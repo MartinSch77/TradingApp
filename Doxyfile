@@ -1,0 +1,56 @@
+# Doxygen configuration for TradingApp (doxygen 1.9.8). HTML output with
+# PlantUML architecture diagrams and the specification/traceability pages.
+# Build the docs:   tools/make_docs.sh   →  docs/html/index.html
+
+PROJECT_NAME           = "TradingApp"
+PROJECT_BRIEF          = "eToro trading app with a consolidated, costed decision system"
+PROJECT_NUMBER         = 1.0.0
+OUTPUT_DIRECTORY       = docs
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+INPUT                  = src docs/mainpage.md docs/architecture.md \
+                         docs/requirements.md docs/design.md docs/test_spec.md \
+                         docs/verification.md docs/tools.md docs/platforms.md \
+                         tests README.md
+FILE_PATTERNS          = *.h *.cpp *.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
+EXCLUDE_PATTERNS       = */build*/*
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+SOURCE_BROWSER         = YES
+GENERATE_TREEVIEW      = YES
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# Traceability tags used in the test sources; rendered as labelled paragraphs
+# and machine-read by tools/trace_report.py.
+ALIASES                = "tstid=\par Test case ID:^^" \
+                         "verifies=\par Verifies requirement:^^" \
+                         "design=\par Design element:^^" \
+                         "satisfies=\par Satisfies:^^"
+
+# Diagrams: PlantUML for the architecture pages, Graphviz for code graphs.
+PLANTUML_JAR_PATH      = tools/third-party/plantuml.jar
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = NO
+
+# Qt specifics so the parser copes with the macros.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = Q_OBJECT= "Q_DECLARE_METATYPE(x)=" QT_FORWARD_DECLARE_CLASS(x)= \
+                         "signals=public" "slots="
+
+# The generated traceability matrix is shipped alongside the HTML docs; the
+# main page links to it. (Regenerate with tools/trace_report.py first.)
+HTML_EXTRA_FILES       = docs/traceability.html

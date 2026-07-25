@@ -21,3 +21,11 @@ TradingApp_Axivion_Report.pdf
 .idea/
 *.swp
 .DS_Store
+
+# Test / coverage / docs artifacts
+build-cov-gcc/
+build-cov-mcdc/
+coverage/
+test-results/
+docs/html/
+docs/traceability.html

@@ -90,6 +90,18 @@ set_target_properties(TradingApp PROPERTIES
 )
 
 # ---------------------------------------------------------------------------
+# Tests (desktop only; see docs/test_spec.md and tools/run_tests.sh)
+# ---------------------------------------------------------------------------
+# include(CTest) defines the standard BUILD_TESTING option (default ON), so
+# `cmake -DBUILD_TESTING=OFF` skips the suite (e.g. for deployment builds).
+if(NOT ANDROID AND NOT IOS)
+    include(CTest)
+    if(BUILD_TESTING)
+        add_subdirectory(tests)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Android
 # ---------------------------------------------------------------------------
 # Only evaluated when configuring with an Android Qt kit (use the kit's

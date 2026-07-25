@@ -1,0 +1,86 @@
+#ifndef TRADINGAPP_SERVICES_MARKETFEEDS_H
+#define TRADINGAPP_SERVICES_MARKETFEEDS_H
+
+#include "domain/Models.h"
+
+#include <QHash>
+#include <QList>
+#include <QObject>
+#include <QStringList>
+
+class JsonHttp;
+class QNetworkAccessManager;
+class QTimer;
+
+// Market context from public, non-eToro web feeds: the CBOE VIX (Yahoo), the
+// TradingView technical rating (single instrument and bulk), recent news
+// headlines, the CNN Fear & Greed crowd-sentiment index, and a Yahoo Finance
+// reference quote for the current instrument (an independent, near-real-time
+// cross-check on eToro's own rate). Independent of the broker connection — the
+// feeds run identically in real, demo and simulation mode. Extracted from
+// EtoroClient so the broker client only talks to eToro.
+class MarketFeeds : public QObject
+{
+    Q_OBJECT
+public:
+    explicit MarketFeeds(QObject *parent = nullptr);
+
+    // The instruments the bulk rating/news fetches cover.
+    void setTradableSymbols(const QStringList &symbols);
+
+    // The instrument the periodic single-instrument rating tracks; switching
+    // re-fetches promptly so the panel isn't stale for a whole refresh cycle.
+    void setCurrentSymbol(const QString &symbol);
+
+    // Fetch now, then refresh the VIX and the current instrument's rating
+    // every refreshIntervalMs (the slow-moving cadence of both sources).
+    void start(qint32 refreshIntervalMs);
+
+public slots:
+    // Fetch TradingView's aggregated technical rating for every tradable instrument
+    // that has a mapped web ticker, in one call; result via instrumentRatingsUpdated.
+    void fetchInstrumentRatings();
+    // Fetch recent news headlines for every tradable instrument that has a mapped web
+    // ticker; results arrive per instrument via instrumentNewsUpdated.
+    void fetchInstrumentNews();
+
+signals:
+    // CBOE VIX ("fear index") level and its change vs. its multi-month average, in percent.
+    void vixUpdated(double level, double changePct);
+    // Real-time technical rating from the web (TradingView) for the current
+    // instrument: available=false when the instrument has no mapped web symbol;
+    // otherwise score is in [-1,1] (Strong Sell ... Strong Buy) with a text rating.
+    void externalSignalUpdated(bool available, double score, const QString &rating);
+    // TradingView multi-timeframe technical rating for each tradable instrument with a
+    // mapped web ticker, keyed by app symbol (instruments without a ticker are omitted).
+    void instrumentRatingsUpdated(const QHash<QString, WebRating> &ratingBySymbol);
+    // Recent news headlines for one tradable instrument (newest first).
+    void instrumentNewsUpdated(const QString &symbol, const QList<NewsHeadline> &headlines);
+    // CNN Fear & Greed index — what the trading crowd is doing right now:
+    // 0 (extreme fear) .. 100 (extreme greed), with CNN's own rating word.
+    void fearGreedUpdated(double score, const QString &rating);
+    // Independent Yahoo Finance quote for the current instrument, with the
+    // exchange timestamp — a freshness/level cross-check on the eToro rate.
+    // Not emitted for instruments without a mapped Yahoo ticker.
+    void webQuoteUpdated(const QString &symbol, double price, const QDateTime &asOf);
+
+private:
+    // Fetch the spot CBOE VIX from a free public feed (eToro only lists monthly
+    // VIX futures) and emit vixUpdated.
+    void fetchVix();
+    // Fetch the current instrument's real-time technical rating from TradingView
+    // and emit externalSignalUpdated.
+    void fetchExternalSignal();
+    // Fetch the CNN Fear & Greed index and emit fearGreedUpdated.
+    void fetchFearGreed();
+    // Fetch the current instrument's Yahoo Finance quote and emit webQuoteUpdated.
+    void fetchWebQuote();
+
+    QNetworkAccessManager *m_nam = nullptr;
+    JsonHttp *m_http = nullptr;
+    QTimer *m_timer = nullptr;      // periodic VIX + current-instrument rating refresh
+    QStringList m_tradableSymbols;  // instruments the bulk fetches cover
+    QString m_currentSymbol;        // instrument the single-rating fetch tracks
+};
+
+#endif // TRADINGAPP_SERVICES_MARKETFEEDS_H

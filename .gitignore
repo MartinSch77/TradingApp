@@ -1,0 +1,23 @@
+# Local secrets — the real eToro API keys live here, never commit.
+# (config.json itself carries no secrets any more and IS committed.)
+apiKeyEtoro.json
+
+# Build output
+build/
+build_axivion/
+dist/
+*.user
+
+# Axivion incremental-analysis state (includes a private shadow Fossil repo)
+.axivion-cache/
+.fslckout
+TradingApp_Axivion_Report.pdf
+
+# Local tool state
+.claude/settings.local.json
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

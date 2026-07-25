@@ -1,0 +1,9 @@
+{
+  "_comment": "Non-secret app settings, safe to commit. The API keys live in apiKeyEtoro.json next to this file (git-ignored); env vars override both.",
+  "mode": "real",
+  "symbol": "SPX500",
+  "baseUrl": "https://public-api.etoro.com/api",
+  "orderCurrency": "usd",
+  "defaultLeverage": 20,
+  "pollIntervalMs": 1000
+}

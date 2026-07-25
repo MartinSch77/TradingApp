@@ -1,0 +1,39 @@
+{
+    "Project": {
+        "BuildSystemIntegration": {
+            "child_order": [
+                "CMakeIntegration 1"
+            ]
+        },
+        "CMakeIntegration 1": {
+            "_active": true,
+            "_copy_from": "CMakeIntegration",
+            "build_directory": "build_axivion",
+            "generator": "Ninja"
+        },
+        "Project-GlobalOptions": {
+            "advanced": {
+                "check_installation_integrity": false
+            },
+            "directory": "../",
+            "ir": "build_axivion/TradingApp",
+            "name": "TradingApp"
+        },
+        "Shadow": {
+            "_active": true
+        }
+    },
+    "Results": {
+        "Dashboard": {
+            "dashboard_url": "$(AXIVION_DASHBOARD_URL=http://localhost:9090/axivion)",
+            "database_mode": "managed_upload"
+        }
+    },
+    "_Format": "1.0",
+    "_VersionNum": [
+        7,
+        12,
+        2,
+        20260
+    ]
+}

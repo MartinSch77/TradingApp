@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to apiKeyEtoro.json and fill in your eToro API credentials (api-portal.etoro.com -> Settings -> Trading -> API Key Management). apiKeyEtoro.json is git-ignored - never commit it.",
+  "apiKey": "",
+  "userKey": ""
+}

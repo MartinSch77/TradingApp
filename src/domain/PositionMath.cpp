@@ -1,0 +1,57 @@
+#include "domain/PositionMath.h"
+
+#include <QLocale>
+
+#include <cmath>
+
+namespace trading {
+
+qint32 priceDecimals(double price)
+{
+    const double a = std::abs(price);
+    if (a >= 100.0) {
+        return 2;
+    }
+    if (a >= 10.0) {
+        return 3;
+    }
+    if (a >= 1.0) {
+        return 4;
+    }
+    return 5;
+}
+
+double accountValuePerPoint(const Position &p)
+{
+    if (p.openRate <= 0.0) {
+        return 0.0;
+    }
+    const double notional = p.amount * p.leverage;
+    return (notional > 0.0) ? (notional / p.openRate) : p.units;
+}
+
+QString slTpAmountText(const Position &p, double rate, double eurPerUsd)
+{
+    const double perPoint = accountValuePerPoint(p);
+    if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
+        return QString();
+    }
+    const double usd = perPoint * std::abs(p.openRate - rate);
+    return QLocale().toString(usd * ((eurPerUsd > 0.0) ? eurPerUsd : 1.0), 'f', 2);
+}
+
+QString slSignedAmountText(const Position &p, double eurPerUsd)
+{
+    const double rate = p.stopLossRate;
+    const double perPoint = accountValuePerPoint(p);
+    if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
+        return QString();
+    }
+    const double pnl = (p.isBuy ? (perPoint * (rate - p.openRate))
+                                : (perPoint * (p.openRate - rate)))
+                       * ((eurPerUsd > 0.0) ? eurPerUsd : 1.0);
+    return ((pnl < 0.0) ? QStringLiteral("-") : QStringLiteral("+"))
+           + QLocale().toString(std::abs(pnl), 'f', 2);
+}
+
+} // namespace trading

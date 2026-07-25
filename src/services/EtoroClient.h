@@ -59,6 +59,17 @@ public:
     double lastAsk() const { return m_lastAsk; }
     const Config &config() const & { return m_config; }
 
+    // Live spread (percent of mid) for any listed symbol, from the most recent
+    // bulk rates snapshot (the periodic tradeability refresh keeps it warm for
+    // every resolved instrument). 0 while unknown.
+    double spreadPctFor(const QString &symbol) const;
+    // Cached per-unit rollover fees for any listed symbol (invalid while unknown).
+    InstrumentFees feesFor(const QString &symbol) const;
+    // Fetch the rollover fees for a listed symbol if they aren't cached yet
+    // (public etorostatic feed — cheap, outside the rate-limited API). The result
+    // arrives via instrumentFeesUpdated; a no-op in simulation mode.
+    void requestFees(const QString &symbol);
+
 public slots:
     // amount is the cash to invest (order currency); isBuy=false opens a short.
     // stopLossAmount / takeProfitAmount are the loss/profit in account currency at
@@ -94,6 +105,8 @@ signals:
     void resolveFailed(const QString &symbol);
     // Per-unit overnight/weekend rollover fees for the current instrument.
     void feesUpdated(const InstrumentFees &fees);
+    // Rollover fees fetched for an arbitrary listed symbol (see requestFees).
+    void instrumentFeesUpdated(const QString &symbol, const InstrumentFees &fees);
     void historyReady(const QList<Candle> &candles);
     void priceUpdated(const QDateTime &time, double price);
     void portfolioUpdated(const QList<Position> &positions);
@@ -220,6 +233,9 @@ private:
 
     QStringList m_tradableSymbols;      // instruments selectable in the app
     QHash<qint64, QString> m_symbolById; // resolved instrumentId -> tradable symbol
+    QHash<QString, qint64> m_idBySymbol; // the reverse map, for per-symbol lookups
+    QHash<qint64, InstrumentFees> m_feesById;  // rollover fees per instrument (cached)
+    QSet<qint64> m_feesInFlight;               // fee fetches already running
     QHash<QString, qint64> m_instrumentByPosition;  // open positionId -> its instrumentId,
                                                     // so any trade can be closed regardless
                                                     // of the instrument currently shown

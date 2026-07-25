@@ -233,6 +233,7 @@ void EtoroClient::resolveListedInstrumentIds()
                 // exact symbol match when present, otherwise take the first valid id.
                 if (s.isEmpty() || (s.compare(sym, Qt::CaseInsensitive) == 0)) {
                     static_cast<void>(m_symbolById.insert(id, sym));
+                    static_cast<void>(m_idBySymbol.insert(sym, id));
                     return;
                 }
             }
@@ -516,6 +517,7 @@ void EtoroClient::resolveInstrumentReal()
         m_instrument = found;
         static_cast<void>(
             m_symbolById.insert(m_instrument.instrumentId, wantSym));  // always mapped
+        static_cast<void>(m_idBySymbol.insert(wantSym, m_instrument.instrumentId));
         if (found.currentRate > 0.0) {
             m_lastPrice = found.currentRate;
         }
@@ -657,7 +659,55 @@ void EtoroClient::fetchFeesReal()
         fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
         fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
         if (fees.isValid()) {
+            m_feesById.insert(wantId, fees);  // shared cache (see feesFor/requestFees)
             emit feesUpdated(fees);
+        }
+    });
+}
+
+double EtoroClient::spreadPctFor(const QString &symbol) const
+{
+    return m_spreadPctById.value(m_idBySymbol.value(symbol, 0), 0.0);
+}
+
+InstrumentFees EtoroClient::feesFor(const QString &symbol) const
+{
+    return m_feesById.value(m_idBySymbol.value(symbol, 0), InstrumentFees{});
+}
+
+void EtoroClient::requestFees(const QString &symbol)
+{
+    if (m_simulated) {
+        return;  // no fee feed in simulation — the plan flags its bill as partial
+    }
+    const qint64 id = m_idBySymbol.value(symbol, 0);
+    if ((id <= 0) || m_feesById.contains(id) || m_feesInFlight.contains(id)) {
+        if (m_feesById.contains(id)) {
+            emit instrumentFeesUpdated(symbol, m_feesById.value(id));
+        }
+        return;
+    }
+    static_cast<void>(m_feesInFlight.insert(id));
+    // Same public trade-config feed as fetchFeesReal, keyed to any listed symbol.
+    QNetworkRequest req(QUrl(QStringLiteral(
+        "https://api.etorostatic.com/sapi/trade-real/instruments/%1").arg(id)));
+    JsonHttp::setBrowserHeaders(req);
+    QNetworkReply *reply = m_nam->get(req);
+    handleReply(reply, [this, id, symbol](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                          const QByteArray & /*raw*/, const QString & /*netError*/) {
+        static_cast<void>(m_feesInFlight.remove(id));
+        if (!ok) {
+            return;  // transient — the next plan render will re-request
+        }
+        const QJsonObject inst = doc.object().value(QStringLiteral("Instrument")).toObject();
+        InstrumentFees fees;
+        fees.buyOvernight = inst.value(QStringLiteral("BuyOverNightFee")).toDouble();
+        fees.sellOvernight = inst.value(QStringLiteral("SellOverNightFee")).toDouble();
+        fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
+        fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
+        if (fees.isValid()) {
+            m_feesById.insert(id, fees);
+            emit instrumentFeesUpdated(symbol, fees);
         }
     });
 }
@@ -707,6 +757,15 @@ void EtoroClient::refreshTradeabilityReal()
             const QString sym = m_symbolById.value(id);
             if (sym.isEmpty()) {
                 continue;
+            }
+            // Same bulk snapshot also keeps the per-instrument spread cache warm,
+            // so the decision window can cost a plan for ANY listed instrument.
+            const double bid =
+                numFrom(pick(rate, {QStringLiteral("bid"), QStringLiteral("cvtBid")}));
+            const double ask =
+                numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
+            if ((bid > 0.0) && (ask > bid)) {
+                m_spreadPctById.insert(id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0);
             }
             const QDateTime quoteTime = QDateTime::fromString(
                 pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
@@ -1273,6 +1332,11 @@ void EtoroClient::finishTradeHistory(QSharedPointer<PnlAccum> acc)
                 t.openCostEst = half;
                 t.closeCostEst = half;
                 t.costEstValid = true;
+                // Roll the estimate up into the per-instrument summary so its
+                // Costs column can show open+close+fees.
+                if (t.listed) {
+                    acc->bySymbol[t.symbol].estSpreadCosts += t.openCostEst + t.closeCostEst;
+                }
             }
         }
         emitMonthlyPnl(acc);

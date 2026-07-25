@@ -99,7 +99,10 @@ struct InstrumentPnl {
     QString symbol;
     qint32 trades = 0;
     double netProfit = 0.0;  // summed net P/L of closed trades, in account currency
-    double fees = 0.0;
+    double fees = 0.0;       // summed rollover fees the API reports
+    // Summed estimated open+close spread costs (half-spread × notional per side,
+    // priced at the instrument's current spread — see ClosedTrade).
+    double estSpreadCosts = 0.0;
 };
 
 // Aggregated closed-trade P/L over a period, restricted to the app's listed

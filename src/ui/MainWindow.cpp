@@ -157,6 +157,14 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
         connect(m_client, &EtoroClient::monthlyPnlFailed, this, &MainWindow::onMonthlyPnlFailed));
     static_cast<void>(
         connect(m_client, &EtoroClient::closedTradesReady, this, &MainWindow::onClosedTrades));
+    // Fees fetched for a non-selected instrument (decision-plan cache miss):
+    // re-render the decision window so its cost bill completes.
+    static_cast<void>(connect(m_client, &EtoroClient::instrumentFeesUpdated, this,
+                              [this](const QString &, const InstrumentFees &) {
+                                  if ((m_decisionDialog != nullptr) && m_decisionDialog->isVisible()) {
+                                      rebuildDecision();
+                                  }
+                              }));
     static_cast<void>(connect(m_feeds, &MarketFeeds::vixUpdated, this, &MainWindow::onVix));
     static_cast<void>(
         connect(m_feeds, &MarketFeeds::externalSignalUpdated, this, &MainWindow::onExternalSignal));
@@ -1074,7 +1082,7 @@ void MainWindow::buildUi()
     m_pnlTable = new QTableWidget(0, 4, m_pnlBox);
     m_pnlTable->setHorizontalHeaderLabels(
         {QStringLiteral("Instrument"), QStringLiteral("Trades"),
-         QStringLiteral("Net P/L (%1)").arg(m_ccy), QStringLiteral("Fees")});
+         QStringLiteral("Net P/L (%1)").arg(m_ccy), QStringLiteral("Costs (%1)").arg(m_ccy)});
     m_pnlTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_pnlTable->verticalHeader()->setVisible(false);
     m_pnlTable->setSelectionMode(QAbstractItemView::NoSelection);
@@ -1082,8 +1090,10 @@ void MainWindow::buildUi()
     m_pnlTable->setFocusPolicy(Qt::NoFocus);
     m_pnlTable->setMaximumHeight(150);
     m_pnlTable->setToolTip(QStringLiteral(
-        "Net P/L of trades closed in the last 7 weeks, only for instruments in the "
-        "selector. Whole-account totals are shown above for context."));
+        "Net P/L of trades closed in the window, only for instruments in the "
+        "selector. Costs = estimated opening + closing spread cost (at the "
+        "instrument's current spread) + the rollover fees eToro reports. "
+        "Whole-account totals are shown above for context."));
     pnlLayout->addWidget(m_pnlTable);
 
     auto *pnlButtons = new QHBoxLayout;
@@ -2558,12 +2568,18 @@ void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
         auto *net = new QTableWidgetItem(signed2(r.netProfit));
         net->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         net->setForeground(colorFor(r.netProfit));
-        auto *fees = new QTableWidgetItem(QLocale().toString(toDisplay(r.fees), 'f', 2));
-        fees->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        // Costs = estimated open+close spread + reported rollover fees.
+        auto *costs = new QTableWidgetItem(
+            QLocale().toString(toDisplay(r.fees + r.estSpreadCosts), 'f', 2));
+        costs->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        costs->setToolTip(QStringLiteral("open+close spread (est.) %1%2 + rollover fees %1%3")
+                              .arg(m_ccy)
+                              .arg(toDisplay(r.estSpreadCosts), 0, 'f', 2)
+                              .arg(toDisplay(r.fees), 0, 'f', 2));
         m_pnlTable->setItem(i, 0, name);
         m_pnlTable->setItem(i, 1, trades);
         m_pnlTable->setItem(i, 2, net);
-        m_pnlTable->setItem(i, 3, fees);
+        m_pnlTable->setItem(i, 3, costs);
     }
 
     // Headline summary above the table; the box title names the actual window
@@ -2929,10 +2945,12 @@ void MainWindow::rebuildClosedTradesTable()
         return;
     }
     if (rows == 0) {
+        const bool simulated = !m_client->config().hasCredentials();
         m_closedSummary->setText(
-            QStringLiteral("<b>No closed trades in the selected window.</b> "
-                           "<span style='color:#9a9a9a'>(simulation mode keeps no "
-                           "per-trade history)</span>"));
+            QStringLiteral("<b>No closed trades in the selected window.</b>%1")
+                .arg(simulated ? QStringLiteral(" <span style='color:#9a9a9a'>(simulation "
+                                                "mode keeps no per-trade history)</span>")
+                               : QString()));
         return;
     }
     const QString netColor = (sumNet >= 0.0) ? QStringLiteral("#25b563")
@@ -3800,6 +3818,21 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
         in.fees = m_fees;
         in.feesKnown = m_fees.isValid();
     }
+    // Any listed instrument: the client keeps a per-instrument spread cache warm
+    // (bulk-rates tradeability poll) and serves cached rollover fees; a cache
+    // miss triggers a one-off fetch and the plan re-renders on arrival.
+    if (in.spreadPct <= 0.0) {
+        in.spreadPct = m_client->spreadPctFor(focusSymbol);
+    }
+    if (!in.feesKnown) {
+        const InstrumentFees fees = m_client->feesFor(focusSymbol);
+        if (fees.isValid()) {
+            in.fees = fees;
+            in.feesKnown = true;
+        } else {
+            m_client->requestFees(focusSymbol);
+        }
+    }
     in.horizonHours = 24;
     in.now = QDateTime::currentDateTime();
     in.vixValid = m_vixValid;
@@ -3893,8 +3926,8 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
                 .arg(costLine, eur(plan.expectedCosts))
                 .arg(plan.costsComplete
                          ? QString()
-                         : QStringLiteral(" <span style='color:%1'>(partial — select the "
-                                          "instrument for live spread/fees)</span>")
+                         : QStringLiteral(" <span style='color:%1'>(partial — live "
+                                          "spread/fees not received yet)</span>")
                                .arg(amber))
                 .arg(netColor,
                      (plan.expectedNet >= 0.0) ? QStringLiteral("+") : QString(),

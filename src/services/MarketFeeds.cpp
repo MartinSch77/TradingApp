@@ -186,7 +186,7 @@ void MarketFeeds::fetchVix()
         if (!quotes.isEmpty()) {
             const QJsonArray closeArr = quotes.first().toObject()
                                             .value(QStringLiteral("close")).toArray();
-            for (const QJsonValue &v : closeArr) {
+            for (const auto &v : closeArr) {
                 if (v.isDouble() && (v.toDouble() > 0.0)) {
                     closes.append(v.toDouble());
                 }
@@ -314,7 +314,7 @@ void MarketFeeds::fetchInstrumentRatings()
         };
         QHash<QString, WebRating> ratingBySymbol;
         const QJsonArray data = doc.object().value(QStringLiteral("data")).toArray();
-        for (const QJsonValue &v : data) {
+        for (const auto &v : data) {
             const QJsonObject o = v.toObject();
             const QJsonArray d = o.value(QStringLiteral("d")).toArray();
             WebRating r;
@@ -363,7 +363,7 @@ void MarketFeeds::fetchInstrumentNews()
             }
             QList<NewsHeadline> headlines;
             const QJsonArray items = doc.object().value(QStringLiteral("items")).toArray();
-            for (const QJsonValue &v : items) {
+            for (const auto &v : items) {
                 const QJsonObject o = v.toObject();
                 NewsHeadline h;
                 h.title = o.value(QStringLiteral("title")).toString();

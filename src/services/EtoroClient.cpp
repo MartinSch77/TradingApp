@@ -218,7 +218,7 @@ void EtoroClient::resolveListedInstrumentIds()
             }
             const QJsonArray items =
                 asArray(doc, {QStringLiteral("items"), QStringLiteral("results")});
-            for (const QJsonValue &v : items) {
+            for (const auto &v : items) {
                 const QJsonObject o = v.toObject();
                 const QString s = pick(o, {QStringLiteral("internalSymbolFull"),
                                            QStringLiteral("symbolFull"),
@@ -382,7 +382,7 @@ void EtoroClient::fetchClosedTrades(qint32 weeksBack)
     m_pnlFetching = true;
     auto acc = QSharedPointer<PnlAccum>::create();
     const qint32 weeks = std::clamp(weeksBack, 1, 26);
-    acc->minDate = QDate::currentDate().addDays(-7 * weeks);
+    acc->minDate = QDate::currentDate().addDays(-7LL * weeks);
     fetchTradeHistoryPageReal(acc);
 }
 
@@ -477,7 +477,7 @@ void EtoroClient::resolveInstrumentReal()
         const QJsonArray items =
             asArray(doc, {QStringLiteral("items"), QStringLiteral("results")});
         Instrument found;
-        for (const QJsonValue &v : items) {
+        for (const auto &v : items) {
             const QJsonObject o = v.toObject();
             const QString sym = pick(o, {QStringLiteral("internalSymbolFull"),
                                          QStringLiteral("symbolFull"),
@@ -604,13 +604,13 @@ void EtoroClient::fetchLeverageReal()
         QList<qint32> cfd;
         QList<qint32> all;
         const QJsonArray leverageConfigs = e.value(QStringLiteral("leverageConfigs")).toArray();
-        for (const QJsonValue &lcv : leverageConfigs) {
+        for (const auto &lcv : leverageConfigs) {
             const QJsonObject lc = lcv.toObject();
             const bool isCfd = lc.value(QStringLiteral("settlementType"))
                                    .toString()
                                    .compare(QLatin1String("cfd"), Qt::CaseInsensitive) == 0;
             const QJsonArray leverageValues = lc.value(QStringLiteral("leverageValues")).toArray();
-            for (const QJsonValue &lv : leverageValues) {
+            for (const auto &lv : leverageValues) {
                 const qint32 v = lv.toInt();
                 if (v <= 0) {
                     continue;
@@ -750,7 +750,7 @@ void EtoroClient::refreshTradeabilityReal()
             arr.append(doc.object());
         }
         QSet<QString> open;
-        for (const QJsonValue &v : arr) {
+        for (const auto &v : arr) {
             const QJsonObject rate = v.toObject();
             const qint64 id = static_cast<qint64>(
                 numFrom(pick(rate, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
@@ -789,7 +789,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
                              .arg(interval)
                              .arg(count);
     QNetworkReply *reply = apiGet(path, QUrlQuery());
-    handleReply(reply, [this, cb, interval](bool ok, qint32 status, const QJsonDocument &doc,
+    handleReply(reply, [this, cb = std::move(cb), interval](bool ok, qint32 status, const QJsonDocument &doc,
                                             const QByteArray &raw, const QString &netError) {
         if (!ok) {
             emit log(QStringLiteral("Candle history (%1) unavailable (HTTP %2): %3")
@@ -812,7 +812,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
         }
         QList<Candle> candles;
         candles.reserve(arr.size());
-        for (const QJsonValue &v : arr) {
+        for (const auto &v : arr) {
             const QJsonObject o = v.toObject();
             Candle c;
             c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
@@ -843,12 +843,12 @@ void EtoroClient::fetchHistoryReal()
     // one-minute candles onto the end. Short-lookback signals then land entirely in
     // the 1-minute region.
     const qint64 wantId = m_instrument.instrumentId;  // guard against an instrument switch
-    fetchCandles(QStringLiteral("OneHour"), 720, [this, wantId](QList<Candle> hourly) {
+    fetchCandles(QStringLiteral("OneHour"), 720, [this, wantId](const QList<Candle> &hourly) {
         if (m_instrument.instrumentId != wantId) {
             return;
         }
         fetchCandles(QStringLiteral("OneMinute"), 1000,
-                     [this, wantId, hourly](QList<Candle> minute) mutable {
+                     [this, wantId, hourly](const QList<Candle> &minute) mutable {
             if (m_instrument.instrumentId != wantId) {
                 return;
             }
@@ -995,7 +995,7 @@ void EtoroClient::refreshPortfolioReal()
         }
 
         QList<Position> positions;
-        for (const QJsonValue &v : arr) {
+        for (const auto &v : arr) {
             const QJsonObject o = v.toObject();
             const qint64 instrumentId =
                 static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
@@ -1110,7 +1110,7 @@ void EtoroClient::finalizePortfolioPl(QList<Position> positions)
             if (arr.isEmpty() && doc.isObject()) {
                 arr.append(doc.object());
             }
-            for (const QJsonValue &v : arr) {
+            for (const auto &v : arr) {
                 const QJsonObject rate = v.toObject();
                 const qint64 id =
                     static_cast<qint64>(numFrom(pick(rate, {QStringLiteral("instrumentId")})));
@@ -1196,7 +1196,7 @@ void EtoroClient::refreshBalanceReal()
     }, /*retriesLeft=*/2);  // ride out a transient 429/5xx rather than logging an error
 }
 
-void EtoroClient::fetchTradeHistoryPageReal(QSharedPointer<PnlAccum> acc)
+void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
 {
     constexpr qint32 kPageSize = 1000;
     // History is newest-first and honours minDate; page until an empty page arrives.
@@ -1225,7 +1225,7 @@ void EtoroClient::fetchTradeHistoryPageReal(QSharedPointer<PnlAccum> acc)
         const QJsonArray batch =
             doc.isArray() ? doc.array()
                           : asArray(doc, {QStringLiteral("data"), QStringLiteral("trades")});
-        for (const QJsonValue &v : batch) {
+        for (const auto &v : batch) {
             const QJsonObject o = v.toObject();
             const double net = numFrom(pick(o, {QStringLiteral("netProfit")}));
             const double fee = numFrom(pick(o, {QStringLiteral("fees")}));
@@ -1282,7 +1282,7 @@ void EtoroClient::fetchTradeHistoryPageReal(QSharedPointer<PnlAccum> acc)
     }, /*retriesLeft=*/3);
 }
 
-void EtoroClient::finishTradeHistory(QSharedPointer<PnlAccum> acc)
+void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
 {
     if (acc->trades.isEmpty() || acc->instrumentIds.isEmpty()) {
         emitMonthlyPnl(acc);
@@ -1310,7 +1310,7 @@ void EtoroClient::finishTradeHistory(QSharedPointer<PnlAccum> acc)
         if (ok) {
             const QJsonArray arr =
                 asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
-            for (const QJsonValue &v : arr) {
+            for (const auto &v : arr) {
                 const QJsonObject rate = v.toObject();
                 const qint64 id = static_cast<qint64>(numFrom(
                     pick(rate, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
@@ -1425,7 +1425,7 @@ void EtoroClient::scanInstrumentsReal()
                                   const QByteArray &raw, const QString &netError) {
         if (ok) {
             const QJsonArray elig = doc.object().value(QStringLiteral("eligibilities")).toArray();
-            for (const QJsonValue &ev : elig) {
+            for (const auto &ev : elig) {
                 const QJsonObject e = ev.toObject();
                 const qint64 id =
                     static_cast<qint64>(numFrom(pick(e, {QStringLiteral("instrumentId")})));
@@ -1434,14 +1434,14 @@ void EtoroClient::scanInstrumentsReal()
                 QList<qint32> all;
                 const QJsonArray leverageConfigs =
                     e.value(QStringLiteral("leverageConfigs")).toArray();
-                for (const QJsonValue &lcv : leverageConfigs) {
+                for (const auto &lcv : leverageConfigs) {
                     const QJsonObject lc = lcv.toObject();
                     const bool isCfd = lc.value(QStringLiteral("settlementType"))
                                            .toString()
                                            .compare(QLatin1String("cfd"), Qt::CaseInsensitive) == 0;
                     const QJsonArray leverageValues =
                         lc.value(QStringLiteral("leverageValues")).toArray();
-                    for (const QJsonValue &lv : leverageValues) {
+                    for (const auto &lv : leverageValues) {
                         const qint32 v = lv.toInt();
                         if (v <= 0) {
                             continue;
@@ -1473,7 +1473,7 @@ void EtoroClient::scanInstrumentsReal()
     });
 }
 
-void EtoroClient::fetchScanCandle(QSharedPointer<ScanState> st)
+void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
 {
     if (st->index >= st->queue.size()) {
         m_scanActive = false;
@@ -1508,7 +1508,7 @@ void EtoroClient::fetchScanCandle(QSharedPointer<ScanState> st)
             }
             QList<Candle> candles;
             candles.reserve(arr.size());
-            for (const QJsonValue &v : arr) {
+            for (const auto &v : arr) {
                 const QJsonObject o = v.toObject();
                 Candle c;
                 c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
@@ -1685,7 +1685,7 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
                         QStringList msgs;
                         if (it.value().isArray()) {
                             const QJsonArray a = it.value().toArray();
-                            for (const QJsonValue &m : a) {
+                            for (const auto &m : a) {
                                 msgs << m.toString();
                             }
                         } else {
@@ -1763,7 +1763,7 @@ void EtoroClient::confirmOrderReal(qint64 orderId, bool isBuy, const QString &sy
         // the definitive "it worked" signal, regardless of the status wording.
         QString openedPositionId;
         const QJsonArray execs = pick(o, {QStringLiteral("positionExecutions")}).toArray();
-        for (const QJsonValue &v : execs) {
+        for (const auto &v : execs) {
             const QJsonObject e = v.toObject();
             const QString pid = pick(e, {QStringLiteral("positionId")}).toVariant().toString();
             const QString state = pick(e, {QStringLiteral("state")}).toString();

@@ -109,7 +109,7 @@ private:
     // Visible window (ms) shown by the timeframe buttons; 0 = all loaded history.
     // Default ~2h so the recent 1-minute detail is on screen (per-second wiggle is
     // there too — wheel-zoom in for it); the buttons step out from there.
-    qint64 m_viewWindowMs = 2 * 60 * 60'000;  // 2 hours
+    qint64 m_viewWindowMs = 2LL * 60 * 60'000;  // 2 hours
 
     // Room for ~1 month of seeded history plus many hours of live ticks, so the
     // accumulating live tail doesn't trim the older history off the left edge.

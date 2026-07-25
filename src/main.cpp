@@ -8,7 +8,6 @@
 #include <QByteArray>
 #include <QTimer>
 
-#include <cstdlib>
 
 int main(int argc, char *argv[])
 {
@@ -60,8 +59,8 @@ int main(int argc, char *argv[])
     // TRADINGAPP_SHOT_OPEN=1 also opens the decision and closed-trades windows
     // first, and TRADINGAPP_SHOT_DELAY_MS overrides the capture delay (default
     // 3000) so slow scans can finish before the grab.
-    if (const char *shot = std::getenv("TRADINGAPP_SHOT")) {
-        const QString path = QString::fromLocal8Bit(shot);
+    const QString path = qEnvironmentVariable("TRADINGAPP_SHOT");
+    if (!path.isEmpty()) {
         if (qEnvironmentVariableIsSet("TRADINGAPP_SHOT_OPEN")) {
             QTimer::singleShot(1500, &window, [&window]() {
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openDecision"));

@@ -93,7 +93,7 @@ double marketRegime(const MarketSnapshot &m, bool &eventRiskOut)
     const QDateTime now = QDateTime::currentDateTime();
     for (const EconomicEvent &e : m.events) {
         const qint64 secsToEvent = now.secsTo(e.when);
-        if (e.when.isValid() && (secsToEvent > 0) && (secsToEvent <= (6 * 3600))
+        if (e.when.isValid() && (secsToEvent > 0) && (secsToEvent <= (6LL * 3600))
             && (e.impact.compare(QLatin1String("High"), Qt::CaseInsensitive) == 0)) {
             eventRiskOut = true;
             break;

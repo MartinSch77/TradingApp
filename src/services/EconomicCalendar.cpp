@@ -159,7 +159,7 @@ void EconomicCalendar::refresh()
             QJsonDocument::fromJson(reply->readAll()).object().value(QStringLiteral("result")).toArray();
 
         QList<EconomicEvent> events;
-        for (const QJsonValue &v : arr) {
+        for (const auto &v : arr) {
             const QJsonObject o = v.toObject();
             EconomicEvent e;
             e.title = o.value(QStringLiteral("title")).toString();
@@ -212,7 +212,7 @@ void EconomicCalendar::scheduleNextEventRefresh(const QList<EconomicEvent> &even
         //   * ~1 s AFTER it, so it rolls into the past and the released actual is picked up.
         // Schedule whichever comes next; each refresh re-runs this and advances to the
         // next moment (the periodic m_timer stays a backstop and re-evaluates too).
-        const QDateTime preRefresh = e.when.addSecs(-30 * 60);
+        const QDateTime preRefresh = e.when.addSecs(-30LL * 60);
         const qint64 ms = (now < preRefresh) ? now.msecsTo(preRefresh)
                                              : (now.msecsTo(e.when) + 1000);
         const qint64 clamped =

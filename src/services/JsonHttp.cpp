@@ -35,7 +35,7 @@ void JsonHttp::setBrowserHeaders(QNetworkRequest &req)
 
 void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
 {
-    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, cb, retriesLeft]() {
+    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, cb = std::move(cb), retriesLeft]() {
         const qint32 status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 

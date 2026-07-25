@@ -1,0 +1,6 @@
+// cppcheck suppressions — each entry documents why it is safe to silence.
+// Qt's parent-child ownership: 'new' widgets/objects with a parent are owned
+// and deleted by the parent, not leaked.
+// (handled by --library=qt; add project-specific entries below)
+missingIncludeSystem
+unusedFunction

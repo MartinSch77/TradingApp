@@ -1,0 +1,21 @@
+# clang-tidy configuration (run via tools/static_analysis.sh over the compile
+# database). Focus: real bug classes (bugprone, CERT, concurrency) plus the
+# performance checks that matter for Qt value types. Style is Axivion's job
+# (MISRA C++ 2023), so readability checks stay off except the few that catch
+# genuine confusion.
+Checks: >
+  bugprone-*,
+  cert-*,
+  concurrency-*,
+  performance-*,
+  misc-unused-using-decls,
+  readability-misleading-indentation,
+  readability-container-size-empty,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -cert-err58-cpp,
+  -performance-enum-size,
+  -clang-analyzer-optin.performance.Padding
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/(domain|services|ui)/.*'
+FormatStyle: none

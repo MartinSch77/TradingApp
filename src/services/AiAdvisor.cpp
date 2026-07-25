@@ -94,7 +94,7 @@ void AiAdvisor::requestDecision(const QString &evidencePrompt)
         }
         // Find the first text block; with output_config.format it holds the JSON object.
         QString jsonText;
-        for (const QJsonValue &b : doc.object().value(QStringLiteral("content")).toArray()) {
+        for (const auto &b : doc.object().value(QStringLiteral("content")).toArray()) {
             const QJsonObject o = b.toObject();
             if (o.value(QStringLiteral("type")).toString() == QStringLiteral("text")) {
                 jsonText = o.value(QStringLiteral("text")).toString();

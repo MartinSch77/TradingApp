@@ -178,16 +178,16 @@ private:
     void refreshBalanceReal();
     // Fetch one trade-history page and fold it into acc, then recurse to the next
     // page until the API returns an empty page (history is newest-first).
-    void fetchTradeHistoryPageReal(QSharedPointer<PnlAccum> acc);
+    void fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc);
     // Walk complete: price the trades' open/close cost estimates from one bulk
     // rates call (current spreads), then emit the summary and the trade list.
-    void finishTradeHistory(QSharedPointer<PnlAccum> acc);
+    void finishTradeHistory(const QSharedPointer<PnlAccum> &acc);
     void emitMonthlyPnl(const QSharedPointer<PnlAccum> &acc);  // build MonthlyPnl + emit
     // ---- leverage screener -----------------------------------------------
     void scanInstrumentsReal();
     // Fetch the next queued instrument's candles, emit its screenerRow, then recurse
     // to the following one — sequential so the market-data rate budget isn't burst.
-    void fetchScanCandle(QSharedPointer<ScanState> st);
+    void fetchScanCandle(const QSharedPointer<ScanState> &st);
 
     void openPositionReal(bool isBuy, double amount, double leverage, double stopLossAmount,
                           double takeProfitAmount, bool trailingStop);

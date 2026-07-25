@@ -2381,7 +2381,7 @@ void MainWindow::onEvents(const QList<EconomicEvent> &events)
 void MainWindow::rebuildEventsView(bool force)
 {
     // An event stays listed until 10 minutes after its time, then drops off.
-    constexpr qint64 kKeepPastSecs = 10 * 60;
+    constexpr qint64 kKeepPastSecs = 10LL * 60;
     const QDateTime now = QDateTime::currentDateTime();
 
     // Recompute the soonest still-upcoming event (event-risk term of the prediction)
@@ -2452,7 +2452,7 @@ void MainWindow::refreshChartEventMarker()
             continue;
         }
         const qint64 secs = now.secsTo(e.when);  // >0 upcoming, <0 already passed
-        if ((secs <= (10 * 60)) && (secs >= (-5 * 60))) {
+        if ((secs <= (10LL * 60)) && (secs >= (-5LL * 60))) {
             const qint64 a = qAbs(secs);
             if ((bestAbs < 0) || (a < bestAbs)) {
                 bestAbs = a;
@@ -2705,7 +2705,7 @@ void MainWindow::checkCloseProposals(double price)
         return;
     }
     const QString sym = m_client->config().symbol;
-    constexpr qint64 kLogCooldownMs = 5 * 60 * 1000;  // one log line per trade per 5 min
+    constexpr qint64 kLogCooldownMs = 5LL * 60 * 1000;  // one log line per trade per 5 min
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     QStringList lines;

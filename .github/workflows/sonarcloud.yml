@@ -27,7 +27,7 @@ jobs:
           if [ -n "$SONAR_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT";
           else echo "present=false" >> "$GITHUB_OUTPUT"; echo "SONAR_TOKEN not set — SonarCloud scan skipped."; fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.token.outputs.present == 'true'
         with:
           fetch-depth: 0 # blame info for SonarCloud

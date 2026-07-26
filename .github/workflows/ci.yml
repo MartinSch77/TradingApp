@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
@@ -137,7 +137,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
@@ -161,7 +161,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: SBOM (syft — SPDX + CycloneDX)
         uses: anchore/sbom-action@v0
         with:

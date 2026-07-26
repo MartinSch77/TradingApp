@@ -1,6 +1,7 @@
 {
     "#": "Note: Evaluation order is from bottom to top",
     "_Layers": [
+        "external_import.py",
         "ci_config.json",
         "compiler_config.json",
         "rule_config.json"

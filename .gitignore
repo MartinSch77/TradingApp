@@ -15,6 +15,7 @@ TradingApp_Axivion_Report.pdf
 
 # Local tool state
 .claude/settings.local.json
+__pycache__/
 
 # Editor / OS
 .vscode/
@@ -25,12 +26,16 @@ TradingApp_Axivion_Report.pdf
 # Test / coverage / docs artifacts
 build-cov-gcc/
 build-cov-mcdc/
+build-cov-coco/
 coverage/
 test-results/
 docs/html/
 docs/traceability.html
+docs/strictdoc/
 tools/third-party/
 analysis-results/
 build-san/
+build-san-tsan/
+build-release/
 build-android/
 build-ios/

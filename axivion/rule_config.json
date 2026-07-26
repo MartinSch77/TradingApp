@@ -17,6 +17,405 @@
         "C++CloneDetection": {
             "_active": true
         },
+        "CWE-1043": {
+            "_active": true
+        },
+        "CWE-1055": {
+            "_active": true
+        },
+        "CWE-1056": {
+            "_active": true
+        },
+        "CWE-1064": {
+            "_active": true
+        },
+        "CWE-1069": {
+            "_active": true
+        },
+        "CWE-1071": {
+            "_active": true
+        },
+        "CWE-1074": {
+            "_active": true
+        },
+        "CWE-1075": {
+            "_active": true
+        },
+        "CWE-1077": {
+            "_active": true
+        },
+        "CWE-1079": {
+            "_active": true
+        },
+        "CWE-1080": {
+            "_active": true
+        },
+        "CWE-1082": {
+            "_active": true
+        },
+        "CWE-1086": {
+            "_active": true
+        },
+        "CWE-1087": {
+            "_active": true
+        },
+        "CWE-1119": {
+            "_active": true
+        },
+        "CWE-1121": {
+            "_active": true
+        },
+        "CWE-1124": {
+            "_active": true
+        },
+        "CWE-1126": {
+            "_active": true
+        },
+        "CWE-1127": {
+            "_active": true
+        },
+        "CWE-119": {
+            "_active": true
+        },
+        "CWE-120": {
+            "_active": true
+        },
+        "CWE-121": {
+            "_active": true
+        },
+        "CWE-123": {
+            "_active": true
+        },
+        "CWE-124": {
+            "_active": true
+        },
+        "CWE-125": {
+            "_active": true
+        },
+        "CWE-126": {
+            "_active": true
+        },
+        "CWE-127": {
+            "_active": true
+        },
+        "CWE-131": {
+            "_active": true
+        },
+        "CWE-134": {
+            "_active": true
+        },
+        "CWE-135": {
+            "_active": true
+        },
+        "CWE-1390": {
+            "_active": true
+        },
+        "CWE-1391": {
+            "_active": true
+        },
+        "CWE-190": {
+            "_active": true
+        },
+        "CWE-191": {
+            "_active": true
+        },
+        "CWE-192": {
+            "_active": true
+        },
+        "CWE-194": {
+            "_active": true
+        },
+        "CWE-195": {
+            "_active": true
+        },
+        "CWE-197": {
+            "_active": true
+        },
+        "CWE-20": {
+            "_active": true
+        },
+        "CWE-200": {
+            "_active": true
+        },
+        "CWE-22": {
+            "_active": true
+        },
+        "CWE-23": {
+            "_active": true
+        },
+        "CWE-242": {
+            "_active": true
+        },
+        "CWE-243": {
+            "_active": true
+        },
+        "CWE-244": {
+            "_active": true
+        },
+        "CWE-248": {
+            "_active": true
+        },
+        "CWE-252": {
+            "_active": true
+        },
+        "CWE-253": {
+            "_active": true
+        },
+        "CWE-259": {
+            "_active": true
+        },
+        "CWE-269": {
+            "_active": true
+        },
+        "CWE-271": {
+            "_active": true
+        },
+        "CWE-272": {
+            "_active": true
+        },
+        "CWE-273": {
+            "_active": true
+        },
+        "CWE-287": {
+            "_active": true
+        },
+        "CWE-335": {
+            "_active": true
+        },
+        "CWE-336": {
+            "_active": true
+        },
+        "CWE-337": {
+            "_active": true
+        },
+        "CWE-338": {
+            "_active": true
+        },
+        "CWE-36": {
+            "_active": true
+        },
+        "CWE-362": {
+            "_active": true
+        },
+        "CWE-369": {
+            "_active": true
+        },
+        "CWE-378": {
+            "_active": true
+        },
+        "CWE-379": {
+            "_active": true
+        },
+        "CWE-396": {
+            "_active": true
+        },
+        "CWE-397": {
+            "_active": true
+        },
+        "CWE-400": {
+            "_active": true
+        },
+        "CWE-401": {
+            "_active": true
+        },
+        "CWE-404": {
+            "_active": true
+        },
+        "CWE-413": {
+            "_active": true
+        },
+        "CWE-415": {
+            "_active": true
+        },
+        "CWE-416": {
+            "_active": true
+        },
+        "CWE-426": {
+            "_active": true
+        },
+        "CWE-457": {
+            "_active": true
+        },
+        "CWE-464": {
+            "_active": true
+        },
+        "CWE-467": {
+            "_active": true
+        },
+        "CWE-468": {
+            "_active": true
+        },
+        "CWE-469": {
+            "_active": true
+        },
+        "CWE-476": {
+            "_active": true
+        },
+        "CWE-477": {
+            "_active": true
+        },
+        "CWE-478": {
+            "_active": true
+        },
+        "CWE-480": {
+            "_active": true
+        },
+        "CWE-481": {
+            "_active": true
+        },
+        "CWE-482": {
+            "_active": true
+        },
+        "CWE-483": {
+            "_active": true
+        },
+        "CWE-484": {
+            "_active": true
+        },
+        "CWE-489": {
+            "_active": true
+        },
+        "CWE-500": {
+            "_active": true
+        },
+        "CWE-502": {
+            "_active": true
+        },
+        "CWE-547": {
+            "_active": true
+        },
+        "CWE-558": {
+            "_active": true
+        },
+        "CWE-561": {
+            "_active": true
+        },
+        "CWE-562": {
+            "_active": true
+        },
+        "CWE-563": {
+            "_active": true
+        },
+        "CWE-587": {
+            "_active": true
+        },
+        "CWE-588": {
+            "_active": true
+        },
+        "CWE-590": {
+            "_active": true
+        },
+        "CWE-595": {
+            "_active": true
+        },
+        "CWE-606": {
+            "_active": true
+        },
+        "CWE-617": {
+            "_active": true
+        },
+        "CWE-665": {
+            "_active": true
+        },
+        "CWE-672": {
+            "_active": true
+        },
+        "CWE-674": {
+            "_active": true
+        },
+        "CWE-675": {
+            "_active": true
+        },
+        "CWE-676": {
+            "_active": true
+        },
+        "CWE-683": {
+            "_active": true
+        },
+        "CWE-685": {
+            "_active": true
+        },
+        "CWE-686": {
+            "_active": true
+        },
+        "CWE-690": {
+            "_active": true
+        },
+        "CWE-761": {
+            "_active": true
+        },
+        "CWE-762": {
+            "_active": true
+        },
+        "CWE-763": {
+            "_active": true
+        },
+        "CWE-766": {
+            "_active": true
+        },
+        "CWE-767": {
+            "_active": true
+        },
+        "CWE-77": {
+            "_active": true
+        },
+        "CWE-772": {
+            "_active": true
+        },
+        "CWE-773": {
+            "_active": true
+        },
+        "CWE-775": {
+            "_active": true
+        },
+        "CWE-78": {
+            "_active": true
+        },
+        "CWE-783": {
+            "_active": true
+        },
+        "CWE-787": {
+            "_active": true
+        },
+        "CWE-789": {
+            "_active": true
+        },
+        "CWE-79": {
+            "_active": true
+        },
+        "CWE-798": {
+            "_active": true
+        },
+        "CWE-806": {
+            "_active": true
+        },
+        "CWE-824": {
+            "_active": true
+        },
+        "CWE-825": {
+            "_active": true
+        },
+        "CWE-828": {
+            "_active": true
+        },
+        "CWE-831": {
+            "_active": true
+        },
+        "CWE-839": {
+            "_active": true
+        },
+        "CWE-843": {
+            "_active": true
+        },
+        "CWE-89": {
+            "_active": true
+        },
+        "CWE-910": {
+            "_active": true
+        },
+        "CWE-94": {
+            "_active": true
+        },
         "CycleDetection-CallgraphCycles": {
             "_active": true
         },
@@ -591,6 +990,591 @@
         "MisraC++2023-9.6.5": {
             "_active": true
         },
+        "Qt-AutoUnexpectedQStringbuilder": {
+            "_active": true
+        },
+        "Qt-Autosar-A0.1.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A0.1.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A0.1.6": {
+            "_active": true
+        },
+        "Qt-Autosar-A1.4.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A10.2.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A10.3.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A10.3.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A10.3.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A12.4.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A12.8.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A12.8.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A12.8.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.1.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.1.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.2.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.2.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.2.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A13.5.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A14.5.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A14.7.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A14.7.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A14.8.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.1.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.3.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.3.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.4.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.4.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.4.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A15.4.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A16.2.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A17.0.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A17.6.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.0.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.1.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.1.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.1.6": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.5.11": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.5.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.5.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.5.8": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.9.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A18.9.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.10.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.10.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.10.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.10.6": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.13.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.13.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.13.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.13.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.13.6": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.5.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A2.7.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A20.8.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A20.8.5": {
+            "_active": true
+        },
+        "Qt-Autosar-A20.8.6": {
+            "_active": true
+        },
+        "Qt-Autosar-A21.8.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A25.1.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A26.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A26.5.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A27.0.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A3.1.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A3.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A4.10.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.0.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.1.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.1.9": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.10.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.2.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.3.3": {
+            "_active": true
+        },
+        "Qt-Autosar-A5.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A6.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A6.5.2": {
+            "_active": true
+        },
+        "Qt-Autosar-A7.1.4": {
+            "_active": true
+        },
+        "Qt-Autosar-A7.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A7.5.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A7.6.1": {
+            "_active": true
+        },
+        "Qt-Autosar-A8.4.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M0.1.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M0.1.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M0.2.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M10.1.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M10.1.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M12.1.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M14.5.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M15.0.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M15.1.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M15.3.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M15.3.6": {
+            "_active": true
+        },
+        "Qt-Autosar-M15.3.7": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.0.5": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.0.6": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.0.7": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.0.8": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.1.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.1.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M16.2.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M17.0.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M2.7.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M3.2.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M3.2.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M3.2.3": {
+            "_active": true
+        },
+        "Qt-Autosar-M3.2.4": {
+            "_active": true
+        },
+        "Qt-Autosar-M4.10.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M5.19.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M5.2.2": {
+            "_active": true
+        },
+        "Qt-Autosar-M5.3.4": {
+            "_active": true
+        },
+        "Qt-Autosar-M6.6.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M8.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M9.3.1": {
+            "_active": true
+        },
+        "Qt-Autosar-M9.6.4": {
+            "_active": true
+        },
+        "Qt-BaseClassEvent": {
+            "_active": true
+        },
+        "Qt-ChildEventQObjectCast": {
+            "_active": true
+        },
+        "Qt-Connect3argLambda": {
+            "_active": true
+        },
+        "Qt-ConnectByName": {
+            "_active": true
+        },
+        "Qt-ConnectNonSignal": {
+            "_active": true
+        },
+        "Qt-ConstSignalOrSlot": {
+            "_active": true
+        },
+        "Qt-CtorMissingParentArgument": {
+            "_active": true
+        },
+        "Qt-DetachingTemporary": {
+            "_active": true
+        },
+        "Qt-FullyQualifiedMocTypes": {
+            "_active": true
+        },
+        "Qt-FunctionArgsByValueRef": {
+            "_active": true
+        },
+        "Qt-Generic-DuplicateIncludeGuard": {
+            "_active": true
+        },
+        "Qt-Generic-FormatSpecifier": {
+            "_active": true
+        },
+        "Qt-Generic-InitializeAllFieldsInConstructor": {
+            "_active": true
+        },
+        "Qt-Generic-MissingBaseCopy": {
+            "_active": true
+        },
+        "Qt-Generic-MissingIncludeGuard": {
+            "_active": true
+        },
+        "Qt-Generic-MissingTrCall": {
+            "_active": true
+        },
+        "Qt-Generic-NoAbsoluteInclude": {
+            "_active": true
+        },
+        "Qt-Generic-NoFunctionDefinitionInHeader": {
+            "_active": true
+        },
+        "Qt-Generic-NoIrregularInclude": {
+            "_active": true
+        },
+        "Qt-Generic-NoMixOfClassStruct": {
+            "_active": true
+        },
+        "Qt-Generic-NoOverloadedOperators": {
+            "_active": true
+        },
+        "Qt-Generic-NoReferenceToLocalVariable": {
+            "_active": true
+        },
+        "Qt-Generic-QNetworkReplyDeleteLater": {
+            "_active": true
+        },
+        "Qt-Generic-ThrowByValueCatchByReference": {
+            "_active": true
+        },
+        "Qt-Generic-TypedefCheck": {
+            "_active": true
+        },
+        "Qt-Generic-WrongIncludeCasing": {
+            "_active": true
+        },
+        "Qt-GlobalConstCharPointer": {
+            "_active": true
+        },
+        "Qt-IncorrectEmit": {
+            "_active": true
+        },
+        "Qt-InstallEventFilter": {
+            "_active": true
+        },
+        "Qt-LambdaInConnect": {
+            "_active": true
+        },
+        "Qt-LambdaUniqueConnection": {
+            "_active": true
+        },
+        "Qt-LowercaseQmlTypeName": {
+            "_active": true
+        },
+        "Qt-MissingQObjectMacro": {
+            "_active": true
+        },
+        "Qt-MutableContainerKey": {
+            "_active": true
+        },
+        "Qt-NonPodGlobalStatic": {
+            "_active": true
+        },
+        "Qt-OldStyleConnect": {
+            "_active": true
+        },
+        "Qt-OverloadedSignal": {
+            "_active": true
+        },
+        "Qt-OverriddenSignal": {
+            "_active": true
+        },
+        "Qt-PostEvent": {
+            "_active": true
+        },
+        "Qt-QDateTimeUTC": {
+            "_active": true
+        },
+        "Qt-QEnums": {
+            "_active": true
+        },
+        "Qt-QLatin1StringNonAscii": {
+            "_active": true
+        },
+        "Qt-QMapWithPointerKey": {
+            "_active": true
+        },
+        "Qt-QPropertyWithoutNotify": {
+            "_active": true
+        },
+        "Qt-QStringArg": {
+            "_active": true
+        },
+        "Qt-QStringComparisonToImplicitChar": {
+            "_active": true
+        },
+        "Qt-QhashNamespace": {
+            "_active": true
+        },
+        "Qt-QtMacros": {
+            "_active": true
+        },
+        "Qt-RangeLoopDetach": {
+            "_active": true
+        },
+        "Qt-RangeLoopReference": {
+            "_active": true
+        },
+        "Qt-ReturningDataFromTemporary": {
+            "_active": true
+        },
+        "Qt-RuleOfThree": {
+            "_active": true
+        },
+        "Qt-RuleOfTwoSoft": {
+            "_active": true
+        },
+        "Qt-Security-QAuthenticatorSetPassword": {
+            "_active": true
+        },
+        "Qt-Security-QDataStreamOperatorRead": {
+            "_active": true
+        },
+        "Qt-Security-QDtlsIgnoreVerificationErrors": {
+            "_active": true
+        },
+        "Qt-Security-QMqttClientSetPassword": {
+            "_active": true
+        },
+        "Qt-Security-QNetworkAccessManagerConnectToHost": {
+            "_active": true
+        },
+        "Qt-Security-QNetworkReplyIgnoreSslErrors": {
+            "_active": true
+        },
+        "Qt-Security-QProcessStart": {
+            "_active": true
+        },
+        "Qt-Security-QSqlDatabaseSetPassword": {
+            "_active": true
+        },
+        "Qt-Security-QSslConfigurationSetCiphers": {
+            "_active": true
+        },
+        "Qt-Security-QSslConfigurationSetMissingCertificateIsFatal": {
+            "_active": true
+        },
+        "Qt-Security-QSslConfigurationSetPeerVerifyMode": {
+            "_active": true
+        },
+        "Qt-Security-QSslConfigurationSetProtocol": {
+            "_active": true
+        },
+        "Qt-Security-QSslSocketIgnoreSslErrors": {
+            "_active": true
+        },
+        "Qt-Security-QSslSocketSetPeerVerifyMode": {
+            "_active": true
+        },
+        "Qt-Security-QSslSocketSetProtocol": {
+            "_active": true
+        },
+        "Qt-Security-QUrlSetPassword": {
+            "_active": true
+        },
+        "Qt-Security-QWebEngineCertificateErrorAcceptCertificate": {
+            "_active": true
+        },
+        "Qt-Security-QWebengineViewLoad": {
+            "_active": true
+        },
+        "Qt-SkippedBaseMethod": {
+            "_active": true
+        },
+        "Qt-StrictIterators": {
+            "_active": true
+        },
+        "Qt-TemporaryIterator": {
+            "_active": true
+        },
+        "Qt-UnusedNonTrivialVariable": {
+            "_active": true
+        },
+        "Qt-VirtualSignal": {
+            "_active": true
+        },
+        "Qt-WritingToTemporary": {
+            "_active": true
+        },
+        "Qt-WrongQEventCast": {
+            "_active": true
+        },
+        "Qt-WrongQGlobalStatic": {
+            "_active": true
+        },
         "StaticSemanticAnalysis": {
             ".#": "from preset 'focus_on_few_false_positives'",
             "_active": true,
@@ -616,7 +1600,7 @@
     "_VersionNum": [
         7,
         12,
-        2,
-        20260
+        3,
+        20347
     ]
 }

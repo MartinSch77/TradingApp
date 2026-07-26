@@ -1,0 +1,11 @@
+# ThreadSanitizer suppressions for the TradingApp test suite.
+#
+# The Qt libraries are NOT TSan-instrumented (that would require a TSan build
+# of Qt itself), so TSan cannot see Qt-internal synchronization — e.g. the
+# lock-free atomics coordinating QNetworkAccessManager's HTTP worker thread —
+# and reports races inside Qt that are not analyzable here. These
+# suppressions silence reports whose intercepted call originates in the Qt
+# libraries; races in the project's own code remain fully visible.
+called_from_lib:libQt6Network.so
+called_from_lib:libQt6Core.so
+called_from_lib:libQt6Test.so

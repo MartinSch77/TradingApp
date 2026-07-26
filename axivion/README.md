@@ -5,23 +5,29 @@ MISRA C++ 2023 style analysis + architecture checks for TradingApp; run via
 
 ## External-tool integration (clang-tidy / cppcheck / clazy)
 
-Pipeline that brings the third-party analyzer output onto the dashboard:
+Pipeline that brings the third-party analyzer output onto the dashboard,
+using the Suite's official import mechanism (reference manual 6.2.10
+*ImportExternalAnalysisOutput* + 6.2.4.4 *ExternalAnalysisFormats*):
 
 1. `tools/static_analysis.sh build` runs **cppcheck** and **clang-tidy**
    (plus **clazy** — Qt coding rules, levels 0–1 — when installed:
-   `sudo apt install clazy`) over the compile database and merges every
-   finding into `analysis-results/external_findings.csv`.
-2. The custom rule `axivion/rules/external_findings.py`
-   (`ExternalFindings-Import`, rule group *Stylechecks*) re-emits each CSV row
-   as a style violation during the next `axivion_ci` run — tool and original
-   rule id are carried in the message, so dashboard filtering/suppression and
-   delta views work exactly as for native rules.
+   `sudo apt install clazy`) over the compile database and writes one log per
+   tool to `analysis-results/`.
+2. The configuration layer `axivion/external_import.py` (listed in
+   `axivion_config.json`) creates one `ImportExternalAnalysisOutput` +
+   `GenericFormat` copy per tool. During the next `axivion_ci` run each copy
+   cats its log and re-emits every finding line as a style violation —
+   *provider* = tool name, *errno* = the tool's own rule id — so dashboard
+   filtering, suppression and delta views work exactly as for native rules.
+   A missing log imports nothing (`check_returncode = False`), so analysis
+   runs without a prior `static_analysis.sh` are unaffected.
 
-One-time registration: `axivion_config axivion/axivion_config.json` →
-right-click *Analysis* → *Additional rules…* → select `axivion/rules` →
-enable *ExternalFindings-Import*. The rule is a no-op when the CSV is absent.
-Validate the source-location factory against your Suite version on first run
-(the rule tries the known API spellings and documents itself).
+No manual registration step is needed: the layer is plain configuration and
+travels with the repository. (An earlier custom-rule scaffold under
+`axivion/rules/` was replaced by this official mechanism; see git history.)
 
 Current state (2026-07-25): cppcheck and clang-tidy report **0 findings**
 (40 were fixed in commit history); clazy pending installation (needs sudo).
+The import pipeline was verified end-to-end with synthetic findings — one per
+tool — which appeared on the dashboard under their respective providers and
+disappeared again after re-running with the real, clean logs.

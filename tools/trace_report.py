@@ -6,7 +6,9 @@ Joins the four legs of the traceability chain and reports completeness:
   requirements  docs/requirements.md   REQ-… ids
   design        docs/design.md         DES-… ids with `satisfies` REQ links
   test spec     docs/test_spec.md      TS-… ids (tables, with REQ/DES context)
-  test impl     tests/tst_*.cpp        functions tagged @tstid/@verifies/@design
+  test impl     tests/tst_*.cpp        functions tagged @tstid/@design plus
+                                       @relation(REQ-…, scope=function) —
+                                       the StrictDoc source-coverage marker
   test results  test-results/*.xml     JUnit per-function pass/fail
 
 Outputs docs/traceability.html (self-contained, also included in the Doxygen
@@ -73,13 +75,21 @@ def parse_test_spec():
 
 
 def parse_test_impl():
-    """TS id -> {file, function, verifies: {REQ}, design: {DES}} from tests."""
+    """TS id -> {file, function, verifies: {REQ}, design: {DES}} from tests.
+
+    A test function's traceability block is one or more //! lines directly
+    above it: `@tstid TS-… @design DES-…` plus the StrictDoc source marker
+    `@relation(REQ-…, scope=function)` carrying the verified requirements
+    (one marker serves both this report and the StrictDoc source coverage).
+    """
     impl = {}
     for path in sorted(glob.glob(str(ROOT / "tests" / "tst_*.cpp"))):
         src = Path(path).read_text()
-        # A traceability comment directly precedes its test function.
+        # The @tstid line plus any further comment lines up to the function
+        # (the @relation marker uses a plain // comment — StrictDoc's C++
+        # parser does not recognize Doxygen-style //! comments).
         for m in re.finditer(
-            r"//!\s*@tstid\s+(TS-[A-Z]+-\d{3})([^\n]*)\n\s*void\s+(\w+)\s*\(",
+            r"//!\s*@tstid\s+(TS-[A-Z]+-\d{3})((?:[^\n]*\n\s*//!?)*[^\n]*)\n\s*void\s+(\w+)\s*\(",
             src,
         ):
             ts, rest, func = m.group(1), m.group(2), m.group(3)
@@ -140,7 +150,7 @@ def main():
             hard_gaps.append(f"{ts}: implemented ({info['file']}) but missing from test_spec.md")
         for r in info["verifies"]:
             if r not in reqs:
-                hard_gaps.append(f"{ts}: @verifies references unknown {r}")
+                hard_gaps.append(f"{ts}: @relation references unknown {r}")
         for d in info["design"]:
             if d not in design:
                 hard_gaps.append(f"{ts}: @design references unknown {d}")

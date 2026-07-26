@@ -1,5 +1,13 @@
 #!/bin/bash
 set -ex -o pipefail
+# Only one axivion_ci per project: concurrent runs (e.g. build_all.sh while a
+# manual run is active) share build_axivion/ and delete each other's IR right
+# before the dashboard upload. clean_all.sh during a run does the same.
+exec 9>"$HOME/.axivion-TradingApp.lock"
+if ! flock -n 9; then
+    echo "another Axivion run for TradingApp is already active — aborting" >&2
+    exit 1
+fi
 . /home/schulemn/bauhaus-suite/bauhaus-kshrc
 if [ -z "$AXIVION_USERNAME" ] && [ -z "$AXIVION_PASSWORD" ] && [ -z "$AXIVION_PASSFILE" ]; then
 # You may put dashboard credentials inside such a guarded block:

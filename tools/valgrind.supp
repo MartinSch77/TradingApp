@@ -1,0 +1,18 @@
+# Valgrind memcheck suppressions for the TradingApp test suite.
+#
+# QtTest starts an internal watchdog QThread (QTest::qRun) that is still
+# running at process exit, so its glibc TLS/stack bookkeeping (allocate_dtv)
+# is reported as "possibly lost" (336 bytes) in every test binary. This is
+# Qt/glibc runtime behaviour, not project code — real leaks stay visible.
+{
+   qtest-watchdog-thread-tls
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:calloc
+   fun:calloc
+   fun:allocate_dtv
+   fun:_dl_allocate_tls
+   fun:allocate_stack
+   fun:pthread_create@@GLIBC_2.34
+   fun:_ZN7QThread5startENS_8PriorityE
+}

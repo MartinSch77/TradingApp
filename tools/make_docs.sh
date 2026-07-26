@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 [ -f tools/third-party/plantuml.jar ] || tools/fetch_plantuml.sh
+tools/make_requirements.sh              # StrictDoc export + regenerated requirements.md
 python3 tools/trace_report.py || true   # gaps are reported inside the matrix
 doxygen Doxyfile
 # Belt-and-braces: render the collected PlantUML blocks explicitly (doxygen

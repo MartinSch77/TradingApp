@@ -11,6 +11,13 @@ GER40, …), forex, commodities and eToro's thematic baskets — through the
 `https://public-api.etoro.com/api`). SPX500 is merely the start-up default;
 the instrument selector switches everything live.
 
+**Purpose:** placing a trade with stop-loss and take-profit through the eToro
+web interface takes quite a few steps. This app puts everything on one
+screen — amount, leverage and auto-proposed SL/TP are always ready, so a
+trade is two deliberate clicks away — and it shows upcoming market events
+plus a battery of indicators and independent sources that suggest **when to
+buy or sell** (and, just as importantly, when to stay out).
+
 It provides:
 
 - an **instrument selector** with a **live time chart** of the selected

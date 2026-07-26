@@ -23,6 +23,12 @@ invoke the tools.
 | clazy | KDE / clazy project, invent.kde.org/sdk/clazy | 1.11 (Ubuntu package; install: `apt install clazy`) | Qt-specific coding rules (connect syntax, detach, QString…) |
 | Axivion Suite | Axivion GmbH / Qt Group, axivion.com | 7.12.3 (`~/bauhaus-suite`) | MISRA C++ 2023, architecture checks, dashboard; external-findings import |
 | Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco |  at `/opt/SquishCoco` — **license expired**; auto-detected and used by `tools/coverage.sh` once renewed | MC/DC coverage + CocoAI test-case suggestion (documented alternative) |
+| codespell | codespell-project (GPL-2.0) | pipx | Typos in comments/docs (`.codespellrc`; provider `codespell` on the dashboard) |
+| SonarQube / SonarCloud | Sonar (LGPL server / free cloud tier) | conditional | `tools/sonar_scan.sh` runs only against a reachable server; issues → dashboard provider `sonarqube`; CI via SONAR_TOKEN |
+| CodeQL | GitHub | CI | Security scanning, free for public repositories (.github/workflows/codeql.yml) |
+| Syft / Grype / Trivy | Anchore / Aqua (Apache-2.0) | ~/.local/bin via setup.sh | SBOM (SPDX+CycloneDX), vulnerability scan, repo/misconfig/secret scan (`tools/supply_chain.sh` + CI) |
+| Sphinx + MyST | sphinx-doc.org (BSD) | pipx | Developer handbook over docs/*.md → docs/sphinx-html (tools/make_docs.sh) |
+| Graphviz | graphviz.org (EPL) | apt | Doxygen dependency/class graphs (HAVE_DOT) |
 | AddressSanitizer / UBSan | LLVM/GCC runtime | as shipped with GCC 13 / Clang 18 | Dynamic out-of-bounds / UB detection (`tools/sanitize.sh`) |
 | Valgrind (memcheck) | valgrind.org | 3.22.0 | Independent dynamic memory checking |
 | StrictDoc | strictdoc.readthedocs.io (Apache-2.0) | 0.27.0 (pipx) | Requirements-as-code: `requirements/requirements.sdoc` → HTML + requirement↔source traceability (`tools/make_requirements.sh`) |

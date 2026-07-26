@@ -33,6 +33,7 @@ GENERATED=(
     docs/html
     docs/traceability.html
     docs/strictdoc
+    docs/sphinx-html
 )
 DEEP=(
     .axivion-cache

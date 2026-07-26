@@ -23,6 +23,7 @@ class MarketFeeds;
 class PositionsModel;
 class PriceChart;
 class ScreenerDialog;
+class TradeGaugeDialog;
 QT_FORWARD_DECLARE_CLASS(QCheckBox)
 QT_FORWARD_DECLARE_CLASS(QCloseEvent)
 QT_FORWARD_DECLARE_CLASS(QComboBox)
@@ -229,6 +230,7 @@ private:
     QPushButton *m_armSell = nullptr;
     QTableView *m_positions = nullptr;         // view over m_positionsModel
     PositionsModel *m_positionsModel = nullptr;
+    TradeGaugeDialog *m_tradeGauge = nullptr;  // per-trade gauge (click on a row)
     QPushButton *m_closeButton = nullptr;
     // Row-indexed snapshot of the open trades currently shown, so the SL/TP editors
     // can convert a currency amount back into a rate using each trade's open/units.

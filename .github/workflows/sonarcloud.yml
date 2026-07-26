@@ -1,0 +1,56 @@
+# SonarCloud analysis — free for public GitHub repositories. Self-activating:
+# the job runs only when the SONAR_TOKEN repository secret is configured
+# (create the project at sonarcloud.io, then add the secret); without it the
+# workflow succeeds as a no-op. Locally, tools/sonar_scan.sh does the same
+# against a self-hosted SonarQube and feeds the issues into the Axivion
+# dashboard (provider "sonarqube").
+name: SonarCloud
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sonarcloud:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Check token
+        id: token
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT";
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "SONAR_TOKEN not set — SonarCloud scan skipped."; fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          fetch-depth: 0 # blame info for SonarCloud
+
+      - name: Install Qt (with Charts)
+        if: steps.token.outputs.present == 'true'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.2"
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Build with compile database
+        if: steps.token.outputs.present == 'true'
+        run: |
+          python3 -m pip install --upgrade cmake ninja
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build -j"$(nproc)"
+
+      - name: SonarQube scan
+        if: steps.token.outputs.present == 'true'
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

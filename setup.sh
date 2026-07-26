@@ -39,14 +39,14 @@ APT_PKGS=(
     build-essential ninja-build git gh curl ca-certificates
     clang-18 llvm-18 clang-tidy clang-tools-18
     cppcheck clazy valgrind lcov
-    doxygen default-jre-headless
+    doxygen graphviz default-jre-headless
     python3 python3-venv python3-pip pipx
     libgl1-mesa-dev libglx-dev libopengl0 libegl1
     libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libfreetype6 libdbus-1-3
     libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0
     libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
 )
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall)
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -120,6 +120,17 @@ pipx_install() {
     done
 }
 
+supply_chain_install() {
+    echo "== supply-chain tools (syft / grype / trivy) =="
+    local dst="$HOME/.local/bin"
+    mkdir -p "$dst"
+    have syft || curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$dst"
+    have grype || curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$dst"
+    have trivy || curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$dst"
+    # sphinx needs the MyST markdown parser inside its pipx venv
+    pipx runpip sphinx show myst-parser >/dev/null 2>&1 || pipx inject sphinx myst-parser || true
+}
+
 qt_install() {
     echo "== Qt $QT_VERSION =="
     if [ -d "$QT_DIR/$QT_VERSION/gcc_64" ]; then
@@ -141,6 +152,7 @@ case "$MODE" in
 install)
     apt_install
     pipx_install
+    supply_chain_install
     qt_install
     plantuml_install
     echo

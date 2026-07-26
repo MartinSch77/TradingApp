@@ -1,0 +1,47 @@
+# CodeQL security scanning — free for public GitHub repositories. C++ needs a
+# real build, so the job mirrors the CI build steps (Qt + CMake).
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # weekly, Monday morning
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.2"
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Build
+        run: |
+          python3 -m pip install --upgrade cmake ninja
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          cmake --build build -j"$(nproc)"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"

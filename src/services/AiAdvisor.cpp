@@ -104,7 +104,7 @@ void AiAdvisor::requestDecision(const QString &evidencePrompt)
         }
         const QJsonObject r = QJsonDocument::fromJson(jsonText.toUtf8()).object();
         if (r.isEmpty()) {
-            d.error = QStringLiteral("Claude returned an unparseable response.");
+            d.error = QStringLiteral("Claude returned an unparsable response.");
             emit decisionReady(d);
             return;
         }

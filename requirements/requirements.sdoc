@@ -176,6 +176,12 @@ VERIFICATION: T
 TITLE: Event-based activity proposal
 STATEMENT: 'For each upcoming calendar event the app shall propose an advisory-only activity: the side (BUY/SELL, from the event class and the forecast-vs-previous change) and the timing — after the print for high-impact events (gap/whipsaw risk), before the release for lower-impact consensus — or STAY OUT with the reason when no direction can be derived. Proposals are never executed automatically.'
 
+[REQUIREMENT]
+UID: REQ-F-024
+VERIFICATION: I
+TITLE: Per-trade gauge window
+STATEMENT: 'Clicking an open-trade row shall open a non-modal gauge window for that trade: a dial whose needle is the live price over a stop-loss→open→take-profit scale (loss zone red, win zone green, open-rate marker), plus the buy (open) value, the current value, the live P/L and the SL/TP values; the gauge follows live price ticks of the shown instrument.'
+
 [[/SECTION]]
 
 [[SECTION]]

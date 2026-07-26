@@ -52,6 +52,8 @@ _TOOLS = {
     'clang-tidy': ('clang-tidy.txt', _GCC_STYLE),
     'clazy': ('clazy.txt', _GCC_STYLE),
     'gcc-analyzer': ('gcc-analyzer.txt', _GCC_STYLE),
+    'codespell': ('codespell.txt', _PIPE),
+    'sonarqube': ('sonarqube.txt', _PIPE),
     'asan-ubsan': ('sanitize-asan-ubsan.txt', _PIPE),
     'tsan': ('sanitize-tsan.txt', _PIPE),
     'valgrind': ('sanitize-valgrind.txt', _PIPE),

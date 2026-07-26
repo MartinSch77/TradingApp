@@ -72,6 +72,8 @@ qt_add_executable(TradingApp
     src/ui/MainWindow.h
     src/ui/PositionsModel.cpp
     src/ui/PositionsModel.h
+    src/ui/TradeGauge.cpp
+    src/ui/TradeGauge.h
     src/ui/PriceChart.cpp
     src/ui/PriceChart.h
     src/ui/ScreenerDialog.cpp

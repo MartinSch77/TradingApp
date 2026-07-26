@@ -15,4 +15,11 @@ if [ -f docs/html/inline_umlgraph_svghtml.pu ]; then
     java -Djava.awt.headless=true -jar tools/third-party/plantuml.jar \
         -tsvg -o "$ROOT/docs/html" docs/html/inline_umlgraph_svghtml.pu
 fi
+# Sphinx developer handbook over the same markdown (optional tool).
+if command -v sphinx-build >/dev/null 2>&1; then
+    sphinx-build -q -b html docs docs/sphinx-html
+    echo "handbook: $ROOT/docs/sphinx-html/sphinx_index.html"
+else
+    echo "sphinx-build not installed — handbook skipped (pipx install sphinx; pipx inject sphinx myst-parser)"
+fi
 echo "docs: $ROOT/docs/html/index.html"

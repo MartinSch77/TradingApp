@@ -12,6 +12,7 @@
 #include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
+#include "ui/TradeGauge.h"
 
 #include <QAbstractItemView>
 #include <QAbstractSpinBox>
@@ -1054,6 +1055,27 @@ void MainWindow::buildUi()
                                 .arg(m_ccy));
     static_cast<void>(connect(m_positionsModel, &PositionsModel::slTpEdited, this,
                               &MainWindow::onPositionSlTpEdited));
+    // Click a trade (outside the mark checkbox / editable SL/TP cells) → the
+    // gauge window: buy value, live value/needle, P/L and SL/TP (REQ-F-024).
+    static_cast<void>(connect(
+        m_positions, &QTableView::clicked, this, [this](const QModelIndex &index) {
+            const qint32 col = index.column();
+            if ((col == PositionsModel::ColMark) || (col >= PositionsModel::ColSl)) {
+                return;
+            }
+            const qint32 row = index.row();
+            if ((row < 0) || (row >= m_shownPositions.size())) {
+                return;
+            }
+            if (m_tradeGauge == nullptr) {
+                m_tradeGauge = new TradeGaugeDialog(this);
+            }
+            const Position &p = m_shownPositions[row];
+            const bool isCurrent =
+                p.symbol.compare(m_client->instrument().symbol, Qt::CaseInsensitive) == 0;
+            m_tradeGauge->showTrade(p, (isCurrent && (m_lastPrice > 0.0)) ? m_lastPrice : 0.0,
+                                    m_ccy, m_eurPerUsd);
+        }));
     // Double-click a trade (outside the mark checkbox / editable SL/TP cells) to switch
     // the app to that instrument, like picking it from the selector.
     static_cast<void>(connect(
@@ -1358,6 +1380,12 @@ void MainWindow::onPrice(const QDateTime &time, double price)
     }
 
     updateOpenTradePnl(price);  // live-refresh open-trade P/L with the new price
+    // Keep the trade-gauge needle live while it shows a trade on this instrument.
+    if ((m_tradeGauge != nullptr) && m_tradeGauge->isVisible()
+        && (m_tradeGauge->symbol().compare(m_client->instrument().symbol,
+                                           Qt::CaseInsensitive) == 0)) {
+        m_tradeGauge->updatePrice(price);
+    }
     updateSignals();
     checkAutoOrders(price);
     checkCloseProposals(price);  // propose closing trades the prediction turned against

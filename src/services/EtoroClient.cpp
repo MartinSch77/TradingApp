@@ -772,7 +772,7 @@ void EtoroClient::refreshTradeabilityReal()
             }
             const QDateTime quoteTime = QDateTime::fromString(
                 pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
-            // Fail open: a missing/unparseable timestamp must not falsely block trading.
+            // Fail open: a missing/unparsable timestamp must not falsely block trading.
             const bool fresh = !quoteTime.isValid()
                                || (quoteTime.secsTo(nowUtc) < kQuoteFreshSecs);
             if (fresh) {

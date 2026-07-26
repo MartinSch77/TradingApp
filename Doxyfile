@@ -12,8 +12,8 @@ GENERATE_LATEX         = NO
 
 INPUT                  = src docs/mainpage.md docs/architecture.md \
                          docs/requirements.md docs/design.md docs/test_spec.md \
-                         docs/verification.md docs/tools.md docs/platforms.md \
-                         tests README.md
+                         docs/verification.md docs/vmodel.md docs/tools.md \
+                         docs/platforms.md tests README.md
 FILE_PATTERNS          = *.h *.cpp *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
@@ -38,6 +38,7 @@ ALIASES                = "tstid=\par Test case ID:^^" \
 PLANTUML_JAR_PATH      = tools/third-party/plantuml.jar
 HAVE_DOT               = YES
 DOT_IMAGE_FORMAT       = svg
+DOT_GRAPH_MAX_NODES    = 70
 INTERACTIVE_SVG        = YES
 CALL_GRAPH             = NO
 CALLER_GRAPH           = NO

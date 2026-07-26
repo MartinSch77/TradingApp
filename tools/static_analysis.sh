@@ -107,6 +107,11 @@ def run(entry):
         # WITH default initializers). Findings naming a concrete variable stay.
         if "‘<unknown>’" in line or "<unnamed>" in line:
             continue
+        # Throwing `operator new` can never return null; the analyzer models
+        # the nothrow variant and flags every `new Widget(...)` argument as
+        # possibly-NULL — a documented false-positive class in C++ mode.
+        if "possibly-NULL" in line and "operator new" in line:
+            continue
         keep.append(line)
     return keep
 
@@ -120,6 +125,21 @@ print(f"gcc-analyzer: {len(lines)} findings over {len(entries)} TUs")
 EOF
 GCCA_N=$(grep -c . "$OUT/gcc-analyzer.txt" || true)
 echo "g++ -fanalyzer findings: $GCCA_N (analysis-results/gcc-analyzer.txt)"
+
+CODESPELL_N=0
+if command -v codespell >/dev/null 2>&1; then
+    echo "== codespell ($(codespell --version 2>&1)) =="
+    # Typos in comments, docs and scripts; config in .codespellrc. Output is
+    # normalized to the pipe format so it lands on the Axivion dashboard.
+    (cd "$ROOT" && codespell src tests docs/*.md tools *.md *.sh requirements .github .claude 2>/dev/null) \
+        | sed -E 's#^([^:]+):([0-9]+): (.*)$#\1|\2|warning|codespell|\3#' \
+        > "$OUT/codespell.txt" || true
+    CODESPELL_N=$(grep -c . "$OUT/codespell.txt" || true)
+    echo "codespell findings: $CODESPELL_N (analysis-results/codespell.txt)"
+else
+    echo "== codespell: not installed (pipx install codespell) — typo check skipped =="
+    printf '' > "$OUT/codespell.txt"
+fi
 
 CLAZY_N=0
 if command -v clazy-standalone >/dev/null 2>&1; then
@@ -164,6 +184,6 @@ with open(out / "external_findings.csv", "w", newline="") as f:
 print(f"merged: {len(rows)} findings -> analysis-results/external_findings.csv")
 EOF
 
-TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N))
+TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CODESPELL_N))
 echo "TOTAL findings: $TOTAL"
 [ "$TOTAL" -eq 0 ] && [ "${CPPCHECK_RC:-0}" -eq 0 ]

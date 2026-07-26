@@ -1,0 +1,9 @@
+# codespell configuration — typo check over sources, docs and scripts
+# (tools/static_analysis.sh runs it; findings feed the Axivion dashboard).
+[codespell]
+skip = build*,docs/html,docs/strictdoc,docs/sphinx-html,.git,coverage,analysis-results,test-results,tools/third-party,*.svg
+# Legitimate identifiers/tickers flagged by the dictionary:
+#   nam  = QNetworkAccessManager member naming (m_nam, nam)
+#   HSI  = Hang Seng Index ticker
+#   nD   = "n days" variable in Forecasting
+ignore-words-list = nam,hsi,nd

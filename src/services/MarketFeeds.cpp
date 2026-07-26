@@ -105,14 +105,14 @@ QHash<QString, QStringList> symbolsByWebTicker(const QStringList &tradable,
 } // namespace
 
 MarketFeeds::MarketFeeds(QObject *parent)
-    : QObject(parent)
+    : QObject(parent), m_nam(new QNetworkAccessManager(this)), m_http(new JsonHttp(m_nam, this)), m_timer(new QTimer(this))
 {
-    m_nam = new QNetworkAccessManager(this);
+    
     // Abort any request that stalls with no data for 30s so its finished() always
     // fires (public feeds occasionally hang behind CDNs instead of failing fast).
     m_nam->setTransferTimeout(std::chrono::seconds{30});
-    m_http = new JsonHttp(m_nam, this);
-    m_timer = new QTimer(this);
+    
+    
     static_cast<void>(connect(m_timer, &QTimer::timeout, this, [this] {
         fetchVix();
         fetchExternalSignal();
@@ -412,6 +412,62 @@ void MarketFeeds::fetchFearGreed()
         }
         emit fearGreedUpdated(score, fg.value(QStringLiteral("rating")).toString());
     });
+}
+
+void MarketFeeds::fetchIntradaySeries()
+{
+    // One chart request per mapped instrument; instruments without a Yahoo
+    // ticker (eToro proprietary baskets) are silently skipped. Same endpoint
+    // as the reference quote, but here the 1-minute close ARRAY is the payload.
+    for (const QString &symbol : m_tradableSymbols) {
+        const QString ticker = yahooTicker(symbol);
+        if (ticker.isEmpty()) {
+            continue;
+        }
+        QNetworkRequest req(QUrl(QStringLiteral(
+                                     "https://query1.finance.yahoo.com/v8/finance/chart/"
+                                     "%1?interval=1m&range=1d")
+                                     .arg(QString::fromLatin1(
+                                         QUrl::toPercentEncoding(ticker)))));
+        JsonHttp::setBrowserHeaders(req);
+        QNetworkReply *reply = m_nam->get(req);
+        m_http->handleReply(reply, [this, symbol](bool ok, qint32 /*status*/,
+                                                  const QJsonDocument &doc,
+                                                  const QByteArray & /*raw*/,
+                                                  const QString & /*netError*/) {
+            if (!ok || !doc.isObject()) {
+                return;  // transient / blocked — this source just stays absent
+            }
+            const QJsonArray result = doc.object()
+                                          .value(QStringLiteral("chart"))
+                                          .toObject()
+                                          .value(QStringLiteral("result"))
+                                          .toArray();
+            if (result.isEmpty()) {
+                return;
+            }
+            const QJsonArray closesJson = result.first()
+                                              .toObject()
+                                              .value(QStringLiteral("indicators"))
+                                              .toObject()
+                                              .value(QStringLiteral("quote"))
+                                              .toArray()
+                                              .first()
+                                              .toObject()
+                                              .value(QStringLiteral("close"))
+                                              .toArray();
+            QList<double> closes;
+            closes.reserve(closesJson.size());
+            for (const auto &v : closesJson) {  // QJsonValueConstRef, no conversion
+                if (v.isDouble()) {  // gaps come through as null — skip them
+                    closes.append(v.toDouble());
+                }
+            }
+            if (!closes.isEmpty()) {
+                emit intradayCloses(symbol, closes);
+            }
+        });
+    }
 }
 
 void MarketFeeds::fetchWebQuote()

@@ -34,9 +34,10 @@ ScreenerRow row(const QString &sym, const QList<double> &closes, qint32 maxLev =
 
 class TestDecisionEngine : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-DEC-001 @verifies REQ-F-009 @design DES-DOM-DEC
+    //! @tstid TS-DEC-001 @design DES-DOM-DEC
+    // @relation(REQ-F-009, scope=function)
     void TS_DEC_001_crowdTilt()
     {
         QVERIFY(crowdTilt(5.0) > 0.4);     // extreme fear → contrarian bullish
@@ -48,7 +49,8 @@ private slots:
         QVERIFY(crowdTilt(500.0) >= -1.0);
     }
 
-    //! @tstid TS-DEC-002 @verifies REQ-F-008 @design DES-DOM-DEC
+    //! @tstid TS-DEC-002 @design DES-DOM-DEC
+    // @relation(REQ-F-008, scope=function)
     void TS_DEC_002_newsSentimentSign()
     {
         qint32 n = 0;
@@ -69,7 +71,8 @@ private slots:
         QCOMPARE(newsSentimentScore(neutral, n), 0.0);
     }
 
-    //! @tstid TS-DEC-003 @verifies REQ-F-008 @design DES-DOM-DEC
+    //! @tstid TS-DEC-003 @design DES-DOM-DEC
+    // @relation(REQ-F-008, scope=function)
     void TS_DEC_003_marketRegime()
     {
         MarketSnapshot m;
@@ -89,7 +92,8 @@ private slots:
         QVERIFY(eventRisk);  // imminent high-impact event flagged
     }
 
-    //! @tstid TS-DEC-004 @verifies REQ-F-008 REQ-F-009 @design DES-DOM-DEC
+    //! @tstid TS-DEC-004 @design DES-DOM-DEC
+    // @relation(REQ-F-008, REQ-F-009, scope=function)
     void TS_DEC_004_compositeWeightingAndSort()
     {
         MarketSnapshot m;
@@ -120,7 +124,8 @@ private slots:
         QVERIFY(up->composite < plain[0].composite);
     }
 
-    //! @tstid TS-DEC-005 @verifies REQ-F-008 REQ-F-009 @design DES-DOM-DEC
+    //! @tstid TS-DEC-005 @design DES-DOM-DEC
+    // @relation(REQ-F-008, REQ-F-009, scope=function)
     void TS_DEC_005_evidenceMentionsCrowd()
     {
         MarketSnapshot m;
@@ -131,6 +136,34 @@ private slots:
         const QString evidence = buildDecisionEvidence(rows, m);
         QVERIFY(evidence.contains(QStringLiteral("Fear & Greed")));
         QVERIFY(evidence.contains(QStringLiteral("UP")));
+    }
+
+    //! @tstid TS-DEC-006 @design DES-DOM-DEC
+    // @relation(REQ-F-022, scope=function)
+    void TS_DEC_006_yahooIntradaySource()
+    {
+        // The tilt reads where the last price sits in the session distribution.
+        QList<double> rising;
+        QList<double> falling;
+        for (int i = 0; i < 120; ++i) {
+            rising << 100.0 + i;
+            falling << 220.0 - i;
+        }
+        QVERIFY(intradayTilt(rising) > 0.5);           // last far above the mean
+        QVERIFY(intradayTilt(falling) < -0.5);         // last far below the mean
+        QCOMPARE(intradayTilt(QList<double>(120, 5.0)), 0.0);  // flat → no read
+        QCOMPARE(intradayTilt({1.0, 2.0}), 0.0);       // too short → no read
+
+        // A bullish intraday series lifts the composite; the source is flagged.
+        MarketSnapshot m;
+        m.screenerRows << row(QStringLiteral("UP"), trend(120, 1.004, 1.001));
+        const QList<DecisionRow> without = computeDecisionRows(m);
+        m.intradayBySymbol.insert(QStringLiteral("UP"), rising);
+        const QList<DecisionRow> with = computeDecisionRows(m);
+        QVERIFY(!with.isEmpty());
+        QVERIFY(with[0].haveYahoo);
+        QVERIFY(with[0].yahoo > 0.5);
+        QVERIFY(with[0].composite > without[0].composite);
     }
 };
 

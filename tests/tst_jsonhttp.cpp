@@ -49,9 +49,10 @@ Outcome roundTrip(QNetworkAccessManager &nam, JsonHttp &http, QNetworkReply *rep
 
 class TestJsonHttp : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-HTTP-001 @verifies REQ-N-003 @design DES-SVC-HTTP
+    //! @tstid TS-HTTP-001 @design DES-SVC-HTTP
+    // @relation(REQ-N-003, scope=function)
     void TS_HTTP_001_okJsonDelivered()
     {
         MockHttpServer server([](const QByteArray &, const QString &) {
@@ -69,7 +70,8 @@ private slots:
                  QStringLiteral("world"));
     }
 
-    //! @tstid TS-HTTP-002 @verifies REQ-N-003 @design DES-SVC-HTTP
+    //! @tstid TS-HTTP-002 @design DES-SVC-HTTP
+    // @relation(REQ-N-003, scope=function)
     void TS_HTTP_002_get429RetriedAfterBackoff()
     {
         qint32 hits = 0;
@@ -92,7 +94,8 @@ private slots:
         QCOMPARE(hits, 2);          // 429 first, success on the retry
     }
 
-    //! @tstid TS-HTTP-003 @verifies REQ-N-003 @design DES-SVC-HTTP
+    //! @tstid TS-HTTP-003 @design DES-SVC-HTTP
+    // @relation(REQ-N-003, scope=function)
     void TS_HTTP_003_postNeverRetried()
     {
         qint32 hits = 0;

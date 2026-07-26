@@ -16,14 +16,14 @@ Regression linRegForecast(const QList<double> &values, qsizetype n)
         return r;
     }
     const qsizetype start = values.size() - n;
-    const double nD = static_cast<double>(n);
+    const auto nD = static_cast<double>(n);
     double sx = 0.0;
     double sy = 0.0;
     double sxx = 0.0;
     double sxy = 0.0;
     double syy = 0.0;
     for (qsizetype i = 0; i < n; ++i) {
-        const double x = static_cast<double>(i);
+        const auto x = static_cast<double>(i);
         const double y = values[start + i];
         sx += x;
         sy += y;
@@ -152,7 +152,7 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     if ((ret.size() < 10) || (price <= 0.0) || (horizon <= 0) || (paths <= 0)) {
         return o;
     }
-    const qint32 m = static_cast<qint32>(ret.size());
+    const auto m = static_cast<qint32>(ret.size());
     const bool haveBarriers = (tpFrac > 0.0) && (slFrac > 0.0);
     QRandomGenerator *rng = QRandomGenerator::global();
 
@@ -168,7 +168,7 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
         bool longDone = false;
         bool shortDone = false;
         for (qint32 t = 0; t < horizon; ++t) {
-            const qsizetype pickIdx = static_cast<qsizetype>(rng->bounded(m));
+            const auto pickIdx = static_cast<qsizetype>(rng->bounded(m));
             cum = ((1.0 + cum) * (1.0 + ret[pickIdx])) - 1.0;
             if (haveBarriers) {
                 if (!longDone) {
@@ -203,7 +203,7 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     const auto sortBegin = finals.begin();
     const auto sortEnd = finals.end();
     std::sort(sortBegin, sortEnd);
-    const double pathsD = static_cast<double>(paths);
+    const auto pathsD = static_cast<double>(paths);
     o.valid = true;
     o.pUp = static_cast<double>(upCount) / pathsD;
     o.p5 = finals[static_cast<qsizetype>(0.05 * pathsD)];

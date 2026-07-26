@@ -43,9 +43,10 @@ QByteArray historyPage(qint32 page)
 
 class TestEtoroClient : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-CLI-001 @verifies REQ-F-014 REQ-N-003 @design DES-SVC-CLIENT
+    //! @tstid TS-CLI-001 @design DES-SVC-CLIENT
+    // @relation(REQ-F-014, REQ-N-003, scope=function)
     void TS_CLI_001_historyPagerAccumulates()
     {
         MockHttpServer server([](const QByteArray &, const QString &path) {
@@ -88,7 +89,8 @@ private slots:
         QVERIFY(pnl.fromDate <= QDate::currentDate().addDays(-7 * 8 + 1));
     }
 
-    //! @tstid TS-CLI-002 @verifies REQ-F-014 @design DES-SVC-CLIENT
+    //! @tstid TS-CLI-002 @design DES-SVC-CLIENT
+    // @relation(REQ-F-014, scope=function)
     void TS_CLI_002_closedTradeCostEstimates()
     {
         MockHttpServer server([](const QByteArray &, const QString &path) {

@@ -34,7 +34,7 @@ QString slTpAmountText(const Position &p, double rate, double eurPerUsd)
 {
     const double perPoint = accountValuePerPoint(p);
     if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
-        return QString();
+        return {};
     }
     const double usd = perPoint * std::abs(p.openRate - rate);
     return QLocale().toString(usd * ((eurPerUsd > 0.0) ? eurPerUsd : 1.0), 'f', 2);
@@ -45,7 +45,7 @@ QString slSignedAmountText(const Position &p, double eurPerUsd)
     const double rate = p.stopLossRate;
     const double perPoint = accountValuePerPoint(p);
     if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
-        return QString();
+        return {};
     }
     const double pnl = (p.isBuy ? (perPoint * (rate - p.openRate))
                                 : (perPoint * (p.openRate - rate)))

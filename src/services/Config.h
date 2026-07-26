@@ -28,15 +28,15 @@ struct Config {
     QString anthropicApiKey;                              // optional: enables the Claude AI
                                                           // source in the decision window
 
-    bool hasCredentials() const { return !apiKey.isEmpty() && !userKey.isEmpty(); }
-    bool hasAi() const { return !anthropicApiKey.isEmpty(); }
+    [[nodiscard]] bool hasCredentials() const;  // out-of-line: keeps coverage records unambiguous
+    [[nodiscard]] bool hasAi() const { return !anthropicApiKey.isEmpty(); }
 
     // True only when we have credentials AND the user explicitly asked for real
     // money. Everything else (demo, or no credentials) never touches real funds.
-    bool isLive() const;
+    [[nodiscard]] bool isLive() const;
 
     // Human-readable description of the active mode, for the UI badge.
-    QString modeLabel() const;
+    [[nodiscard]] QString modeLabel() const;
 
     static Config load();
 };

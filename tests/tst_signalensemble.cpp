@@ -23,9 +23,10 @@ QList<double> trend(qint32 n, double factorEven, double factorOdd)
 
 class TestSignalEnsemble : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-ENS-001 @verifies REQ-F-007 @design DES-DOM-ENS
+    //! @tstid TS-ENS-001 @design DES-DOM-ENS
+    // @relation(REQ-F-007, scope=function)
     void TS_ENS_001_uptrendBuys()
     {
         const Ensemble e = computeEnsemble(trend(120, 1.004, 1.001), false, 0.0);
@@ -35,7 +36,8 @@ private slots:
         QVERIFY(e.confidence > 0.0);
     }
 
-    //! @tstid TS-ENS-002 @verifies REQ-F-007 @design DES-DOM-ENS
+    //! @tstid TS-ENS-002 @design DES-DOM-ENS
+    // @relation(REQ-F-007, scope=function)
     void TS_ENS_002_downtrendSells()
     {
         const Ensemble e = computeEnsemble(trend(120, 0.996, 0.999), false, 0.0);
@@ -44,13 +46,15 @@ private slots:
         QCOMPARE(e.signalDir, -1);
     }
 
-    //! @tstid TS-ENS-003 @verifies REQ-F-007 @design DES-DOM-ENS
+    //! @tstid TS-ENS-003 @design DES-DOM-ENS
+    // @relation(REQ-F-007, scope=function)
     void TS_ENS_003_shortSeriesInvalid()
     {
         QVERIFY(!computeEnsemble({100.0, 101.0, 102.0}, false, 0.0).valid);
     }
 
-    //! @tstid TS-ENS-004 @verifies REQ-F-007 @design DES-DOM-ENS
+    //! @tstid TS-ENS-004 @design DES-DOM-ENS
+    // @relation(REQ-F-007, scope=function)
     void TS_ENS_004_vixHaircutMonotone()
     {
         const double base = 80.0;

@@ -15,12 +15,13 @@
 AiAdvisor::AiAdvisor(QString apiKey, QObject *parent)
     : QObject(parent)
     , m_apiKey(std::move(apiKey))
+    , m_nam(new QNetworkAccessManager(this))
+    , m_http(new JsonHttp(m_nam, this))
 {
-    m_nam = new QNetworkAccessManager(this);
     // The manager default guards against silent stalls; the actual request below
     // overrides it with a longer per-request timeout while Claude composes.
     m_nam->setTransferTimeout(std::chrono::seconds{30});
-    m_http = new JsonHttp(m_nam, this);
+    
 }
 
 void AiAdvisor::requestDecision(const QString &evidencePrompt)

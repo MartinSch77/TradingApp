@@ -34,9 +34,10 @@ QList<double> upDrift(qint32 n)
 
 class TestForecasting : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-FC-001 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-001 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_001_regressionPerfectLine()
     {
         const Regression r = linRegForecast(ramp(40, 100.0, 1.0), 30);
@@ -45,14 +46,16 @@ private slots:
         QVERIFY(r.slopePct > 0.0);  // ~1 point/bar on a ~115 mean → ~0.87%/bar
     }
 
-    //! @tstid TS-FC-002 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-002 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_002_regressionFlatSeries()
     {
         const Regression r = linRegForecast(QList<double>(40, 100.0), 30);
         QVERIFY(std::abs(r.slopePct) < 1e-9);
     }
 
-    //! @tstid TS-FC-003 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-003 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_003_knnBounds()
     {
         const Knn k = knnForecast(upDrift(120), 10, 5);
@@ -61,7 +64,8 @@ private slots:
         QVERIFY(k.agree <= 1.0);
     }
 
-    //! @tstid TS-FC-004 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-004 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_004_hurstTrendingVsAlternating()
     {
         // Persistent: two up bars, one down — runs build up. Anti-persistent:
@@ -81,14 +85,16 @@ private slots:
         QVERIFY(hurstExponent(persistent) > hurstExponent(alternating));
     }
 
-    //! @tstid TS-FC-005 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-005 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_005_monteCarloValidity()
     {
         QVERIFY(!monteCarlo({100.0, 101.0}, 100.0, 3, 0.01, 0.01, 200).valid);
         QVERIFY(monteCarlo(upDrift(80), 100.0, 5, 0.01, 0.01, 200).valid);
     }
 
-    //! @tstid TS-FC-006 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-006 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_006_monteCarloDriftDirection()
     {
         const QList<double> s = upDrift(120);
@@ -100,7 +106,8 @@ private slots:
         QVERIFY(o.p5 <= o.p95);
     }
 
-    //! @tstid TS-FC-007 @verifies REQ-F-006 @design DES-DOM-FC
+    //! @tstid TS-FC-007 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
     void TS_FC_007_sigmoidShape()
     {
         QCOMPARE(sigmoid(0.0), 0.5);

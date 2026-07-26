@@ -37,9 +37,10 @@ PlanInput baseInput(const QList<double> &closes)
 
 class TestTradePlan : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-PLAN-001 @verifies REQ-F-010 REQ-F-012 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-001 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, REQ-F-012, scope=function)
     void TS_PLAN_001_slFractionScalingAndClamps()
     {
         // 1.5σ·√horizon: 0.2%/bar over 24 bars → 1.5·0.002·√24 ≈ 0.0147.
@@ -50,7 +51,8 @@ private slots:
         QCOMPARE(proposedSlFraction(50.0, 96), 0.5);       // upper clamp
     }
 
-    //! @tstid TS-PLAN-002 @verifies REQ-F-010 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-002 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, scope=function)
     void TS_PLAN_002_leverageRecommendation()
     {
         // Budget 25% of stake, stop at 1.8% → raw 13.9 → step down to 10.
@@ -63,7 +65,8 @@ private slots:
         QCOMPARE(recommendLeverage(0.001, 0.25, 0, {}), 20);
     }
 
-    //! @tstid TS-PLAN-003 @verifies REQ-F-010 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-003 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, scope=function)
     void TS_PLAN_003_stayOutWithoutSignal()
     {
         // A flat series with a pinch of noise: no directional ensemble call.
@@ -78,7 +81,8 @@ private slots:
         QCOMPARE(plan.verdictReason, QStringLiteral("no clear directional signal"));
     }
 
-    //! @tstid TS-PLAN-004 @verifies REQ-F-011 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-004 @design DES-DOM-PLAN
+    // @relation(REQ-F-011, scope=function)
     void TS_PLAN_004_costBillAndWeekend()
     {
         PlanInput in = baseInput(trend(120, 1.004, 1.001));
@@ -112,7 +116,8 @@ private slots:
         QCOMPARE(monday.weekendFee, 0.0);
     }
 
-    //! @tstid TS-PLAN-005 @verifies REQ-F-010 REQ-F-011 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-005 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, REQ-F-011, scope=function)
     void TS_PLAN_005_costsEatEdgeStaysOut()
     {
         PlanInput in = baseInput(trend(120, 1.004, 1.001));
@@ -123,7 +128,8 @@ private slots:
         QVERIFY(plan.expectedNet <= 0.0);
     }
 
-    //! @tstid TS-PLAN-006 @verifies REQ-F-010 @design DES-DOM-PLAN
+    //! @tstid TS-PLAN-006 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, scope=function)
     void TS_PLAN_006_riskFactorBumps()
     {
         PlanInput calm = baseInput(trend(120, 1.004, 1.001));

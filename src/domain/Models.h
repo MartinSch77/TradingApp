@@ -21,7 +21,7 @@ struct Instrument {
     // e.g. 20 units for GOLD); 0 while unknown, which disables the local check.
     double maxUnitsPerOrder = 0.0;
 
-    bool isValid() const { return instrumentId != 0; }
+    [[nodiscard]] bool isValid() const { return instrumentId != 0; }
 };
 
 // Per-unit rollover fees for an instrument (USD per unit per night; the weekend
@@ -33,11 +33,9 @@ struct InstrumentFees {
     double buyWeekend = 0.0;
     double sellWeekend = 0.0;
 
-    bool isValid() const
-    {
-        return (buyOvernight != 0.0) || (sellOvernight != 0.0) || (buyWeekend != 0.0)
-               || (sellWeekend != 0.0);
-    }
+    // Defined out-of-line (Models.cpp) so exactly one TU instruments it for
+    // coverage — see the note there.
+    [[nodiscard]] bool isValid() const;
 };
 
 // One OHLC candle (used to seed the chart with recent history).
@@ -144,12 +142,12 @@ struct WebRating {
     double m15 = std::nan("");   // 15-minute
     double h1 = std::nan("");    // 1-hour
     double d1 = std::nan("");    // 1-day
-    bool valid() const
+    [[nodiscard]] bool valid() const
     {
         return !std::isnan(m15) || !std::isnan(h1) || !std::isnan(d1);
     }
     // Mean of the available timeframes (the multi-timeframe consensus).
-    double consensus() const
+    [[nodiscard]] double consensus() const
     {
         double sum = 0.0;
         qint32 n = 0;

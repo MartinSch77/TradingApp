@@ -2,12 +2,14 @@
 #define TRADINGAPP_MAINWINDOW_H
 
 #include "domain/DecisionEngine.h"
+#include "domain/Forecasting.h"
 #include "domain/Models.h"
 #include "domain/TradePlan.h"
 #include "services/EconomicCalendar.h"
 
 #include <QDateTime>
 #include <QFont>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QList>
 #include <QMainWindow>
@@ -18,6 +20,7 @@
 class AiAdvisor;
 class EtoroClient;
 class MarketFeeds;
+class PositionsModel;
 class PriceChart;
 class ScreenerDialog;
 QT_FORWARD_DECLARE_CLASS(QCheckBox)
@@ -32,6 +35,7 @@ QT_FORWARD_DECLARE_CLASS(QListWidget)
 QT_FORWARD_DECLARE_CLASS(QPlainTextEdit)
 QT_FORWARD_DECLARE_CLASS(QPushButton)
 QT_FORWARD_DECLARE_CLASS(QTableWidget)
+QT_FORWARD_DECLARE_CLASS(QTableView)
 QT_FORWARD_DECLARE_CLASS(QTableWidgetItem)
 QT_FORWARD_DECLARE_CLASS(QTimer)
 
@@ -95,20 +99,20 @@ private slots:
     void onBuyClicked();
     void onSellClicked();
     void onCloseClicked();
-    // A stop-loss / take-profit cell was edited: convert the currency amount to a
-    // rate and push the change to the position.
-    void onPositionCellChanged(QTableWidgetItem *item);
+    // A stop-loss / take-profit cell editor was committed (PositionsModel::
+    // slTpEdited): convert the currency amount to a rate and push the change.
+    void onPositionSlTpEdited(qint32 row, qint32 column, const QString &text);
 
 private:
     // Account figures come from the API in USD (the account currency); the UI shows
     // euro. toDisplay converts a USD amount to the shown euro value; fromDisplay maps
     // a user-entered euro amount back to USD for the API. Both are identity until the
     // first EURUSD rate arrives (m_eurPerUsd == 0), so nothing shows a bogus number.
-    double toDisplay(double usd) const
+    [[nodiscard]] double toDisplay(double usd) const
     {
         return (m_eurPerUsd > 0.0) ? (usd * m_eurPerUsd) : usd;
     }
-    double fromDisplay(double disp) const
+    [[nodiscard]] double fromDisplay(double disp) const
     {
         return (m_eurPerUsd > 0.0) ? (disp / m_eurPerUsd) : disp;
     }
@@ -121,7 +125,7 @@ private:
     // button within 650 ms; a single press just arms and prompts for confirmation.
     void handleOrderButton(bool isBuy);
     void appendLog(const QString &message, bool isError = false);
-    QStringList markedPositionIds() const;  // position ids of ticked open-trade rows
+    [[nodiscard]] QStringList markedPositionIds() const;  // position ids of ticked open-trade rows
     void handleQuickKey(qint32 key);        // double-tap detection for the s/b shortcut
     void updateSignals();               // recompute the SPX500 technical signals panel
     void updateOpenCost();              // refresh the estimated opening (spread) cost
@@ -134,7 +138,6 @@ private:
     // we have); each is anchored to the last API P/L so the value stays net of
     // spread/fees and doesn't jump when the poll re-supplies it. See m_pnlAnchorPrice.
     void updateOpenTradePnl(double price);
-    QTableWidgetItem *makePlItem(double profitUsd) const;  // formatted, coloured P/L cell
     // Ctrl + mouse-wheel UI zoom: scale both windows' size and every font from a
     // captured baseline. setUiScale clamps and stores the factor; applyUiScale does
     // the work. Over the chart, Ctrl+wheel keeps zooming its time axis instead.
@@ -149,7 +152,7 @@ private:
     // Decision window helpers. The weighted multi-source blend itself lives in the
     // domain layer (trading::computeDecisionRows and friends); the UI only captures
     // its latest feeds as the engine's input snapshot and renders the result.
-    trading::MarketSnapshot marketSnapshot() const;
+    [[nodiscard]] trading::MarketSnapshot marketSnapshot() const;
     void startDecisionScan();     // (re)scan + rating + news, then ask Claude if configured
     void rebuildDecision();       // (re)fill the decision window from the latest data
     // Render the decision window's sources table + conclusion for one "focus" instrument
@@ -159,6 +162,12 @@ private:
     // (verdict, P(win), risk factor, leverage, SL/TP, the full cost bill); the result
     // is kept in m_lastPlan for the "Apply to trade panel" button.
     void renderTradePlan(const trading::DecisionRow *focus, const QString &focusSymbol);
+    // Applies an asynchronously-built plan (renderTradePlan dispatches the
+    // Monte-Carlo heavy buildTradePlan to the thread pool via m_planWatcher).
+    void renderTradePlanResult(const trading::TradePlan &plan, const QString &focusSymbol,
+                               bool isCurrent);
+    // Applies the signals-panel Monte-Carlo outlook computed off the GUI thread.
+    void renderMonteCarlo(const trading::McOutlook &mc);
     void applyDecisionPlan();     // push m_lastPlan into the trade panel (no order placed)
     // Auto-fill the trade panel's SL/TP from recent volatility while the user hasn't
     // edited them by hand (m_slTpAuto); volPct is the per-hour σ from updateSignals.
@@ -218,12 +227,12 @@ private:
     QDoubleSpinBox *m_sellAbove = nullptr;
     QPushButton *m_armBuy = nullptr;
     QPushButton *m_armSell = nullptr;
-    QTableWidget *m_positions = nullptr;
+    QTableView *m_positions = nullptr;         // view over m_positionsModel
+    PositionsModel *m_positionsModel = nullptr;
     QPushButton *m_closeButton = nullptr;
     // Row-indexed snapshot of the open trades currently shown, so the SL/TP editors
     // can convert a currency amount back into a rate using each trade's open/units.
     QList<Position> m_shownPositions;
-    bool m_updatingPositions = false;  // guards itemChanged during programmatic fills
 
     // SL/TP rates the user just submitted for a position, pinned in the table until
     // the server's portfolio snapshot reflects them (or a short timeout). Without
@@ -310,6 +319,7 @@ private:
     bool m_recoKickoff = false;                         // first scan fired once the app is live
     QHash<QString, WebRating> m_ratingBySymbol;         // latest web rating per instrument
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
+    QHash<QString, QList<double>> m_intradayBySymbol;   // Yahoo 1-min session closes
 
     // Decision window (separate, lazily built like the screener dialog).
     QPushButton *m_decisionButton = nullptr;   // opens the window, in the header
@@ -318,6 +328,21 @@ private:
     QLabel *m_decisionPlanLabel = nullptr;     // the costed trade plan for the focus
     QPushButton *m_decisionApply = nullptr;    // pushes the plan into the trade panel
     trading::TradePlan m_lastPlan;             // plan behind the Apply button
+    // Off-GUI-thread computation of the Monte-Carlo heavy pieces (QtConcurrent):
+    // the signals-panel outlook (coalesced: a tick is skipped while one runs)
+    // and the decision-window trade plan (the watcher always tracks the newest
+    // request, so stale results are dropped automatically).
+    QFutureWatcher<trading::McOutlook> m_mcWatcher;
+    bool m_mcBusy = false;
+    qint32 m_mcScore = 0;                      // ensemble score behind the running MC
+    double m_mcTp = 0.0;                       // take-profit amount the MC evaluated
+    double m_mcSl = 0.0;                       // stop-loss amount the MC evaluated
+    double m_mcExposure = 0.0;                 // amount × leverage behind tp/sl fracs
+    double m_lastMcEdge = 0.0;                 // edge of the last COMPLETED MC run —
+    bool m_lastMcEdgeValid = false;            // the advice line reads these (≤1 tick old)
+    QFutureWatcher<trading::TradePlan> m_planWatcher;
+    QString m_planPendingSymbol;               // focus symbol of the running plan build
+    bool m_planPendingIsCurrent = false;
     QString m_lastPlanSymbol;                  // instrument that plan was built for
     QLabel *m_decisionSourcesLabel = nullptr;  // "Sources for <focus symbol>:" caption
     QTableWidget *m_decisionSources = nullptr; // one row per source for the focus instrument

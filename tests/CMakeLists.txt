@@ -25,9 +25,10 @@ tradingapp_add_test(tst_decisionengine tst_decisionengine.cpp)
 tradingapp_add_test(tst_tradeplan tst_tradeplan.cpp)
 tradingapp_add_test(tst_positionmath tst_positionmath.cpp)
 tradingapp_add_test(tst_eventinsight tst_eventinsight.cpp)
+tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 
 # --- integration tests (services layer) ------------------------------------
 tradingapp_add_test(tst_config tst_config.cpp)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
-tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.h)
-tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.h)
+tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)

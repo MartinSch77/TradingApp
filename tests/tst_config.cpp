@@ -28,7 +28,7 @@ const char *kEnvVars[] = {"ETORO_CONFIG", "ETORO_API_KEY", "ETORO_USER_KEY",
 
 class TestConfig : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private:
     QString m_originalCwd;
 
@@ -49,7 +49,8 @@ private slots:
         }
     }
 
-    //! @tstid TS-CFG-001 @verifies REQ-F-017 REQ-F-018 @design DES-SVC-CFG
+    //! @tstid TS-CFG-001 @design DES-SVC-CFG
+    // @relation(REQ-F-017, REQ-F-018, scope=function)
     void TS_CFG_001_defaultsWithoutFiles()
     {
         QTemporaryDir dir;  // empty: no config.json, no apiKeyEtoro.json
@@ -62,7 +63,8 @@ private slots:
         QVERIFY(cfg.modeLabel().contains(QStringLiteral("SIMULATION")));
     }
 
-    //! @tstid TS-CFG-002 @verifies REQ-F-018 REQ-N-004 @design DES-SVC-CFG
+    //! @tstid TS-CFG-002 @design DES-SVC-CFG
+    // @relation(REQ-F-018, REQ-N-004, scope=function)
     void TS_CFG_002_secretsFileLayersOverConfig()
     {
         QTemporaryDir dir;
@@ -82,7 +84,8 @@ private slots:
         QVERIFY(cfg.isLive());
     }
 
-    //! @tstid TS-CFG-003 @verifies REQ-F-018 @design DES-SVC-CFG
+    //! @tstid TS-CFG-003 @design DES-SVC-CFG
+    // @relation(REQ-F-018, scope=function)
     void TS_CFG_003_envOverridesFiles()
     {
         QTemporaryDir dir;
@@ -99,7 +102,8 @@ private slots:
         QCOMPARE(cfg.userKey, QStringLiteral("file-user"));   // untouched key stays
     }
 
-    //! @tstid TS-CFG-004 @verifies REQ-F-017 @design DES-SVC-CFG
+    //! @tstid TS-CFG-004 @design DES-SVC-CFG
+    // @relation(REQ-F-017, scope=function)
     void TS_CFG_004_liveRequiresCredentialsAndRealMode()
     {
         QTemporaryDir dir;

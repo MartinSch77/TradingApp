@@ -21,9 +21,9 @@ public:
 
     // False when no API key is configured; requestDecision then reports
     // decisionReady(ok=false) instead of calling out.
-    bool isConfigured() const { return !m_apiKey.isEmpty(); }
+    [[nodiscard]] bool isConfigured() const { return !m_apiKey.isEmpty(); }
 
-public slots:
+
     void requestDecision(const QString &evidencePrompt);
 
 signals:

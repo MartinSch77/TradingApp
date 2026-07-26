@@ -119,6 +119,11 @@ void applyEnv(Config &cfg)
 
 } // namespace
 
+bool Config::hasCredentials() const
+{
+    return !apiKey.isEmpty() && !userKey.isEmpty();
+}
+
 bool Config::isLive() const
 {
     const bool wantsReal = mode.compare(QStringLiteral("real"), Qt::CaseInsensitive) == 0;

@@ -36,7 +36,7 @@ public:
     // positions whose SL/TP is hit, and re-publish the portfolio.
     void tick();
 
-    double lastPrice() const { return m_simPrice; }
+    [[nodiscard]] double lastPrice() const;  // out-of-line: keeps coverage records unambiguous
 
     void openPosition(bool isBuy, double amount, double leverage, double stopLossAmount,
                       double takeProfitAmount, bool trailingStop);

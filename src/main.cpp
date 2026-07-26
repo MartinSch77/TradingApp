@@ -32,7 +32,7 @@ int main(int argc, char *argv[])
     }
 
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("eToro SPX500 Trader"));
+    QApplication::setApplicationName(QStringLiteral("eToro Trader"));
     QApplication::setOrganizationName(QStringLiteral("TradingApp"));
 
     const Config config = Config::load();
@@ -101,5 +101,5 @@ int main(int argc, char *argv[])
         });
     }
 
-    return app.exec();
+    return QApplication::exec();
 }

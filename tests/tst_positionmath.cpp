@@ -24,9 +24,10 @@ Position makePosition()
 
 class TestPositionMath : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-POS-001 @verifies REQ-F-016 @design DES-DOM-POS
+    //! @tstid TS-POS-001 @design DES-DOM-POS
+    // @relation(REQ-F-016, scope=function)
     void TS_POS_001_priceDecimalsByMagnitude()
     {
         QCOMPARE(priceDecimals(6543.21), 2);   // index level
@@ -35,7 +36,8 @@ private slots:
         QCOMPARE(priceDecimals(0.63), 5);
     }
 
-    //! @tstid TS-POS-002 @verifies REQ-F-003 REQ-F-016 @design DES-DOM-POS
+    //! @tstid TS-POS-002 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
     void TS_POS_002_valuePerPointIdentity()
     {
         Position p = makePosition();
@@ -49,7 +51,8 @@ private slots:
         QCOMPARE(accountValuePerPoint(p), 0.0);
     }
 
-    //! @tstid TS-POS-003 @verifies REQ-F-003 REQ-F-016 @design DES-DOM-POS
+    //! @tstid TS-POS-003 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
     void TS_POS_003_slTpAmountsAndSigns()
     {
         const Position p = makePosition();

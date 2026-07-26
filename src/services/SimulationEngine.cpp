@@ -5,10 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = std::numbers::pi;
 
 // eToro leverage steps per instrument, used only for SIMULATION — real mode
 // fetches the exact values from the eToro eligibility API. Values are the steps
@@ -82,6 +83,11 @@ double simBasePrice(const QString &symbol)
 SimulationEngine::SimulationEngine(QObject *parent)
     : QObject(parent)
 {
+}
+
+double SimulationEngine::lastPrice() const
+{
+    return m_simPrice;
 }
 
 double SimulationEngine::gaussian()
@@ -319,7 +325,7 @@ void SimulationEngine::modifyPosition(const QString &positionId, double stopLoss
 
 void SimulationEngine::scanInstruments(const QStringList &symbols)
 {
-    const qint32 total = static_cast<qint32>(symbols.size());
+    const auto total = static_cast<qint32>(symbols.size());
     emit screenerProgress(0, total);
     qint32 done = 0;
     for (const QString &sym : symbols) {

@@ -24,6 +24,19 @@ struct ImpactGuess {
 // forecast — real reactions depend on the surprise vs. the actual print.
 ImpactGuess guessImpact(const EconomicEvent &e);
 
+// A concrete, advisory-only activity proposal around a calendar event: which side
+// to trade (if any), whether to act before or after the print, and why — derived
+// from the event class, its impact rating and the forecast-vs-previous change.
+// Advisory only: it is never executed automatically (REQ-N-005).
+struct EventProposal {
+    bool actionable = false;  // false → the safe stance is to stay out
+    qint32 dir = 0;           // +1 buy / -1 sell / 0 none
+    QString action;           // "BUY" / "SELL" / "STAY OUT"
+    QString timing;           // when to act, e.g. "after the 14:30 print confirms"
+    QString rationale;        // the forecast-vs-previous + impact reasoning
+};
+EventProposal proposeActivity(const EconomicEvent &e);
+
 // Plain-language explanation of what a calendar event measures and why it moves
 // the traded instrument, keyed off the same title cues as guessImpact()
 // (unemployment is tested before the general jobs bucket, matching that ordering).

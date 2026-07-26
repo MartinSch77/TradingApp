@@ -25,6 +25,9 @@ struct MarketSnapshot {
     QList<EconomicEvent> events;                        // upcoming calendar events
     bool fgValid = false;                               // a Fear & Greed reading arrived
     double fearGreed = 50.0;                            // CNN Fear & Greed, 0..100
+    // Independent Yahoo Finance intraday series (1-minute closes, session so
+    // far) per instrument — an additional source for the composite.
+    QHash<QString, QList<double>> intradayBySymbol;
 };
 
 // One aggregated row per instrument, combining every source into a weighted
@@ -48,6 +51,8 @@ struct DecisionRow {
     double regime = 0.0;      // VIX/market regime tilt, [-1, 1]
     bool haveCrowd = false;   // a Fear & Greed reading fed the composite
     double crowd = 0.0;       // crowd-sentiment tilt, [-1, 1] (see crowdTilt)
+    bool haveYahoo = false;   // a Yahoo intraday series fed the composite
+    double yahoo = 0.0;       // intraday momentum tilt, [-1, 1] (see intradayTilt)
     bool eventRisk = false;   // an imminent high-impact event tempered the confidence
 };
 
@@ -59,6 +64,12 @@ double crowdTilt(double fearGreed);
 
 // Crude keyword sentiment over recent headlines -> [-1, 1]; countOut = headline count.
 double newsSentimentScore(const QList<NewsHeadline> &news, qint32 &countOut);
+
+// Session-momentum tilt in [-1, 1] from an independent intraday close series
+// (Yahoo Finance, 1-minute bars): where the last price sits relative to the
+// session mean, in units of the session's own dispersion. Needs ≥ 30 points;
+// returns 0 otherwise (and for flat series).
+double intradayTilt(const QList<double> &closes);
 
 // Market regime tilt in [-1, 1] from the VIX (risk-on/off); sets eventRiskOut when a
 // high-impact calendar event is imminent (within six hours).

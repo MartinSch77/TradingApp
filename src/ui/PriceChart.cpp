@@ -46,23 +46,23 @@ void addToChart(QChart *chart, QAbstractSeries *s, QAbstractAxis *x, QAbstractAx
 }  // namespace
 
 PriceChart::PriceChart(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent), m_series(new QLineSeries(this)), m_chart(new QChart()), m_axisX(new QDateTimeAxis(m_chart)), m_axisY(new QValueAxis(m_chart)), m_levelSeries(new QLineSeries(this)), m_eventSeries(new QLineSeries(this)), m_markerBg(new QGraphicsRectItem(m_chart)), m_markerText(new QGraphicsSimpleTextItem(m_chart)), m_arrow(new QGraphicsSimpleTextItem(m_chart)), m_eventText(new QGraphicsSimpleTextItem(m_chart)), m_changeSeries(new QLineSeries(this)), m_changeChart(new QChart()), m_changeAxisX(new QDateTimeAxis(m_changeChart)), m_changeAxisY(new QValueAxis(m_changeChart)), m_changeHp(new QLineSeries(this)), m_changeView(new QChartView(m_changeChart, this))
 {
     // Keep this window above the others (reinforced by MainWindow); intrinsic to
     // the chart so it holds even if the window is re-parented or re-shown.
     setWindowFlag(Qt::WindowStaysOnTopHint, true);
 
-    m_series = new QLineSeries(this);
+    
     m_series->setName(QStringLiteral("Price"));
 
-    m_chart = new QChart();
+    
     m_chart->addSeries(m_series);
     m_chart->legend()->hide();
     m_chart->setTheme(QChart::ChartThemeDark);
     m_chart->setAnimationOptions(QChart::NoAnimation);
     m_chart->setMargins(QMargins(4, 4, 4, 4));
 
-    m_axisX = new QDateTimeAxis(m_chart);
+    
     // Date + time: the chart seeds ~1 month of history, so a time-only label would make
     // a month look like a single day. "dd MMM HH:mm" reads correctly zoomed in or out.
     m_axisX->setFormat(QStringLiteral("dd MMM HH:mm"));
@@ -71,14 +71,14 @@ PriceChart::PriceChart(QWidget *parent)
     m_chart->addAxis(m_axisX, Qt::AlignBottom);
     static_cast<void>(m_series->attachAxis(m_axisX));
 
-    m_axisY = new QValueAxis(m_chart);
+    
     m_axisY->setLabelFormat(QStringLiteral("%.2f"));
     m_axisY->setTitleText(QStringLiteral("Price"));
     m_chart->addAxis(m_axisY, Qt::AlignRight);
     static_cast<void>(m_series->attachAxis(m_axisY));
 
     // Horizontal "current price" level line spanning the whole plot.
-    m_levelSeries = new QLineSeries(this);
+    
     QPen levelPen(QColor(0xe0, 0xb0, 0x00));  // amber, stands out on the dark theme
     levelPen.setWidthF(1.0);
     levelPen.setStyle(Qt::DashLine);
@@ -86,7 +86,7 @@ PriceChart::PriceChart(QWidget *parent)
     addToChart(m_chart, m_levelSeries, m_axisX, m_axisY);
 
     // Vertical line marking an imminent economic event (driven by setEventMarker()).
-    m_eventSeries = new QLineSeries(this);
+    
     QPen eventPen(QColor(0xff, 0x8c, 0x00));  // orange — distinct from the amber level line
     eventPen.setWidthF(1.6);
     eventPen.setStyle(Qt::DashLine);
@@ -134,18 +134,18 @@ PriceChart::PriceChart(QWidget *parent)
 
     // Right-side price tag: a filled amber box with the price, pinned to the
     // right edge of the plot at the current-price level.
-    m_markerBg = new QGraphicsRectItem(m_chart);
+    
     m_markerBg->setPen(Qt::NoPen);
     m_markerBg->setBrush(QColor(0xe0, 0xb0, 0x00));
     m_markerBg->setZValue(20.0);
-    m_markerText = new QGraphicsSimpleTextItem(m_chart);
+    
     m_markerText->setBrush(QColor(0x10, 0x10, 0x10));
     m_markerText->setZValue(21.0);
     m_markerBg->hide();
     m_markerText->hide();
 
     // Prediction-direction arrow (▲ green up / ▼ red down), near the current price.
-    m_arrow = new QGraphicsSimpleTextItem(m_chart);
+    
     QFont arrowFont = m_arrow->font();
     arrowFont.setPointSizeF(arrowFont.pointSizeF() + 14.0);
     arrowFont.setBold(true);
@@ -154,7 +154,7 @@ PriceChart::PriceChart(QWidget *parent)
     m_arrow->hide();
 
     // Label sitting at the top of the event line (e.g. the event's title).
-    m_eventText = new QGraphicsSimpleTextItem(m_chart);
+    
     m_eventText->setBrush(QColor(0xff, 0x8c, 0x00));
     m_eventText->setZValue(22.0);
     m_eventText->hide();
@@ -166,12 +166,12 @@ PriceChart::PriceChart(QWidget *parent)
     // --- Change strip below the price chart ---------------------------------
     // Shows the per-tick % change with an adaptive ±2σ "strong move" filter, so
     // sharp moves stand out from ordinary noise.
-    m_changeSeries = new QLineSeries(this);
+    
     QPen chgPen(QColor(0x4f, 0xa3, 0xff));  // steel blue
     chgPen.setWidthF(1.2);
     m_changeSeries->setPen(chgPen);
 
-    m_changeChart = new QChart();
+    
     m_changeChart->addSeries(m_changeSeries);
     m_changeChart->legend()->hide();
     m_changeChart->setTheme(QChart::ChartThemeDark);
@@ -185,14 +185,14 @@ PriceChart::PriceChart(QWidget *parent)
     m_changeChart->setTitleBrush(QColor(0xb0, 0xb0, 0xb0));
     m_changeSeries->setPen(chgPen);  // re-apply after setTheme(), which resets series pens
 
-    m_changeAxisX = new QDateTimeAxis(m_changeChart);
+    
     m_changeAxisX->setFormat(QStringLiteral("HH:mm:ss"));
     m_changeAxisX->setTickCount(6);
     m_changeAxisX->setLabelsVisible(false);  // time is already labelled on the chart above
     m_changeChart->addAxis(m_changeAxisX, Qt::AlignBottom);
     static_cast<void>(m_changeSeries->attachAxis(m_changeAxisX));
 
-    m_changeAxisY = new QValueAxis(m_changeChart);
+    
     m_changeAxisY->setLabelFormat(QStringLiteral("%+.2f"));
     m_changeAxisY->setTitleText(QStringLiteral("Δ %"));
     m_changeAxisY->setTickCount(3);
@@ -216,7 +216,7 @@ PriceChart::PriceChart(QWidget *parent)
 
     // High-pass filtered price (violet): removes the slow trend and leaves only
     // the fast component, so sharp moves stand out even inside a drifting market.
-    m_changeHp = new QLineSeries(this);
+    
     QPen hpPen(QColor(0xb5, 0x6c, 0xff));  // violet
     hpPen.setWidthF(1.3);
     m_changeHp->setPen(hpPen);
@@ -228,7 +228,7 @@ PriceChart::PriceChart(QWidget *parent)
     m_strongDown = makeScatter(m_changeChart, m_changeAxisX, m_changeAxisY,
                                QColor(0xe3, 0x55, 0x55), 9.0, QColor(0x10, 0x10, 0x10));
 
-    m_changeView = new QChartView(m_changeChart, this);
+    
     m_changeView->setRenderHint(QPainter::Antialiasing);
     m_changeView->setToolTip(QStringLiteral(
         "Per-tick price change (blue, %). Violet = high-pass filter: the slow trend "
@@ -338,7 +338,7 @@ void PriceChart::addPoint(const QDateTime &time, double price)
     if (!time.isValid() || (price <= 0.0)) {
         return;
     }
-    const qreal x = static_cast<qreal>(time.toMSecsSinceEpoch());
+    const auto x = static_cast<qreal>(time.toMSecsSinceEpoch());
 
     // Remember the newest point's time before appending: the manual-view follow below
     // uses it to tell whether the view was still tracking the live edge.

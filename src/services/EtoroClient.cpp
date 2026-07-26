@@ -34,7 +34,7 @@ QJsonValue pick(const QJsonObject &obj, const QStringList &keys)
             }
         }
     }
-    return QJsonValue(QJsonValue::Undefined);
+    return {QJsonValue::Undefined};
 }
 
 double numFrom(const QJsonValue &v)
@@ -81,7 +81,7 @@ QDateTime timeFrom(const QJsonValue &v)
 {
     if (v.isDouble()) {
         // Heuristic: seconds vs milliseconds epoch.
-        const qint64 n = static_cast<qint64>(v.toDouble());
+        const auto n = static_cast<qint64>(v.toDouble());
         return (n > 1000000000000LL) ? QDateTime::fromMSecsSinceEpoch(n)
                                      : QDateTime::fromSecsSinceEpoch(n);
     }
@@ -129,19 +129,22 @@ struct ScanState {
 EtoroClient::EtoroClient(Config config, QObject *parent)
     : QObject(parent)
     , m_config(std::move(config))
+    , m_nam(new QNetworkAccessManager(this))
+    , m_http(new JsonHttp(m_nam, this))
+    , m_sim(new SimulationEngine(this))
+    , m_pollTimer(new QTimer(this))
 {
-    m_nam = new QNetworkAccessManager(this);
     // Abort any request that stalls with no data for 30s so its finished() always
     // fires: without this a hung reply (e.g. a Cloudflare-blocked trade/history call)
     // never invokes handleReply's callback, leaving guards like m_pnlFetching stuck
     // true forever. The AI request overrides this with a longer per-request timeout.
     m_nam->setTransferTimeout(std::chrono::seconds{30});
-    m_http = new JsonHttp(m_nam, this);
+    
 
     // The simulation engine implements the same operations against a synthetic
     // feed; its signals are forwarded unchanged so the UI sees one client API in
     // both modes. The price forward also keeps m_lastPrice in sync.
-    m_sim = new SimulationEngine(this);
+    
     static_cast<void>(connect(m_sim, &SimulationEngine::historyReady,
                               this, &EtoroClient::historyReady));
     static_cast<void>(connect(m_sim, &SimulationEngine::priceUpdated, this,
@@ -171,7 +174,7 @@ EtoroClient::EtoroClient(Config config, QObject *parent)
     }));
     static_cast<void>(connect(m_sim, &SimulationEngine::log, this, &EtoroClient::log));
 
-    m_pollTimer = new QTimer(this);
+    
     m_pollTimer->setInterval(m_config.pollIntervalMs);
     static_cast<void>(connect(m_pollTimer, &QTimer::timeout, this, &EtoroClient::onPollTimeout));
 }

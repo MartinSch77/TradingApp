@@ -36,13 +36,17 @@ public:
     // every refreshIntervalMs (the slow-moving cadence of both sources).
     void start(qint32 refreshIntervalMs);
 
-public slots:
+
     // Fetch TradingView's aggregated technical rating for every tradable instrument
     // that has a mapped web ticker, in one call; result via instrumentRatingsUpdated.
     void fetchInstrumentRatings();
     // Fetch recent news headlines for every tradable instrument that has a mapped web
     // ticker; results arrive per instrument via instrumentNewsUpdated.
     void fetchInstrumentNews();
+    // Fetch the Yahoo Finance intraday close series (1-minute bars, session so
+    // far) for every tradable instrument with a mapped Yahoo ticker; results
+    // arrive per instrument via intradayCloses. Feeds the decision composite.
+    void fetchIntradaySeries();
 
 signals:
     // CBOE VIX ("fear index") level and its change vs. its multi-month average, in percent.
@@ -63,6 +67,9 @@ signals:
     // exchange timestamp — a freshness/level cross-check on the eToro rate.
     // Not emitted for instruments without a mapped Yahoo ticker.
     void webQuoteUpdated(const QString &symbol, double price, const QDateTime &asOf);
+    // Yahoo intraday close series (1-minute bars) for one tradable instrument —
+    // the independent session-momentum source of the decision composite.
+    void intradayCloses(const QString &symbol, const QList<double> &closes);
 
 private:
     // Fetch the spot CBOE VIX from a free public feed (eToro only lists monthly

@@ -9,6 +9,7 @@
 #include "services/AiAdvisor.h"
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
+#include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
 
@@ -42,11 +43,13 @@
 #include <QScreen>
 #include <QSet>
 #include <QStandardItemModel>
+#include <QTableView>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
@@ -61,12 +64,10 @@ constexpr qint32 kOrderCooldownMs = 2000;
 // A new order is rejected if it would push the open-trades total above this.
 constexpr double kMaxOpenExposure = 17000.0;
 
-// Open-trades table columns. Named so the SL/TP edit handling and the render loop
-// stay in step when a column is inserted (Close cost sits right after P/L).
-enum PosCol {
-    PosColMark = 0, PosColInstrument, PosColSide, PosColAmount, PosColLev, PosColOpen,
-    PosColUnits, PosColPl, PosColCloseCost, PosColSl, PosColTp, PosColCount
-};
+// Open-trades table columns live in PositionsModel::Column; the aliases below
+// keep the SL/TP edit handling readable.
+constexpr qint32 PosColSl = PositionsModel::ColSl;
+constexpr qint32 PosColTp = PositionsModel::ColTp;
 
 QString colored(const QString &text, const QString &hexColor)
 {
@@ -77,12 +78,12 @@ QString colored(const QString &text, const QString &hexColor)
 QColor impactColor(qint32 dir)
 {
     if (dir > 0) {
-        return QColor(0x25, 0xb5, 0x63);
+        return {0x25, 0xb5, 0x63};
     }
     if (dir < 0) {
-        return QColor(0xe3, 0x55, 0x55);
+        return {0xe3, 0x55, 0x55};
     }
-    return QColor(0xe0, 0xb0, 0x00);
+    return {0xe0, 0xb0, 0x00};
 }
 
 // Rich, explanatory mouse-over for one calendar row: what the event is, when it
@@ -122,6 +123,11 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     , m_client(client)
     , m_feeds(feeds)
     , m_aiAdvisor(aiAdvisor)
+    , m_orderCooldownTimer(new QTimer(this))
+    , m_calendar(new EconomicCalendar(this))
+    , m_eventTimer(new QTimer(this))
+    , m_pnlAfterCloseTimer(new QTimer(this))
+    , m_recoTimer(new QTimer(this))
 {
     buildUi();
 
@@ -185,8 +191,24 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
                               &MainWindow::onInstrumentRatings));
     static_cast<void>(
         connect(m_feeds, &MarketFeeds::instrumentNewsUpdated, this, &MainWindow::onInstrumentNews));
+    static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCloses, this,
+                              [this](const QString &symbol, const QList<double> &closes) {
+                                  m_intradayBySymbol.insert(symbol, closes);
+                              }));
     static_cast<void>(
         connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
+    // Results of the off-GUI-thread Monte-Carlo / trade-plan computations.
+    static_cast<void>(connect(&m_mcWatcher, &QFutureWatcher<trading::McOutlook>::finished,
+                              this, [this] {
+                                  m_mcBusy = false;
+                                  renderMonteCarlo(m_mcWatcher.result());
+                              }));
+    static_cast<void>(connect(&m_planWatcher, &QFutureWatcher<trading::TradePlan>::finished,
+                              this, [this] {
+                                  renderTradePlanResult(m_planWatcher.result(),
+                                                        m_planPendingSymbol,
+                                                        m_planPendingIsCurrent);
+                              }));
 
     static_cast<void>(connect(m_buyButton, &QPushButton::clicked, this, &MainWindow::onBuyClicked));
     static_cast<void>(connect(m_sellButton, &QPushButton::clicked, this, &MainWindow::onSellClicked));
@@ -198,7 +220,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
 
     // Cooldown between orders: while it runs the buy/sell buttons are disabled and
     // placeOrder() rejects any order (manual or auto). Re-enable them when it ends.
-    m_orderCooldownTimer = new QTimer(this);
     m_orderCooldownTimer->setSingleShot(true);
     m_orderCooldownTimer->setInterval(kOrderCooldownMs);
     static_cast<void>(connect(m_orderCooldownTimer, &QTimer::timeout, this, [this] {
@@ -208,7 +229,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
 
     // Economic calendar: macro events for the regions that move the selected
     // instrument. Scope it to the startup instrument before the first fetch.
-    m_calendar = new EconomicCalendar(this);
     static_cast<void>(
         connect(m_calendar, &EconomicCalendar::eventsUpdated, this, &MainWindow::onEvents));
     static_cast<void>(connect(m_calendar, &EconomicCalendar::log, this, &MainWindow::onLog));
@@ -217,7 +237,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
 
     // Age events out of the list ~10 min after they pass, without waiting for the
     // calendar's (30-min) re-fetch. Rebuilds only when an event actually drops off.
-    m_eventTimer = new QTimer(this);
     m_eventTimer->setInterval(30 * 1000);  // 30 s granularity on the 10-min rule
     static_cast<void>(
         connect(m_eventTimer, &QTimer::timeout, this, [this] { rebuildEventsView(false); }));
@@ -226,7 +245,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // After a trade closes, wait ~10 s (so eToro's trade-history API reflects it) then
     // refresh the closed-trade P/L. Single-shot and restarted per close, so closing
     // several marked trades at once triggers just one fetch after the last one.
-    m_pnlAfterCloseTimer = new QTimer(this);
     m_pnlAfterCloseTimer->setSingleShot(true);
     m_pnlAfterCloseTimer->setInterval(10 * 1000);
     static_cast<void>(
@@ -235,7 +253,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // "Buy / sell now": scan once at startup, then refresh in the background every few
     // minutes. The scan shares eToro's small rate pool with the price poll, so keep the
     // cadence conservative; the Refresh button covers on-demand updates in between.
-    m_recoTimer = new QTimer(this);
     m_recoTimer->setInterval(5 * 60 * 1000);
     static_cast<void>(
         connect(m_recoTimer, &QTimer::timeout, this, &MainWindow::startRecommendationScan));
@@ -267,6 +284,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // Requires an active app window (i.e. the user has clicked into the app). The
     // chart is skipped: its own Ctrl+wheel zooms the price/time axis, which we keep.
     if (event->type() == QEvent::Wheel) {
+        // Qt idiom: event->type() is checked above, so static_cast is the
+        // supported downcast here (see pro-type-static-cast-downcast note in
+        // .clang-tidy).
         auto *we = static_cast<QWheelEvent *>(event);
         const bool ctrlHeld = we->modifiers().testFlag(Qt::ControlModifier);
         const qint32 wheelDelta = we->angleDelta().y();
@@ -294,7 +314,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     if (event->type() == QEvent::KeyPress) {
-        auto *ke = static_cast<QKeyEvent *>(event);
+        auto *ke = static_cast<QKeyEvent *>(event);  // guarded by type() above
         if (!ke->isAutoRepeat() && ((ke->key() == Qt::Key_S) || (ke->key() == Qt::Key_B))) {
             QWidget *fw = QApplication::focusWidget();
             // Numeric spin fields (amount, SL/TP, auto-order prices) reject letters
@@ -1009,13 +1029,13 @@ void MainWindow::buildUi()
     auto *posBox = new QGroupBox(QStringLiteral("Open trades"), lower);
     auto *posLayout = new QVBoxLayout(posBox);
 
-    m_positions = new QTableWidget(0, PosColCount, posBox);
-    m_positions->setHorizontalHeaderLabels(
-        {QStringLiteral("Position"), QStringLiteral("Instrument"), QStringLiteral("Side"),
-         QStringLiteral("Amount"), QStringLiteral("Lev"), QStringLiteral("Open"),
-         QStringLiteral("Units"), QStringLiteral("P/L (%1)").arg(m_ccy),
-         QStringLiteral("Close (%1)").arg(m_ccy), QStringLiteral("SL (%1)").arg(m_ccy),
-         QStringLiteral("TP (%1)").arg(m_ccy)});
+    // Model/view: the poll and the per-tick P/L re-price update the model in
+    // place (dataChanged) — no per-refresh item allocations, and open SL/TP
+    // editors / checkbox marks survive by construction.
+    m_positionsModel = new PositionsModel(posBox);
+    m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);
+    m_positions = new QTableView(posBox);
+    m_positions->setModel(m_positionsModel);
     m_positions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_positions->verticalHeader()->setVisible(false);
     // Trades are marked with the per-row checkbox in the Position column, so plain
@@ -1032,15 +1052,17 @@ void MainWindow::buildUi()
         "SL is signed P/L: a negative value closes at a loss, a positive value locks in a "
         "profit (stop on the winning side).")
                                 .arg(m_ccy));
-    static_cast<void>(connect(m_positions, &QTableWidget::itemChanged, this,
-                              &MainWindow::onPositionCellChanged));
+    static_cast<void>(connect(m_positionsModel, &PositionsModel::slTpEdited, this,
+                              &MainWindow::onPositionSlTpEdited));
     // Double-click a trade (outside the mark checkbox / editable SL/TP cells) to switch
     // the app to that instrument, like picking it from the selector.
-    static_cast<void>(
-        connect(m_positions, &QTableWidget::cellDoubleClicked, this, [this](int row, int col) {
-            if ((col == PosColMark) || (col >= PosColSl)) {  // mark checkbox / editable SL,TP
-                return;
+    static_cast<void>(connect(
+        m_positions, &QTableView::doubleClicked, this, [this](const QModelIndex &index) {
+            const qint32 col = index.column();
+            if ((col == PositionsModel::ColMark) || (col >= PositionsModel::ColSl)) {
+                return;  // mark checkbox / editable SL,TP
             }
+            const qint32 row = index.row();
             if ((row < 0) || (row >= m_shownPositions.size())) {
                 return;
             }
@@ -1410,8 +1432,9 @@ void MainWindow::updateOpenCost()
 void MainWindow::setUiScale(double scale)
 {
     scale = std::clamp(scale, 0.6, 2.5);  // 60%–250%: readable, never off-screen
-    if (qFuzzyCompare(scale, m_uiScale))
+    if (qFuzzyCompare(scale, m_uiScale)) {
         return;
+}
     m_uiScale = scale;
     applyUiScale();
 }
@@ -1468,19 +1491,6 @@ void MainWindow::applyUiScale()
     }
 }
 
-QTableWidgetItem *MainWindow::makePlItem(double profitUsd) const
-{
-    const QString amountText = QLocale().toString(qAbs(toDisplay(profitUsd)), 'f', 2);
-    const QString text =
-        ((profitUsd < 0.0) ? QStringLiteral("-") : QString()) + m_ccy + amountText;
-    auto *item = new QTableWidgetItem(text);
-    item->setTextAlignment(Qt::AlignCenter);
-    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-    item->setForeground(profitUsd >= 0.0 ? QColor(0x25, 0xb5, 0x63)
-                                         : QColor(0xe3, 0x55, 0x55));
-    return item;
-}
-
 // Re-price the open-trades P/L column from a fresh live price, in place, so it tracks
 // the chart between the ~3s portfolio polls. Each shown-instrument row shows its last
 // API P/L plus the account-currency value of the price move since m_pnlAnchorPrice
@@ -1488,29 +1498,10 @@ QTableWidgetItem *MainWindow::makePlItem(double profitUsd) const
 // instruments are left as the poll supplied them (no live price for them here).
 void MainWindow::updateOpenTradePnl(double price)
 {
-    if ((m_positions == nullptr) || (price <= 0.0) || (m_pnlAnchorPrice <= 0.0)
-        || m_shownPositions.isEmpty()) {
+    if (m_positionsModel == nullptr) {
         return;
     }
-    const QString shown = m_client->instrument().symbol;
-
-    // These are non-editable, programmatic fills: don't let itemChanged fire.
-    m_updatingPositions = true;
-    const QSignalBlocker block(m_positions);
-    const qsizetype rows = std::min<qsizetype>(m_shownPositions.size(), m_positions->rowCount());
-    for (qsizetype row = 0; row < rows; ++row) {
-        const Position &p = m_shownPositions[row];
-        if ((p.openRate <= 0.0) || (p.symbol.compare(shown, Qt::CaseInsensitive) != 0)) {
-            continue;
-        }
-        const double perPoint = trading::accountValuePerPoint(p);
-        if (perPoint <= 0.0) {
-            continue;
-        }
-        const double delta = (p.isBuy ? 1.0 : -1.0) * perPoint * (price - m_pnlAnchorPrice);
-        m_positions->setItem(static_cast<int>(row), PosColPl, makePlItem(p.profit + delta));
-    }
-    m_updatingPositions = false;
+    m_positionsModel->repriceOpenPnl(m_client->instrument().symbol, price, m_pnlAnchorPrice);
 }
 
 void MainWindow::onPortfolio(const QList<Position> &positionsIn)
@@ -1559,33 +1550,6 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // can re-price these trades against later ticks without a jump at the next poll.
     m_pnlAnchorPrice = m_lastPrice;
 
-    // A full rebuild replaces every cell (destroying any open SL/TP editor) and
-    // resets the marked checkboxes, so only do it when the set/order of trades
-    // actually changes. Otherwise refresh values in place, leaving an in-progress
-    // edit — and the ticked checkboxes — untouched across the periodic poll.
-    bool sameRows = m_positions->rowCount() == positions.size();
-    for (qsizetype row = 0; sameRows && (row < positions.size()); ++row) {
-        QTableWidgetItem *idItem = m_positions->item(static_cast<int>(row), 0);
-        if (idItem == nullptr) {
-            sameRows = false;
-        } else {
-            const QString shownId = idItem->data(Qt::UserRole).toString();
-            const QString polledId = positions[row].positionId;
-            if (shownId != polledId) {
-                sameRows = false;
-            }
-        }
-    }
-    // An open cell editor is a QLineEdit parented into the table; don't overwrite
-    // its cell while the user is typing there.
-    QWidget *fw = QApplication::focusWidget();
-    const bool editing =
-        (qobject_cast<QLineEdit *>(fw) != nullptr) && m_positions->isAncestorOf(fw);
-
-    // itemChanged must not fire for these programmatic fills.
-    m_updatingPositions = true;
-    const QSignalBlocker block(m_positions);
-
     // Override a position's SL/TP with the value the user just submitted, until the
     // server snapshot converges to it (or the pin times out) — see m_pendingSlTp.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -1610,104 +1574,16 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
         return p;
     };
 
-    auto plItem = [this](const Position &p) { return makePlItem(p.profit); };
-    // Expected spread cost to close the position now (account currency → euro).
-    auto closeCostItem = [this](const Position &p) {
-        const QString text = p.closingCost > 0.0
-                                 ? m_ccy + QLocale().toString(toDisplay(p.closingCost), 'f', 2)
-                                 : QStringLiteral("—");
-        auto *item = new QTableWidgetItem(text);
-        item->setTextAlignment(Qt::AlignCenter);
-        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-        item->setForeground(QColor(0x9a, 0x9a, 0x9a));
-        item->setToolTip(QStringLiteral(
-            "Estimated cost to close this trade at the current price — eToro attributes half "
-            "the bid/ask spread to the exit, i.e. roughly spread/2 × units, matching its close "
-            "dialog. eToro's P/L already reflects this (a long is valued at the bid, a short at "
-            "the ask)."));
-        return item;
-    };
-    auto slTpItem = [](const QString &text) {  // editable: Stop-loss / Take-profit
-        auto *item = new QTableWidgetItem(text);
-        item->setTextAlignment(Qt::AlignCenter);
-        item->setFlags((item->flags() | Qt::ItemIsEditable | Qt::ItemIsEnabled)
-                       & ~Qt::ItemIsUserCheckable);
-        return item;
-    };
-    // Stop-loss cell, tagged with a "⇅" marker + tooltip when the stop trails the price.
-    auto slItem = [&slTpItem, this](const Position &p) {
-        QString text = trading::slSignedAmountText(p, m_eurPerUsd);  // signed: −loss / +profit
-        const bool trailing = p.trailingStop && (p.stopLossRate > 0.0) && !text.isEmpty();
-        if (trailing) {
-            text += QStringLiteral(" ⇅");
-        }
-        QTableWidgetItem *item = slTpItem(text);
-        if (trailing) {
-            item->setToolTip(
-                QStringLiteral("Trailing stop-loss (follows the price in your favour)"));
-        }
-        return item;
-    };
-
-    if (!sameRows) {
-        const QStringList markedIds = markedPositionIds();
-        const QSet<QString> marked(markedIds.cbegin(), markedIds.cend());
-
-        auto makeItem = [](const QString &text) {
-            auto *item = new QTableWidgetItem(text);
-            item->setTextAlignment(Qt::AlignCenter);
-            item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-            return item;
-        };
-        // Side cell coloured by direction: green BUY / red SELL.
-        auto sideItem = [&makeItem](bool isBuy) {
-            QTableWidgetItem *item = makeItem(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"));
-            item->setForeground(isBuy ? QColor(0x25, 0xb5, 0x63) : QColor(0xe3, 0x55, 0x55));
-            return item;
-        };
-
-        const qint32 posCount = static_cast<qint32>(positions.size());
-        m_positions->setRowCount(posCount);
-        for (qint32 row = 0; row < posCount; ++row) {
-            const Position p = withPending(positions[row]);
-            auto *idItem = makeItem(p.positionId);
-            idItem->setData(Qt::UserRole, p.positionId);
-            idItem->setFlags((idItem->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsSelectable);
-            idItem->setCheckState(marked.contains(p.positionId) ? Qt::Checked : Qt::Unchecked);
-            m_positions->setItem(row, PosColMark, idItem);
-            m_positions->setItem(row, PosColInstrument, makeItem(p.symbol));
-            m_positions->setItem(row, PosColSide, sideItem(p.isBuy));
-            // Invested amount (account currency → euro), rounded up to the next whole unit.
-            m_positions->setItem(row, PosColAmount,
-                                 makeItem(QLocale().toString(std::ceil(toDisplay(p.amount)), 'f', 0)));
-            m_positions->setItem(row, PosColLev,
-                                 makeItem((p.leverage > 0.0)
-                                              ? QStringLiteral("x%1").arg(p.leverage, 0, 'f', 0)
-                                              : QStringLiteral("—")));
-            m_positions->setItem(
-                row, PosColOpen,
-                makeItem(QLocale().toString(p.openRate, 'f', trading::priceDecimals(p.openRate))));
-            m_positions->setItem(row, PosColUnits, makeItem(QLocale().toString(p.units, 'f', 4)));
-            m_positions->setItem(row, PosColPl, plItem(p));
-            m_positions->setItem(row, PosColCloseCost, closeCostItem(p));
-            m_positions->setItem(row, PosColSl, slItem(p));
-            m_positions->setItem(row, PosColTp,
-                                 slTpItem(trading::slTpAmountText(p, p.takeProfitRate, m_eurPerUsd)));
-        }
-    } else {
-        const qint32 posCount = static_cast<qint32>(positions.size());
-        for (qint32 row = 0; row < posCount; ++row) {
-            const Position p = withPending(positions[row]);
-            m_positions->setItem(row, PosColPl, plItem(p));
-            m_positions->setItem(row, PosColCloseCost, closeCostItem(p));
-            // Don't overwrite an SL/TP cell the user is currently editing.
-            if (!editing) {
-                m_positions->setItem(row, PosColSl, slItem(p));
-                m_positions->setItem(row, PosColTp,
-                                     slTpItem(trading::slTpAmountText(p, p.takeProfitRate, m_eurPerUsd)));
-            }
-        }
+    // Hand the (pin-adjusted) snapshot to the model: same ids in the same order
+    // update in place — open SL/TP editors and checkbox marks survive; a changed
+    // set resets the model (marks survive by id inside the model).
+    QList<Position> pinned;
+    pinned.reserve(positions.size());
+    for (const Position &p : positions) {
+        pinned.append(withPending(p));
     }
+    m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);  // keep the FX rate fresh
+    m_positionsModel->setPositions(pinned);
 
     // Drop pins for positions no longer open (e.g. closed), so the map can't grow.
     if (!m_pendingSlTp.isEmpty()) {
@@ -1725,8 +1601,6 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
         }
     }
 
-    m_updatingPositions = false;
-
     // On the first portfolio after startup, adopt the instrument shown at the top of
     // the open-trades list. One-shot: a later-opened trade — or the portfolio re-fetch
     // triggered by the switch itself — must never override the current view.
@@ -1742,32 +1616,21 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     }
 }
 
-void MainWindow::onPositionCellChanged(QTableWidgetItem *item)
+void MainWindow::onPositionSlTpEdited(qint32 row, qint32 column, const QString &text)
 {
-    if (m_updatingPositions || (item == nullptr)) {
-        return;
-    }
-    const qint32 col = item->column();
-    if ((col != PosColSl) && (col != PosColTp)) {  // only Stop-loss / Take-profit are editable
-        return;
-    }
-    const qint32 row = item->row();
     if ((row < 0) || (row >= m_shownPositions.size())) {
         return;
     }
+    const qint32 col = column;
     const Position p = m_shownPositions[row];  // copy: the snapshot may change under us
     if ((p.units <= 0.0) || (p.openRate <= 0.0)) {
         appendLog(QStringLiteral("Can't set SL/TP yet — trade has no open rate/units."), true);
         return;
     }
 
-    // Read a cell as a signed account-currency amount (blank / 0 / unparsable = clear).
-    auto cellValue = [this](qint32 r, qint32 c) -> double {
-        QTableWidgetItem *it = m_positions->item(r, c);
-        if (it == nullptr) {
-            return 0.0;
-        }
-        QString t = it->text().trimmed();
+    // Parse a signed display-currency amount (blank / 0 / unparsable = clear).
+    auto parseAmount = [this](QString t) -> double {
+        t = t.trimmed();
         static_cast<void>(t.remove(m_ccy));
         // Trailing-stop marker "⇅" — not part of the amount.
         static_cast<void>(t.remove(QChar(0x21C5)));
@@ -1781,6 +1644,14 @@ void MainWindow::onPositionCellChanged(QTableWidgetItem *item)
             v = t.toDouble(&ok);  // fall back to C-locale parsing
         }
         return ok ? v : 0.0;
+    };
+    // The edited cell arrives as text; the sibling cell is read from the model.
+    auto cellValue = [this, row, col, &text, &parseAmount](qint32 /*r*/, qint32 c) -> double {
+        if (c == col) {
+            return parseAmount(text);
+        }
+        return parseAmount(
+            m_positionsModel->data(m_positionsModel->index(row, c), Qt::EditRole).toString());
     };
     // SL is a SIGNED target P/L: negative closes at a loss (stop on the losing side),
     // positive closes locked in a profit (stop on the winning side). TP is a profit.
@@ -1816,18 +1687,9 @@ void MainWindow::onPositionCellChanged(QTableWidgetItem *item)
         return ((v < 0.0) ? QStringLiteral("-") : QStringLiteral("+")) + m_ccy + amount;
     };
 
-    // Normalise the edited cell now (guarded so it doesn't recurse); safe because no
-    // table rebuild happens here. SL shows its sign; TP is a plain positive amount.
-    m_updatingPositions = true;
-    if (col == PosColSl) {
-        item->setText((slPnlDisp != 0.0)
-                          ? (((slPnlDisp < 0.0) ? QStringLiteral("-") : QStringLiteral("+"))
-                             + QLocale().toString(std::abs(slPnlDisp), 'f', 2))
-                          : QString());
-    } else {
-        item->setText((tpAmtDisp > 0.0) ? QLocale().toString(tpAmtDisp, 'f', 2) : QString());
-    }
-    m_updatingPositions = false;
+    // Echo the accepted values immediately: the model renders SL/TP from the
+    // rates, so the cells show the normalised amounts without a poll round-trip.
+    m_positionsModel->setSlTpRates(row, (slRate > 0.0) ? slRate : 0.0, tpRate);
 
     const QString slStr = (slPnlDisp != 0.0) ? signedCcy(slPnlDisp) : QStringLiteral("none");
     const QString tpStr = (tpAmtDisp > 0.0)
@@ -1847,6 +1709,60 @@ void MainWindow::onPositionCellChanged(QTableWidgetItem *item)
         m_client->modifyPosition(id, slRateOut, tpRate, trailing);
         appendLog(QStringLiteral("Trade #%1: SL %2 / TP %3 requested.").arg(id, slStr, tpStr));
     });
+}
+
+void MainWindow::renderMonteCarlo(const trading::McOutlook &mc)
+{
+    if ((m_aiMonteCarlo == nullptr) || (m_aiEdge == nullptr)) {
+        return;
+    }
+    const QString green = QStringLiteral("#25b563");
+    const QString red = QStringLiteral("#e35555");
+    const QString amber = QStringLiteral("#e0b000");
+
+    if (mc.valid) {
+        const QString mcColor = (mc.pUp >= 0.55) ? green : ((mc.pUp <= 0.45) ? red : amber);
+        const QString p5Text = QString::number(mc.p5, 'f', trading::priceDecimals(mc.p5));
+        const QString p95Text = QString::number(mc.p95, 'f', trading::priceDecimals(mc.p95));
+        m_aiMonteCarlo->setText(colored(QStringLiteral("P(up) %1%  ·  range %2–%3")
+                                            .arg(std::lround(mc.pUp * 100.0))
+                                            .arg(p5Text, p95Text),
+                                        mcColor));
+    } else {
+        m_aiMonteCarlo->setText(QStringLiteral("—"));
+    }
+
+    const bool preferLong = m_mcScore >= 0;  // evaluate the ensemble's favoured side
+    const double pWin = preferLong ? mc.pWinLong : mc.pWinShort;
+    // Win-rate needed to break even for this reward:risk.
+    const double breakeven =
+        ((m_mcTp + m_mcSl) > 0.0) ? (m_mcSl / (m_mcTp + m_mcSl)) : 0.0;
+    const double edge = pWin - breakeven;
+    const bool edgeValid =
+        mc.valid && (m_mcTp > 0.0) && (m_mcSl > 0.0) && (m_mcExposure > 0.0);
+    m_lastMcEdge = edge;
+    m_lastMcEdgeValid = edgeValid;
+    if (edgeValid) {
+        const QString side = preferLong ? QStringLiteral("BUY") : QStringLiteral("SELL");
+        const QString eColor = (edge > 0.02) ? green : ((edge < -0.02) ? red : amber);
+        const QString verdict = (edge > 0.02)
+                                    ? QStringLiteral("favourable")
+                                    : ((edge < -0.02) ? QStringLiteral("unfavourable")
+                                                      : QStringLiteral("marginal"));
+        const long edgePct = std::lround(edge * 100.0);
+        const QString edgeStr = ((edgePct >= 0) ? QStringLiteral("+") : QString())
+                                + QString::number(edgePct);
+        m_aiEdge->setText(colored(
+            QStringLiteral("%1 win %2% vs break-even %3% → %4% (%5)")
+                .arg(side)
+                .arg(std::lround(pWin * 100.0))
+                .arg(std::lround(breakeven * 100.0))
+                .arg(edgeStr, verdict),
+            eColor));
+    } else {
+        m_aiEdge->setText(colored(
+            QStringLiteral("set amount / stop-loss / take-profit"), amber));
+    }
 }
 
 void MainWindow::updateSignals()
@@ -2218,46 +2134,22 @@ void MainWindow::updateSignals()
     const double sl = m_stopLoss->value();
     const double tpFrac = (exposure > 0.0) ? (tp / exposure) : 0.0;
     const double slFrac = (exposure > 0.0) ? (sl / exposure) : 0.0;
-    const trading::McOutlook mc = trading::monteCarlo(series, m_lastPrice, kHorizonBars, tpFrac, slFrac, 1200);
-
-    if (mc.valid) {
-        const QString mcColor = (mc.pUp >= 0.55) ? green : ((mc.pUp <= 0.45) ? red : amber);
-        const QString p5Text = QString::number(mc.p5, 'f', trading::priceDecimals(mc.p5));
-        const QString p95Text = QString::number(mc.p95, 'f', trading::priceDecimals(mc.p95));
-        m_aiMonteCarlo->setText(colored(QStringLiteral("P(up) %1%  ·  range %2–%3")
-                                            .arg(std::lround(mc.pUp * 100.0))
-                                            .arg(p5Text, p95Text),
-                                        mcColor));
-    } else {
-        m_aiMonteCarlo->setText(QStringLiteral("—"));
-    }
-
-    const bool preferLong = score >= 0;  // evaluate the ensemble's favoured side
-    const double pWin = preferLong ? mc.pWinLong : mc.pWinShort;
-    // Win-rate needed to break even for this reward:risk.
-    const double breakeven = ((tp + sl) > 0.0) ? (sl / (tp + sl)) : 0.0;
-    const double edge = pWin - breakeven;
-    const bool edgeValid = mc.valid && (tp > 0.0) && (sl > 0.0) && (exposure > 0.0);
-    if (edgeValid) {
-        const QString side = preferLong ? QStringLiteral("BUY") : QStringLiteral("SELL");
-        const QString eColor = (edge > 0.02) ? green : ((edge < -0.02) ? red : amber);
-        const QString verdict = (edge > 0.02)
-                                    ? QStringLiteral("favourable")
-                                    : ((edge < -0.02) ? QStringLiteral("unfavourable")
-                                                      : QStringLiteral("marginal"));
-        const long edgePct = std::lround(edge * 100.0);
-        const QString edgeStr = ((edgePct >= 0) ? QStringLiteral("+") : QString())
-                                + QString::number(edgePct);
-        m_aiEdge->setText(colored(
-            QStringLiteral("%1 win %2% vs break-even %3% → %4% (%5)")
-                .arg(side)
-                .arg(std::lround(pWin * 100.0))
-                .arg(std::lround(breakeven * 100.0))
-                .arg(edgeStr, verdict),
-            eColor));
-    } else {
-        m_aiEdge->setText(colored(
-            QStringLiteral("set amount / stop-loss / take-profit"), amber));
+    // The 1200-path bootstrap Monte-Carlo used to run synchronously here — on
+    // every price tick, on the GUI thread. It now runs in the global thread
+    // pool; renderMonteCarlo() applies the result. While one run is in flight
+    // new ticks are skipped — the next tick re-triggers with fresher inputs.
+    if (!m_mcBusy && (m_aiMonteCarlo != nullptr)) {
+        m_mcBusy = true;
+        m_mcScore = score;
+        m_mcTp = tp;
+        m_mcSl = sl;
+        m_mcExposure = exposure;
+        const double mcPrice = m_lastPrice;
+        // series is captured by value — a cheap copy-on-write share for the worker.
+        m_mcWatcher.setFuture(QtConcurrent::run([series, mcPrice, tpFrac, slFrac] {
+            constexpr qint32 kMcHorizonBars = 3;  // 3 hours = 3 hourly bars
+            return trading::monteCarlo(series, mcPrice, kMcHorizonBars, tpFrac, slFrac, 1200);
+        }));
     }
 
     // 4) Market regime from the Hurst exponent.
@@ -2301,7 +2193,8 @@ void MainWindow::updateSignals()
         } else {
             // random-walk regime — nothing extra to add
         }
-        if (edgeValid && (edge < 0.0)) {
+        // From the last completed (async) Monte-Carlo run — at most one tick old.
+        if (m_lastMcEdgeValid && (m_lastMcEdge < 0.0)) {
             advice += QStringLiteral("; TP/SL give negative edge — widen TP or tighten entry");
         }
     }
@@ -2433,10 +2326,17 @@ void MainWindow::rebuildEventsView(bool force)
                              e.previous.isEmpty() ? QStringLiteral("—") : e.previous);
         }
         line += QStringLiteral("   →  %1 %2").arg(sym, guess.text);
+        // Activity proposal from the previous/forecast comparison: which side,
+        // and whether to act before or after the print (advisory only).
+        const trading::EventProposal prop = trading::proposeActivity(e);
+        line += QStringLiteral("   ·  %1 %2")
+                    .arg(prop.action, prop.actionable ? prop.timing : QString());
 
         auto *item = new QListWidgetItem(line, m_events);
         item->setForeground(impactColor(guess.dir));  // colour by predicted direction
-        item->setToolTip(eventTooltip(e, guess, sym));
+        item->setToolTip(QStringLiteral("%1<br><b>Proposal:</b> %2 %3.<br><i>%4.</i>")
+                             .arg(eventTooltip(e, guess, sym), prop.action.toHtmlEscaped(),
+                                  prop.timing.toHtmlEscaped(), prop.rationale.toHtmlEscaped()));
     }
 }
 
@@ -2558,7 +2458,7 @@ void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
     };
 
     // Fill the per-instrument rows (already sorted by net P/L, descending).
-    const qint32 pnlRows = static_cast<qint32>(s.perInstrument.size());
+    const auto pnlRows = static_cast<qint32>(s.perInstrument.size());
     m_pnlTable->setRowCount(pnlRows);
     for (qint32 i = 0; i < pnlRows; ++i) {
         const InstrumentPnl &r = s.perInstrument[i];
@@ -2732,9 +2632,13 @@ void MainWindow::checkCloseProposals(double price)
                 // inside the corridor — check the signal flip below
             }
         }
-        // Trigger 2 — the ensemble flipped hard against the position.
+        // Trigger 2 — the ensemble flipped hard against the position. The
+        // direction test is hoisted into a named bool so the decision stays
+        // within the 6 conditions clang-18 can instrument for MC/DC.
+        const bool signalAgainstPosition =
+            p.isBuy ? (m_lastSignalDir < 0) : (m_lastSignalDir > 0);
         if (reason.isEmpty() && (m_lastSignalDir != 0) && (m_lastSignalConf >= 60.0)
-            && ((p.isBuy && (m_lastSignalDir < 0)) || (!p.isBuy && (m_lastSignalDir > 0)))) {
+            && signalAgainstPosition) {
             reason = QStringLiteral("signal flipped to %1 with %2% confidence")
                          .arg((m_lastSignalDir > 0) ? QStringLiteral("BUY")
                                                     : QStringLiteral("SELL"))
@@ -2886,7 +2790,7 @@ void MainWindow::rebuildClosedTradesTable()
     double sumCosts = 0.0;
     qint32 costRows = 0;
 
-    const qint32 rows = static_cast<qint32>(m_closedTrades.size());
+    const auto rows = static_cast<qint32>(m_closedTrades.size());
     m_closedTable->setRowCount(rows);
     for (qint32 i = 0; i < rows; ++i) {
         const ClosedTrade &t = m_closedTrades[i];
@@ -3012,9 +2916,9 @@ void MainWindow::onScreenerRow(const ScreenerRow &row)
     // Replace any existing row for the same symbol (a rescan), else append; then
     // re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
     bool replaced = false;
-    for (qsizetype i = 0; i < m_screenerRows.size(); ++i) {
-        if (m_screenerRows[i].symbol == row.symbol) {
-            m_screenerRows[i] = row;
+    for (auto & m_screenerRow : m_screenerRows) {
+        if (m_screenerRow.symbol == row.symbol) {
+            m_screenerRow = row;
             replaced = true;
             break;
         }
@@ -3075,6 +2979,7 @@ void MainWindow::startRecommendationScan()
     m_client->scanInstruments();
     m_feeds->fetchInstrumentRatings();
     m_feeds->fetchInstrumentNews();
+    m_feeds->fetchIntradaySeries();
 }
 
 void MainWindow::onInstrumentRatings(const QHash<QString, WebRating> &ratingBySymbol)
@@ -3120,7 +3025,7 @@ void MainWindow::rebuildRecommendations()
     };
     auto ago = [](const QDateTime &t) -> QString {
         if (!t.isValid()) {
-            return QString();
+            return {};
         }
         const qint64 s = t.secsTo(QDateTime::currentDateTime());
         if (s < 60) {
@@ -3306,6 +3211,7 @@ trading::MarketSnapshot MainWindow::marketSnapshot() const
     m.events = m_eventList;
     m.fgValid = m_fgValid;
     m.fearGreed = m_fg;
+    m.intradayBySymbol = m_intradayBySymbol;
     return m;
 }
 
@@ -3318,6 +3224,7 @@ void MainWindow::startDecisionScan()
     m_client->scanInstruments();
     m_feeds->fetchInstrumentRatings();
     m_feeds->fetchInstrumentNews();
+    m_feeds->fetchIntradaySeries();
 }
 
 void MainWindow::openDecision()
@@ -3374,15 +3281,15 @@ void MainWindow::openDecision()
         m_decisionSources->setSelectionMode(QAbstractItemView::NoSelection);
         m_decisionSources->verticalHeader()->setVisible(false);
         m_decisionSources->horizontalHeader()->setStretchLastSection(true);
-        m_decisionSources->setMaximumHeight(210);  // six source rows
+        m_decisionSources->setMaximumHeight(240);  // seven source rows
         lay->addWidget(m_decisionSources);
 
         lay->addWidget(new QLabel(QStringLiteral("All instruments, ranked by composite:"),
                                   m_decisionDialog));
-        m_decisionRanked = new QTableWidget(0, 4, m_decisionDialog);
+        m_decisionRanked = new QTableWidget(0, 5, m_decisionDialog);
         m_decisionRanked->setHorizontalHeaderLabels(
             {QStringLiteral("Instrument"), QStringLiteral("Call"), QStringLiteral("Composite"),
-             QStringLiteral("Confidence")});
+             QStringLiteral("Confidence"), QStringLiteral("Stay out?")});
         m_decisionRanked->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_decisionRanked->setSelectionBehavior(QAbstractItemView::SelectRows);
         m_decisionRanked->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3486,7 +3393,7 @@ void MainWindow::rebuildDecision()
     // Fill the ranked table (all instruments), guarded so the programmatic refill isn't
     // mistaken for a user selection.
     m_decisionUpdatingRanked = true;
-    const qint32 rowCount = static_cast<qint32>(rows.size());
+    const auto rowCount = static_cast<qint32>(rows.size());
     m_decisionRanked->setRowCount(rowCount);
     for (qint32 i = 0; i < rowCount; ++i) {
         const trading::DecisionRow &d = rows[i];
@@ -3495,14 +3402,64 @@ void MainWindow::rebuildDecision()
         auto *call = new QTableWidgetItem(callWord(d.dir));
         call->setForeground(callColour(d.dir));
         call->setTextAlignment(Qt::AlignCenter);
+        // Mouse-over: what the call means and which source reads produced it.
+        QStringList why;
+        if (d.haveTech) {
+            why << QStringLiteral("technical ensemble %1 (%2%)")
+                       .arg(d.techLabel).arg(qRound(d.techConf));
+        }
+        if (d.haveRating) {
+            why << QStringLiteral("TradingView rating %1").arg(d.rating, 0, 'f', 2);
+        }
+        if (d.haveNews) {
+            why << QStringLiteral("news sentiment %1 (%2 headlines)")
+                       .arg(d.newsScore, 0, 'f', 2).arg(d.newsCount);
+        }
+        why << QStringLiteral("market regime %1").arg(d.regime, 0, 'f', 2);
+        if (d.haveCrowd) {
+            why << QStringLiteral("crowd tilt %1").arg(d.crowd, 0, 'f', 2);
+        }
+        if (d.haveYahoo) {
+            why << QStringLiteral("Yahoo intraday momentum %1").arg(d.yahoo, 0, 'f', 2);
+        }
+        const QString callMeaning =
+            (d.dir > 0) ? QStringLiteral("BUY: the weighted blend of the sources points up.")
+            : ((d.dir < 0) ? QStringLiteral("SELL: the weighted blend of the sources points down.")
+                           : QStringLiteral("No call: the sources cancel out — no directional "
+                                            "edge either way."));
+        call->setToolTip(QStringLiteral("%1\nComposite %2 from: %3.%4")
+                             .arg(callMeaning)
+                             .arg(d.composite, 0, 'f', 2)
+                             .arg(why.join(QStringLiteral("; ")))
+                             .arg(d.eventRisk ? QStringLiteral(
+                                      "\n⚠ Confidence trimmed: high-impact event within 6h.")
+                                              : QString()));
         auto *comp = new QTableWidgetItem(QStringLiteral("%1").arg(d.composite, 0, 'f', 2));
         comp->setTextAlignment(Qt::AlignCenter);
         auto *conf = new QTableWidgetItem(QStringLiteral("%1%").arg(qRound(d.confidence)));
         conf->setTextAlignment(Qt::AlignCenter);
+        // Signal-level stay-out gate: no direction, or too weak to act on. The
+        // focus instrument's plan below adds the cost-based STAY OUT reasons.
+        const bool stayOut = (d.dir == 0) || (d.confidence < 55.0);
+        auto *stay = new QTableWidgetItem(stayOut ? QStringLiteral("✋ stay out")
+                                                  : QStringLiteral("✓ tradeable"));
+        stay->setTextAlignment(Qt::AlignCenter);
+        stay->setForeground(stayOut ? QColor(0xe0, 0xb0, 0x00) : QColor(0x25, 0xb5, 0x63));
+        stay->setToolTip(
+            stayOut
+                ? ((d.dir == 0)
+                       ? QStringLiteral("Stay out: the sources give no direction for this "
+                                        "instrument right now.")
+                       : QStringLiteral("Stay out: composite confidence %1% is below the 55% "
+                                        "bar — too weak to pay the spread for.")
+                             .arg(qRound(d.confidence)))
+                : QStringLiteral("The signal is strong enough to consider — check the trade "
+                                 "plan below for the cost-based verdict before acting."));
         m_decisionRanked->setItem(i, 0, sym);
         m_decisionRanked->setItem(i, 1, call);
         m_decisionRanked->setItem(i, 2, comp);
         m_decisionRanked->setItem(i, 3, conf);
+        m_decisionRanked->setItem(i, 4, stay);
     }
 
     // Resolve the focus instrument: the user's manual pick if it's still listed, else
@@ -3600,7 +3557,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         m_decisionSources->setItem(row, 3, make(note));
     };
 
-    m_decisionSources->setRowCount(6);
+    m_decisionSources->setRowCount(7);
     if (focus != nullptr) {
         const QColor techColor = callColour(focus->techDir);
         const QString techConf =
@@ -3654,14 +3611,26 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                focus->haveCrowd ? QStringLiteral("%1").arg(focus->crowd, 0, 'f', 2)
                                 : QString(),
                QStringLiteral("extremes read contrarian"));
+        // Independent Yahoo Finance intraday momentum (1-minute session bars).
+        const qint32 yahooDir =
+            (focus->yahoo > 0.1) ? 1 : ((focus->yahoo < -0.1) ? -1 : 0);
+        setSrc(5, QStringLiteral("Yahoo intraday"),
+               focus->haveYahoo
+                   ? ((yahooDir > 0) ? QStringLiteral("above session mean")
+                                     : ((yahooDir < 0) ? QStringLiteral("below session mean")
+                                                       : QStringLiteral("at session mean")))
+                   : QStringLiteral("n/a"),
+               focus->haveYahoo ? callColour(yahooDir) : grey,
+               focus->haveYahoo ? QStringLiteral("%1").arg(focus->yahoo, 0, 'f', 2)
+                                : QString(),
+               QStringLiteral("1-min closes, yahoo finance"));
     } else {
-        for (qint32 r = 0; r < 5; ++r) {
-            setSrc(r, (r == 0) ? QStringLiteral("Technical ensemble")
-                      : ((r == 1) ? QStringLiteral("TradingView rating")
-                         : ((r == 2) ? QStringLiteral("News sentiment")
-                            : ((r == 3) ? QStringLiteral("VIX / calendar regime")
-                                        : QStringLiteral("Crowd (Fear & Greed)")))),
-                   QStringLiteral("—"), grey, QString(),
+        static const QStringList names = {
+            QStringLiteral("Technical ensemble"), QStringLiteral("TradingView rating"),
+            QStringLiteral("News sentiment"),     QStringLiteral("VIX / calendar regime"),
+            QStringLiteral("Crowd (Fear & Greed)"), QStringLiteral("Yahoo intraday")};
+        for (qint32 r = 0; r < static_cast<qint32>(names.size()); ++r) {
+            setSrc(r, names[r], QStringLiteral("—"), grey, QString(),
                    m_screenerRows.isEmpty() ? QStringLiteral("scanning…") : QString());
         }
     }
@@ -3681,7 +3650,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         m_aiAdvisor->isConfigured() ? (m_aiDecision.ok ? QStringLiteral("synthesised")
                                                        : QStringLiteral("pending / n/a"))
                                     : QStringLiteral("set anthropicApiKey to enable");
-    setSrc(5, QStringLiteral("Claude (AI)"), aiRead, aiColor, aiConf, aiNote);
+    setSrc(6, QStringLiteral("Claude (AI)"), aiRead, aiColor, aiConf, aiNote);
 
     // Build the costed plan first: the headline's suggested leverage below quotes
     // the plan's volatility-targeted recommendation, so the two never disagree.
@@ -3842,7 +3811,20 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
     in.fgValid = m_fgValid;
     in.fearGreed = m_fg;
 
-    const trading::TradePlan plan = trading::buildTradePlan(in);
+    // buildTradePlan runs its own Monte-Carlo — dispatch it to the thread pool
+    // so a scan or row click never stalls the GUI. The watcher tracks the
+    // newest request only, so a superseded plan is dropped automatically.
+    m_planPendingSymbol = focusSymbol;
+    m_planPendingIsCurrent = isCurrent;
+    m_planWatcher.setFuture(QtConcurrent::run(trading::buildTradePlan, in));
+}
+
+void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
+                                       const QString &focusSymbol, bool isCurrent)
+{
+    if (m_decisionPlanLabel == nullptr) {
+        return;
+    }
     if (!plan.valid) {
         m_decisionPlanLabel->setText(QString());
         return;
@@ -3952,6 +3934,44 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
     }
 
     m_decisionPlanLabel->setText(html);
+    // Mouse-over: what this verdict means, why it was reached, and what
+    // "expected edge after costs" is — the whole plan block explains itself.
+    QString verdictMeaning;
+    if (plan.verdict == QStringLiteral("BUY")) {
+        verdictMeaning = QStringLiteral(
+            "BUY — open a long position: the sources point up and the expected "
+            "win, after all costs, is positive.");
+    } else if (plan.verdict == QStringLiteral("SELL")) {
+        verdictMeaning = QStringLiteral(
+            "SELL — open a short position: the sources point down and the expected "
+            "win, after all costs, is positive.");
+    } else {
+        verdictMeaning = QStringLiteral(
+            "STAY OUT — do not open a position on this instrument now.");
+    }
+    if (!plan.verdictReason.isEmpty()) {
+        verdictMeaning += QStringLiteral("\nWhy: %1.").arg(plan.verdictReason);
+    }
+    if (!plan.riskNotes.isEmpty()) {
+        verdictMeaning += QStringLiteral("\nRisk notes: %1.")
+                              .arg(plan.riskNotes.join(QStringLiteral("; ")));
+    }
+    m_decisionPlanLabel->setToolTip(QStringLiteral(
+        "%1\n\n"
+        "Expected edge after costs = P(take-profit first) × TP amount − "
+        "P(stop first) × SL amount − the full cost bill (half the spread on "
+        "opening + half on closing + rollover per night + the ~3× weekend "
+        "rollover when the horizon crosses it).\n"
+        "Here: %2 × %3%4 − %5 × %3%6 − %3%7 = %3%8. Positive = the trade is "
+        "worth taking after costs; negative = the costs eat the edge.")
+        .arg(verdictMeaning)
+        .arg(plan.pWin, 0, 'f', 2)
+        .arg(m_ccy)
+        .arg(plan.tpAmount, 0, 'f', 0)
+        .arg(plan.pLose, 0, 'f', 2)
+        .arg(plan.slAmount, 0, 'f', 0)
+        .arg(plan.expectedCosts, 0, 'f', 2)
+        .arg(plan.expectedNet, 0, 'f', 2));
     if (m_decisionApply != nullptr) {
         m_decisionApply->setEnabled(plan.dir != 0);
     }
@@ -4281,14 +4301,7 @@ void MainWindow::onCloseClicked()
 
 QStringList MainWindow::markedPositionIds() const
 {
-    QStringList ids;
-    for (qint32 row = 0; row < m_positions->rowCount(); ++row) {
-        QTableWidgetItem *item = m_positions->item(row, 0);
-        if ((item != nullptr) && (item->checkState() == Qt::Checked)) {
-            ids << item->data(Qt::UserRole).toString();
-        }
-    }
-    return ids;
+    return (m_positionsModel != nullptr) ? m_positionsModel->markedIds() : QStringList{};
 }
 
 void MainWindow::appendLog(const QString &message, bool isError)

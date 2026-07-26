@@ -35,7 +35,7 @@ QString scalarToString(const QJsonValue &v)
     if (v.isDouble()) {
         return QString::number(v.toDouble(), 'g', 6);
     }
-    return QString();
+    return {};
 }
 
 // Map each tradable instrument to the macro regions whose calendar events tend to move

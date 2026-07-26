@@ -23,9 +23,10 @@ QList<double> ramp(qint32 n, double start, double step)
 
 class TestIndicators : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-IND-001 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-001 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_001_smaWindowAverage()
     {
         const QList<double> s = {1.0, 2.0, 3.0, 4.0, 5.0};
@@ -34,7 +35,8 @@ private slots:
         QCOMPARE(sma(s, 6), 0.0);  // shorter than the window
     }
 
-    //! @tstid TS-IND-002 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-002 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_002_rsiExtremes()
     {
         QCOMPARE(rsi({1.0, 2.0}, 14), -1.0);  // not enough data
@@ -44,7 +46,8 @@ private slots:
         QVERIFY(rsi(down, 14) < 50.0);
     }
 
-    //! @tstid TS-IND-003 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-003 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_003_stochasticRangePosition()
     {
         QList<double> s = ramp(20, 100.0, 1.0);
@@ -53,14 +56,16 @@ private slots:
         QCOMPARE(stochasticK(s, 14), 0.0);
     }
 
-    //! @tstid TS-IND-004 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-004 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_004_macdTrendSign()
     {
         QVERIFY(macdHistogram(ramp(80, 100.0, 1.0)) > 0.0);
         QVERIFY(macdHistogram(ramp(80, 200.0, -1.0)) < 0.0);
     }
 
-    //! @tstid TS-IND-005 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-005 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_005_bollingerPercentB()
     {
         // Alternating series: the mean sits centrally, the last value (high leg)
@@ -74,7 +79,8 @@ private slots:
         QVERIFY(b <= 1.5);
     }
 
-    //! @tstid TS-IND-006 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-006 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_006_volatilityConstantVsNoisy()
     {
         const QList<double> flat(30, 100.0);
@@ -86,14 +92,16 @@ private slots:
         QVERIFY(volatilityPct(noisy, 20) > 0.0);
     }
 
-    //! @tstid TS-IND-007 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-007 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_007_rocPercentChange()
     {
         const QList<double> s = {100.0, 100.0, 100.0, 100.0, 100.0, 110.0};
         QCOMPARE(roc(s, 5), 10.0);  // +10% over 5 bars
     }
 
-    //! @tstid TS-IND-008 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-008 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_008_returnsAndMean()
     {
         const QList<double> s = {100.0, 110.0, 99.0};
@@ -104,7 +112,8 @@ private slots:
         QVERIFY(std::abs(meanReturn(s, 2)) < 1e-12);  // +10% then −10%
     }
 
-    //! @tstid TS-IND-009 @verifies REQ-F-005 @design DES-DOM-IND
+    //! @tstid TS-IND-009 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
     void TS_IND_009_emaSeedAndPull()
     {
         const QList<double> s = {100.0, 100.0, 100.0, 200.0, 200.0, 200.0};

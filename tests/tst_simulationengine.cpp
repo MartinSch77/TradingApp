@@ -9,9 +9,10 @@
 
 class TestSimulationEngine : public QObject
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
-    //! @tstid TS-SIM-001 @verifies REQ-F-017 @design DES-SVC-SIM
+    //! @tstid TS-SIM-001 @design DES-SVC-SIM
+    // @relation(REQ-F-017, scope=function)
     void TS_SIM_001_snapshotAndTick()
     {
         SimulationEngine sim;
@@ -40,7 +41,8 @@ private slots:
         QVERIFY(price.count() >= 20);            // the feed moves on every tick
     }
 
-    //! @tstid TS-SIM-002 @verifies REQ-F-017 @design DES-SVC-SIM
+    //! @tstid TS-SIM-002 @design DES-SVC-SIM
+    // @relation(REQ-F-017, scope=function)
     void TS_SIM_002_openPositionBooksCashAndPortfolio()
     {
         SimulationEngine sim;
@@ -68,7 +70,8 @@ private slots:
         QVERIFY(cash.last().at(0).toDouble() < 100000.0);  // margin reserved
     }
 
-    //! @tstid TS-SIM-003 @verifies REQ-F-017 @design DES-SVC-SIM
+    //! @tstid TS-SIM-003 @design DES-SVC-SIM
+    // @relation(REQ-F-017, scope=function)
     void TS_SIM_003_stopLossAutoCloseAndSummary()
     {
         SimulationEngine sim;

@@ -60,6 +60,31 @@ double newsSentimentScore(const QList<NewsHeadline> &news, qint32 &countOut)
                : 0.0;
 }
 
+double intradayTilt(const QList<double> &closes)
+{
+    constexpr qsizetype kMinPoints = 30;  // enough of the session to mean something
+    if (closes.size() < kMinPoints) {
+        return 0.0;
+    }
+    double sum = 0.0;
+    for (const double c : closes) {
+        sum += c;
+    }
+    const double mean = sum / static_cast<double>(closes.size());
+    double var = 0.0;
+    for (const double c : closes) {
+        var += (c - mean) * (c - mean);
+    }
+    const double sigma = std::sqrt(var / static_cast<double>(closes.size()));
+    if (sigma <= 0.0) {
+        return 0.0;  // flat series — no read
+    }
+    // Where the latest price sits in the session's own distribution: a z-score
+    // against the session mean, softened so ±2σ maps to the full ±1 tilt.
+    const double z = (closes.last() - mean) / sigma;
+    return std::clamp(z / 2.0, -1.0, 1.0);
+}
+
 double crowdTilt(double fearGreed)
 {
     const double fg = std::clamp(fearGreed, 0.0, 100.0);
@@ -145,6 +170,13 @@ QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
             d.crowd = crowdTilt(m.fearGreed);
         }
 
+        // Independent Yahoo intraday momentum, when a session series arrived.
+        const QList<double> intraday = m.intradayBySymbol.value(d.symbol);
+        if (intraday.size() >= 30) {
+            d.haveYahoo = true;
+            d.yahoo = intradayTilt(intraday);
+        }
+
         // Weighted blend over the AVAILABLE sources (weights renormalised) plus the
         // always-present market regime.
         double num = 0.0;
@@ -163,6 +195,10 @@ QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
         }
         if (d.haveCrowd) {
             num += 0.10 * d.crowd;
+            den += 0.10;
+        }
+        if (d.haveYahoo) {
+            num += 0.10 * d.yahoo;
             den += 0.10;
         }
         num += 0.15 * regime;

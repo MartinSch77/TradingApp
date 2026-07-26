@@ -51,26 +51,26 @@ public:
     // restrict the (account-wide) real portfolio to just these instruments.
     void setTradableSymbols(const QStringList &symbols);
 
-    const Instrument &instrument() const & { return m_instrument; }
+    [[nodiscard]] const Instrument &instrument() const & { return m_instrument; }
     // Latest bid/ask (0 until a real quote arrives, e.g. in simulation mode): a buy
     // opens near the ask, a sell near the bid, so their gap is the spread the trade
     // crosses on opening. Used by the UI to estimate the opening cost.
-    double lastBid() const { return m_lastBid; }
-    double lastAsk() const { return m_lastAsk; }
-    const Config &config() const & { return m_config; }
+    [[nodiscard]] double lastBid() const { return m_lastBid; }
+    [[nodiscard]] double lastAsk() const { return m_lastAsk; }
+    [[nodiscard]] const Config &config() const & { return m_config; }
 
     // Live spread (percent of mid) for any listed symbol, from the most recent
     // bulk rates snapshot (the periodic tradeability refresh keeps it warm for
     // every resolved instrument). 0 while unknown.
-    double spreadPctFor(const QString &symbol) const;
+    [[nodiscard]] double spreadPctFor(const QString &symbol) const;
     // Cached per-unit rollover fees for any listed symbol (invalid while unknown).
-    InstrumentFees feesFor(const QString &symbol) const;
+    [[nodiscard]] InstrumentFees feesFor(const QString &symbol) const;
     // Fetch the rollover fees for a listed symbol if they aren't cached yet
     // (public etorostatic feed — cheap, outside the rate-limited API). The result
     // arrives via instrumentFeesUpdated; a no-op in simulation mode.
     void requestFees(const QString &symbol);
 
-public slots:
+
     // amount is the cash to invest (order currency); isBuy=false opens a short.
     // stopLossAmount / takeProfitAmount are the loss/profit in account currency at
     // which the position should auto-close (0 = none). trailingStop makes the
@@ -141,7 +141,7 @@ private:
     using JsonHandler = JsonHttp::Handler;
     // Build a request to `url` with the shared auth + tracing headers (x-api-key,
     // x-user-key, a fresh x-request-id, Accept: application/json).
-    QNetworkRequest makeRequest(const QUrl &url) const;
+    [[nodiscard]] QNetworkRequest makeRequest(const QUrl &url) const;
     QNetworkReply *apiGet(const QString &path, const QUrlQuery &query);
     QNetworkReply *apiPost(const QString &path, const QJsonObject &body);
     QNetworkReply *apiPatch(const QString &path, const QJsonObject &body);
@@ -201,7 +201,7 @@ private:
     void closePositionReal(const QString &positionId);
     void modifyPositionReal(const QString &positionId, double stopLossRate,
                             double takeProfitRate, bool trailingStop);
-    QString accountSegment() const;  // "" for real, "/demo" for demo
+    [[nodiscard]] QString accountSegment() const;  // "" for real, "/demo" for demo
 
     // ---- simulation orchestration ------------------------------------------
     // The synthetic feed + virtual account live in SimulationEngine; this emits

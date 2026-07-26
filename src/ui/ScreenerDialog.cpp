@@ -18,7 +18,7 @@
 #include <cmath>
 
 ScreenerDialog::ScreenerDialog(QWidget *parent)
-    : QDialog(parent)
+    : QDialog(parent), m_table(new QTableWidget(this)), m_status(new QLabel(this))
 {
     setWindowTitle(QStringLiteral("Leverage screener"));
     resize(700, 540);
@@ -33,7 +33,7 @@ ScreenerDialog::ScreenerDialog(QWidget *parent)
     intro->setWordWrap(true);
     lay->addWidget(intro);
 
-    m_table = new QTableWidget(this);
+    
     m_table->setColumnCount(7);
     m_table->setHorizontalHeaderLabels(
         {QStringLiteral("Instrument"), QStringLiteral("Max lev"), QStringLiteral("Signal"),
@@ -62,7 +62,7 @@ ScreenerDialog::ScreenerDialog(QWidget *parent)
     lay->addWidget(m_table);
 
     auto *footer = new QHBoxLayout;
-    m_status = new QLabel(this);
+    
     m_rescan = new QPushButton(QStringLiteral("Rescan"), this);
     static_cast<void>(
         connect(m_rescan, &QPushButton::clicked, this, &ScreenerDialog::rescanRequested));
@@ -157,7 +157,7 @@ void ScreenerDialog::updateRows(const QList<ScreenerRow> &rows, bool vixValid, d
         return a.symbol < b.symbol;
     });
 
-    const qint32 viewCount = static_cast<qint32>(views.size());
+    const auto viewCount = static_cast<qint32>(views.size());
     m_table->setRowCount(viewCount);
     for (qint32 row = 0; row < viewCount; ++row) {
         const View &v = views[row];

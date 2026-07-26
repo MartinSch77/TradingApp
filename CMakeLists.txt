@@ -5,14 +5,14 @@ project(TradingApp
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Qt 6.10.2 lives under ~/Qt on this machine; allow overriding via -DCMAKE_PREFIX_PATH.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent)
 
 qt_standard_project_setup()
 
@@ -25,6 +25,7 @@ qt_standard_project_setup()
 # stays one-way even as the code grows.
 # ---------------------------------------------------------------------------
 qt_add_library(trading_domain STATIC
+    src/domain/Models.cpp
     src/domain/Models.h
     src/domain/Indicators.cpp
     src/domain/Indicators.h
@@ -69,6 +70,8 @@ qt_add_executable(TradingApp
     src/main.cpp
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/PositionsModel.cpp
+    src/ui/PositionsModel.h
     src/ui/PriceChart.cpp
     src/ui/PriceChart.h
     src/ui/ScreenerDialog.cpp
@@ -82,6 +85,7 @@ target_link_libraries(TradingApp PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Charts
+    Qt6::Concurrent
 )
 
 # Put the binary directly in the build dir root for convenience.

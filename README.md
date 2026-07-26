@@ -1,7 +1,6 @@
 # eToro Trader (Qt)
 
-<!-- After publishing, replace OWNER with your GitHub user/org: -->
-![CI](https://github.com/OWNER/TradingApp/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
 A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,

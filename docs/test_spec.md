@@ -6,7 +6,9 @@
 Requirement-based test specification. Every test case has a stable ID
 (`TS-…`), links to the requirement(s) it verifies and the design element it
 exercises, and maps 1:1 to a Qt Test function of the same name in
-`tests/tst_*.cpp` (tagged there with `@tstid` / `@verifies` / `@design`).
+`tests/tst_*.cpp` (tagged there with `@tstid` / `@design` plus the StrictDoc
+source marker `@relation(REQ-…, scope=function)` naming the verified
+requirements).
 Test results are read from the JUnit XML files the suite writes to
 `test-results/` (see `tools/run_tests.sh`); the traceability matrix
 (`tools/trace_report.py`) joins spec ↔ implementation ↔ result ↔ design ↔
@@ -59,6 +61,7 @@ event loop / local mock HTTP server).
 | TS-DEC-003 | U | `marketRegime`: risk-off for VIX ≥ 25, risk-on for VIX < 16; imminent high-impact event sets the event-risk flag. |
 | TS-DEC-004 | U | `computeDecisionRows` renormalises weights over available sources, applies the crowd tilt when Fear & Greed is valid, and sorts by confidence descending. |
 | TS-DEC-005 | U | `buildDecisionEvidence` names the crowd reading and the actionable candidates. |
+| TS-DEC-006 | U | `intradayTilt` reads the session position (rising > 0.5, falling < −0.5, flat/short = 0) and a bullish Yahoo intraday series lifts the composite (REQ-F-022). |
 
 ## Trade planner (tests/tst_tradeplan.cpp, DES-DOM-PLAN, REQ-F-010/-011/-012)
 
@@ -85,6 +88,7 @@ event loop / local mock HTTP server).
 |----|---|------|
 | TS-EVT-001 | U | `parseNum` extracts leading numbers from feed strings ("0.3%", "-0.2%", "215K"). |
 | TS-EVT-002 | U | `guessImpact` returns a non-empty text and a direction in {−1, 0, +1} keyed to the event type. |
+| TS-EVT-003 | U | `proposeActivity` (REQ-F-023): high-impact hot CPI → SELL after the print; medium-impact stronger PMI → BUY before the release; missing forecast/previous → STAY OUT with a reason. |
 
 ## Configuration (tests/tst_config.cpp, DES-SVC-CFG, REQ-F-017/-018, REQ-N-004) — integration
 
@@ -124,3 +128,11 @@ UI-level requirements (REQ-F-001…004, -013, -015, -016 display path, -019,
 REQ-N-001, REQ-N-005) are exercised manually / by the offscreen screenshot
 QA aid and are reported as *gaps* in the traceability matrix until automated
 GUI tests exist — the matrix makes this visible rather than hiding it.
+
+## Performance benchmarks (tests/tst_benchmarks.cpp, REQ-N-006)
+
+| ID | L | Case |
+|----|---|------|
+| TS-PERF-001 | U | `monteCarlo` (1200 paths) benchmark over a deterministic 240-bar walk — QBENCHMARK wall-clock per iteration. |
+| TS-PERF-002 | U | `buildTradePlan` benchmark (full plan incl. its Monte-Carlo) over the same walk. |
+| TS-PERF-003 | U | `computeDecisionRows` benchmark over 25 instruments with intraday series. |

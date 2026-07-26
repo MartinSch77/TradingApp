@@ -3,12 +3,19 @@
 @page requirements Software Requirements
 @tableofcontents
 
-Requirement IDs are stable and referenced from the design (`docs/design.md`),
-the test specification (`docs/test_spec.md`), the test implementations
-(`tests/tst_*.cpp`, tag `@verifies`) and the generated traceability matrix
+<!-- GENERATED FILE — do not edit. Source of truth:
+     requirements/requirements.sdoc (StrictDoc). Regenerate with
+     tools/make_requirements.sh -->
+
+This page is **generated** from `requirements/requirements.sdoc`
+(requirements-as-code, StrictDoc) — edit there and run
+`tools/make_requirements.sh`. Requirement IDs are stable and referenced
+from the design (`docs/design.md`), the test specification
+(`docs/test_spec.md`), the test implementations (`tests/tst_*.cpp`, marker
+`@relation(REQ-…, scope=function)`) and the generated traceability matrix
 (`docs/traceability.html`). Format: `REQ-F-xxx` functional, `REQ-N-xxx`
-non-functional. Each requirement lists its ASPICE-style attributes:
-verification method (T = test, A = analysis, I = inspection) and status.
+non-functional. Verification method: T = test, A = analysis,
+I = inspection.
 
 ## Functional requirements
 
@@ -31,9 +38,12 @@ verification method (T = test, A = analysis, I = inspection) and status.
 | REQ-F-015 | The app shall infer per-instrument market-open state from quote freshness and block opening orders on closed markets. | T |
 | REQ-F-016 | The app shall display account figures in EUR using the live EUR/USD rate and convert user inputs back to the account currency for the API. | T |
 | REQ-F-017 | Without API credentials the app shall run fully functional against a self-contained simulation (synthetic feed, virtual account, closed-trade log). | T |
-| REQ-F-018 | Configuration shall be layered: built-in defaults ← `config.json` (non-secret) ← `apiKeyEtoro.json` (secrets, git-ignored) ← environment variables. | T |
+| REQ-F-018 | Configuration shall be layered: built-in defaults ← config.json (non-secret) ← apiKeyEtoro.json (secrets, git-ignored) ← environment variables. | T |
 | REQ-F-019 | The app shall display an independent web reference quote (Yahoo Finance) for the selected instrument with its exchange timestamp and the delta versus the eToro rate. | T |
 | REQ-F-020 | The app shall obtain market context from public feeds: CBOE VIX, TradingView technical ratings, per-instrument news headlines, and a macro-economic calendar with per-event impact heuristics. | T |
+| REQ-F-021 | The decision window shall explain its conclusions in place: the trade-plan verdict carries a mouse-over stating what the verdict means and why it was reached (incl. the STAY OUT reason), the "expected edge after costs" figure carries a mouse-over defining it with the plan''s own numbers, each ranked-list call carries a mouse-over with its source breakdown, and a dedicated Stay-out column marks instruments not worth trading right now. | I |
+| REQ-F-022 | The app shall obtain an independent Yahoo Finance intraday close series (1-minute session bars) per instrument and blend a session-momentum tilt derived from it into the weighted composite call, renormalised with the other sources and shown in the decision window's sources table. | T |
+| REQ-F-023 | For each upcoming calendar event the app shall propose an advisory-only activity: the side (BUY/SELL, from the event class and the forecast-vs-previous change) and the timing — after the print for high-impact events (gap/whipsaw risk), before the release for lower-impact consensus — or STAY OUT with the reason when no direction can be derived. Proposals are never executed automatically. | T |
 
 ## Non-functional requirements
 
@@ -44,3 +54,4 @@ verification method (T = test, A = analysis, I = inspection) and status.
 | REQ-N-003 | REST access shall survive transient failures: idempotent GETs are retried on 429/5xx honouring Retry-After / RateLimit-Reset; non-GETs are never auto-retried. | T |
 | REQ-N-004 | No secret (API key, user key) shall be stored in version control. | I/T |
 | REQ-N-005 | Money-moving actions shall require explicit user confirmation (double-press) and shall never be triggered by advisory features (plans, watchdog, AI). | T/I |
+| REQ-N-006 | Compute-heavy work (Monte-Carlo, trade-plan building) shall run off the GUI thread; the per-tick open-trades refresh shall be allocation-free (model/view, in-place dataChanged); the domain hot paths shall be covered by deterministic benchmarks (tst_benchmarks) and a profiling entry point (tools/profile.sh) with an optimized release build (./build_all.sh release) as the measuring target. | T/A |

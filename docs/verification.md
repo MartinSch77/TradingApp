@@ -19,10 +19,27 @@ The JUnit results feed the traceability matrix
 which shows for every requirement the design element, the specified test, the
 implementing test function and its latest verdict — and lists every gap.
 
+## Requirements-as-code (StrictDoc)
+
+The requirements live in `requirements/requirements.sdoc` (StrictDoc, single
+source of truth, versioned in git); `tools/make_requirements.sh` validates
+and exports them to `docs/strictdoc/html/` — including the requirement ↔
+source-code traceability built from the `@relation(REQ-…, scope=function)`
+markers the test functions carry — and regenerates the `docs/requirements.md`
+Doxygen page from the same file. **Doorstop** was evaluated hands-on for the
+same role (versioned requirement items + links in git; the pilot with
+REQ/TST documents, linking and validation worked); it was *not* adopted,
+because it would duplicate the requirement set StrictDoc already owns —
+one source of truth beats two. Its distinctive feature (fingerprint-based
+suspect-link review on item changes) is the one reason to reconsider.
+
 ## Structural coverage — line, branch, MC/DC
 
+    tools/coverage.sh        # auto: Squish Coco when installed AND licensed,
+                             # otherwise both free modes below
     tools/coverage.sh gcov   # GCC --coverage → lcov/genhtml, line + branch
     tools/coverage.sh mcdc   # clang-18 -fcoverage-mcdc → llvm-cov, incl. MC/DC
+    tools/coverage.sh coco   # Squish Coco csg++ build, incl. native MC/DC
 
 Both reports land under `coverage/`. MC/DC (modified condition/decision
 coverage) is measured with Clang 18's source-based coverage — each complex
@@ -34,18 +51,44 @@ gaps in the traceability report).
 
 **Squish Coco** (Qt Group's coverage tool, installed at `/opt/SquishCoco`)
 measures MC/DC natively and its CocoAI feature can propose test inputs that
-close specific uncovered conditions. Its license on this machine is expired
-(`cocolic --check`); once renewed, build with the `coveragescanner` compiler
-wrappers and import the `.csmes/.csexe` into the CoverageBrowser — until
-then, the clang MC/DC path above is the measuring tool of record.
+close specific uncovered conditions. `tools/coverage.sh` auto-detects it and
+uses it as the coverage tool whenever the license is valid (`cocolic
+--check`); with the license currently expired the script falls back to the
+clang MC/DC path above as the measuring tool of record. Note that clang-18
+cannot instrument decisions with more than 6 conditions for MC/DC, so the
+sources keep every decision at ≤ 6 conditions (keyword groups are tested via
+`hasAny()`/`std::any_of`).
+
+## Performance (REQ-N-006)
+
+    ./build_all.sh release   # optimized RelWithDebInfo build (frame pointers kept)
+    tools/profile.sh         # perf / gperftools hotspots over the release binary
+    build*/tests/tst_benchmarks   # deterministic QBENCHMARK numbers
+
+Compute-heavy work (Monte-Carlo, trade-plan building) runs off the GUI thread
+(QtConcurrent); the open-trades table refreshes allocation-free through
+`PositionsModel` (in-place `dataChanged`). Measured 2026-07-26 (Debug →
+release): monteCarlo 0.29 → 0.086 ms, buildTradePlan 1.59 → 0.73 ms,
+computeDecisionRows over 25 instruments 4.5 → 0.22 ms per iteration.
 
 ## Dynamic runtime-error evidence (sanitizers)
 
-    tools/sanitize.sh asan-ubsan   # AddressSanitizer + UBSan over the suite
-    tools/sanitize.sh valgrind     # independent memcheck pass
+    tools/sanitize.sh              # all three checkers in sequence
+    tools/sanitize.sh asan-ubsan   # GCC ASan (incl. LeakSanitizer) + UBSan
+    tools/sanitize.sh tsan         # clang-18 ThreadSanitizer (data races)
+    tools/sanitize.sh valgrind     # memcheck: --leak-check=full
+                                   # --show-leak-kinds=all --track-origins=yes
+                                   # --error-exitcode=1
 
 A clean ASan+UBSan run demonstrates absence of out-of-bounds access,
-use-after-free and undefined behaviour **on the executed paths**.
+use-after-free, leaks and undefined behaviour **on the executed paths**; the
+TSan run adds data races and lock-order inversions. Every mode normalizes its
+findings into `analysis-results/sanitize-<mode>.txt`
+(`tools/parse_sanitizer_log.py`), which the next `axivion_ci` run imports
+onto the dashboard (providers `asan-ubsan`, `tsan`, `valgrind` — see
+`axivion/external_import.py`); the raw logs sit next to them as
+`sanitize-<mode>.raw.txt`. Valgrind "still reachable" blocks stay in the raw
+log only — they are Qt/OpenSSL runtime allocations, not actionable findings.
 
 ### On *proving* the absence of runtime errors
 

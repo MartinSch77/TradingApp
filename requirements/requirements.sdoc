@@ -1,0 +1,220 @@
+[DOCUMENT]
+TITLE: TradingApp — Software Requirement Specification (SRS)
+UID: SRS-TRADINGAPP
+
+[GRAMMAR]
+ELEMENTS:
+- TAG: REQUIREMENT
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: True
+  - TITLE: VERIFICATION
+    TYPE: String
+    REQUIRED: True
+  - TITLE: TITLE
+    TYPE: String
+    REQUIRED: True
+  - TITLE: STATEMENT
+    TYPE: String
+    REQUIRED: True
+  RELATIONS:
+  - TYPE: File
+
+[TEXT]
+STATEMENT: >>>
+This document is the single source of truth for the TradingApp requirements
+(requirements-as-code, StrictDoc format). Requirement IDs are stable and
+referenced from the design (``docs/design.md``), the test specification
+(``docs/test_spec.md``), the test implementations (``tests/tst_*.cpp``, marker
+``@relation(REQ-…, scope=function)``) and the generated traceability matrix
+(``docs/traceability.html``). ``docs/requirements.md`` is GENERATED from this
+file by ``tools/make_requirements.sh`` — do not edit it by hand.
+
+Format: ``REQ-F-xxx`` functional, ``REQ-N-xxx`` non-functional. VERIFICATION:
+T = test, A = analysis, I = inspection.
+<<<
+
+[[SECTION]]
+TITLE: Functional requirements
+
+[REQUIREMENT]
+UID: REQ-F-001
+VERIFICATION: T
+TITLE: Instrument resolution gates trading
+STATEMENT: The app shall resolve a user-selected instrument symbol to its eToro instrument id and only enable trading once the resolution is confirmed.
+
+[REQUIREMENT]
+UID: REQ-F-002
+VERIFICATION: T
+TITLE: Live price polling and chart
+STATEMENT: The app shall poll live prices for the selected instrument and display them in a chart and price read-out.
+
+[REQUIREMENT]
+UID: REQ-F-003
+VERIFICATION: T
+TITLE: Guarded market orders with SL/TP
+STATEMENT: The app shall place market orders with a configurable cash amount, leverage, stop-loss and take-profit (entered as account-currency amounts), guarded by a deliberate double-press confirmation.
+
+[REQUIREMENT]
+UID: REQ-F-004
+VERIFICATION: T
+TITLE: Exposure cap and order cooldown
+STATEMENT: The app shall reject orders that would exceed a configured total open-exposure cap, and enforce a cooldown between consecutive orders.
+
+[REQUIREMENT]
+UID: REQ-F-005
+VERIFICATION: T
+TITLE: Technical indicators as pure functions
+STATEMENT: The app shall compute the classic technical indicators (SMA, EMA, RSI, stochastic %K, MACD histogram, Bollinger %B, volatility, ROC, mean return) as pure functions over a close-price series.
+
+[REQUIREMENT]
+UID: REQ-F-006
+VERIFICATION: T
+TITLE: Statistical forecasts
+STATEMENT: The app shall provide statistical forecasts: OLS regression (slope, R²), k-nearest-neighbour analog forecast, Hurst exponent, and a bootstrap Monte-Carlo outlook reporting P(up), a 5–95% range, and the probabilities that a long/short hits take-profit before stop-loss and vice versa.
+
+[REQUIREMENT]
+UID: REQ-F-007
+VERIFICATION: T
+TITLE: Directional signal ensemble
+STATEMENT: The app shall combine the indicators into a directional ensemble (BUY / SELL / NEUTRAL with a confidence), and trim the confidence in high-VIX and imminent-event conditions.
+
+[REQUIREMENT]
+UID: REQ-F-008
+VERIFICATION: T
+TITLE: Weighted composite call per instrument
+STATEMENT: The app shall blend the available per-instrument sources (technical ensemble, TradingView rating, news sentiment, market regime, crowd sentiment) into a weighted composite call per instrument, renormalising weights over available sources, and rank instruments by confidence.
+
+[REQUIREMENT]
+UID: REQ-F-009
+VERIFICATION: T
+TITLE: Crowd-sentiment tilt (Fear & Greed)
+STATEMENT: The app shall obtain crowd sentiment (CNN Fear & Greed, 0–100) and tilt the composite with it: mildly with the crowd for ordinary readings, contrarian at extremes (≤20, ≥80).
+
+[REQUIREMENT]
+UID: REQ-F-010
+VERIFICATION: T
+TITLE: Costed trade plan with risk factor
+STATEMENT: The app shall build a costed trade plan per instrument: a BUY/SELL/STAY-OUT verdict with reason, Monte-Carlo win/lose probabilities against the proposed barriers, a break-even comparison, a 1–5 risk factor with reasons, and a volatility-targeted leverage recommendation that keeps the loss-at-stop within 25% of the stake, stepped to the instrument's allowed leverage values and cap.
+
+[REQUIREMENT]
+UID: REQ-F-011
+VERIFICATION: T
+TITLE: Cost bill: spread, rollover, weekend
+STATEMENT: The trade plan's cost bill shall account for half the spread on opening and half on closing, the per-night rollover fee, and the one-off ~3× weekend rollover whenever the holding window includes Friday–Sunday; the expected edge shall be reported net of these costs.
+
+[REQUIREMENT]
+UID: REQ-F-012
+VERIFICATION: T
+TITLE: Trade-panel defaults and auto SL/TP
+STATEMENT: The trade panel shall default the invest amount to 3750 (display currency) and auto-propose SL/TP from recent volatility (stop ≈ 1.5σ of the horizon move, TP = 1.5 × SL) until the user edits them; an instrument switch re-enables the automatics.
+
+[REQUIREMENT]
+UID: REQ-F-013
+VERIFICATION: T
+TITLE: Close watchdog proposes, never executes
+STATEMENT: The app shall propose (never execute) closing an open position when the live price leaves the prediction corridor against it or the ensemble flips against it with ≥60% confidence, with a per-position log cooldown.
+
+[REQUIREMENT]
+UID: REQ-F-014
+VERIFICATION: T
+TITLE: Closed-trades lookback with costs
+STATEMENT: The app shall list closed trades over a selectable 7–13-week lookback with the API's net P/L and rollover fees plus estimated open/close spread costs (half current spread × notional per side), and summarise per instrument with a Costs column = spread costs + fees.
+
+[REQUIREMENT]
+UID: REQ-F-015
+VERIFICATION: T
+TITLE: Market-open inference blocks orders
+STATEMENT: The app shall infer per-instrument market-open state from quote freshness and block opening orders on closed markets.
+
+[REQUIREMENT]
+UID: REQ-F-016
+VERIFICATION: T
+TITLE: EUR display with live conversion
+STATEMENT: The app shall display account figures in EUR using the live EUR/USD rate and convert user inputs back to the account currency for the API.
+
+[REQUIREMENT]
+UID: REQ-F-017
+VERIFICATION: T
+TITLE: Full-featured simulation without credentials
+STATEMENT: Without API credentials the app shall run fully functional against a self-contained simulation (synthetic feed, virtual account, closed-trade log).
+
+[REQUIREMENT]
+UID: REQ-F-018
+VERIFICATION: T
+TITLE: Layered configuration
+STATEMENT: 'Configuration shall be layered: built-in defaults ← config.json (non-secret) ← apiKeyEtoro.json (secrets, git-ignored) ← environment variables.'
+
+[REQUIREMENT]
+UID: REQ-F-019
+VERIFICATION: T
+TITLE: Independent web reference quote
+STATEMENT: The app shall display an independent web reference quote (Yahoo Finance) for the selected instrument with its exchange timestamp and the delta versus the eToro rate.
+
+[REQUIREMENT]
+UID: REQ-F-020
+VERIFICATION: T
+TITLE: Public market-context feeds
+STATEMENT: 'The app shall obtain market context from public feeds: CBOE VIX, TradingView technical ratings, per-instrument news headlines, and a macro-economic calendar with per-event impact heuristics.'
+
+[REQUIREMENT]
+UID: REQ-F-021
+VERIFICATION: I
+TITLE: Decision window explains itself in place
+STATEMENT: 'The decision window shall explain its conclusions in place: the trade-plan verdict carries a mouse-over stating what the verdict means and why it was reached (incl. the STAY OUT reason), the "expected edge after costs" figure carries a mouse-over defining it with the plan''s own numbers, each ranked-list call carries a mouse-over with its source breakdown, and a dedicated Stay-out column marks instruments not worth trading right now.'
+
+[REQUIREMENT]
+UID: REQ-F-022
+VERIFICATION: T
+TITLE: Yahoo intraday momentum as a composite source
+STATEMENT: The app shall obtain an independent Yahoo Finance intraday close series (1-minute session bars) per instrument and blend a session-momentum tilt derived from it into the weighted composite call, renormalised with the other sources and shown in the decision window's sources table.
+
+[REQUIREMENT]
+UID: REQ-F-023
+VERIFICATION: T
+TITLE: Event-based activity proposal
+STATEMENT: 'For each upcoming calendar event the app shall propose an advisory-only activity: the side (BUY/SELL, from the event class and the forecast-vs-previous change) and the timing — after the print for high-impact events (gap/whipsaw risk), before the release for lower-impact consensus — or STAY OUT with the reason when no direction can be derived. Proposals are never executed automatically.'
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Non-functional requirements
+
+[REQUIREMENT]
+UID: REQ-N-001
+VERIFICATION: A/I
+TITLE: Cross-platform build (desktop + mobile)
+STATEMENT: The app shall build and run on Linux and Windows desktops with Qt ≥ 6.5, and shall be buildable for Android (APK via androiddeployqt) and iOS from the same CMake project.
+
+[REQUIREMENT]
+UID: REQ-N-002
+VERIFICATION: A/T
+TITLE: Pure domain layer, linker-enforced layering
+STATEMENT: The domain layer shall be pure (Qt Core only, no I/O, no UI); layering (ui → services → domain) shall be enforced by the linker.
+
+[REQUIREMENT]
+UID: REQ-N-003
+VERIFICATION: T
+TITLE: Resilient REST access
+STATEMENT: 'REST access shall survive transient failures: idempotent GETs are retried on 429/5xx honouring Retry-After / RateLimit-Reset; non-GETs are never auto-retried.'
+
+[REQUIREMENT]
+UID: REQ-N-004
+VERIFICATION: I/T
+TITLE: No secrets in version control
+STATEMENT: No secret (API key, user key) shall be stored in version control.
+
+[REQUIREMENT]
+UID: REQ-N-005
+VERIFICATION: T/I
+TITLE: Explicit confirmation for money-moving actions
+STATEMENT: Money-moving actions shall require explicit user confirmation (double-press) and shall never be triggered by advisory features (plans, watchdog, AI).
+
+[REQUIREMENT]
+UID: REQ-N-006
+VERIFICATION: T/A
+TITLE: GUI-thread responsiveness and measured hot paths
+STATEMENT: 'Compute-heavy work (Monte-Carlo, trade-plan building) shall run off the GUI thread; the per-tick open-trades refresh shall be allocation-free (model/view, in-place dataChanged); the domain hot paths shall be covered by deterministic benchmarks (tst_benchmarks) and a profiling entry point (tools/profile.sh) with an optimized release build (./build_all.sh release) as the measuring target.'
+
+[[/SECTION]]

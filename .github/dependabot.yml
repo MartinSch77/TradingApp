@@ -1,0 +1,8 @@
+# Keep the GitHub Actions used by CI current. (C++/Qt/pipx dependencies are
+# managed by ./setup.sh update, not by Dependabot.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

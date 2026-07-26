@@ -1,24 +1,61 @@
-# eToro SPX500 Trader (Qt)
+# eToro Trader (Qt)
 
-A small Qt 6 desktop app to trade **SPX500** through the **official eToro public
-API** ([api-portal.etoro.com](https://api-portal.etoro.com/), base URL
-`https://public-api.etoro.com/api`).
+<!-- After publishing, replace OWNER with your GitHub user/org: -->
+![CI](https://github.com/OWNER/TradingApp/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+
+A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,
+GER40, …), forex, commodities and eToro's thematic baskets — through the
+**official eToro public API**
+([api-portal.etoro.com](https://api-portal.etoro.com/), base URL
+`https://public-api.etoro.com/api`). SPX500 is merely the start-up default;
+the instrument selector switches everything live.
 
 It provides:
 
-- a **live time chart** of the SPX500 price (Qt Charts);
-- an **amount** field and a **leverage** selector;
-- **BUY** and **SELL** buttons to open a market position;
-- a table of **open trades** with live P/L and a **Close selected trade** button;
-- an activity log.
+- an **instrument selector** with a **live time chart** of the selected
+  instrument (Qt Charts) and a leverage screener across all instruments;
+- an **amount** field, a **leverage** selector and auto-proposed **SL/TP**;
+- **BUY** and **SELL** buttons (double-press guarded) to open a market position;
+- a table of **open trades** with live P/L, editable SL/TP and marked-close;
+- a **decision window**: multi-source composite call per instrument (technical
+  ensemble, TradingView, news, VIX regime, Fear & Greed, Yahoo intraday,
+  optional Claude synthesis) plus a costed **trade plan**;
+- **closed-trades history** (7–13 weeks) with cost accounting, a macro-economic
+  **event calendar** with activity proposals, and an activity log.
 
 If no API keys are configured it runs in a clearly-labelled **SIMULATION** mode
 with a synthetic price feed, so it is fully usable before you have credentials.
 
 ## Build
 
+On a naked Debian/Ubuntu Linux, `./setup.sh` installs every required tool
+and dependency (compilers, CMake, Qt 6 incl. Charts via aqtinstall, the
+clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, Doxygen + Java,
+StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
+latest versions and `./setup.sh status` reports what is present. License-bound
+tools (Axivion Suite, Squish Coco) are detected and reported but must be
+installed manually.
+
+The repository has three top-level entry points:
+
+```bash
+./build_all.sh            # everything: app, tests, traceability, docs,
+                          # coverage, static analysis, sanitizers, Axivion
+./build_all.sh app        # ONLY the TradingApp executable (build/TradingApp)
+./build_all.sh build test # any subset of stages, in order
+./build_all.sh --skip axivion  # everything except the (slow) Axivion analysis
+./clean_all.sh [--deep]   # remove everything generated
+```
+
+Stages: `build test trace docs coverage analysis sanitize axivion` (default:
+all, continuing past failing stages with a summary at the end); `app` is an
+extra stage that is only run when named. For a different single CMake target:
+`cmake --build build --target <name>`.
+
 Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
-(developed against Qt 6.10.2), CMake ≥ 3.21 and a C++17 compiler. The sources are
+(developed against Qt 6.10.2), CMake ≥ 3.21 and a C++23-capable compiler
+(GCC 13+, Clang 17+, MSVC 19.38+). The sources are
 plain cross-platform Qt/C++ — the same code builds on Linux, Windows, and
 Android; only the Qt kit and the packaging step differ.
 
@@ -213,3 +250,9 @@ Trading involves risk of financial loss. This is example software provided as-is
 is not affiliated with or endorsed by eToro, and is not financial advice. Verify
 every order in eToro's own interface. Use `demo` mode until you fully trust the
 behaviour on your account.
+
+## License
+
+[MIT](LICENSE). Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md)
+and [SECURITY.md](SECURITY.md) for the quality bar and how to report
+vulnerabilities.

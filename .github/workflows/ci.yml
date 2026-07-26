@@ -1,0 +1,132 @@
+# CI for TradingApp: build + tests (with the traceability gate), AddressSanitizer
+# evidence, and a non-gating static-analysis report.
+#
+# Not run here (by design): valgrind/TSan (slow; run locally via
+# tools/sanitize.sh), coverage (tools/coverage.sh), Doxygen/StrictDoc docs
+# (tools/make_docs.sh), and the Axivion analysis (license-bound, local
+# dashboard). See build_all.sh for the full local pipeline.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.10.2"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install CMake >= 4.2 and Ninja
+        run: python3 -m pip install --upgrade cmake ninja
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run test suite (JUnit per test function)
+        run: QT_QPA_PLATFORM=offscreen ./tools/run_tests.sh build
+
+      - name: Traceability matrix (fails on hard gaps)
+        run: python3 tools/trace_report.py
+
+      - name: Upload test results + traceability
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results/
+            docs/traceability.html
+
+  sanitize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install CMake >= 4.2 and Ninja
+        run: python3 -m pip install --upgrade cmake ninja
+
+      - name: ASan + UBSan over the suite
+        run: QT_QPA_PLATFORM=offscreen QT_PREFIX="$QT_ROOT_DIR" ./tools/sanitize.sh asan-ubsan
+
+      - name: Upload sanitizer logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-logs
+          path: analysis-results/sanitize-*
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install analyzers and CMake
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cppcheck clang-tidy clazy
+          python3 -m pip install --upgrade cmake ninja
+
+      - name: Configure (compile database for the analyzers)
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      # Report, don't gate (yet): the expanded clang-tidy check set still has
+      # open findings that are triaged via the Axivion dashboard. Flip
+      # continue-on-error to false once the count reaches zero.
+      - name: cppcheck + clang-tidy + clazy
+        continue-on-error: true
+        run: ./tools/static_analysis.sh build
+
+      - name: Upload analysis results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: analysis-results/

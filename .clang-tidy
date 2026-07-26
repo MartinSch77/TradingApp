@@ -1,21 +1,61 @@
 # clang-tidy configuration (run via tools/static_analysis.sh over the compile
-# database). Focus: real bug classes (bugprone, CERT, concurrency) plus the
-# performance checks that matter for Qt value types. Style is Axivion's job
-# (MISRA C++ 2023), so readability checks stay off except the few that catch
-# genuine confusion.
+# database; clang-tidy works best with compile_commands.json, which the build
+# exports). Findings land on the Axivion dashboard via the external import.
+#
+# Check families: the analyzer + bug/performance/portability classes plus the
+# modernize/readability/cppcoreguidelines style families (target: modern C++,
+# up to C++23 as set in CMakeLists.txt). Auto-fixable findings can be applied
+# with tools/static_analysis.sh --fix.
+#
+# Disabled, with reason:
+#   bugprone-easily-swappable-parameters   API-shape noise, no fix suggested
+#   *narrowing-conversions                 Qt int/qsizetype mixing — churn
+#   cert-err58-cpp                         static Qt objects are idiomatic
+#   performance-enum-size                  micro-optimisation, hurts clarity
+#   clang-analyzer-optin.performance.Padding  layout noise
+#   modernize-use-trailing-return-type     pure style churn, no gain
+#   *magic-numbers                         trading constants / UI layout values
+#   readability-identifier-length          Qt idiom (ok, e, i, ui…)
+#   cppcoreguidelines-owning-memory        Qt parent/child ownership model
+#   readability-redundant-access-specifiers  "private:" after "private slots:"
+#                                          is NOT redundant — it ends the moc
+#                                          slots section (its removal broke moc)
+#   cppcoreguidelines-pro-type-static-cast-downcast  QEvent handling checks
+#                                          event->type() first; static_cast is
+#                                          the supported Qt idiom there
+#   readability-avoid-nested-conditional-operator  the codebase's established
+#                                          three-way mapping idiom
+#                                          (dir>0 ? A : dir<0 ? B : C) — 76
+#                                          hits, pure churn to rewrite
+#   readability-function-cognitive-complexity  complexity is already tracked
+#                                          by the Axivion McCabe metric on the
+#                                          dashboard — no second gate here
 Checks: >
+  clang-analyzer-*,
   bugprone-*,
   cert-*,
   concurrency-*,
   performance-*,
+  portability-*,
+  modernize-*,
+  cppcoreguidelines-*,
+  readability-*,
   misc-unused-using-decls,
-  readability-misleading-indentation,
-  readability-container-size-empty,
   -bugprone-easily-swappable-parameters,
   -bugprone-narrowing-conversions,
+  -cppcoreguidelines-narrowing-conversions,
   -cert-err58-cpp,
   -performance-enum-size,
-  -clang-analyzer-optin.performance.Padding
+  -clang-analyzer-optin.performance.Padding,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-identifier-length,
+  -cppcoreguidelines-owning-memory,
+  -readability-redundant-access-specifiers,
+  -cppcoreguidelines-pro-type-static-cast-downcast,
+  -readability-avoid-nested-conditional-operator,
+  -readability-function-cognitive-complexity
 WarningsAsErrors: ''
 HeaderFilterRegex: 'src/(domain|services|ui)/.*'
 FormatStyle: none

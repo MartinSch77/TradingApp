@@ -157,6 +157,74 @@ private slots:
         QVERIFY(!fx.isEmpty());
         QVERIFY(fx.first().first().toDouble() > 0.0);
     }
+
+    //! @tstid TS-CLI-004 @design DES-SVC-CLIENT
+    // @relation(REQ-F-015, scope=function)
+    void TS_CLI_004_closedPositionDisappearsFromOpenTrades()
+    {
+        // Regression: a position closed at eToro (in its own UI, or automatically
+        // by SL/TP) kept showing as an open trade here. The open SET used to come
+        // from /pnl, which serves a cached snapshot up to ~1.5 h old. /portfolio is
+        // the live view and now decides membership; /pnl only supplies eToro's own
+        // P/L for the positions that are still open.
+        //
+        // /portfolio holds GER40 only. /pnl is stale: it still lists the closed
+        // SPX500 trade, and carries a P/L figure for GER40.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"positions":[
+                         {"positionId":11,"instrumentId":5,"symbolFull":"GER40","isBuy":true,
+                          "amount":100.0,"leverage":10,"openRate":20000.0,
+                          "openDateTime":"2026-07-27T09:00:00Z"}
+                       ]}})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/pnl"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"positions":[
+                         {"positionId":11,"instrumentId":5,"symbolFull":"GER40","isBuy":true,
+                          "amount":100.0,"leverage":10,"openRate":20000.0,
+                          "unrealizedPnL":{"pnL":42.5,"closeRate":20100.0}},
+                         {"positionId":22,"instrumentId":27,"symbolFull":"SPX500","isBuy":true,
+                          "amount":250.0,"leverage":5,"openRate":5000.0,
+                          "unrealizedPnL":{"pnL":-7.0,"closeRate":4990.0}}
+                       ]}})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                return MockHttpServer::Response{
+                    200, R"({"rates":[{"instrumentId":5,"bid":20100.0,"ask":20102.0}]})", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg;
+        cfg.apiKey = QStringLiteral("k");   // credentials -> real mode code path
+        cfg.userKey = QStringLiteral("u");
+        cfg.mode = QStringLiteral("demo");
+        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        EtoroClient client(cfg);
+        // Both symbols are listed, so neither is dropped for being unknown — the
+        // closed one must disappear because /portfolio omits it, not by accident.
+        client.setTradableSymbols({QStringLiteral("GER40"), QStringLiteral("SPX500")});
+
+        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        client.refreshPortfolio();
+        QVERIFY(portfolio.wait(15000));
+
+        const auto positions = portfolio.takeLast().at(0).value<QList<Position>>();
+        QCOMPARE(positions.size(), 1);                       // the stale one is gone
+        QCOMPARE(positions[0].symbol, QStringLiteral("GER40"));
+        QCOMPARE(positions[0].positionId, QStringLiteral("11"));
+        // eToro's own P/L was overlaid from /pnl, then re-anchored to the live
+        // close rate (which equals the snapshot's here, so the figure stands).
+        QVERIFY(positions[0].profitFromApi);
+        QVERIFY(std::abs(positions[0].profit - 42.5) < 1e-9);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

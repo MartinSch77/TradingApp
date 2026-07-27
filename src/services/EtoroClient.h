@@ -91,6 +91,11 @@ public:
     // spread-cost estimates priced from the instruments' current spreads.
     void fetchClosedTrades(qint32 weeksBack);
 
+    // Re-read the open positions now instead of waiting for the next poll, and
+    // emit portfolioUpdated. Useful after trading elsewhere (eToro's own UI), and
+    // the entry point the open-trades regression test drives.
+    void refreshPortfolio();
+
     // Scan every tradable instrument for its max leverage + a recent close series,
     // so the UI can rank them by leverage and compute a buy/sell signal for each.
     // Rows arrive progressively via screenerRow; screenerFinished ends the run. A
@@ -171,6 +176,14 @@ private:
     // Fetch the EURUSD rate (instrument 1) and emit fxRateUpdated. Real mode only.
     void fetchEurUsd();
     void refreshPortfolioReal();
+    // Parse the open-position array out of a /portfolio or /pnl payload (the two
+    // share one shape). Positions on instruments outside the app's list are
+    // dropped. Shared so the live set and the P/L snapshot cannot drift apart.
+    QList<Position> parsePositionsPayload(const QJsonDocument &doc) const;
+    // Overlay eToro's own per-position P/L (from the /pnl snapshot) onto the LIVE
+    // position set, then finalize. `live` decides which positions exist; /pnl only
+    // contributes profit / profitFromApi / apiCloseRate for the ones still open.
+    void overlayPnlOntoLivePositions(const QList<Position> &live);
     // Fill in each open position's P/L from live rates for all held instruments,
     // then emit portfolioUpdated (the payload has no per-position P/L).
     void finalizePortfolioPl(const QList<Position> &positions);

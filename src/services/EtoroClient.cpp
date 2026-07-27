@@ -959,17 +959,32 @@ void EtoroClient::fetchEurUsd()
     }, /*retriesLeft=*/2);
 }
 
+void EtoroClient::refreshPortfolio()
+{
+    if (m_simulated) {
+        // The simulation is the authority for its own book; ask it to re-publish.
+        m_sim->refreshPortfolio();
+        return;
+    }
+    refreshPortfolioReal();
+}
+
 void EtoroClient::refreshPortfolioReal()
 {
-    // Use the /pnl breakdown (same shape as /portfolio) rather than /portfolio: it
-    // carries eToro's own live per-position unrealised P/L (unrealizedPnL.pnL), which
-    // already reflects the closing spread and any fees. The old code derived P/L from
-    // the mid rate, understating it vs eToro (a long is marked at the bid, not mid).
-    // NB: unlike /portfolio (real = no segment), /pnl needs an explicit real|demo
-    // segment — /v1/trading/info/real/pnl — so accountSegment() ("" for real) is wrong.
-    const QString path = QStringLiteral("/v1/trading/info/%1/pnl")
-                             .arg(m_config.isLive() ? QStringLiteral("real")
-                                                    : QStringLiteral("demo"));
+    // WHICH positions are open is decided by /portfolio, not by /pnl.
+    //
+    // /pnl carries eToro's own unrealised P/L per position (unrealizedPnL.pnL,
+    // already net of the closing spread and fees), which is why it is still used
+    // below — but it serves a CACHED snapshot (observed ~1.5 h old mid-session).
+    // Taking the position SET from that cache meant a trade closed anywhere else
+    // — in eToro's own web/app UI, or automatically by its stop-loss/take-profit
+    // — kept showing as an open trade here until the cache happened to refresh.
+    // /portfolio is the live view, so it is the authority for membership and
+    // /pnl only decorates the positions it says are still open.
+    //
+    // NB: /portfolio takes the segment as accountSegment() gives it ("" for real,
+    // "/demo" otherwise); /pnl instead needs an explicit real|demo path element.
+    const QString path = QStringLiteral("/v1/trading/info%1/portfolio").arg(accountSegment());
     QNetworkReply *reply = apiGet(path, QUrlQuery());
     handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
                               const QByteArray &raw, const QString &netError) {
@@ -978,93 +993,136 @@ void EtoroClient::refreshPortfolioReal()
                          .arg(status)
                          .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
                      true);
+            // Deliberately no emit: keep the previous snapshot rather than blanking
+            // the table on a transient error. The next poll retries.
             return;
         }
-        // Open positions are nested under clientPortfolio.positions; fall back to
-        // the flatter shapes in case the payload differs.
-        const QJsonObject root = doc.object();
-        const QJsonObject clientPortfolio =
-            pick(root, {QStringLiteral("clientPortfolio")}).toObject();
-        QJsonArray arr = pick(clientPortfolio, {QStringLiteral("positions")}).toArray();
-        if (arr.isEmpty()) {
-            arr = asArray(doc, {QStringLiteral("positions"), QStringLiteral("openPositions"),
-                                QStringLiteral("data")});
-        }
-
-        QList<Position> positions;
-        for (const auto &v : std::as_const(arr)) {
-            const QJsonObject o = v.toObject();
-            const qint64 instrumentId =
-                static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
-            const bool isCurrent = m_instrument.isValid()
-                                   && (instrumentId == m_instrument.instrumentId);
-
-            // Resolve the tradable symbol for this position; skip positions on
-            // instruments that aren't in the app's list (the account can hold many).
-            QString sym = m_symbolById.value(instrumentId);
-            if (sym.isEmpty()) {
-                const QString payloadSym = pick(o, {QStringLiteral("internalSymbolFull"),
-                                                    QStringLiteral("symbolFull"),
-                                                    QStringLiteral("symbol")}).toString();
-                const bool listed =
-                    m_tradableSymbols.contains(payloadSym, Qt::CaseInsensitive);
-                if (!payloadSym.isEmpty() && listed) {
-                    sym = payloadSym;
-                } else if (isCurrent) {
-                    sym = m_config.symbol;
-                } else {
-                    // unknown instrument — the empty symbol is skipped just below
-                }
-            }
-            if (sym.isEmpty()) {
-                continue;  // not one of the app's instruments (or its id not resolved yet)
-            }
-
-            Position p;
-            p.positionId =
-                pick(o, {QStringLiteral("positionId"), QStringLiteral("id")}).toVariant().toString();
-            p.instrumentId = instrumentId;
-            p.symbol = sym;
-            p.isBuy = pick(o, {QStringLiteral("isBuy"), QStringLiteral("buy")}).toBool(true);
-            p.amount = numFrom(pick(o, {QStringLiteral("amount"), QStringLiteral("investedAmount")}));
-            p.units = numFrom(pick(o, {QStringLiteral("units"), QStringLiteral("unitsValue")}));
-            p.openRate = numFrom(pick(o, {QStringLiteral("openRate"), QStringLiteral("openPrice")}));
-            p.leverage = numFrom(pick(o, {QStringLiteral("leverage")}));
-            p.openTime =
-                timeFrom(pick(o, {QStringLiteral("openDateTime"), QStringLiteral("openTime")}));
-
-            // SL/TP: the payload carries rates plus explicit "disabled" flags (a tiny
-            // sentinel rate is used when a leg is off), so honour those flags.
-            const bool noSl = pick(o, {QStringLiteral("isNoStopLoss")}).toBool(false);
-            const bool noTp = pick(o, {QStringLiteral("isNoTakeProfit")}).toBool(false);
-            p.stopLossRate = noSl ? 0.0 : numFrom(pick(o, {QStringLiteral("stopLossRate")}));
-            p.takeProfitRate = noTp ? 0.0 : numFrom(pick(o, {QStringLiteral("takeProfitRate")}));
-            p.trailingStop = pick(o, {QStringLiteral("isTslEnabled")}).toBool(false);
-
-            // Authoritative P/L: eToro's own live figure in the account currency,
-            // under unrealizedPnL.pnL (already net of the closing spread and fees).
-            // Prefer it; fall back to the flat fields, or to a derived estimate in
-            // finalizePortfolioPl() only when no API value is available.
-            const QJsonObject upnl = pick(o, {QStringLiteral("unrealizedPnL")}).toObject();
-            const QJsonValue pnlVal = pick(upnl, {QStringLiteral("pnL"), QStringLiteral("pnl")});
-            if (!pnlVal.isUndefined()) {
-                p.profit = numFrom(pnlVal);
-                p.profitFromApi = true;
-                // The rate this P/L was marked at (long → bid, short → ask): the
-                // exact anchor for re-pricing the figure against later live ticks.
-                p.apiCloseRate = numFrom(pick(upnl, {QStringLiteral("closeRate")}));
-            } else {
-                const QJsonValue flat = pick(o, {QStringLiteral("netProfit"),
-                                                 QStringLiteral("profit"), QStringLiteral("openPl")});
-                if (!flat.isUndefined()) {
-                    p.profit = numFrom(flat);
-                    p.profitFromApi = true;
-                }
-            }
-            positions << p;
-        }
-        finalizePortfolioPl(positions);
+        overlayPnlOntoLivePositions(parsePositionsPayload(doc));
     }, /*retriesLeft=*/2);  // ride out a transient 429/5xx rather than logging an error
+}
+
+// Fetch the cached /pnl snapshot and copy eToro's own P/L onto the live set,
+// matched by positionId. Positions missing from the snapshot (just opened, cache
+// not caught up) keep profitFromApi=false and get the derived estimate in
+// finalizePortfolioPl(); positions only IN the snapshot (already closed) are
+// ignored, because `live` is what exists.
+void EtoroClient::overlayPnlOntoLivePositions(const QList<Position> &live)
+{
+    const QString path = QStringLiteral("/v1/trading/info/%1/pnl")
+                             .arg(m_config.isLive() ? QStringLiteral("real")
+                                                    : QStringLiteral("demo"));
+    QNetworkReply *reply = apiGet(path, QUrlQuery());
+    handleReply(reply, [this, live = live](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                          const QByteArray & /*raw*/,
+                                          const QString & /*netError*/) mutable {
+        if (ok) {
+            QHash<QString, Position> pnlById;
+            for (const Position &p : parsePositionsPayload(doc)) {
+                if (!p.positionId.isEmpty()) {
+                    static_cast<void>(pnlById.insert(p.positionId, p));
+                }
+            }
+            for (Position &p : live) {
+                const auto it = pnlById.constFind(p.positionId);
+                if (it != pnlById.constEnd() && it->profitFromApi) {
+                    p.profit = it->profit;
+                    p.profitFromApi = true;
+                    p.apiCloseRate = it->apiCloseRate;
+                }
+            }
+        }
+        // Even if /pnl failed, the live set is still correct — publish it with
+        // locally derived P/L rather than showing nothing.
+        finalizePortfolioPl(live);
+    }, /*retriesLeft=*/2);
+}
+
+QList<Position> EtoroClient::parsePositionsPayload(const QJsonDocument &doc) const
+{
+    // Open positions are nested under clientPortfolio.positions; fall back to
+    // the flatter shapes in case the payload differs.
+    const QJsonObject root = doc.object();
+    const QJsonObject clientPortfolio =
+        pick(root, {QStringLiteral("clientPortfolio")}).toObject();
+    QJsonArray arr = pick(clientPortfolio, {QStringLiteral("positions")}).toArray();
+    if (arr.isEmpty()) {
+        arr = asArray(doc, {QStringLiteral("positions"), QStringLiteral("openPositions"),
+                            QStringLiteral("data")});
+    }
+
+    QList<Position> positions;
+    for (const auto &v : std::as_const(arr)) {
+        const QJsonObject o = v.toObject();
+        const qint64 instrumentId =
+            static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
+        const bool isCurrent = m_instrument.isValid()
+                               && (instrumentId == m_instrument.instrumentId);
+
+        // Resolve the tradable symbol for this position; skip positions on
+        // instruments that aren't in the app's list (the account can hold many).
+        QString sym = m_symbolById.value(instrumentId);
+        if (sym.isEmpty()) {
+            const QString payloadSym = pick(o, {QStringLiteral("internalSymbolFull"),
+                                                QStringLiteral("symbolFull"),
+                                                QStringLiteral("symbol")}).toString();
+            const bool listed =
+                m_tradableSymbols.contains(payloadSym, Qt::CaseInsensitive);
+            if (!payloadSym.isEmpty() && listed) {
+                sym = payloadSym;
+            } else if (isCurrent) {
+                sym = m_config.symbol;
+            } else {
+                // unknown instrument — the empty symbol is skipped just below
+            }
+        }
+        if (sym.isEmpty()) {
+            continue;  // not one of the app's instruments (or its id not resolved yet)
+        }
+
+        Position p;
+        p.positionId =
+            pick(o, {QStringLiteral("positionId"), QStringLiteral("id")}).toVariant().toString();
+        p.instrumentId = instrumentId;
+        p.symbol = sym;
+        p.isBuy = pick(o, {QStringLiteral("isBuy"), QStringLiteral("buy")}).toBool(true);
+        p.amount = numFrom(pick(o, {QStringLiteral("amount"), QStringLiteral("investedAmount")}));
+        p.units = numFrom(pick(o, {QStringLiteral("units"), QStringLiteral("unitsValue")}));
+        p.openRate = numFrom(pick(o, {QStringLiteral("openRate"), QStringLiteral("openPrice")}));
+        p.leverage = numFrom(pick(o, {QStringLiteral("leverage")}));
+        p.openTime =
+            timeFrom(pick(o, {QStringLiteral("openDateTime"), QStringLiteral("openTime")}));
+
+        // SL/TP: the payload carries rates plus explicit "disabled" flags (a tiny
+        // sentinel rate is used when a leg is off), so honour those flags.
+        const bool noSl = pick(o, {QStringLiteral("isNoStopLoss")}).toBool(false);
+        const bool noTp = pick(o, {QStringLiteral("isNoTakeProfit")}).toBool(false);
+        p.stopLossRate = noSl ? 0.0 : numFrom(pick(o, {QStringLiteral("stopLossRate")}));
+        p.takeProfitRate = noTp ? 0.0 : numFrom(pick(o, {QStringLiteral("takeProfitRate")}));
+        p.trailingStop = pick(o, {QStringLiteral("isTslEnabled")}).toBool(false);
+
+        // Authoritative P/L: eToro's own live figure in the account currency,
+        // under unrealizedPnL.pnL (already net of the closing spread and fees).
+        // Prefer it; fall back to the flat fields, or to a derived estimate in
+        // finalizePortfolioPl() only when no API value is available.
+        const QJsonObject upnl = pick(o, {QStringLiteral("unrealizedPnL")}).toObject();
+        const QJsonValue pnlVal = pick(upnl, {QStringLiteral("pnL"), QStringLiteral("pnl")});
+        if (!pnlVal.isUndefined()) {
+            p.profit = numFrom(pnlVal);
+            p.profitFromApi = true;
+            // The rate this P/L was marked at (long → bid, short → ask): the
+            // exact anchor for re-pricing the figure against later live ticks.
+            p.apiCloseRate = numFrom(pick(upnl, {QStringLiteral("closeRate")}));
+        } else {
+            const QJsonValue flat = pick(o, {QStringLiteral("netProfit"),
+                                             QStringLiteral("profit"), QStringLiteral("openPl")});
+            if (!flat.isUndefined()) {
+                p.profit = numFrom(flat);
+                p.profitFromApi = true;
+            }
+        }
+        positions << p;
+    }
+    return positions;
 }
 
 void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)

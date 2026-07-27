@@ -163,6 +163,11 @@ private:
     // (verdict, P(win), risk factor, leverage, SL/TP, the full cost bill); the result
     // is kept in m_lastPlan for the "Apply to trade panel" button.
     void renderTradePlan(const trading::DecisionRow *focus, const QString &focusSymbol);
+    // Batch-cost a plan per ranked instrument (off the GUI thread) so the ranked
+    // table's "Trade plan" column mirrors the panel's verdict for every row.
+    void dispatchRowPlans(const QList<trading::DecisionRow> &rows);
+    void applyRowPlanVerdicts();       // batch finished → refresh the column cells
+    void updateDecisionOpenColumn();   // market opened/closed → repaint "Open" cells
     // Applies an asynchronously-built plan (renderTradePlan dispatches the
     // Monte-Carlo heavy buildTradePlan to the thread pool via m_planWatcher).
     void renderTradePlanResult(const trading::TradePlan &plan, const QString &focusSymbol,
@@ -345,6 +350,8 @@ private:
     QFutureWatcher<trading::TradePlan> m_planWatcher;
     QString m_planPendingSymbol;               // focus symbol of the running plan build
     bool m_planPendingIsCurrent = false;
+    QFutureWatcher<QHash<QString, trading::TradePlan>> m_rowPlanWatcher;
+    QHash<QString, trading::TradePlan> m_rowPlans;  // ranked-table plan verdicts by symbol
     QString m_lastPlanSymbol;                  // instrument that plan was built for
     QLabel *m_decisionSourcesLabel = nullptr;  // "Sources for <focus symbol>:" caption
     QTableWidget *m_decisionSources = nullptr; // one row per source for the focus instrument

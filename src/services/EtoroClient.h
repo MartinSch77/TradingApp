@@ -82,7 +82,6 @@ public:
     // leg). trailingStop only matters when a stop-loss rate is set.
     void modifyPosition(const QString &positionId, double stopLossRate,
                         double takeProfitRate, bool trailingStop);
-    void refreshPortfolio();
     // Summarise closed-trade net P/L over the last 7 weeks, restricted to the app's
     // listed (selectable) instruments; result arrives via monthlyPnlReady.
     void fetchMonthlyPnl();
@@ -174,7 +173,7 @@ private:
     void refreshPortfolioReal();
     // Fill in each open position's P/L from live rates for all held instruments,
     // then emit portfolioUpdated (the payload has no per-position P/L).
-    void finalizePortfolioPl(QList<Position> positions);
+    void finalizePortfolioPl(const QList<Position> &positions);
     void refreshBalanceReal();
     // Fetch one trade-history page and fold it into acc, then recurse to the next
     // page until the API returns an empty page (history is newest-first).
@@ -247,6 +246,11 @@ private:
     // bid/ask (frozen weekend quotes), and the cached value keeps the cost
     // estimates stable instead of flickering to "unknown".
     QHash<qint64, double> m_spreadPctById;
+
+    // Symbols whose last bulk-rates quote was fresh (market open), from the same
+    // poll that feeds tradeabilityUpdated. Lets the closed-trades cost estimator
+    // flag spreads captured from frozen (widened) after-hours quotes.
+    QSet<QString> m_freshQuoteSymbols;
 
     // Candle sort direction (newest-first). The chart is seeded from two resolutions
     // merged in fetchHistoryReal: hourly for ~1 month of context, plus the most recent

@@ -1,7 +1,8 @@
 # Local secrets — the real eToro API keys live here, never commit.
 # (config.json itself carries no secrets any more and IS committed.)
 apiKeyEtoro.json
-
+*apiKeyEtoro.json
+ 
 # Build output
 build/
 build_axivion/

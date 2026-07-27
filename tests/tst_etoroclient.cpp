@@ -138,6 +138,25 @@ private slots:
         QCOMPARE(last.instrumentId, static_cast<qint64>(38));
         QVERIFY(!last.costEstValid);
     }
+
+    //! @tstid TS-CLI-003 @design DES-SVC-CLIENT
+    // @relation(REQ-F-017, scope=function)
+    void TS_CLI_003_simulationPublishesFxRate()
+    {
+        // Without credentials the client runs the simulation — which must
+        // publish a display FX rate, otherwise the UI blocks every order
+        // with "waiting for the EUR/USD rate" (regression test).
+        Config cfg;  // no apiKey/userKey -> simulation mode
+        EtoroClient client(cfg);
+        QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        client.start();
+        if (ready.isEmpty()) {
+            QVERIFY(ready.wait(2000));
+        }
+        QVERIFY(!fx.isEmpty());
+        QVERIFY(fx.first().first().toDouble() > 0.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

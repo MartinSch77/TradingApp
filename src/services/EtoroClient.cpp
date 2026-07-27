@@ -204,7 +204,7 @@ void EtoroClient::resolveListedInstrumentIds()
     // internalSymbolFull field matches the app's symbols, incl. the .24-7 variants),
     // so the account-wide portfolio can be restricted to these instruments and named.
     const QList<QString> known = m_symbolById.values();
-    for (const QString &sym : m_tradableSymbols) {
+    for (const QString &sym : std::as_const(m_tradableSymbols)) {
         if (known.contains(sym)) {
             continue;
         }
@@ -286,9 +286,11 @@ void EtoroClient::onPollTimeout()
 {
     // EUR/USD for display conversion — moves slowly, ~every 20s. Real mode only: it
     // needs an authenticated rates call, and simulation shows the raw account currency.
-    // (The tick only advances in real mode, mirroring the original short-circuit.)
-    if (!m_simulated && ((m_fxTick++ % 20) == 0)) {
-        fetchEurUsd();
+    if (!m_simulated) {
+        if ((m_fxTick % 20) == 0) {
+            fetchEurUsd();
+        }
+        ++m_fxTick;
     }
 
     if (m_simulated) {
@@ -352,15 +354,6 @@ void EtoroClient::modifyPosition(const QString &positionId, double stopLossRate,
         m_sim->modifyPosition(positionId, stopLossRate, takeProfitRate, trailingStop);
     } else {
         modifyPositionReal(positionId, stopLossRate, takeProfitRate, trailingStop);
-    }
-}
-
-void EtoroClient::refreshPortfolio()
-{
-    if (m_simulated) {
-        m_sim->refreshPortfolio();
-    } else {
-        refreshPortfolioReal();
     }
 }
 
@@ -662,7 +655,7 @@ void EtoroClient::fetchFeesReal()
         fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
         fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
         if (fees.isValid()) {
-            m_feesById.insert(wantId, fees);  // shared cache (see feesFor/requestFees)
+            static_cast<void>(m_feesById.insert(wantId, fees));  // shared cache (see feesFor/requestFees)
             emit feesUpdated(fees);
         }
     });
@@ -709,7 +702,7 @@ void EtoroClient::requestFees(const QString &symbol)
         fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
         fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
         if (fees.isValid()) {
-            m_feesById.insert(id, fees);
+            static_cast<void>(m_feesById.insert(id, fees));
             emit instrumentFeesUpdated(symbol, fees);
         }
     });
@@ -753,7 +746,7 @@ void EtoroClient::refreshTradeabilityReal()
             arr.append(doc.object());
         }
         QSet<QString> open;
-        for (const auto &v : arr) {
+        for (const auto &v : std::as_const(arr)) {
             const QJsonObject rate = v.toObject();
             const qint64 id = static_cast<qint64>(
                 numFrom(pick(rate, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
@@ -768,7 +761,8 @@ void EtoroClient::refreshTradeabilityReal()
             const double ask =
                 numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
             if ((bid > 0.0) && (ask > bid)) {
-                m_spreadPctById.insert(id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0);
+                static_cast<void>(
+                    m_spreadPctById.insert(id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0));
             }
             const QDateTime quoteTime = QDateTime::fromString(
                 pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
@@ -779,6 +773,7 @@ void EtoroClient::refreshTradeabilityReal()
                 static_cast<void>(open.insert(sym));
             }
         }
+        m_freshQuoteSymbols = open;
         emit tradeabilityUpdated(open);
     }, /*retriesLeft=*/1);  // ride out a transient 429 on the shared market-data pool
 }
@@ -788,8 +783,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
 {
     const QString path = QStringLiteral("/v1/market-data/instruments/%1/history/candles/%2/%3/%4")
                              .arg(m_instrument.instrumentId)
-                             .arg(m_candleDirection)
-                             .arg(interval)
+                             .arg(m_candleDirection, interval)
                              .arg(count);
     QNetworkReply *reply = apiGet(path, QUrlQuery());
     handleReply(reply, [this, cb = std::move(cb), interval](bool ok, qint32 status, const QJsonDocument &doc,
@@ -815,7 +809,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
         }
         QList<Candle> candles;
         candles.reserve(arr.size());
-        for (const auto &v : arr) {
+        for (const auto &v : std::as_const(arr)) {
             const QJsonObject o = v.toObject();
             Candle c;
             c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
@@ -998,7 +992,7 @@ void EtoroClient::refreshPortfolioReal()
         }
 
         QList<Position> positions;
-        for (const auto &v : arr) {
+        for (const auto &v : std::as_const(arr)) {
             const QJsonObject o = v.toObject();
             const qint64 instrumentId =
                 static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
@@ -1070,7 +1064,7 @@ void EtoroClient::refreshPortfolioReal()
     }, /*retriesLeft=*/2);  // ride out a transient 429/5xx rather than logging an error
 }
 
-void EtoroClient::finalizePortfolioPl(QList<Position> positions)
+void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
 {
     // Remember each open position's own instrument, so closePositionReal() can send
     // the right InstrumentId even for a trade on an instrument other than the one
@@ -1104,7 +1098,9 @@ void EtoroClient::finalizePortfolioPl(QList<Position> positions)
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("instrumentIds"), ids.join(QLatin1Char(',')));
     QNetworkReply *reply = apiGet(QStringLiteral("/v1/market-data/instruments/rates"), q);
-    handleReply(reply, [this, positions](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+    // Init-capture: deduces a mutable QList<Position> copy (a plain by-copy capture
+    // of the const-ref parameter would keep the referenced const type).
+    handleReply(reply, [this, positions = positions](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                           const QByteArray & /*raw*/, const QString & /*netError*/) mutable {
         if (ok) {
             QHash<qint64, double> bidById;
@@ -1113,7 +1109,7 @@ void EtoroClient::finalizePortfolioPl(QList<Position> positions)
             if (arr.isEmpty() && doc.isObject()) {
                 arr.append(doc.object());
             }
-            for (const auto &v : arr) {
+            for (const auto &v : std::as_const(arr)) {
                 const QJsonObject rate = v.toObject();
                 const qint64 id =
                     static_cast<qint64>(numFrom(pick(rate, {QStringLiteral("instrumentId")})));
@@ -1299,7 +1295,8 @@ void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
     // identity the trade panel's opening-cost estimate uses. One bulk rates call
     // (≤100 ids) covers every instrument seen in the window.
     QStringList ids;
-    for (const qint64 id : std::as_const(acc->instrumentIds)) {
+    const QSet<qint64> &instrumentIds = acc->instrumentIds;  // single-call range-init
+    for (const qint64 id : instrumentIds) {
         ids << QString::number(id);
         if (ids.size() >= 100) {
             break;
@@ -1322,7 +1319,8 @@ void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
                 const double ask =
                     numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
                 if ((id > 0) && (bid > 0.0) && (ask > bid)) {
-                    m_spreadPctById.insert(id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0);
+                    static_cast<void>(m_spreadPctById.insert(
+                        id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0));
                 }
                 // Rows without a usable bid/ask (frozen weekend quotes) keep the
                 // previously cached spread, so estimates don't flicker away.
@@ -1335,6 +1333,10 @@ void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
                 t.openCostEst = half;
                 t.closeCostEst = half;
                 t.costEstValid = true;
+                t.spreadPctUsed = sp;
+                // Frozen after-hours quotes carry the widened closing spread, so
+                // the estimate overstates what the trade really paid — flag it.
+                t.spreadStale = !m_freshQuoteSymbols.contains(t.symbol);
                 // Roll the estimate up into the per-instrument summary so its
                 // Costs column can show open+close+fees.
                 if (t.listed) {
@@ -1415,7 +1417,8 @@ void EtoroClient::scanInstrumentsReal()
     // One bulk eligibility call for every id (the endpoint takes up to 100 and
     // returns each instrument's leverageConfigs) → max CFD leverage per instrument.
     QJsonArray ids;
-    for (const ScanItem &item : st->queue) {
+    const QList<ScanItem> &queue = st->queue;  // const ref: detach-free, single-call range-init
+    for (const ScanItem &item : queue) {
         ids.append(static_cast<qint32>(item.id));
     }
     QJsonObject body;
@@ -1489,8 +1492,7 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
     // Hurst) and a stable swing view, at one request per instrument.
     const QString path = QStringLiteral("/v1/market-data/instruments/%1/history/candles/%2/%3/%4")
                              .arg(item.id)
-                             .arg(m_candleDirection)
-                             .arg(QStringLiteral("OneHour"))
+                             .arg(m_candleDirection, QStringLiteral("OneHour"))
                              .arg(300);
     QNetworkReply *reply = apiGet(path, QUrlQuery());
     handleReply(reply, [this, st, item](bool ok, qint32, const QJsonDocument &doc,
@@ -1511,7 +1513,7 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
             }
             QList<Candle> candles;
             candles.reserve(arr.size());
-            for (const auto &v : arr) {
+            for (const auto &v : std::as_const(arr)) {
                 const QJsonObject o = v.toObject();
                 Candle c;
                 c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
@@ -1528,7 +1530,7 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
             std::sort(sortBegin, sortEnd,
                       [](const Candle &a, const Candle &b) { return a.timestamp < b.timestamp; });
             row.closes.reserve(candles.size());
-            for (const Candle &c : candles) {
+            for (const Candle &c : std::as_const(candles)) {
                 row.closes.append(c.close);
             }
             row.ok = !row.closes.isEmpty();
@@ -1658,8 +1660,7 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
                              QStringLiteral("%1 order submitted (id %5): %2 %3 %4 — confirming…")
                                  .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
                                  .arg(amount)
-                                 .arg(orderCurrency.toUpper())
-                                 .arg(symbolLabel)
+                                 .arg(orderCurrency.toUpper(), symbolLabel)
                                  .arg(orderId));
             if (orderId > 0) {
                 // Give execution a moment to register before the first lookup.
@@ -1907,6 +1908,15 @@ void EtoroClient::startSimulation(bool resetAccount)
                  .arg(m_config.symbol),
              false);
     emit ready(m_instrument);
+
+    // The live EUR/USD display rate comes from the eToro rates API, which the
+    // simulation never calls — without this, the UI blocks every order with
+    // "waiting for the EUR/USD rate". The account is synthetic anyway, so a
+    // fixed representative rate keeps the € display and the sizing math
+    // consistent (clearly synthetic, like the price feed itself).
+    constexpr double kSimEurPerUsd = 0.90;
+    m_eurPerUsd = kSimEurPerUsd;
+    emit fxRateUpdated(m_eurPerUsd);
 
     m_sim->emitSnapshot();  // history, price, cash, portfolio, leverage steps
     m_lastPrice = m_sim->lastPrice();

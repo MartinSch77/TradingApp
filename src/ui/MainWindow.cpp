@@ -9,6 +9,7 @@
 #include "services/AiAdvisor.h"
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
+#include "ui/Palette.h"
 #include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
@@ -54,6 +55,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -73,6 +75,40 @@ constexpr qint32 PosColTp = PositionsModel::ColTp;
 QString colored(const QString &text, const QString &hexColor)
 {
     return QStringLiteral("<span style='color:%1'>%2</span>").arg(hexColor, text);
+}
+
+// Cell for the ranked table's "Trade plan" column: the SAME verdict the trade-plan
+// panel shows (cost + break-even gates included), so the two can never disagree.
+QTableWidgetItem *makePlanVerdictItem(const trading::TradePlan &plan)
+{
+    auto *it = new QTableWidgetItem();
+    it->setTextAlignment(Qt::AlignCenter);
+    if (!plan.valid) {
+        it->setText(QStringLiteral("—"));
+        it->setForeground(trading::ui::kGrey);
+        it->setToolTip(QStringLiteral("Not enough price history to build a plan."));
+    } else if (plan.verdict == QLatin1String("STAY OUT")) {
+        it->setText(QStringLiteral("✋ stay out"));
+        it->setForeground(QColor(0xe0, 0xb0, 0x00));
+        it->setToolTip(QStringLiteral("Plan verdict: STAY OUT — %1.").arg(plan.verdictReason));
+    } else {
+        it->setText(QStringLiteral("✓ %1").arg(plan.verdict));
+        it->setForeground((plan.dir > 0) ? trading::ui::kGreen : trading::ui::kRed);
+        it->setToolTip(QStringLiteral("Plan verdict: %1 — positive expected edge after "
+                                      "costs; the trade plan below has the sizing.")
+                           .arg(plan.verdict));
+    }
+    return it;
+}
+
+// Placeholder cell while the batch plan build for the ranked table is running.
+QTableWidgetItem *makePendingPlanItem()
+{
+    auto *it = new QTableWidgetItem(QStringLiteral("…"));
+    it->setTextAlignment(Qt::AlignCenter);
+    it->setForeground(trading::ui::kGrey);
+    it->setToolTip(QStringLiteral("Costing the trade plan…"));
+    return it;
 }
 
 // Colour for an event-impact direction (+1 bullish, -1 bearish, 0 volatile).
@@ -194,7 +230,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
         connect(m_feeds, &MarketFeeds::instrumentNewsUpdated, this, &MainWindow::onInstrumentNews));
     static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCloses, this,
                               [this](const QString &symbol, const QList<double> &closes) {
-                                  m_intradayBySymbol.insert(symbol, closes);
+                                  static_cast<void>(m_intradayBySymbol.insert(symbol, closes));
                               }));
     static_cast<void>(
         connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
@@ -204,6 +240,9 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
                                   m_mcBusy = false;
                                   renderMonteCarlo(m_mcWatcher.result());
                               }));
+    static_cast<void>(connect(&m_rowPlanWatcher,
+                              &QFutureWatcher<QHash<QString, trading::TradePlan>>::finished,
+                              this, [this]() { applyRowPlanVerdicts(); }));
     static_cast<void>(connect(&m_planWatcher, &QFutureWatcher<trading::TradePlan>::finished,
                               this, [this] {
                                   renderTradePlanResult(m_planWatcher.result(),
@@ -416,6 +455,7 @@ void MainWindow::onTradeability(const QSet<QString> &tradeableSymbols)
     // (a market opened/closed) so a closed instrument drops off without waiting for a scan.
     if (setChanged) {
         rebuildRecommendations();
+        updateDecisionOpenColumn();  // ranked table's "Open" cells follow live
     }
 }
 
@@ -1428,13 +1468,14 @@ void MainWindow::updateOpenCost()
     const double costBuy = (halfSpread * amount * leverage) / ask;
     const double costSell = (halfSpread * amount * leverage) / bid;
 
+    const QLocale loc;
+    const QString costBuyText = loc.toString(costBuy, 'f', 2);
+    const QString costSellText = loc.toString(costSell, 'f', 2);
+    const QString spreadText = loc.toString(spread, 'f', trading::priceDecimals(ask));
     m_openCost->setText(
         QStringLiteral("Buy <b>%1%2</b> &nbsp;·&nbsp; Sell <b>%1%3</b> "
                        "<span style='color:#9a9a9a'>(spread %4)</span>")
-            .arg(m_ccy)
-            .arg(QLocale().toString(costBuy, 'f', 2))
-            .arg(QLocale().toString(costSell, 'f', 2))
-            .arg(QLocale().toString(spread, 'f', trading::priceDecimals(ask))));
+            .arg(m_ccy, costBuyText, costSellText, spreadText));
 
     // Rollover fees scale with the position's unit count. The fees are quoted in
     // USD per unit; multiplying by units derived from the euro amount lands in
@@ -1445,14 +1486,14 @@ void MainWindow::updateOpenCost()
         } else {
             const double unitsBuy = (amount * leverage) / ask;
             const double unitsSell = (amount * leverage) / bid;
+            const QString nightBuy = loc.toString(m_fees.buyOvernight * unitsBuy, 'f', 2);
+            const QString nightSell = loc.toString(m_fees.sellOvernight * unitsSell, 'f', 2);
+            const QString weekendBuy = loc.toString(m_fees.buyWeekend * unitsBuy, 'f', 2);
+            const QString weekendSell = loc.toString(m_fees.sellWeekend * unitsSell, 'f', 2);
             m_feeCost->setText(
                 QStringLiteral("Buy <b>%1%2</b> &nbsp;·&nbsp; Sell <b>%1%3</b> per night "
                                "<span style='color:#9a9a9a'>(weekend %1%4 / %1%5)</span>")
-                    .arg(m_ccy)
-                    .arg(QLocale().toString(m_fees.buyOvernight * unitsBuy, 'f', 2))
-                    .arg(QLocale().toString(m_fees.sellOvernight * unitsSell, 'f', 2))
-                    .arg(QLocale().toString(m_fees.buyWeekend * unitsBuy, 'f', 2))
-                    .arg(QLocale().toString(m_fees.sellWeekend * unitsSell, 'f', 2)));
+                    .arg(m_ccy, nightBuy, nightSell, weekendBuy, weekendSell));
         }
     }
 }
@@ -1553,7 +1594,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     const QString shown = m_client->instrument().symbol;
     QList<QPointF> buyEntries;
     QList<QPointF> sellEntries;
-    for (const Position &p : positions) {
+    for (const Position &p : std::as_const(positions)) {
         if ((p.openRate <= 0.0) || (p.symbol.compare(shown, Qt::CaseInsensitive) != 0)) {
             continue;
         }
@@ -1566,7 +1607,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
 
     // Authoritative open-trades exposure, used by placeOrder() to enforce the cap.
     double openTotal = 0.0;
-    for (const Position &p : positions) {
+    for (const Position &p : std::as_const(positions)) {
         openTotal += p.amount;
     }
     m_openTradesTotal = openTotal;
@@ -1586,7 +1627,8 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
         const double scale = std::max({std::abs(a), std::abs(b), 1.0});
         return std::abs(a - b) <= scale * 1e-4;  // absorbs 2dp/5dp round-trip rounding
     };
-    auto withPending = [this, nowMs, kPendingTtlMs, &ratesClose](Position p) -> Position {
+    auto withPending = [this, nowMs, kPendingTtlMs, &ratesClose](const Position &src) -> Position {
+        Position p = src;
         const auto it = m_pendingSlTp.find(p.positionId);
         if (it == m_pendingSlTp.end()) {
             return p;
@@ -1607,7 +1649,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // set resets the model (marks survive by id inside the model).
     QList<Position> pinned;
     pinned.reserve(positions.size());
-    for (const Position &p : positions) {
+    for (const Position &p : std::as_const(positions)) {
         pinned.append(withPending(p));
     }
     m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);  // keep the FX rate fresh
@@ -1617,7 +1659,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     if (!m_pendingSlTp.isEmpty()) {
         QSet<QString> openIds;
         openIds.reserve(positions.size());
-        for (const Position &p : positions) {
+        for (const Position &p : std::as_const(positions)) {
             static_cast<void>(openIds.insert(p.positionId));
         }
         for (auto it = m_pendingSlTp.begin(); it != m_pendingSlTp.end();) {
@@ -1657,8 +1699,8 @@ void MainWindow::onPositionSlTpEdited(qint32 row, qint32 column, const QString &
     }
 
     // Parse a signed display-currency amount (blank / 0 / unparsable = clear).
-    auto parseAmount = [this](QString t) -> double {
-        t = t.trimmed();
+    auto parseAmount = [this](const QString &text) -> double {
+        QString t = text.trimmed();
         static_cast<void>(t.remove(m_ccy));
         // Trailing-stop marker "⇅" — not part of the amount.
         static_cast<void>(t.remove(QChar(0x21C5)));
@@ -2310,7 +2352,7 @@ void MainWindow::rebuildEventsView(bool force)
     m_nextEventTime = QDateTime();
     m_nextEventTitle.clear();
     qint32 visibleCount = 0;
-    for (const EconomicEvent &e : m_eventList) {
+    for (const EconomicEvent &e : std::as_const(m_eventList)) {
         if (!e.when.isValid()) {
             continue;
         }
@@ -2337,7 +2379,7 @@ void MainWindow::rebuildEventsView(bool force)
         return;
     }
     const QString sym = m_client->config().symbol;  // current instrument, for the read-out
-    for (const EconomicEvent &e : m_eventList) {
+    for (const EconomicEvent &e : std::as_const(m_eventList)) {
         if (!e.when.isValid() || (e.when.secsTo(now) > kKeepPastSecs)) {
             continue;  // passed more than 10 minutes ago — drop it
         }
@@ -2362,9 +2404,12 @@ void MainWindow::rebuildEventsView(bool force)
 
         auto *item = new QListWidgetItem(line, m_events);
         item->setForeground(impactColor(guess.dir));  // colour by predicted direction
+        const QString baseTip = eventTooltip(e, guess, sym);
+        const QString actionEsc = prop.action.toHtmlEscaped();
+        const QString timingEsc = prop.timing.toHtmlEscaped();
+        const QString rationaleEsc = prop.rationale.toHtmlEscaped();
         item->setToolTip(QStringLiteral("%1<br><b>Proposal:</b> %2 %3.<br><i>%4.</i>")
-                             .arg(eventTooltip(e, guess, sym), prop.action.toHtmlEscaped(),
-                                  prop.timing.toHtmlEscaped(), prop.rationale.toHtmlEscaped()));
+                             .arg(baseTip, actionEsc, timingEsc, rationaleEsc));
     }
 }
 
@@ -2375,7 +2420,7 @@ void MainWindow::refreshChartEventMarker()
     const QDateTime now = QDateTime::currentDateTime();
     const EconomicEvent *active = nullptr;
     qint64 bestAbs = -1;
-    for (const EconomicEvent &e : m_eventList) {
+    for (const EconomicEvent &e : std::as_const(m_eventList)) {
         if (!e.when.isValid()) {
             continue;
         }
@@ -2399,7 +2444,8 @@ void MainWindow::onOrderResult(bool ok, const QString &message)
 {
     appendLog(message, !ok);
     if (!ok) {
-        QMessageBox::warning(this, QStringLiteral("Order"), message);
+        [[maybe_unused]] const QMessageBox::StandardButton btn =
+            QMessageBox::warning(this, QStringLiteral("Order"), message);
     }
 }
 
@@ -2407,7 +2453,8 @@ void MainWindow::onPositionClosed(bool ok, const QString &message)
 {
     appendLog(message, !ok);
     if (!ok) {
-        QMessageBox::warning(this, QStringLiteral("Close position"), message);
+        [[maybe_unused]] const QMessageBox::StandardButton btn =
+            QMessageBox::warning(this, QStringLiteral("Close position"), message);
         return;
     }
     // (Re)arm the delayed closed-trade P/L refresh so the just-closed trade shows up
@@ -2441,9 +2488,8 @@ void MainWindow::onVix(double level, double changePct)
     m_sigVix->setText(QStringLiteral("<span style='color:%1'>%2  (%3, %4, %5%6%)</span>")
                           .arg(color)                    // %1
                           .arg(level, 0, 'f', 2)         // %2
-                          .arg(mood)                     // %3
-                          .arg(arrow)                    // %4
-                          .arg((changePct >= 0.0) ? QStringLiteral("+") : QString())  // %5
+                          .arg(mood, arrow,              // %3, %4
+                               (changePct >= 0.0) ? QStringLiteral("+") : QString())  // %5
                           .arg(changePct, 0, 'f', 1));   // %6  (trailing "%)" is literal)
     updateSignals();  // re-fold VIX into the buy/sell ensemble
 }
@@ -2525,10 +2571,18 @@ void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
     }
     const QString netColor = colorFor(s.netProfit).name();
     const QString netText = signed2(s.netProfit);
+    // Total costs across the listed instruments: estimated open+close spread
+    // plus the rollover fees eToro reports (same figures as the Costs column).
+    double totalCosts = 0.0;
+    for (const InstrumentPnl &r : s.perInstrument) {
+        totalCosts += r.fees + r.estSpreadCosts;
+    }
+    const QString costsText = QLocale().toString(toDisplay(totalCosts), 'f', 2);
     QString html = QStringLiteral(
-                       "<b>Net P/L (listed): <span style='color:%1'>%2 %3</span></b>"
-                       " &nbsp;·&nbsp; %4 closed trades &nbsp;·&nbsp; %5 → %6")
-                       .arg(netColor, netText, ccy)
+                       "<b>Net P/L (listed): <span style='color:%1'>%2 %3</span>"
+                       " &nbsp;·&nbsp; total costs %4 %3</b>"
+                       " &nbsp;·&nbsp; %5 closed trades &nbsp;·&nbsp; %6 → %7")
+                       .arg(netColor, netText, ccy, costsText)
                        .arg(s.trades)
                        .arg(fromText, toText);
     if (s.perInstrument.isEmpty()) {
@@ -2637,7 +2691,7 @@ void MainWindow::checkCloseProposals(double price)
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     QStringList lines;
-    for (const Position &p : m_shownPositions) {
+    for (const Position &p : std::as_const(m_shownPositions)) {
         // Only the shown instrument has a live price to test against.
         if (p.symbol.compare(sym, Qt::CaseInsensitive) != 0) {
             continue;
@@ -2648,14 +2702,18 @@ void MainWindow::checkCloseProposals(double price)
         if ((m_forecastTarget > 0.0) && (m_forecastBandPct > 0.0)) {
             const double lower = m_forecastTarget * (1.0 - (m_forecastBandPct / 100.0));
             const double upper = m_forecastTarget * (1.0 + (m_forecastBandPct / 100.0));
+            const QString priceText =
+                QLocale().toString(price, 'f', trading::priceDecimals(price));
             if (p.isBuy && (price < lower)) {
+                const QString lowerText =
+                    QLocale().toString(lower, 'f', trading::priceDecimals(lower));
                 reason = QStringLiteral("price %1 fell out of the prediction corridor (≥ %2)")
-                             .arg(QLocale().toString(price, 'f', trading::priceDecimals(price)),
-                                  QLocale().toString(lower, 'f', trading::priceDecimals(lower)));
+                             .arg(priceText, lowerText);
             } else if (!p.isBuy && (price > upper)) {
+                const QString upperText =
+                    QLocale().toString(upper, 'f', trading::priceDecimals(upper));
                 reason = QStringLiteral("price %1 rose out of the prediction corridor (≤ %2)")
-                             .arg(QLocale().toString(price, 'f', trading::priceDecimals(price)),
-                                  QLocale().toString(upper, 'f', trading::priceDecimals(upper)));
+                             .arg(priceText, upperText);
             } else {
                 // inside the corridor — check the signal flip below
             }
@@ -2697,7 +2755,7 @@ void MainWindow::checkCloseProposals(double price)
 
         const qint64 last = m_closeAdviceMs.value(p.positionId, 0);
         if ((now - last) >= kLogCooldownMs) {
-            m_closeAdviceMs.insert(p.positionId, now);
+            static_cast<void>(m_closeAdviceMs.insert(p.positionId, now));
             appendLog(QStringLiteral("CLOSE proposal for %1 %2 position: %3. Tick the trade "
                                      "and press Close marked trades if you agree.")
                           .arg(sym, p.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
@@ -2709,9 +2767,11 @@ void MainWindow::checkCloseProposals(double price)
         m_closeAdvice->setVisible(false);
         return;
     }
+    const QString symEsc = sym.toHtmlEscaped();
+    const QString joinedLines = lines.join(QStringLiteral("<br/>"));
     m_closeAdvice->setText(
         QStringLiteral("<span style='color:#e0b000'><b>⚠ Close proposal — %1:</b></span><br/>%2")
-            .arg(sym.toHtmlEscaped(), lines.join(QStringLiteral("<br/>"))));
+            .arg(symEsc, joinedLines));
     m_closeAdvice->setVisible(true);
 }
 
@@ -2731,7 +2791,8 @@ void MainWindow::openClosedTrades()
         top->addWidget(new QLabel(QStringLiteral("Lookback:"), m_closedDialog));
         m_closedWeeks = new QComboBox(m_closedDialog);
         for (qint32 w = 7; w <= 13; ++w) {
-            m_closedWeeks->addItem(QStringLiteral("%1 weeks").arg(w), w);
+            const QString label = QStringLiteral("%1 weeks").arg(w);
+            m_closedWeeks->addItem(label, w);
         }
         m_closedWeeks->setCurrentIndex(m_closedWeeks->count() - 1);  // default: 13 weeks
         top->addWidget(m_closedWeeks);
@@ -2745,13 +2806,14 @@ void MainWindow::openClosedTrades()
         m_closedSummary->setWordWrap(true);
         lay->addWidget(m_closedSummary);
 
-        m_closedTable = new QTableWidget(0, 11, m_closedDialog);
+        m_closedTable = new QTableWidget(0, 12, m_closedDialog);
         m_closedTable->setHorizontalHeaderLabels(
             {QStringLiteral("Closed"), QStringLiteral("Instrument"), QStringLiteral("Side"),
              QStringLiteral("Lev"), QStringLiteral("Invest (%1)").arg(m_ccy),
              QStringLiteral("Open"), QStringLiteral("Close"),
              QStringLiteral("Net P/L (%1)").arg(m_ccy), QStringLiteral("Fees"),
-             QStringLiteral("Open cost*"), QStringLiteral("Close cost*")});
+             QStringLiteral("Open cost*"), QStringLiteral("Close cost*"),
+             QStringLiteral("Spread*")});
         m_closedTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_closedTable->setSelectionBehavior(QAbstractItemView::SelectRows);
         m_closedTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -2762,7 +2824,9 @@ void MainWindow::openClosedTrades()
             "not listed in the app's selector).\n"
             "Net P/L and Fees are eToro's own figures (net of spread; fees = rollover).\n"
             "* Open/Close costs are estimates: half the instrument's CURRENT spread × "
-            "the trade's notional — eToro does not report historical spreads."));
+            "the trade's notional — eToro does not report historical spreads.\n"
+            "* Spread = the spread % the estimate priced with; ⚠ = captured while the "
+            "market was closed (frozen quotes widen the spread, inflating the estimate)."));
         lay->addWidget(m_closedTable, 1);
 
         auto *note = new QLabel(
@@ -2864,6 +2928,20 @@ void MainWindow::rebuildClosedTradesTable()
         auto *cc = make(t.costEstValid ? money(t.closeCostEst) : QStringLiteral("—"));
         cc->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 10, cc);
+        QString spreadText = QStringLiteral("—");
+        if (t.costEstValid && (t.spreadPctUsed > 0.0)) {
+            spreadText = QLocale().toString(t.spreadPctUsed, 'f', 3) + QStringLiteral("%")
+                         + (t.spreadStale ? QStringLiteral(" ⚠") : QString());
+        }
+        auto *sp = make(spreadText);
+        sp->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        if (t.spreadStale) {
+            sp->setForeground(QColor(0xe0, 0xb0, 0x00));
+            sp->setToolTip(QStringLiteral(
+                "Priced while the market was closed: frozen quotes carry the widened "
+                "after-hours spread, so this estimate overstates the real cost."));
+        }
+        m_closedTable->setItem(i, 11, sp);
 
         sumNet += t.netProfit;
         sumFees += t.fees;
@@ -2887,16 +2965,16 @@ void MainWindow::rebuildClosedTradesTable()
     }
     const QString netColor = (sumNet >= 0.0) ? QStringLiteral("#25b563")
                                              : QStringLiteral("#e35555");
-    const QString netText = QStringLiteral("%1%2 %3")
-                                .arg((sumNet >= 0.0) ? QStringLiteral("+") : QString(),
-                                     QLocale().toString(toDisplay(sumNet), 'f', 2), m_ccy);
+    const QString netSign = (sumNet >= 0.0) ? QStringLiteral("+") : QString();
+    const QString netValue = QLocale().toString(toDisplay(sumNet), 'f', 2);
+    const QString netText = QStringLiteral("%1%2 %3").arg(netSign, netValue, m_ccy);
+    const QString feesText = QLocale().toString(toDisplay(sumFees), 'f', 2);
+    const QString costsText = QLocale().toString(toDisplay(sumCosts), 'f', 2);
     m_closedSummary->setText(
         QStringLiteral("<b>%1 trades · net <span style='color:%2'>%3</span> · "
                        "rollover fees %4%5 · est. spread costs %4%6 (%7 trades priced)</b>")
             .arg(rows)
-            .arg(netColor, netText, m_ccy,
-                 QLocale().toString(toDisplay(sumFees), 'f', 2),
-                 QLocale().toString(toDisplay(sumCosts), 'f', 2))
+            .arg(netColor, netText, m_ccy, feesText, costsText)
             .arg(costRows));
 }
 
@@ -3077,7 +3155,7 @@ void MainWindow::rebuildRecommendations()
     };
     QList<Reco> recos;
 
-    for (const ScreenerRow &r : m_screenerRows) {
+    for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
         if (!r.ok || r.closes.isEmpty()) {
             continue;
         }
@@ -3314,10 +3392,11 @@ void MainWindow::openDecision()
 
         lay->addWidget(new QLabel(QStringLiteral("All instruments, ranked by composite:"),
                                   m_decisionDialog));
-        m_decisionRanked = new QTableWidget(0, 5, m_decisionDialog);
+        m_decisionRanked = new QTableWidget(0, 6, m_decisionDialog);
         m_decisionRanked->setHorizontalHeaderLabels(
             {QStringLiteral("Instrument"), QStringLiteral("Call"), QStringLiteral("Composite"),
-             QStringLiteral("Confidence"), QStringLiteral("Stay out?")});
+             QStringLiteral("Confidence"), QStringLiteral("Open"),
+             QStringLiteral("Trade plan")});
         m_decisionRanked->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_decisionRanked->setSelectionBehavior(QAbstractItemView::SelectRows);
         m_decisionRanked->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3458,37 +3537,47 @@ void MainWindow::rebuildDecision()
         call->setToolTip(QStringLiteral("%1\nComposite %2 from: %3.%4")
                              .arg(callMeaning)
                              .arg(d.composite, 0, 'f', 2)
-                             .arg(why.join(QStringLiteral("; ")))
-                             .arg(d.eventRisk ? QStringLiteral(
+                             .arg(why.join(QStringLiteral("; ")),
+                                  d.eventRisk ? QStringLiteral(
                                       "\n⚠ Confidence trimmed: high-impact event within 6h.")
                                               : QString()));
         auto *comp = new QTableWidgetItem(QStringLiteral("%1").arg(d.composite, 0, 'f', 2));
         comp->setTextAlignment(Qt::AlignCenter);
         auto *conf = new QTableWidgetItem(QStringLiteral("%1%").arg(qRound(d.confidence)));
         conf->setTextAlignment(Qt::AlignCenter);
-        // Signal-level stay-out gate: no direction, or too weak to act on. The
-        // focus instrument's plan below adds the cost-based STAY OUT reasons.
-        const bool stayOut = (d.dir == 0) || (d.confidence < 55.0);
-        auto *stay = new QTableWidgetItem(stayOut ? QStringLiteral("✋ stay out")
-                                                  : QStringLiteral("✓ tradeable"));
-        stay->setTextAlignment(Qt::AlignCenter);
-        stay->setForeground(stayOut ? QColor(0xe0, 0xb0, 0x00) : QColor(0x25, 0xb5, 0x63));
-        stay->setToolTip(
-            stayOut
-                ? ((d.dir == 0)
-                       ? QStringLiteral("Stay out: the sources give no direction for this "
-                                        "instrument right now.")
-                       : QStringLiteral("Stay out: composite confidence %1% is below the 55% "
-                                        "bar — too weak to pay the spread for.")
-                             .arg(qRound(d.confidence)))
-                : QStringLiteral("The signal is strong enough to consider — check the trade "
-                                 "plan below for the cost-based verdict before acting."));
+        // "Open": live tradeability from the quote-freshness poll (the API has no
+        // session flag), the same state that locks the BUY/SELL buttons.
+        auto *openIt = new QTableWidgetItem();
+        openIt->setTextAlignment(Qt::AlignCenter);
+        if (!m_tradeabilityKnown) {
+            openIt->setText(QStringLiteral("…"));
+            openIt->setForeground(trading::ui::kGrey);
+            openIt->setToolTip(QStringLiteral("Waiting for the first tradeability poll."));
+        } else if (m_tradeableNow.contains(d.symbol)) {
+            openIt->setText(QStringLiteral("● open"));
+            openIt->setForeground(trading::ui::kGreen);
+            openIt->setToolTip(QStringLiteral("Live quotes are fresh — the market is open "
+                                              "for trading right now."));
+        } else {
+            openIt->setText(QStringLiteral("○ closed"));
+            openIt->setForeground(trading::ui::kGrey);
+            openIt->setToolTip(QStringLiteral("Quotes are stale — the market is closed; "
+                                              "BUY/SELL is locked for this instrument."));
+        }
+        // "Trade plan": the plan verdict for this row. Costed asynchronously in one
+        // batch after the table fills; until then show the last known verdict.
+        const auto planIt = m_rowPlans.constFind(d.symbol);
+        QTableWidgetItem *planItem = (planIt != m_rowPlans.constEnd())
+                                         ? makePlanVerdictItem(*planIt)
+                                         : makePendingPlanItem();
         m_decisionRanked->setItem(i, 0, sym);
         m_decisionRanked->setItem(i, 1, call);
         m_decisionRanked->setItem(i, 2, comp);
         m_decisionRanked->setItem(i, 3, conf);
-        m_decisionRanked->setItem(i, 4, stay);
+        m_decisionRanked->setItem(i, 4, openIt);
+        m_decisionRanked->setItem(i, 5, planItem);
     }
+    dispatchRowPlans(rows);  // fill the "Trade plan" column off the GUI thread
 
     // Resolve the focus instrument: the user's manual pick if it's still listed, else
     // the recommendation (Claude's actionable pick, else the top composite).
@@ -3568,7 +3657,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                 : QStringLiteral("Sources:"));
     }
 
-    auto setSrc = [this](qint32 row, const QString &name, const QString &read, const QColor &c,
+    auto setSrc = [this](qint32 row, const QString &name, const QString &read, QColor c,
                          const QString &conf, const QString &note) {
         auto make = [](const QString &t) {
             auto *it = new QTableWidgetItem(t);
@@ -3631,26 +3720,27 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         // Crowd sentiment: what the trading crowd is doing right now (CNN F&G).
         const qint32 crowdDir =
             (focus->crowd > 0.1) ? 1 : ((focus->crowd < -0.1) ? -1 : 0);
-        setSrc(4, QStringLiteral("Crowd (Fear & Greed)"),
-               focus->haveCrowd
-                   ? QStringLiteral("%1/100 %2").arg(qRound(m_fg)).arg(m_fgRating)
-                   : QStringLiteral("n/a"),
-               focus->haveCrowd ? callColour(crowdDir) : grey,
-               focus->haveCrowd ? QStringLiteral("%1").arg(focus->crowd, 0, 'f', 2)
-                                : QString(),
+        const QString crowdRead =
+            focus->haveCrowd ? QStringLiteral("%1/100 %2").arg(qRound(m_fg)).arg(m_fgRating)
+                             : QStringLiteral("n/a");
+        const QColor crowdColor = focus->haveCrowd ? callColour(crowdDir) : grey;
+        const QString crowdConf =
+            focus->haveCrowd ? QStringLiteral("%1").arg(focus->crowd, 0, 'f', 2) : QString();
+        setSrc(4, QStringLiteral("Crowd (Fear & Greed)"), crowdRead, crowdColor, crowdConf,
                QStringLiteral("extremes read contrarian"));
         // Independent Yahoo Finance intraday momentum (1-minute session bars).
         const qint32 yahooDir =
             (focus->yahoo > 0.1) ? 1 : ((focus->yahoo < -0.1) ? -1 : 0);
-        setSrc(5, QStringLiteral("Yahoo intraday"),
-               focus->haveYahoo
-                   ? ((yahooDir > 0) ? QStringLiteral("above session mean")
-                                     : ((yahooDir < 0) ? QStringLiteral("below session mean")
-                                                       : QStringLiteral("at session mean")))
-                   : QStringLiteral("n/a"),
-               focus->haveYahoo ? callColour(yahooDir) : grey,
-               focus->haveYahoo ? QStringLiteral("%1").arg(focus->yahoo, 0, 'f', 2)
-                                : QString(),
+        const QString yahooRead =
+            focus->haveYahoo
+                ? ((yahooDir > 0) ? QStringLiteral("above session mean")
+                                  : ((yahooDir < 0) ? QStringLiteral("below session mean")
+                                                    : QStringLiteral("at session mean")))
+                : QStringLiteral("n/a");
+        const QColor yahooColor = focus->haveYahoo ? callColour(yahooDir) : grey;
+        const QString yahooConf =
+            focus->haveYahoo ? QStringLiteral("%1").arg(focus->yahoo, 0, 'f', 2) : QString();
+        setSrc(5, QStringLiteral("Yahoo intraday"), yahooRead, yahooColor, yahooConf,
                QStringLiteral("1-min closes, yahoo finance"));
     } else {
         static const QStringList names = {
@@ -3764,6 +3854,102 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
     m_decisionConclusion->setText(html);
 }
 
+// Cost a plan for EVERY ranked instrument in one background pass, so the
+// "Trade plan" column mirrors the panel's verdict per row. The Monte-Carlo work
+// stays off the GUI thread (REQ-N-006); all inputs are snapshotted here.
+void MainWindow::dispatchRowPlans(const QList<trading::DecisionRow> &rows)
+{
+    QList<QPair<QString, trading::PlanInput>> inputs;
+    inputs.reserve(rows.size());
+    for (const trading::DecisionRow &d : rows) {
+        const ScreenerRow *row = nullptr;
+        for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
+            if (r.symbol == d.symbol) {
+                row = &r;
+                break;
+            }
+        }
+        if ((row == nullptr) || row->closes.isEmpty()) {
+            continue;
+        }
+        trading::PlanInput in;
+        in.closes = row->closes;
+        in.price = row->lastPrice;
+        in.dir = d.dir;
+        in.invest = m_amount->value();
+        in.maxLeverage = d.maxLev;
+        // Cached spread/fees only — a cache miss keeps the plan's costsComplete
+        // false rather than firing one fetch per row (the focus plan refreshes them).
+        in.spreadPct = m_client->spreadPctFor(d.symbol);
+        const InstrumentFees fees = m_client->feesFor(d.symbol);
+        if (fees.isValid()) {
+            in.fees = fees;
+            in.feesKnown = true;
+        }
+        in.horizonHours = 24;
+        in.now = QDateTime::currentDateTime();
+        in.vixValid = m_vixValid;
+        in.vix = m_vix;
+        in.vixChangePct = m_vixChangePct;
+        in.eventRisk = d.eventRisk;
+        in.fgValid = m_fgValid;
+        in.fearGreed = m_fg;
+        inputs.append(qMakePair(d.symbol, in));
+    }
+    if (inputs.isEmpty()) {
+        return;
+    }
+    m_rowPlanWatcher.setFuture(QtConcurrent::run([inputs]() {
+        QHash<QString, trading::TradePlan> plans;
+        for (const auto &entry : inputs) {
+            static_cast<void>(
+                plans.insert(entry.first, trading::buildTradePlan(entry.second)));
+        }
+        return plans;
+    }));
+}
+
+// Batch result arrived: cache it and refresh the "Trade plan" cells in place.
+void MainWindow::applyRowPlanVerdicts()
+{
+    m_rowPlans = m_rowPlanWatcher.result();
+    if (m_decisionRanked == nullptr) {
+        return;
+    }
+    for (qint32 i = 0; i < m_decisionRanked->rowCount(); ++i) {
+        const QTableWidgetItem *symItem = m_decisionRanked->item(i, 0);
+        if (symItem == nullptr) {
+            continue;
+        }
+        const auto it = m_rowPlans.constFind(symItem->text());
+        if (it != m_rowPlans.constEnd()) {
+            m_decisionRanked->setItem(i, 5, makePlanVerdictItem(*it));
+        }
+    }
+}
+
+// A market opened/closed: repaint the ranked table's "Open" cells without a rebuild.
+void MainWindow::updateDecisionOpenColumn()
+{
+    if ((m_decisionRanked == nullptr) || !m_tradeabilityKnown) {
+        return;
+    }
+    for (qint32 i = 0; i < m_decisionRanked->rowCount(); ++i) {
+        const QTableWidgetItem *symItem = m_decisionRanked->item(i, 0);
+        QTableWidgetItem *openIt = m_decisionRanked->item(i, 4);
+        if ((symItem == nullptr) || (openIt == nullptr)) {
+            continue;
+        }
+        const bool open = m_tradeableNow.contains(symItem->text());
+        openIt->setText(open ? QStringLiteral("● open") : QStringLiteral("○ closed"));
+        openIt->setForeground(open ? trading::ui::kGreen : trading::ui::kGrey);
+        openIt->setToolTip(open ? QStringLiteral("Live quotes are fresh — the market is "
+                                                 "open for trading right now.")
+                                : QStringLiteral("Quotes are stale — the market is closed; "
+                                                 "BUY/SELL is locked for this instrument."));
+    }
+}
+
 void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QString &focusSymbol)
 {
     if (m_decisionPlanLabel == nullptr) {
@@ -3780,7 +3966,7 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
     }
     // The close series behind the focus row (the same one its ensemble used).
     const ScreenerRow *row = nullptr;
-    for (const ScreenerRow &r : m_screenerRows) {
+    for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
         if (r.symbol == focusSymbol) {
             row = &r;
             break;
@@ -3907,6 +4093,10 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
                                               .toHtmlEscaped()));
 
     // Sizing line: recommended leverage + the proposed SL/TP for this stake.
+    const QString slAmountText = eur(plan.slAmount);
+    const QString slRateText = rate(plan.slRate);
+    const QString tpAmountText = eur(plan.tpAmount);
+    const QString tpRateText = rate(plan.tpRate);
     html += QStringLiteral(
                 "<div>Stake %1 · recommended leverage <b>x%2</b> "
                 "<span style='color:%3'>(±%4% of stake per hour)</span> · "
@@ -3915,12 +4105,13 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
                 .arg(plan.leverage)
                 .arg(grey)
                 .arg(plan.marginSwingPct, 0, 'f', 1)
-                .arg(eur(plan.slAmount), rate(plan.slRate), eur(plan.tpAmount),
-                     rate(plan.tpRate));
+                .arg(slAmountText, slRateText, tpAmountText, tpRateText);
 
     // Cost bill: spread both ways, overnight, weekend — netted against the edge.
-    QString costLine = QStringLiteral("open %1 + close %2")
-                           .arg(eur(plan.openCost), eur(plan.closeCost));
+    const QString openCostText = eur(plan.openCost);
+    const QString closeCostText = eur(plan.closeCost);
+    QString costLine =
+        QStringLiteral("open %1 + close %2").arg(openCostText, closeCostText);
     if (plan.feePerNight != 0.0) {
         costLine += QStringLiteral(" + %1/night").arg(eur(plan.feePerNight));
     }
@@ -3928,20 +4119,20 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
         costLine += QStringLiteral(" + weekend %1").arg(eur(plan.weekendFee));
     }
     const QString netColor = (plan.expectedNet > 0.0) ? green : red;
+    const QString nightsPlural = (plan.nights == 1) ? QString() : QStringLiteral("s");
+    const QString costsTotal = eur(plan.expectedCosts);
+    const QString partialNote =
+        plan.costsComplete ? QString()
+                           : QStringLiteral(" <span style='color:%1'>(partial — live "
+                                            "spread/fees not received yet)</span>")
+                                 .arg(amber);
+    const QString netSign = (plan.expectedNet >= 0.0) ? QStringLiteral("+") : QString();
+    const QString netText = QLocale().toString(plan.expectedNet, 'f', 2);
     html += QStringLiteral(
                 "<div>Costs (%1 night%2): %3 = <b>%4</b>%5 · expected edge after costs: "
                 "<span style='color:%6'><b>%7%8</b></span></div>")
                 .arg(plan.nights)
-                .arg((plan.nights == 1) ? QString() : QStringLiteral("s"))
-                .arg(costLine, eur(plan.expectedCosts))
-                .arg(plan.costsComplete
-                         ? QString()
-                         : QStringLiteral(" <span style='color:%1'>(partial — live "
-                                          "spread/fees not received yet)</span>")
-                               .arg(amber))
-                .arg(netColor,
-                     (plan.expectedNet >= 0.0) ? QStringLiteral("+") : QString(),
-                     QLocale().toString(plan.expectedNet, 'f', 2));
+                .arg(nightsPlural, costLine, costsTotal, partialNote, netColor, netSign, netText);
     if (plan.crossesWeekend) {
         html += QStringLiteral(
                     "<div style='color:%1'>⚠ Holding over the weekend: the rollover night "
@@ -4276,7 +4467,8 @@ void MainWindow::placeOrder(bool isBuy)
                 .arg(toDisplay(kMaxOpenExposure), 0, 'f', 2)
                 .arg(toDisplay(m_openTradesTotal), 0, 'f', 2);
         appendLog(msg, true);
-        QMessageBox::warning(this, QStringLiteral("Open-trades limit"), msg);
+        [[maybe_unused]] const QMessageBox::StandardButton btn =
+            QMessageBox::warning(this, QStringLiteral("Open-trades limit"), msg);
         return;
     }
 
@@ -4310,8 +4502,9 @@ void MainWindow::onCloseClicked()
 {
     const QStringList ids = markedPositionIds();
     if (ids.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("Close trades"),
-                                 QStringLiteral("Tick one or more open trades to close first."));
+        [[maybe_unused]] const QMessageBox::StandardButton btn = QMessageBox::information(
+            this, QStringLiteral("Close trades"),
+            QStringLiteral("Tick one or more open trades to close first."));
         return;
     }
     // Close immediately — no confirmation dialog.

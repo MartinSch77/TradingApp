@@ -90,6 +90,9 @@ struct ClosedTrade {
     double openCostEst = 0.0;  // est. half-spread paid on opening (account ccy)
     double closeCostEst = 0.0; // est. half-spread paid on closing
     bool costEstValid = false; // false = no live spread available to estimate from
+    double spreadPctUsed = 0.0; // spread (% of mid) the estimate priced with
+    bool spreadStale = false;   // spread captured while the market was closed —
+                                // frozen quotes overstate the tradable spread
 };
 
 // One instrument's closed-trade P/L over a period (a row of the monthly summary).

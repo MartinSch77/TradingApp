@@ -87,7 +87,7 @@ entries = [e for e in json.load(open(db_path))
            if e["file"].startswith(os.path.join(root, "src") + os.sep)]
 located = re.compile(r"^(/[^:]+):(\d+):(\d+): warning: .*\[-Wanalyzer-[^\]]+\]$")
 
-def run(entry):
+def run(entry, extra=()):
     args, skip = [], False
     for a in shlex.split(entry["command"]):
         if skip:
@@ -97,12 +97,18 @@ def run(entry):
             skip = True
             continue
         args.append(a)
-    args += ["-fanalyzer", "-o", "/dev/null"]
+    args += ["-fanalyzer", *extra, "-o", "/dev/null"]
     try:
         r = subprocess.run(args, cwd=entry["directory"], capture_output=True,
                            text=True, timeout=600)
     except subprocess.TimeoutExpired:
         return [f'{entry["file"]}|1|error|gcc-analyzer-timeout|analyzer timed out']
+    if r.returncode != 0:
+        # g++ exits 0 even with analyzer warnings, so nonzero means the TU was
+        # never fully analyzed (ICE, or the kernel OOM-killed cc1plus). Surface
+        # that as a finding — silently returning nothing would green-wash it.
+        return [f'{entry["file"]}|1|error|gcc-analyzer-failed|'
+                f'g++ -fanalyzer exited with {r.returncode} (OOM-killed?)']
     keep = []
     for line in r.stderr.splitlines():
         m = located.match(line)
@@ -122,10 +128,28 @@ def run(entry):
         keep.append(line)
     return keep
 
+# The analyzer's memory scales hard with TU size: unbounded, the two big TUs
+# peak at ~13 GB (src/ui/MainWindow.cpp) and ~8 GB (src/services/EtoroClient.cpp)
+# on GCC 13 — one process per core OOMs a 16 GB CI runner, whose supervisor
+# then SIGTERMs the whole step (exit 143, ~100 s in). So: small TUs (peaks in
+# the hundreds of MB) run fully parallel at full precision; TUs over the size
+# threshold run one at a time with the exploded-graph growth bounded, which
+# brings MainWindow.cpp down to ~4.4 GB / 35 s with an identical finding set
+# (measured 2026-07: 0 findings both ways). Full precision is simply not
+# buyable for these TUs on any reasonable machine.
+HEAVY_BYTES = 50_000
+HEAVY_FLAGS = ("-fanalyzer-call-summaries",
+               "--param", "analyzer-max-svalue-depth=6",
+               "--param", "analyzer-max-enodes-per-program-point=4",
+               "--param", "analyzer-bb-explosion-factor=2")
+light = [e for e in entries if os.path.getsize(e["file"]) <= HEAVY_BYTES]
+heavy = [e for e in entries if os.path.getsize(e["file"]) > HEAVY_BYTES]
 lines = set()
 with cf.ThreadPoolExecutor(max_workers=os.cpu_count()) as ex:
-    for result in ex.map(run, entries):
+    for result in ex.map(run, light):
         lines.update(result)
+for entry in heavy:
+    lines.update(run(entry, HEAVY_FLAGS))
 with open(out_path, "w") as f:
     f.write("\n".join(sorted(lines)) + ("\n" if lines else ""))
 print(f"gcc-analyzer: {len(lines)} findings over {len(entries)} TUs")
@@ -168,10 +192,24 @@ else
     printf '' > "$OUT/clazy.txt"
 fi
 
-# Merged CSV for the dashboard import: tool;file;line;id;severity;message.
+# Every stage above tolerates its own tool failing (|| true) — so before
+# summing, prove the run actually produced all five logs. A vanished
+# analysis-results/ (e.g. a concurrent clean) once yielded "TOTAL: 0"/exit 0
+# with half the logs missing: a green-washed non-run.
+for f in cppcheck.txt clang-tidy.txt gcc-analyzer.txt codespell.txt clazy.txt; do
+    if [ ! -f "$OUT/$f" ]; then
+        echo "ERROR: $OUT/$f missing — the analysis did not complete (concurrent clean?)" >&2
+        exit 1
+    fi
+done
+
+# Merged CSV for the dashboard import: tool;file;line;rule;severity;message.
 # Shared with the Windows script (tools/static_analysis.ps1) so the two cannot
-# drift apart on the merge format.
-python3 "$ROOT/tools/merge_findings.py" "$OUT"
+# drift apart on the merge format. Its failure must fail the run.
+if ! python3 "$ROOT/tools/merge_findings.py" "$OUT"; then
+    echo "ERROR: merge_findings.py failed — no external_findings.csv" >&2
+    exit 1
+fi
 
 TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CODESPELL_N))
 echo "TOTAL findings: $TOTAL"

@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-PIPE_TOOLS = ("cppcheck",)
+PIPE_TOOLS = ("cppcheck", "codespell")
 GCC_STYLE_TOOLS = ("clang-tidy", "clazy", "gcc-analyzer", "msvc-analyze")
 
 GCC_RE = re.compile(r"^(.*?):(\d+):\d+:\s+(warning|error):\s+(.*?)\s+\[(.*)\]$")

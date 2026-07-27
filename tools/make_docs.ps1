@@ -28,7 +28,7 @@ try {
 
     if (-not (Test-Tool 'doxygen')) {
         Write-Skip "doxygen not installed (winget install DimitriVanHeesch.Doxygen) — API docs skipped"
-        exit 1
+        exit 3
     }
     & doxygen (Join-Path $Root 'Doxyfile')
     $doxRc = $LASTEXITCODE

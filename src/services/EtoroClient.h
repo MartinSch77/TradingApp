@@ -178,7 +178,7 @@ private:
     // Parse the open-position array out of a /portfolio or /pnl payload (the two
     // share one shape). Positions on instruments outside the app's list are
     // dropped. Shared so the live set and the P/L snapshot cannot drift apart.
-    QList<Position> parsePositionsPayload(const QJsonDocument &doc) const;
+    [[nodiscard]] QList<Position> parsePositionsPayload(const QJsonDocument &doc) const;
     // Overlay eToro's own per-position P/L (from the /pnl snapshot) onto the LIVE
     // position set, then finalize. `live` decides which positions exist; /pnl only
     // contributes profit / profitFromApi / apiCloseRate for the ones still open.

@@ -12,6 +12,22 @@
 
 namespace {
 
+// Generous shared bound for spy waits: the mock answers in milliseconds, the
+// margin only absorbs CI load. Deliberate short waits stay literal.
+constexpr qint32 kWaitMs = 15000;
+
+// Real-mode credentials pointed at the in-process mock — the one Config shape
+// every walk test needs (default symbol SPX500 comes from Config itself).
+Config mockConfig(const MockHttpServer &server)
+{
+    Config cfg;
+    cfg.apiKey = QStringLiteral("k");   // credentials → real-mode code path
+    cfg.userKey = QStringLiteral("u");
+    cfg.mode = QStringLiteral("demo");
+    cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+    return cfg;
+}
+
 // Two history pages (newest first) followed by an empty page; instrument 27
 // with a live 100/101 quote → spread 1/100.5 ≈ 0.995% of mid.
 QByteArray historyPage(qint32 page)
@@ -69,17 +85,13 @@ private slots:
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        Config cfg;
-        cfg.apiKey = QStringLiteral("k");   // credentials → real mode code path
-        cfg.userKey = QStringLiteral("u");
-        cfg.mode = QStringLiteral("demo");
-        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
 
         QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
         QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
         client.fetchClosedTrades(8);
-        QVERIFY(summary.wait(15000));
+        QVERIFY(summary.wait(kWaitMs));
         QCOMPARE(trades.count(), 1);
 
         const auto pnl = summary.takeFirst().at(0).value<MonthlyPnl>();
@@ -107,16 +119,12 @@ private slots:
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        Config cfg;
-        cfg.apiKey = QStringLiteral("k");
-        cfg.userKey = QStringLiteral("u");
-        cfg.mode = QStringLiteral("demo");
-        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
 
         QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
         client.fetchClosedTrades(8);
-        QVERIFY(trades.wait(15000));
+        QVERIFY(trades.wait(kWaitMs));
         const auto list = trades.takeFirst().at(0).value<QList<ClosedTrade>>();
         QCOMPARE(list.size(), 3);
 
@@ -129,6 +137,11 @@ private slots:
         QVERIFY(std::abs(first.openCostEst
                          - (1000.0 * 20.0 * (spreadPct / 100.0) / 2.0)) < 1e-9);
         QCOMPARE(first.openCostEst, first.closeCostEst);
+        // The estimate must disclose the spread % it priced with, and flag it
+        // stale: no tradeability poll ran here, so the quote's freshness is
+        // unknown and the frozen-quote warning has to stay on (REQ-F-014).
+        QVERIFY(std::abs(first.spreadPctUsed - spreadPct) < 1e-9);
+        QVERIFY(first.spreadStale);
         QVERIFY(first.isBuy);
         QCOMPARE(first.netProfit, 150.0);
         QCOMPARE(first.fees, -2.5);
@@ -159,7 +172,7 @@ private slots:
     }
 
     //! @tstid TS-CLI-004 @design DES-SVC-CLIENT
-    // @relation(REQ-F-015, scope=function)
+    // @relation(REQ-F-025, scope=function)
     void TS_CLI_004_closedPositionDisappearsFromOpenTrades()
     {
         // Regression: a position closed at eToro (in its own UI, or automatically
@@ -202,11 +215,7 @@ private slots:
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        Config cfg;
-        cfg.apiKey = QStringLiteral("k");   // credentials -> real mode code path
-        cfg.userKey = QStringLiteral("u");
-        cfg.mode = QStringLiteral("demo");
-        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
         // Both symbols are listed, so neither is dropped for being unknown — the
         // closed one must disappear because /portfolio omits it, not by accident.
@@ -214,7 +223,7 @@ private slots:
 
         QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
         client.refreshPortfolio();
-        QVERIFY(portfolio.wait(15000));
+        QVERIFY(portfolio.wait(kWaitMs));
 
         const auto positions = portfolio.takeLast().at(0).value<QList<Position>>();
         QCOMPARE(positions.size(), 1);                       // the stale one is gone
@@ -267,11 +276,7 @@ private slots:
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        Config cfg;  // default symbol SPX500
-        cfg.apiKey = QStringLiteral("k");
-        cfg.userKey = QStringLiteral("u");
-        cfg.mode = QStringLiteral("demo");
-        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
         client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("HKG50")});
 
@@ -279,7 +284,7 @@ private slots:
         QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
         client.start();                // id resolution goes out, answers in 200 ms
         client.fetchClosedTrades(8);   // history pages answer immediately
-        QVERIFY(trades.wait(15000));
+        QVERIFY(trades.wait(kWaitMs));
 
         const auto list = trades.takeFirst().at(0).value<QList<ClosedTrade>>();
         QCOMPARE(list.size(), 3);
@@ -296,6 +301,11 @@ private slots:
         QCOMPARE(pnl.perInstrument[0].trades, 2);
         QCOMPARE(pnl.perInstrument[1].symbol, QStringLiteral("HKG50"));
         QVERIFY(std::abs(pnl.perInstrument[1].netProfit - 10.0) < 1e-9);
+        // The per-instrument Costs column input: open+close spread estimates
+        // roll up per symbol — invest×lev×spread% summed over the trades
+        // (SPX500: 20000/100.5 + 5000/100.5; HKG50: 1000/200.5) (REQ-F-014).
+        QVERIFY(std::abs(pnl.perInstrument[0].estSpreadCosts - 25000.0 / 100.5) < 1e-6);
+        QVERIFY(std::abs(pnl.perInstrument[1].estSpreadCosts - 1000.0 / 200.5) < 1e-6);
     }
 
     //! @tstid TS-CLI-006 @design DES-SVC-CLIENT
@@ -315,11 +325,7 @@ private slots:
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        Config cfg;
-        cfg.apiKey = QStringLiteral("k");
-        cfg.userKey = QStringLiteral("u");
-        cfg.mode = QStringLiteral("demo");
-        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
 
         QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
@@ -327,9 +333,9 @@ private slots:
         client.fetchClosedTrades(8);
         client.fetchClosedTrades(9);   // walk busy → queued…
         client.fetchClosedTrades(13);  // …and superseded by the latest request
-        QVERIFY(summary.wait(15000));
+        QVERIFY(summary.wait(kWaitMs));
         if (summary.count() < 2) {
-            QVERIFY(summary.wait(15000));
+            QVERIFY(summary.wait(kWaitMs));
         }
         QCOMPARE(summary.count(), 2);  // 8-week walk + queued 13-week walk only
         const auto first = summary.at(0).at(0).value<MonthlyPnl>();

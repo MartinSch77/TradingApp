@@ -68,6 +68,9 @@ private slots:
     // @relation(REQ-F-005, scope=function)
     void TS_IND_005_bollingerPercentB()
     {
+        // Degenerate band: a flat series has zero width, %b reports mid-band.
+        QCOMPARE(bollingerPercentB(QList<double>(40, 100.0), 20), 0.5);
+
         // Alternating series: the mean sits centrally, the last value (high leg)
         // sits in the upper half of the band.
         QList<double> s;
@@ -77,6 +80,12 @@ private slots:
         const double b = bollingerPercentB(s, 20);
         QVERIFY(b > 0.5);
         QVERIFY(b <= 1.5);
+
+        // Upper extreme: a monotonic ramp ends at its own maximum — %b sits
+        // near the upper band (≈0.91 for a uniform ramp), well above mid.
+        const double top = bollingerPercentB(ramp(40, 100.0, 1.0), 20);
+        QVERIFY(top > 0.85);
+        QVERIFY(top <= 1.0);
     }
 
     //! @tstid TS-IND-006 @design DES-DOM-IND

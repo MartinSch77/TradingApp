@@ -1,7 +1,8 @@
 # Test suite: unit tests over the pure domain layer plus integration tests over
 # the services (config layering, simulation engine, HTTP plumbing and the eToro
 # client against an in-process mock server). Every test function carries the
-# traceability tags (@tstid / @verifies / @design) that tools/trace_report.py
+# traceability tags (//! @tstid TS-… @design DES-… plus the plain-comment
+# StrictDoc marker // @relation(REQ-…, scope=function)) that tools/trace_report.py
 # joins with docs/requirements.md, docs/design.md, docs/test_spec.md and the
 # JUnit results in test-results/.
 

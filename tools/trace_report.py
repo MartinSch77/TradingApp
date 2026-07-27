@@ -11,8 +11,8 @@ Joins the four legs of the traceability chain and reports completeness:
                                        the StrictDoc source-coverage marker
   test results  test-results/*.xml     JUnit per-function pass/fail
 
-Outputs docs/traceability.html (self-contained, also included in the Doxygen
-HTML as a related page via docs/traceability.md) and prints a gap summary.
+Outputs docs/traceability.html (self-contained, shipped into the Doxygen HTML
+via the Doxyfile's HTML_EXTRA_FILES) and prints a gap summary.
 Exit code 1 when a *hard* gap exists (spec'd test without implementation,
 implemented test without spec, or broken id reference); requirements without
 any automated test are reported as OPEN coverage gaps but do not fail the run
@@ -157,6 +157,14 @@ def main():
     for ts, info in impl.items():
         if ts not in spec:
             hard_gaps.append(f"{ts}: implemented ({info['file']}) but missing from test_spec.md")
+        # The repo-wide naming rule (TS_AREA_NNN_description) is what makes the
+        # JUnit result join reliable — enforce it instead of trusting discipline.
+        expected_prefix = ts.replace("-", "_")
+        if not info["function"].startswith(expected_prefix):
+            hard_gaps.append(
+                f"{ts}: function {info['function']} ({info['file']}) does not start "
+                f"with {expected_prefix} — tag and name have drifted apart"
+            )
         for r in info["verifies"]:
             if r not in reqs:
                 hard_gaps.append(f"{ts}: @relation references unknown {r}")

@@ -83,6 +83,7 @@ private slots:
 
         QSignalSpy closed(&sim, &SimulationEngine::positionClosed);
         QSignalSpy portfolio(&sim, &SimulationEngine::portfolioUpdated);
+        QSignalSpy cash(&sim, &SimulationEngine::cashUpdated);
         for (qint32 i = 0; (i < 5000) && closed.isEmpty(); ++i) {
             sim.tick();
         }
@@ -90,6 +91,13 @@ private slots:
         QVERIFY(closed.last().at(0).toBool());
         QVERIFY(portfolio.count() >= 1);
         QVERIFY(portfolio.last().at(0).value<QList<Position>>().isEmpty());
+        // The close frees the reserved margin: the 1000 stake returns to cash
+        // and only the realized stop-loss (≈ the 1.0 SL amount, plus whatever
+        // the discrete tick gapped past it) is gone from the 100000 start.
+        QVERIFY(cash.count() >= 1);
+        const double cashAfter = cash.last().at(0).toDouble();
+        QVERIFY(cashAfter < 100000.0);   // a loss was realized
+        QVERIFY(cashAfter > 99900.0);    // ... but the margin itself came back
 
         QSignalSpy summary(&sim, &SimulationEngine::monthlyPnlReady);
         sim.summarizeMonthly();

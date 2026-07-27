@@ -182,6 +182,12 @@ VERIFICATION: I
 TITLE: Per-trade gauge window
 STATEMENT: 'Clicking the Side cell of an open-trade row shall open a non-modal gauge window for that trade: a dial whose needle is the live price over a stop-loss→open→take-profit scale (loss zone red, win zone green, open-rate marker), plus the buy (open) value, the current value, the live P/L and the SL/TP values; the gauge follows live price ticks of the shown instrument. Clicking the Instrument cell shall instead switch the app to that trade''s instrument (as if picked from the instrument selector); clicks on other cells shall neither open the gauge nor switch the instrument.'
 
+[REQUIREMENT]
+UID: REQ-F-025
+VERIFICATION: T
+TITLE: Open trades mirror the live portfolio
+STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh; eToro's authoritative per-position P/L shall be overlaid onto the positions that are still open and re-anchored to the live close rate.
+
 [[/SECTION]]
 
 [[SECTION]]

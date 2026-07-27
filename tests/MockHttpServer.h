@@ -15,7 +15,7 @@
 // port inside the test's event loop — no network access, no threads.
 class MockHttpServer : public QTcpServer
 {
-    Q_OBJECT
+    Q_OBJECT;  // ";" = the repo-wide tree-sitter anchor; keep it when copying as a template
 public:
     struct Response {
         qint32 status = 200;
@@ -45,14 +45,11 @@ public:
     // made llvm-cov report "functions have mismatched data".
     QString baseUrl() const;
 
-    qint32 requestCount() const { return m_requests; }
-
 private:
     void serve(QTcpSocket *sock);
 
     Handler m_handler;
     QHash<QTcpSocket *, QByteArray> m_buffer;
-    qint32 m_requests = 0;
 };
 
 #endif // TRADINGAPP_TESTS_MOCKHTTPSERVER_H

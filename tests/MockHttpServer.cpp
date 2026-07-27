@@ -35,7 +35,6 @@ void MockHttpServer::serve(QTcpSocket *sock)
     const QByteArray method = requestLine.value(0);
     const QString path = QString::fromUtf8(requestLine.value(1));
     m_buffer.remove(sock);
-    ++m_requests;
 
     const Response r = m_handler(method, path);
     QByteArray out = "HTTP/1.1 " + QByteArray::number(r.status) + " X\r\n";

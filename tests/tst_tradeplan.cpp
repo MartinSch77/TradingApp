@@ -126,6 +126,9 @@ private slots:
         QVERIFY(plan.valid);
         QCOMPARE(plan.verdict, QStringLiteral("STAY OUT"));
         QVERIFY(plan.expectedNet <= 0.0);
+        // Pin the gate that fired: the refusal must name the cost bill, not
+        // the confidence or break-even gates that precede it.
+        QVERIFY(plan.verdictReason.contains(QStringLiteral("costs eat")));
     }
 
     //! @tstid TS-PLAN-006 @design DES-DOM-PLAN
@@ -193,6 +196,32 @@ private slots:
         QVERIFY(thin.expectedNet < minEdge);
         QCOMPARE(thin.verdict, QStringLiteral("STAY OUT"));
         QVERIFY(thin.verdictReason.contains(QStringLiteral("too thin")));
+    }
+
+    //! @tstid TS-PLAN-008 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, scope=function)
+    void TS_PLAN_008_breakEvenGateRefusesPoorWinRate()
+    {
+        // Gate (b): an actionable call must clear the reward:risk break-even
+        // win-rate by two standard errors of its Monte-Carlo estimate. Force a
+        // SHORT against a confidently rising market: the ensemble confidence
+        // stays high (it measures signal agreement, not the forced side), so
+        // the confidence gate passes — but the short's win rate sits far below
+        // break-even and the verdict must refuse on exactly that ground.
+        PlanInput in = baseInput(trend(120, 1.004, 1.001));
+        in.mcSeed = 7U;
+        QCOMPARE(buildTradePlan(in).verdict, QStringLiteral("BUY"));  // market is long
+
+        in.dir = -1;
+        const TradePlan shortPlan = buildTradePlan(in);
+        QVERIFY(shortPlan.valid);
+        QCOMPARE(shortPlan.verdict, QStringLiteral("STAY OUT"));
+        QVERIFY(shortPlan.verdictReason.contains(QStringLiteral("break-even")));
+        // And the quantitative ground holds: the measured conditional win rate
+        // itself is below the break-even rate (not merely inside its noise band).
+        const double decided = shortPlan.pWin + shortPlan.pLose;
+        QVERIFY(decided > 0.0);
+        QVERIFY((shortPlan.pWin / decided) < shortPlan.breakeven);
     }
 };
 

@@ -106,6 +106,12 @@ private slots:
         QCOMPARE(plain[0].symbol, QStringLiteral("UP"));
         QCOMPARE(plain[0].dir, 1);
         QVERIFY(!plain[0].haveCrowd);
+        // Renormalisation over the AVAILABLE sources: with only the technical
+        // ensemble present (plus the always-on regime term, neutral here), the
+        // composite must be 0.35·tech / (0.35 + 0.15) — NOT tech divided by the
+        // full five-source weight sum, which would dilute lone sources.
+        const double techSigned = plain[0].techDir * (plain[0].techConf / 100.0);
+        QVERIFY(std::abs(plain[0].composite - ((0.35 * techSigned) / 0.50)) < 1e-9);
 
         // Extreme greed tilts the composite of every instrument bearish.
         m.fgValid = true;
@@ -122,6 +128,10 @@ private slots:
         QVERIFY(up->crowd < -0.4);
         // With the bearish crowd source blended in, the composite must drop.
         QVERIFY(up->composite < plain[0].composite);
+        // And the weights renormalise over the grown source set: the crowd
+        // enters at 0.10 and the divisor grows from 0.50 to 0.60.
+        const double crowdBlend = ((0.35 * techSigned) + (0.10 * up->crowd)) / 0.60;
+        QVERIFY(std::abs(up->composite - crowdBlend) < 1e-9);
     }
 
     //! @tstid TS-DEC-005 @design DES-DOM-DEC
@@ -145,7 +155,7 @@ private slots:
         // The tilt reads where the last price sits in the session distribution.
         QList<double> rising;
         QList<double> falling;
-        for (int i = 0; i < 120; ++i) {
+        for (qint32 i = 0; i < 120; ++i) {
             rising << 100.0 + i;
             falling << 220.0 - i;
         }

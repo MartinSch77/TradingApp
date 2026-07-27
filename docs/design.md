@@ -27,7 +27,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 
 | ID | Element | Implementation | satisfies |
 |----|---------|----------------|-----------|
-| DES-SVC-CLIENT | eToro REST client: resolution, rates/candles, orders + confirmation, portfolio/P-L, trade-history pager with spread-cost estimation, fee/spread caches, tradeability inference | `EtoroClient.h/.cpp` | REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-014, REQ-F-015, REQ-F-016, REQ-N-003 |
+| DES-SVC-CLIENT | eToro REST client: resolution, rates/candles, orders + confirmation, portfolio/P-L (live-portfolio position set with the P/L snapshot overlaid), trade-history pager with spread-cost estimation, fee/spread caches, tradeability inference | `EtoroClient.h/.cpp` | REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-014, REQ-F-015, REQ-F-016, REQ-F-025, REQ-N-003 |
 | DES-SVC-SIM | Self-contained simulation (synthetic feed, virtual account, SL/TP/trailing execution, closed-trade log) | `SimulationEngine.h/.cpp` | REQ-F-017 |
 | DES-SVC-FEEDS | Public web feeds: VIX, TradingView ratings (all 26 instruments — verified tickers, ETF/index proxies for thematic baskets, RUBBER n/a), news, CNN Fear & Greed, Yahoo reference quote + intraday series | `MarketFeeds.h/.cpp` | REQ-F-009, REQ-F-019, REQ-F-020, REQ-F-022 |
 | DES-SVC-HTTP | Shared JSON/HTTP plumbing with idempotent-GET retry/backoff | `JsonHttp.h/.cpp` | REQ-N-003 |

@@ -1,5 +1,6 @@
 #include "services/EtoroClient.h"
 
+#include "domain/PositionMath.h"
 #include "services/JsonHttp.h"
 #include "services/SimulationEngine.h"
 
@@ -96,6 +97,14 @@ QDateTime timeFrom(const QJsonValue &v)
         }
     }
     return QDateTime::currentDateTime();
+}
+
+// Short human-readable reason from a failed reply: the transport error when
+// there is one, otherwise the leading bytes of the response body. One shared
+// helper so every log line truncates and falls back identically.
+QString errorText(const QByteArray &raw, const QString &netError)
+{
+    return netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError;
 }
 
 } // namespace
@@ -467,7 +476,7 @@ void EtoroClient::resolveInstrumentReal()
         if (!ok) {
             emit log(QStringLiteral("Instrument search failed (HTTP %1): %2")
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(300)) : netError),
+                         .arg(errorText(raw, netError)),
                      true);
             retryResolveOrGiveUp(wantSym);
             return;
@@ -576,7 +585,7 @@ void EtoroClient::fetchLeverageReal()
         if (!ok) {
             emit log(QStringLiteral("Leverage lookup failed (HTTP %1): %2 — keeping current options.")
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
+                         .arg(errorText(raw, netError)),
                      false);
             return;
         }
@@ -794,7 +803,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
             emit log(QStringLiteral("Candle history (%1) unavailable (HTTP %2): %3")
                          .arg(interval)
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
+                         .arg(errorText(raw, netError)),
                      true);
             cb({});
             return;
@@ -993,7 +1002,7 @@ void EtoroClient::refreshPortfolioReal()
         if (!ok) {
             emit log(QStringLiteral("Portfolio fetch failed (HTTP %1): %2")
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
+                         .arg(errorText(raw, netError)),
                      true);
             // Deliberately no emit: keep the previous snapshot rather than blanking
             // the table on a transient error. The next poll retries.
@@ -1191,12 +1200,11 @@ void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
                 if (p.openRate <= 0.0) {
                     continue;
                 }
-                // Value per point in the account currency: amount × leverage is the
-                // account-currency notional, so notional/openRate moves 1:1 with price
-                // — raw units are in the *quote* currency and mis-scale non-account-
-                // currency instruments (e.g. HKG50 in HKD). Falls back to units.
-                const double notional = p.amount * p.leverage;
-                const double perPoint = (notional > 0.0) ? (notional / p.openRate) : p.units;
+                // Value per point in the account currency — the same domain identity
+                // the positions table and the gauge use (notional/openRate; raw units
+                // are in the *quote* currency and mis-scale non-account-currency
+                // instruments such as HKG50 in HKD).
+                const double perPoint = trading::accountValuePerPoint(p);
 
                 // Expected spread cost to close now. eToro attributes HALF the spread
                 // to opening and half to closing (a long sells at the bid = mid − spread/2),
@@ -1247,7 +1255,7 @@ void EtoroClient::refreshBalanceReal()
         if (!ok) {
             emit log(QStringLiteral("Balance fetch failed (HTTP %1): %2")
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
+                         .arg(errorText(raw, netError)),
                      true);
             return;
         }
@@ -1292,7 +1300,7 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
             emit monthlyPnlFailed(
                 QStringLiteral("Closed-trade history fetch failed (%1): %2")
                     .arg(cause,
-                         netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError));
+                         errorText(raw, netError)));
             startPendingClosedTradesWalk();
             return;
         }
@@ -1569,7 +1577,7 @@ void EtoroClient::scanInstrumentsReal()
             emit log(QStringLiteral("Screener leverage lookup failed (HTTP %1): %2 — "
                                     "rows will show leverage as n/a.")
                          .arg(status)
-                         .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError),
+                         .arg(errorText(raw, netError)),
                      true);
         }
         // Fetch candles regardless: a row still ranks (leverage only) without them.

@@ -1,5 +1,6 @@
 #include "services/MarketFeeds.h"
 
+#include "domain/DecisionEngine.h"
 #include "services/JsonHttp.h"
 
 #include <QJsonArray>
@@ -81,22 +82,6 @@ QString yahooTicker(const QString &symbol)
 }
 
 // TradingView's rating buckets for the aggregated recommendation score in [-1, 1].
-QString ratingText(double score)
-{
-    if (score >= 0.5) {
-        return QStringLiteral("Strong Buy");
-    }
-    if (score >= 0.1) {
-        return QStringLiteral("Buy");
-    }
-    if (score > -0.1) {
-        return QStringLiteral("Neutral");
-    }
-    if (score > -0.5) {
-        return QStringLiteral("Sell");
-    }
-    return QStringLiteral("Strong Sell");
-}
 
 // Collect the web tickers for the tradable instruments; several app symbols can share
 // one ticker (e.g. SPX500 / SP.24-7 -> SP:SPX), so map each ticker to all its symbols.
@@ -277,7 +262,7 @@ void MarketFeeds::fetchExternalSignal()
             return;
         }
         const double score = d.first().toDouble();
-        emit externalSignalUpdated(true, score, ratingText(score));
+        emit externalSignalUpdated(true, score, trading::webRatingWord(score));
     });
 }
 

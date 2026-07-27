@@ -89,7 +89,7 @@ QTableWidgetItem *makePlanVerdictItem(const trading::TradePlan &plan)
         it->setToolTip(QStringLiteral("Not enough price history to build a plan."));
     } else if (plan.verdict == QLatin1String("STAY OUT")) {
         it->setText(QStringLiteral("✋ stay out"));
-        it->setForeground(QColor(0xe0, 0xb0, 0x00));
+        it->setForeground(trading::ui::kAmber);
         it->setToolTip(QStringLiteral("Plan verdict: STAY OUT — %1.").arg(plan.verdictReason));
     } else {
         it->setText(QStringLiteral("✓ %1").arg(plan.verdict));
@@ -123,23 +123,6 @@ constexpr qint32 RankedColOpen = 5;
 constexpr qint32 RankedColPlan = 6;
 constexpr qint32 RankedColCount = 7;
 
-// TradingView's rating buckets for a recommendation score in [-1, 1].
-QString webRatingWord(double score)
-{
-    if (score >= 0.5) {
-        return QStringLiteral("Strong Buy");
-    }
-    if (score >= 0.1) {
-        return QStringLiteral("Buy");
-    }
-    if (score > -0.1) {
-        return QStringLiteral("Neutral");
-    }
-    if (score > -0.5) {
-        return QStringLiteral("Sell");
-    }
-    return QStringLiteral("Strong Sell");
-}
 
 // Cell for the ranked table's "Web signal" column: the TradingView multi-timeframe
 // technical rating (the same read that feeds the composite), per instrument.
@@ -156,7 +139,8 @@ QTableWidgetItem *makeWebRatingItem(const WebRating &r)
         return it;
     }
     const double score = r.consensus();
-    it->setText(QStringLiteral("%1 (%2)").arg(webRatingWord(score)).arg(score, 0, 'f', 2));
+    it->setText(
+        QStringLiteral("%1 (%2)").arg(trading::webRatingWord(score)).arg(score, 0, 'f', 2));
     it->setForeground((score >= 0.1) ? trading::ui::kGreen
                                      : ((score <= -0.1) ? trading::ui::kRed
                                                         : trading::ui::kGrey));
@@ -2178,12 +2162,14 @@ void MainWindow::updateSignals()
     const qint32 votes = ens.votes;
     double confidence = ens.confidence;
 
-    // High absolute VIX = a fearful, choppy tape: trim confidence (instrument-agnostic).
+    // High absolute VIX = a fearful, choppy tape: trim confidence with the SHARED
+    // domain haircut (the screener and the trade planner apply the same one, so a
+    // symbol's confidence reads identically in all three panels).
     QString vixNote;
     if (m_vixValid && (m_vix >= 25.0)) {
-        confidence *= ((m_vix >= 35.0) ? 0.6 : 0.8);
         vixNote = QStringLiteral(" · VIX %1").arg(m_vix, 0, 'f', 0);
     }
+    confidence = trading::applyVixHaircut(confidence, m_vixValid, m_vix);
 
     // Event risk: an imminent calendar event lowers confidence and flags volatility.
     QString eventNote;
@@ -3016,9 +3002,9 @@ void MainWindow::rebuildClosedTradesTable()
     if (m_closedTable == nullptr) {
         return;
     }
-    const QColor green(0x25, 0xb5, 0x63);
-    const QColor red(0xe3, 0x55, 0x55);
-    const QColor grey(0x9a, 0x9a, 0x9a);
+    const QColor &green = trading::ui::kGreen;
+    const QColor &red = trading::ui::kRed;
+    const QColor &grey = trading::ui::kGrey;
 
     double sumNet = 0.0;
     double sumFees = 0.0;
@@ -3079,7 +3065,7 @@ void MainWindow::rebuildClosedTradesTable()
         auto *sp = make(spreadText);
         sp->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         if (t.spreadStale) {
-            sp->setForeground(QColor(0xe0, 0xb0, 0x00));
+            sp->setForeground(trading::ui::kAmber);
             sp->setToolTip(QStringLiteral(
                 "Priced while the market was closed: frozen quotes carry the widened "
                 "after-hours spread, so this estimate overstates the real cost."));
@@ -3254,24 +3240,9 @@ void MainWindow::rebuildRecommendations()
         return;
     }
 
-    const QColor green(0x25, 0xb5, 0x63);
-    const QColor red(0xe3, 0x55, 0x55);
+    const QColor &green = trading::ui::kGreen;
+    const QColor &red = trading::ui::kRed;
 
-    auto ratingWord = [](double s) -> QString {
-        if (s >= 0.5) {
-            return QStringLiteral("Strong Buy");
-        }
-        if (s >= 0.1) {
-            return QStringLiteral("Buy");
-        }
-        if (s > -0.1) {
-            return QStringLiteral("Neutral");
-        }
-        if (s > -0.5) {
-            return QStringLiteral("Sell");
-        }
-        return QStringLiteral("Strong Sell");
-    };
     auto ago = [](const QDateTime &t) -> QString {
         if (!t.isValid()) {
             return {};
@@ -3369,7 +3340,7 @@ void MainWindow::rebuildRecommendations()
         }
         if (haveRating) {
             tip << QStringLiteral("TradingView 1h rating: %1 (%2%3) — %4")
-                       .arg(ratingWord(rating),
+                       .arg(trading::webRatingWord(rating),
                             (rating >= 0.0) ? QStringLiteral("+") : QString())
                        .arg(rating, 0, 'f', 2)
                        .arg(((rating > 0) == (dir > 0)) ? QStringLiteral("confirms")
@@ -3628,9 +3599,9 @@ void MainWindow::rebuildDecision()
         return;
     }
 
-    const QColor green(0x25, 0xb5, 0x63);
-    const QColor red(0xe3, 0x55, 0x55);
-    const QColor grey(0x9a, 0x9a, 0x9a);
+    const QColor &green = trading::ui::kGreen;
+    const QColor &red = trading::ui::kRed;
+    const QColor &grey = trading::ui::kGrey;
     auto callColour = [&green, &red, &grey](qint32 dir) {
         return (dir > 0) ? green : ((dir < 0) ? red : grey);
     };
@@ -3776,9 +3747,9 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         return;
     }
 
-    const QColor green(0x25, 0xb5, 0x63);
-    const QColor red(0xe3, 0x55, 0x55);
-    const QColor grey(0x9a, 0x9a, 0x9a);
+    const QColor &green = trading::ui::kGreen;
+    const QColor &red = trading::ui::kRed;
+    const QColor &grey = trading::ui::kGrey;
     auto callColour = [&green, &red, &grey](qint32 dir) {
         return (dir > 0) ? green : ((dir < 0) ? red : grey);
     };

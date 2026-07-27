@@ -218,6 +218,23 @@ QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
     return rows;
 }
 
+QString webRatingWord(double score)
+{
+    if (score >= 0.5) {
+        return QStringLiteral("Strong Buy");
+    }
+    if (score >= 0.1) {
+        return QStringLiteral("Buy");
+    }
+    if (score > -0.1) {
+        return QStringLiteral("Neutral");
+    }
+    if (score > -0.5) {
+        return QStringLiteral("Sell");
+    }
+    return QStringLiteral("Strong Sell");
+}
+
 QString buildDecisionEvidence(const QList<DecisionRow> &rows, const MarketSnapshot &m)
 {
     QString out = QStringLiteral(

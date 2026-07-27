@@ -11,6 +11,7 @@ namespace trading::ui {
 inline const QColor kGreen(0x25, 0xb5, 0x63);  // BUY / long / profit
 inline const QColor kRed(0xe3, 0x55, 0x55);    // SELL / short / loss
 inline const QColor kGrey(0x9a, 0x9a, 0x9a);   // neutral / no signal
+inline const QColor kAmber(0xe0, 0xb0, 0x00);  // warning / stale / caution (#e0b000)
 
 }  // namespace trading::ui
 

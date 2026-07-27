@@ -82,6 +82,11 @@ QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m);
 // per-source reads and the market context, plus the answer contract.
 QString buildDecisionEvidence(const QList<DecisionRow> &rows, const MarketSnapshot &m);
 
+// TradingView's rating buckets for a recommendation score in [-1, 1]. One
+// shared bucket table: the ranked table, the signals panel and the feed label
+// must word the same score identically.
+QString webRatingWord(double score);
+
 } // namespace trading
 
 #endif // TRADINGAPP_DOMAIN_DECISIONENGINE_H

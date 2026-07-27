@@ -132,9 +132,11 @@
             "_active": true
         },
         "CWE-20": {
+            ".#": "2026-07-27: re-enabled on request after the 2026-07-26 experiment (rule off cut the run from 75 to 3 min); the taint findings on Qt/JSON code are mostly noise — triage via dashboard justifications",
             "_active": true
         },
         "CWE-200": {
+            ".#": "2026-07-27: re-enabled on request after the 2026-07-26 experiment (rule off cut the run from 75 to 3 min); the taint findings on Qt/JSON code are mostly noise — triage via dashboard justifications",
             "_active": true
         },
         "CWE-22": {
@@ -279,6 +281,7 @@
             "_active": true
         },
         "CWE-502": {
+            ".#": "2026-07-27: re-enabled on request after the 2026-07-26 experiment (rule off cut the run from 75 to 3 min); the taint findings on Qt/JSON code are mostly noise — triage via dashboard justifications",
             "_active": true
         },
         "CWE-547": {
@@ -381,6 +384,7 @@
             "_active": true
         },
         "CWE-79": {
+            ".#": "2026-07-27: re-enabled on request after the 2026-07-26 experiment (rule off cut the run from 75 to 3 min); the taint findings on Qt/JSON code are mostly noise — triage via dashboard justifications",
             "_active": true
         },
         "CWE-798": {
@@ -1576,7 +1580,7 @@
             "_active": true
         },
         "StaticSemanticAnalysis": {
-            ".#": "from preset 'focus_on_few_false_positives'",
+            ".#": "from preset 'focus_on_few_false_positives'. 2026-07-26: deactivated — this whole-program job ran >60 min on one core (the analysis-time floor); 2026-07-27: re-enabled on request together with CWE-20/79/200/502 — expect ~75 min runs and the taint-finding noise floor again.",
             "_active": true,
             "performance": {
                 "general": {

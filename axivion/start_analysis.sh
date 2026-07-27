@@ -23,4 +23,8 @@ export BAUHAUS_CONFIG="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 export CMAKE_PREFIX_PATH="/home/schulemn/Qt/6.10.2/gcc_64${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 
 
-axivion_ci "$@"
+# --jobs (no N) = parallel analysis jobs, auto-sized: cores capped so each job
+# keeps >=2 GB RAM (AXIVION_MIN_MEM_PER_CORE). Placed after "$@" so an explicit
+# caller-supplied -j N still wins; the Ninja build phase is already parallel
+# (native parallelization since Suite 7.11.5).
+axivion_ci "$@" --jobs

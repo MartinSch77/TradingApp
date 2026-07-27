@@ -96,7 +96,7 @@ PriceChart::PriceChart(QWidget *parent)
     // One factory for every scatter overlay: the trade-entry bullets on the price
     // chart and the strong-move outliers on the change strip below.
     auto makeScatter = [this](QChart *chart, QAbstractAxis *xAxis, QAbstractAxis *yAxis,
-                              const QColor &fill, qreal markerSize, const QColor &border) {
+                              QColor fill, qreal markerSize, QColor border) {
         auto *s = new QScatterSeries(this);
         s->setMarkerShape(QScatterSeries::MarkerShapeCircle);
         s->setMarkerSize(markerSize);
@@ -112,9 +112,9 @@ PriceChart::PriceChart(QWidget *parent)
     m_sellMarkers = makeScatter(m_chart, m_axisX, m_axisY,
                                 QColor(0xe3, 0x55, 0x55), 16.0, Qt::white);  // red (matches SELL)
     static_cast<void>(connect(m_buyMarkers, &QScatterSeries::hovered, this,
-                              [this](const QPointF &pt, bool on) { showTradeTooltip(pt, true, on); }));
+                              [this](QPointF pt, bool on) { showTradeTooltip(pt, true, on); }));
     static_cast<void>(connect(m_sellMarkers, &QScatterSeries::hovered, this,
-                              [this](const QPointF &pt, bool on) { showTradeTooltip(pt, false, on); }));
+                              [this](QPointF pt, bool on) { showTradeTooltip(pt, false, on); }));
 
     auto *view = new ChartView(m_chart, this);
     view->setRenderHint(QPainter::Antialiasing);
@@ -201,7 +201,7 @@ PriceChart::PriceChart(QWidget *parent)
     static_cast<void>(m_changeSeries->attachAxis(m_changeAxisY));
 
     // Reference lines: 0% baseline and the ±2σ thresholds (dashed amber).
-    auto flatLine = [this](const QColor &c, Qt::PenStyle style, qreal w) {
+    auto flatLine = [this](QColor c, Qt::PenStyle style, qreal w) {
         auto *s = new QLineSeries(this);
         QPen p(c);
         p.setStyle(style);
@@ -431,7 +431,7 @@ void PriceChart::refreshTradeMarkers()
     m_sellMarkers->replace(laneRow(m_openSells));
 }
 
-void PriceChart::showTradeTooltip(const QPointF &point, bool isBuy, bool entered)
+void PriceChart::showTradeTooltip(QPointF point, bool isBuy, bool entered)
 {
     if (!entered) {
         QToolTip::hideText();

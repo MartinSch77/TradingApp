@@ -44,7 +44,6 @@ public:
                    const QString &ccySymbol, double eurPerUsd);
     // Live price tick for the shown trade's instrument.
     void updatePrice(double price);
-    [[nodiscard]] QString positionId() const { return m_pos.positionId; }
     [[nodiscard]] QString symbol() const { return m_pos.symbol; }
 
 private:

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 namespace {
 
@@ -90,10 +91,15 @@ double SimulationEngine::lastPrice() const
     return m_simPrice;
 }
 
+void SimulationEngine::seedRng(quint32 seed)
+{
+    m_rng.seed(seed);
+}
+
 double SimulationEngine::gaussian()
 {
-    double u1 = QRandomGenerator::global()->generateDouble();
-    const double u2 = QRandomGenerator::global()->generateDouble();
+    double u1 = m_rng.generateDouble();
+    const double u2 = m_rng.generateDouble();
     if (u1 < 1e-12) {
         u1 = 1e-12;
     }
@@ -273,8 +279,8 @@ void SimulationEngine::openPosition(bool isBuy, double amount, double leverage,
                                .arg(leverage)
                                .arg(stopLossAmount, 0, 'f', 0)
                                .arg(takeProfitAmount, 0, 'f', 0)
-                               .arg(pos.positionId)
-                               .arg(pos.trailingStop ? QStringLiteral(" trailing") : QString()));
+                               .arg(pos.positionId,
+                                    pos.trailingStop ? QStringLiteral(" trailing") : QString()));
     emit portfolioUpdated(m_simPositions);
     emit cashUpdated(m_simCash, m_orderCurrency);
 }
@@ -364,7 +370,7 @@ void SimulationEngine::summarizeMonthly()
     s.currency = m_orderCurrency.toUpper();
 
     QHash<QString, InstrumentPnl> bySymbol;
-    for (const SimClosedTrade &t : m_simClosed) {
+    for (const SimClosedTrade &t : std::as_const(m_simClosed)) {
         if (t.closeTime.date() < s.fromDate) {
             continue;
         }

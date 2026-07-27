@@ -29,7 +29,6 @@ struct Config {
                                                           // source in the decision window
 
     [[nodiscard]] bool hasCredentials() const;  // out-of-line: keeps coverage records unambiguous
-    [[nodiscard]] bool hasAi() const { return !anthropicApiKey.isEmpty(); }
 
     // True only when we have credentials AND the user explicitly asked for real
     // money. Everything else (demo, or no credentials) never touches real funds.

@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -207,7 +208,7 @@ void MarketFeeds::fetchVix()
         // there is too little history.
         double baseline = 0.0;
         if (closes.size() >= 5) {
-            for (const double c : closes) {
+            for (const double c : std::as_const(closes)) {
                 baseline += c;
             }
             baseline /= static_cast<double>(closes.size());
@@ -276,7 +277,7 @@ void MarketFeeds::fetchInstrumentRatings()
     }
 
     QJsonArray tickerArr;
-    for (const QString &t : tickers) {
+    for (const QString &t : std::as_const(tickers)) {
         tickerArr.append(t);
     }
     QJsonObject symbols;
@@ -340,7 +341,7 @@ void MarketFeeds::fetchInstrumentNews()
     const QHash<QString, QStringList> symbolsByTicker =
         symbolsByWebTicker(m_tradableSymbols, tickers);
     // One request per unique ticker, published to every app symbol that shares it.
-    for (const QString &ticker : tickers) {
+    for (const QString &ticker : std::as_const(tickers)) {
         QUrl url(QStringLiteral("https://news-mediator.tradingview.com/public/view/v1/symbol"));
         // Build the query as a literal string: the filters carry ':' which the feed
         // expects unencoded (matching the browser widget's request).
@@ -398,7 +399,9 @@ void MarketFeeds::fetchFearGreed()
     QNetworkRequest req(QUrl(
         QStringLiteral("https://production.dataviz.cnn.io/index/fearandgreed/graphdata")));
     JsonHttp::setBrowserHeaders(req);
-    req.setRawHeader("Referer", "https://edition.cnn.com/markets/fear-and-greed");
+    const QByteArray refererKey("Referer");
+    const QByteArray refererValue("https://edition.cnn.com/markets/fear-and-greed");
+    req.setRawHeader(refererKey, refererValue);
     QNetworkReply *reply = m_nam->get(req);
     m_http->handleReply(reply, [this](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                       const QByteArray & /*raw*/, const QString & /*netError*/) {
@@ -419,7 +422,7 @@ void MarketFeeds::fetchIntradaySeries()
     // One chart request per mapped instrument; instruments without a Yahoo
     // ticker (eToro proprietary baskets) are silently skipped. Same endpoint
     // as the reference quote, but here the 1-minute close ARRAY is the payload.
-    for (const QString &symbol : m_tradableSymbols) {
+    for (const QString &symbol : std::as_const(m_tradableSymbols)) {
         const QString ticker = yahooTicker(symbol);
         if (ticker.isEmpty()) {
             continue;

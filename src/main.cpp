@@ -72,7 +72,8 @@ int main(int argc, char *argv[])
                                    : 3000;
         QTimer::singleShot(delayMs, qApp, [path]() {
             qint32 idx = 0;
-            for (QWidget *w : QApplication::allWidgets()) {
+            const QWidgetList widgets = QApplication::allWidgets();
+            for (QWidget *w : widgets) {
                 if (!w->isWindow()) {
                     continue;
                 }

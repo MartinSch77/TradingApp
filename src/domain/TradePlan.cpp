@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -42,7 +43,7 @@ qint32 recommendLeverage(double slFrac, double riskBudgetFrac, qint32 maxLeverag
         allowed = {1, 2, 5, 10, 20};
     }
     qint32 best = 1;
-    for (const qint32 step : allowed) {
+    for (const qint32 step : std::as_const(allowed)) {
         if ((step <= cap) && (static_cast<double>(step) <= raw) && (step > best)) {
             best = step;
         }

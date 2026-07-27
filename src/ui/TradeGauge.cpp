@@ -1,6 +1,7 @@
 #include "ui/TradeGauge.h"
 
 #include "domain/PositionMath.h"
+#include "ui/Palette.h"
 
 #include <QConicalGradient>
 #include <QLabel>
@@ -13,16 +14,17 @@
 #include <cmath>
 
 namespace {
-const QColor kGreen(0x25, 0xb5, 0x63);
-const QColor kRed(0xe3, 0x55, 0x55);
+using trading::ui::kGreen;
+using trading::ui::kGrey;
+using trading::ui::kRed;
+
 const QColor kAmber(0xe0, 0xb0, 0x00);
-const QColor kGrey(0x9a, 0x9a, 0x9a);
 const QColor kFace(0x20, 0x24, 0x2a);
 // The gauge sweeps 270°: 7:30 o'clock (-225° in Qt's angle system) → 4:30 (45°).
 constexpr double kStartAngle = 225.0;  // degrees, Qt: 0° = 3 o'clock, CCW positive
 constexpr double kSpanAngle = -270.0;
 
-QString money(const QString &ccy, double v)
+QString formatMoney(const QString &ccy, double v)
 {
     const QString amount = QLocale().toString(qAbs(v), 'f', 2);
     return ((v < 0.0) ? QStringLiteral("-") : QString()) + ccy + amount;
@@ -87,7 +89,7 @@ void TradeGaugeWidget::paintEvent(QPaintEvent * /*event*/)
     // Loss and win zones: from SL to open in red, open to TP in green. For a
     // short position the zones mirror automatically because SL sits above and
     // TP below the open rate on the price scale.
-    auto drawZone = [&](double fromValue, double toValue, const QColor &color) {
+    auto drawZone = [&](double fromValue, double toValue, QColor color) {
         const double a0 = valueToAngle(fromValue, lo, hi);
         const double a1 = valueToAngle(toValue, lo, hi);
         QPen pen(color, side * 0.055, Qt::SolidLine, Qt::FlatCap);
@@ -104,12 +106,16 @@ void TradeGaugeWidget::paintEvent(QPaintEvent * /*event*/)
     const double rOuter = face.width() / 2.0 + 10.0;
     const double rInner = face.width() / 2.0 - 14.0;
     p.setPen(QPen(kAmber, 3));
-    p.drawLine(c + QPointF(std::cos(openAngle), -std::sin(openAngle)) * rInner,
-               c + QPointF(std::cos(openAngle), -std::sin(openAngle)) * rOuter);
+    const double openCos = std::cos(openAngle);
+    const double openSin = -std::sin(openAngle);
+    const QPointF openDir(openCos, openSin);
+    p.drawLine(c + openDir * rInner, c + openDir * rOuter);
 
     // Needle = live price.
     const double needleAngle = valueToAngle(m_price, lo, hi) * M_PI / 180.0;
-    const QPointF dir(std::cos(needleAngle), -std::sin(needleAngle));
+    const double needleCos = std::cos(needleAngle);
+    const double needleSin = -std::sin(needleAngle);
+    const QPointF dir(needleCos, needleSin);
     const QPointF ortho(-dir.y(), dir.x());
     QPainterPath needle;
     needle.moveTo(c + ortho * 4.0);
@@ -205,10 +211,11 @@ void TradeGaugeDialog::renderLabels()
                          .arg(m_pos.symbol, m_pos.positionId,
                               m_pos.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
                          .arg(m_pos.leverage, 0, 'f', 0));
+    const QString openRateText =
+        QLocale().toString(m_pos.openRate, 'f', trading::priceDecimals(m_pos.openRate));
+    const QString stakeText = formatMoney(m_ccy, std::ceil(m_pos.amount * m_eurPerUsd));
     m_open->setText(QStringLiteral("Buy value (open rate): %1 · stake %2")
-                        .arg(QLocale().toString(m_pos.openRate, 'f',
-                                                trading::priceDecimals(m_pos.openRate)),
-                             money(m_ccy, std::ceil(m_pos.amount * m_eurPerUsd))));
+                        .arg(openRateText, stakeText));
     m_current->setText(QStringLiteral("Current value: %1")
                            .arg(QLocale().toString(m_price, 'f',
                                                    trading::priceDecimals(m_price))));
@@ -219,13 +226,14 @@ void TradeGaugeDialog::renderLabels()
         (m_pos.isBuy ? 1.0 : -1.0) * perPoint * (m_price - m_pos.openRate);
     const double plUsd = (perPoint > 0.0) ? delta : m_pos.profit;
     const double plDisp = plUsd * m_eurPerUsd;
-    m_pl->setText(QStringLiteral("P/L: %1").arg(money(m_ccy, plDisp)));
+    m_pl->setText(QStringLiteral("P/L: %1").arg(formatMoney(m_ccy, plDisp)));
     QPalette pal = m_pl->palette();
     pal.setColor(QPalette::WindowText, (plDisp >= 0.0) ? kGreen : kRed);
     m_pl->setPalette(pal);
     const QString slText = trading::slSignedAmountText(m_pos, m_eurPerUsd);
     const QString tpText = trading::slTpAmountText(m_pos, m_pos.takeProfitRate, m_eurPerUsd);
-    m_targets->setText(QStringLiteral("SL %1 · TP (take-profit value) %2")
-                           .arg(slText.isEmpty() ? QStringLiteral("—") : m_ccy + slText,
-                                tpText.isEmpty() ? QStringLiteral("—") : m_ccy + tpText));
+    const QString slLabel = slText.isEmpty() ? QStringLiteral("—") : m_ccy + slText;
+    const QString tpLabel = tpText.isEmpty() ? QStringLiteral("—") : m_ccy + tpText;
+    m_targets->setText(
+        QStringLiteral("SL %1 · TP (take-profit value) %2").arg(slLabel, tpLabel));
 }

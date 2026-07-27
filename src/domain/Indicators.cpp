@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace trading {
 
@@ -125,12 +126,12 @@ double volatilityPct(const QList<double> &values, qsizetype n)
         return 0.0;
     }
     double mean = 0.0;
-    for (const double x : r) {
+    for (const double x : std::as_const(r)) {
         mean += x;
     }
     mean /= static_cast<double>(r.size());
     double var = 0.0;
-    for (const double x : r) {
+    for (const double x : std::as_const(r)) {
         const double d = x - mean;
         var += d * d;
     }

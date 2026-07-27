@@ -42,7 +42,6 @@ public:
     // catches up on a later poll; see MainWindow::m_pendingSlTp).
     void setSlTpRates(qint32 row, double slRate, double tpRate);
 
-    [[nodiscard]] const QList<Position> &positions() const { return m_positions; }
     [[nodiscard]] QStringList markedIds() const;
 
     [[nodiscard]] qint32 rowCount(const QModelIndex &parent = QModelIndex()) const override;

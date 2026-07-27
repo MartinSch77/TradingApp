@@ -90,7 +90,7 @@ Knn knnForecast(const QList<double> &values, qsizetype window, qsizetype k)
     const auto sortBegin = cand.begin();
     const auto sortEnd = cand.end();
     std::sort(sortBegin, sortEnd,
-              [](const DistFuture &a, const DistFuture &b) { return a.dist < b.dist; });
+              [](DistFuture a, DistFuture b) { return a.dist < b.dist; });
 
     const qsizetype kk = std::min(k, cand.size());
     double sum = 0.0;

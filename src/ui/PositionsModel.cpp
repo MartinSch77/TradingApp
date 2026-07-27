@@ -1,6 +1,7 @@
 #include "ui/PositionsModel.h"
 
 #include "domain/PositionMath.h"
+#include "ui/Palette.h"
 
 #include <QColor>
 #include <QLocale>
@@ -8,9 +9,9 @@
 #include <cmath>
 
 namespace {
-const QColor kGreen(0x25, 0xb5, 0x63);
-const QColor kRed(0xe3, 0x55, 0x55);
-const QColor kGrey(0x9a, 0x9a, 0x9a);
+using trading::ui::kGreen;
+using trading::ui::kGrey;
+using trading::ui::kRed;
 }  // namespace
 
 PositionsModel::PositionsModel(QObject *parent)
@@ -25,7 +26,9 @@ void PositionsModel::setDisplay(const QString &ccySymbol, double eurPerUsd)
         m_eurPerUsd = eurPerUsd;
     }
     if (!m_positions.isEmpty()) {
-        emit dataChanged(index(0, 0), index(rowCount() - 1, ColCount - 1));
+        const QModelIndex topLeft = index(0, 0);
+        const QModelIndex bottomRight = index(rowCount() - 1, ColCount - 1);
+        emit dataChanged(topLeft, bottomRight);
     }
     emit headerDataChanged(Qt::Horizontal, ColPl, ColTp);
 }
@@ -38,11 +41,12 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     }
     if (sameRows) {
         m_positions = positions;
-        m_plDelta.fill(0.0);
+        static_cast<void>(m_plDelta.fill(0.0));
         if (!m_positions.isEmpty()) {
             // Values changed, identities didn't: open editors/marks survive.
-            emit dataChanged(index(0, ColAmount),
-                             index(rowCount() - 1, ColCount - 1));
+            const QModelIndex topLeft = index(0, ColAmount);
+            const QModelIndex bottomRight = index(rowCount() - 1, ColCount - 1);
+            emit dataChanged(topLeft, bottomRight);
         }
         return;
     }
@@ -53,7 +57,7 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     for (const Position &p : positions) {
         static_cast<void>(stillOpen.insert(p.positionId));
     }
-    m_marked.intersect(stillOpen);  // drop marks of closed positions
+    static_cast<void>(m_marked.intersect(stillOpen));  // drop marks of closed positions
     endResetModel();
 }
 
@@ -84,7 +88,9 @@ void PositionsModel::setSlTpRates(qint32 row, double slRate, double tpRate)
     }
     m_positions[row].stopLossRate = slRate;
     m_positions[row].takeProfitRate = tpRate;
-    emit dataChanged(index(row, ColSl), index(row, ColTp));
+    const QModelIndex slIndex = index(row, ColSl);
+    const QModelIndex tpIndex = index(row, ColTp);
+    emit dataChanged(slIndex, tpIndex);
 }
 
 QStringList PositionsModel::markedIds() const

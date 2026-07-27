@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QList>
 #include <QObject>
+#include <QRandomGenerator>
 #include <QString>
 #include <QStringList>
 
@@ -66,9 +67,16 @@ signals:
     void screenerFinished();
     void log(const QString &message, bool isError);
 
+public:
+    // Reseed the price-walk PRNG. Tests use this to make the walk deterministic —
+    // QRandomGenerator::global() is securely seeded and cannot repeat a sequence.
+    void seedRng(quint32 seed);
+
 private:
     void recomputePortfolio();      // refresh current-instrument positions' P/L
-    static double gaussian();       // standard-normal sample for the price walk
+    double gaussian();              // standard-normal sample for the price walk
+
+    QRandomGenerator m_rng = QRandomGenerator::securelySeeded();
 
     QString m_symbol;               // instrument the synthetic feed currently tracks
     QString m_orderCurrency;        // currency reported with cash updates

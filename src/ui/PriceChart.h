@@ -63,7 +63,7 @@ private:
     // chart still appear (at the left edge).
     void refreshTradeMarkers();
     // Tooltip shown while hovering an entry bullet (side + opened price).
-    void showTradeTooltip(const QPointF &point, bool isBuy, bool entered);
+    void showTradeTooltip(QPointF point, bool isBuy, bool entered);
     // (Re)draw the event line across the current plot, or hide it when there is no
     // event set or its time is outside the visible window.
     void updateEventMarker();

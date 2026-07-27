@@ -76,6 +76,7 @@ private slots:
     {
         SimulationEngine sim;
         static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(1234U);  // deterministic walk: the flaky "SL never hit" run is gone
         sim.emitSnapshot();
         // Tight stop, no take-profit: the random walk must strike the stop.
         sim.openPosition(true, 1000.0, 10.0, 1.0, 0.0, false);

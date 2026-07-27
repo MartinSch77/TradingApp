@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SDOC = ROOT / "requirements" / "requirements.sdoc"
 OUT = ROOT / "docs" / "requirements.md"
 
-text = SDOC.read_text()
+text = SDOC.read_text(encoding="utf-8")
 
 sections: list[tuple[str, list[dict]]] = []
 current: list[dict] | None = None
@@ -69,6 +69,9 @@ for title, reqs in sections:
         lines.append(f"| {r['uid']} | {r['statement']} | {r['verification']} |")
     lines.append("")
 
-OUT.write_text("\n".join(lines))
+# newline="\n" keeps the generated page byte-identical between Linux and
+# Windows; without it Python writes CRLF here and every regeneration on the
+# other platform shows up as a whole-file diff.
+OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 print(f"generated {OUT.relative_to(ROOT)} from {SDOC.relative_to(ROOT)} "
       f"({sum(len(r) for _, r in sections)} requirements)")

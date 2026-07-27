@@ -16,10 +16,16 @@
 #          build scripts expect (override with QT_PREFIX at build time)
 #   curl   PlantUML jar (pinned in tools/fetch_plantuml.sh)
 #
-# NOT installable here (license-bound, detected + reported only):
-#   Axivion Suite (~/bauhaus-suite + ~/AxivionDashboard), Squish Coco
-#   (/opt/SquishCoco), and the eToro/Anthropic API keys (apiKeyEtoro.json —
-#   copy apiKeyEtoro.example.json and fill in your keys).
+# NOT installable here — LICENSE-BOUND, so they are detected and reported, and
+# the stages that need them SKIP with a message instead of failing (exit 3 =
+# "stage skipped", which build_all.sh reports as `skipped`):
+#   Axivion Suite (~/bauhaus-suite + ~/AxivionDashboard)
+#                 -> axivion/start_analysis.sh reports `skipped`
+#   Squish Coco   (/opt/SquishCoco)
+#                 -> tools/coverage.sh coco reports `skipped`; auto mode just
+#                    uses gcov + clang MC/DC instead
+# Also manual: the eToro/Anthropic API keys (copy apiKeyEtoro.example.json to
+# apiKeyEtoro.json — the app runs in SIMULATION mode without them).
 #
 # install/update need sudo for the apt part; everything else stays in $HOME.
 set -uo pipefail
@@ -46,7 +52,10 @@ APT_PKGS=(
     libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0
     libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
 )
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx)
+# Keep in sync with $PipPkgs in setup.ps1 so both platforms carry the same
+# python-based tooling (gcovr is the CI-friendly gcov reporter named in
+# docs/tools.md).
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -54,12 +63,18 @@ version_of() {
     case "$1" in
     cmake) cmake --version 2>/dev/null | head -1 | awk '{print $3}' ;;
     g++) g++ -dumpfullversion 2>/dev/null ;;
+    # dot answers -V (not --version) and writes to stderr.
+    dot) dot -V 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 ;;
+    # aqt has no --version; the subcommand is spelled "version".
+    aqt) aqt version 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 ;;
     clang-18) clang-18 --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 ;;
     qt) [ -d "$QT_DIR/$QT_VERSION/gcc_64" ] && echo "$QT_VERSION" ;;
     plantuml) [ -f "$ROOT/tools/third-party/plantuml.jar" ] && java -jar "$ROOT/tools/third-party/plantuml.jar" -version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9.]+' | head -1 ;;
     axivion) [ -x "$HOME/bauhaus-suite/bin/axivion_ci" ] && "$HOME/bauhaus-suite/bin/axivion_ci" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9.]+' | head -1 ;;
     coco) [ -x /opt/SquishCoco/bin/coveragescanner ] && /opt/SquishCoco/bin/coveragescanner --cs-version 2>/dev/null | head -1 ;;
-    *) "$1" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9.]+' | head -1 ;;
+    # Stop the version at the last digit: [0-9.]+ would keep a trailing dot
+    # ("ninja 1.13.0." from "1.13.0.git.kitware...").
+    *) "$1" --version 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 ;;
     esac
 }
 
@@ -69,29 +84,41 @@ report() { # name, present?, detail
 
 status() {
     echo "== toolchain status =="
-    for t in g++ cmake ninja git clang-18 clang-tidy cppcheck clazy-standalone \
-        valgrind lcov doxygen java python3 pipx strictdoc doorstop aqt; do
+    # Keep this list in step with Show-Status in setup.ps1 so both platforms
+    # report the same set of tools.
+    for t in g++ cmake ninja git gh clang-18 clang-tidy cppcheck clazy-standalone \
+        valgrind lcov gcovr doxygen dot java python3 pipx \
+        strictdoc doorstop codespell sphinx-build aqt syft grype trivy; do
         if have "$t"; then
             report "$t" "ok" "$(version_of "$t")"
         else
             report "$t" "MISSING" ""
         fi
     done
-    if [ -d "$QT_DIR/$QT_VERSION/gcc_64" ]; then
-        report "Qt" "ok" "$QT_DIR/$QT_VERSION/gcc_64"
+    # Any gcc_64 kit will do; the build scripts take the newest.
+    local qt
+    qt="$(ls -d "$QT_DIR"/*/gcc_64 2>/dev/null | sort -V | tail -1)"
+    if [ -n "$qt" ]; then
+        report "Qt" "ok" "$qt"
     else
         report "Qt" "MISSING" "expected $QT_DIR/$QT_VERSION/gcc_64"
     fi
     [ -f "$ROOT/tools/third-party/plantuml.jar" ] &&
         report "plantuml" "ok" "$(version_of plantuml)" ||
         report "plantuml" "missing" "fetched on demand by tools/make_docs.sh"
-    echo "== license-bound (manual) =="
-    [ -x "$HOME/bauhaus-suite/bin/axivion_ci" ] &&
-        report "axivion" "ok" "$HOME/bauhaus-suite" ||
-        report "axivion" "manual" "install Axivion Suite to ~/bauhaus-suite (license required)"
+    echo "== no Linux counterpart =="
+    report "OpenCppCov" "n/a" "Windows-only; gcov+lcov is the Linux line/branch tool"
+    echo "== license-bound (manual) — the stages that need these report 'skipped' =="
+    if [ -x "$HOME/bauhaus-suite/bin/axivion_ci" ]; then
+        report "axivion" "ok" "$HOME/bauhaus-suite"
+    elif command -v axivion_ci >/dev/null 2>&1; then
+        report "axivion" "ok" "$(command -v axivion_ci)"
+    else
+        report "axivion" "manual" "license required; 'axivion' stage reports skipped"
+    fi
     [ -x /opt/SquishCoco/bin/coveragescanner ] &&
         report "coco" "ok" "/opt/SquishCoco ($(/opt/SquishCoco/bin/cocolic --check 2>&1 | head -1))" ||
-        report "coco" "manual" "optional: Squish Coco to /opt/SquishCoco (license required)"
+        report "coco" "manual" "license required; 'coverage.sh coco' reports skipped"
     [ -f "$ROOT/apiKeyEtoro.json" ] &&
         report "api keys" "ok" "apiKeyEtoro.json present" ||
         report "api keys" "manual" "cp apiKeyEtoro.example.json apiKeyEtoro.json + fill in keys (app runs in SIMULATION without)"

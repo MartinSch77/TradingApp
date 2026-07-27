@@ -9,13 +9,17 @@ build_axivion/
 dist/
 *.user
 
-# Axivion incremental-analysis state (includes a private shadow Fossil repo)
+# Axivion incremental-analysis state (includes a private shadow Fossil repo).
+# The checkout database is named .fslckout on Linux and _FOSSIL_ on Windows.
 .axivion-cache/
 .fslckout
+_FOSSIL_
 
 # Local tool state
 .claude/settings.local.json
 __pycache__/
+# aqtinstall writes this next to the working directory when setup installs Qt.
+aqtinstall.log
 
 # Editor / OS
 .vscode/
@@ -37,6 +41,24 @@ tools/third-party/
 analysis-results/
 build-san/
 build-san-tsan/
+build-san-ubsan/
+build-cov-msvc/
 build-release/
+# Generated Visual Studio solution (tools/make_vs_solution.ps1). CMakeLists.txt
+# is the single description of the build; the .sln is never committed.
+build-vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+CMakeUserPresets.json
+.vs/
 build-android/
 build-ios/
+
+# Squish Coco artefacts. The instrumentation databases live in the build trees
+# above, but an instrumented binary writes its execution report (<exe>.csexe)
+# into the CURRENT directory — so a test run started from the repository root
+# leaves them here.
+*.csexe
+*.csmes

@@ -22,7 +22,10 @@ GENERATED=(
     build-cov-coco
     build-san
     build-san-tsan
+    build-san-ubsan
+    build-cov-msvc
     build-release
+    build-vs
     build_axivion
     build-android
     build-ios
@@ -38,6 +41,7 @@ GENERATED=(
 DEEP=(
     .axivion-cache
     .fslckout
+    _FOSSIL_ # the Windows name of the Axivion Shadow checkout database
     tools/third-party
 )
 

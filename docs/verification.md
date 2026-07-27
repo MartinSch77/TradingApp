@@ -49,15 +49,42 @@ file — the MC/DC deficit pinpoints which condition combinations still need
 targeted tests; UI files are not yet under automated test (tracked as open
 gaps in the traceability report).
 
-**Squish Coco** (Qt Group's coverage tool, installed at `/opt/SquishCoco`)
-measures MC/DC natively and its CocoAI feature can propose test inputs that
-close specific uncovered conditions. `tools/coverage.sh` auto-detects it and
-uses it as the coverage tool whenever the license is valid (`cocolic
---check`); with the license currently expired the script falls back to the
-clang MC/DC path above as the measuring tool of record. Note that clang-18
-cannot instrument decisions with more than 6 conditions for MC/DC, so the
-sources keep every decision at ≤ 6 conditions (keyword groups are tested via
+**Squish Coco** (Qt Group's coverage tool) measures MC/DC natively and its
+CocoAI feature can propose test inputs that close specific uncovered
+conditions. `tools/coverage.sh` auto-detects it at `/opt/SquishCoco` and uses
+it as the coverage tool whenever the license is valid (`cocolic --check`); with
+the Linux license currently expired that script falls back to the clang MC/DC
+path above as the measuring tool of record. Note that clang-18 cannot
+instrument decisions with more than 6 conditions for MC/DC, so the sources keep
+every decision at ≤ 6 conditions (keyword groups are tested via
 `hasAny()`/`std::any_of`).
+
+### MC/DC on Windows — measured twice
+
+The Windows machine has a **valid Coco licence**, so `tools\coverage.ps1` runs
+MC/DC through *both* engines and reports them side by side (see @ref windows):
+
+    tools\coverage.ps1              # auto: Coco + clang-cl MC/DC (+ OpenCppCoverage)
+    tools\coverage.ps1 -Mode coco   # Squish Coco cscl/cslib/cslink, native MC/DC
+    tools\coverage.ps1 -Mode mcdc   # clang-cl -fcoverage-mcdc → llvm-cov
+    tools\coverage.ps1 -Mode msvc   # OpenCppCoverage, LINE coverage only
+
+Two independent instrumentation techniques measuring the same criterion is
+stronger evidence than either alone, and the numbers agree on the shape of the
+deficit. Baseline (2026-07-27, domain + services scope):
+
+| engine | MC/DC |
+|---|---|
+| Squish Coco (source instrumentation) | 637 / 1845 conditions ≈ 34.5% |
+| clang-cl + llvm-cov (IR instrumentation) | 36 / 209 conditions ≈ 17.2% |
+
+The two denominators differ because the tools count MC/DC conditions
+differently (Coco counts every instrumented condition in the scope it
+instruments; llvm-cov counts only decisions it could build a full MC/DC table
+for). They are therefore *not* directly comparable as percentages — each is a
+baseline against itself, and both point at the same files. Coco's report also
+drills down per decision in `coveragebrowser`, which is what makes it the tool
+of record where it is licensed.
 
 ## Performance (REQ-N-006)
 

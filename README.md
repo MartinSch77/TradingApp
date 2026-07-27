@@ -35,11 +35,17 @@ with a synthetic price feed, so it is fully usable before you have credentials.
 
 ## Build
 
+The full quality pipeline runs natively on **both Linux and Windows**. Each
+`*.sh` entry point has a one-to-one PowerShell counterpart; see
+[docs/windows.md](docs/windows.md) for the complete tool mapping and the
+Windows-specific notes.
+
 On a naked Debian/Ubuntu Linux, `./setup.sh` installs every required tool
 and dependency (compilers, CMake, Qt 6 incl. Charts via aqtinstall, the
 clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, Doxygen + Java,
 StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
-latest versions and `./setup.sh status` reports what is present. License-bound
+latest versions and `./setup.sh status` reports what is present. On Windows,
+`.\setup.ps1` does the same through winget + pip + aqtinstall. License-bound
 tools (Axivion Suite, Squish Coco) are detected and reported but must be
 installed manually.
 
@@ -54,10 +60,32 @@ The repository has three top-level entry points:
 ./clean_all.sh [--deep]   # remove everything generated
 ```
 
+```powershell
+.\setup.ps1                     # provision/verify the Windows toolchain
+.\build_all.ps1                 # same stages, same order
+.\build_all.ps1 build test      # any subset of stages
+.\build_all.ps1 -Skip axivion   # everything except the (slow) Axivion analysis
+.\clean_all.ps1 [-Deep]         # remove everything generated
+```
+
 Stages: `build test trace docs coverage analysis sanitize axivion` (default:
 all, continuing past failing stages with a summary at the end); `app` is an
 extra stage that is only run when named. For a different single CMake target:
 `cmake --build build --target <name>`.
+
+**No licence, no problem.** Stage outcomes are `ok` / `skipped` / `FAILED`. A
+stage needing a tool that is license-bound (Axivion Suite, Squish Coco) or
+otherwise absent reports **`skipped`** with a message saying what to install, and
+does *not* fail the run — so the whole pipeline goes green on a machine with only
+the free toolchain. Everything **open source** that the pipeline needs is
+installed for you by `./setup.sh` / `.\setup.ps1`; `setup.sh status` and
+`setup.ps1 status` list what is present, what is license-bound, and what has no
+counterpart on the platform.
+
+`build_all.ps1` selects the Qt kit itself (newest kit containing Qt6Charts,
+MSVC preferred) and imports the Visual Studio developer environment into the
+session, so no "x64 Native Tools" prompt is required. Override the kit with
+`$env:QT_PREFIX` or `-QtKit mingw_64`.
 
 Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
 (developed against Qt 6.10.2), CMake ≥ 3.21 and a C++23-capable compiler
@@ -77,18 +105,67 @@ cmake --build build
 ### Windows (MSVC)
 
 Install the Qt 6 **msvc2022_64** kit (with the Charts module), Visual Studio 2022
-(or its Build Tools), and CMake. From a *Developer* command prompt:
+(or its Build Tools), and CMake — or let `.\setup.ps1` do it. Then, from an
+ordinary PowerShell prompt:
 
 ```powershell
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug ^
-      -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64
+.\build_all.ps1 app          # -> build\TradingApp.exe
+.\build_all.ps1 build test   # app + tests + JUnit results
+```
+
+Or by hand, from a *Developer* command prompt:
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug `
+      -DCMAKE_PREFIX_PATH=C:\Qt\6.9.2\msvc2022_64
 cmake --build build
 build\TradingApp.exe
 ```
 
+The **MinGW** kit works too: `.\build_all.ps1 -QtKit mingw_64` (the matching
+`C:\Qt\Tools\mingw*\bin` is put on PATH automatically).
+
+#### Visual Studio IDE
+
+`CMakeLists.txt` is the single description of the build, so the `.sln` is
+**generated**, not committed:
+
+```powershell
+.\tools\make_vs_solution.ps1 -Open   # -> build-vs\TradingApp.sln
+.\build_all.ps1 vs                   # same thing, as a named stage
+```
+
+The solution contains `TradingApp`, `trading_domain`, `trading_services` and all
+12 `tst_*` projects in Debug/Release/RelWithDebInfo; `TradingApp` is the startup
+project, the Qt DLL directory is already on the debugger's PATH, and
+*Test → Run All Tests* works. Re-run the script after adding or removing source
+files. Two `.sln`-free alternatives, both driven by
+[CMakePresets.json](CMakePresets.json):
+
+- **File → Open → Folder** on the repository root — Visual Studio offers the
+  `windows-msvc-debug` and `visual-studio` presets directly.
+- `cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug`
+  from any shell. Linux has `linux-gcc-debug` / `linux-gcc-release` presets too.
+  All presets take the Qt kit from `$QT_PREFIX`.
+
+To make the built executable runnable on its own — Qt DLLs, the platform
+plugin, the Schannel TLS backend and the compiler runtime copied next to it:
+
+```powershell
+.\build_all.ps1 deploy               # -> build\TradingApp.exe runs with nothing on PATH
+.\tools\deploy_app.ps1 -IncludeTests # also make the tst_*.exe standalone
+```
+
 Qt 6 uses the **Schannel** TLS backend on Windows, so HTTPS to the eToro API
-works with no OpenSSL install. To run the `.exe` outside the build tree, see
-[Packaging](#packaging-desktop) below.
+works with no OpenSSL install. For a distributable package rather than a
+runnable build tree, see [Packaging](#packaging-desktop) below.
+
+The Windows pipeline substitutes a few tools that do not exist there — MSVC
+`/analyze` for `g++ -fanalyzer`, OpenCppCoverage for gcov/lcov, ASan (MSVC) plus
+UBSan (clang-cl) for the combined GCC sanitizer build — and reports the genuine
+gaps (clazy, TSan, valgrind) instead of hiding them. MC/DC coverage is measured
+**twice**, by Squish Coco and by clang-cl/llvm-cov. Details, and the PowerShell
+pitfalls worth knowing about, are in [docs/windows.md](docs/windows.md).
 
 ### Android
 
@@ -249,6 +326,39 @@ independently unit-testable and shared by every view that shows a signal.
 `TRADINGAPP_SHOT=/path/out.png ./build/TradingApp` grabs the window to a PNG
 after ~2.5 s and exits — handy for headless screenshots
 (`QT_QPA_PLATFORM=offscreen`).
+
+## Topics / keywords
+
+Searchable subject tags for this repository. These are the GitHub **topics** —
+keep them in sync with the repository settings (Settings → General → Topics, or
+the `gh` command below), since GitHub search and the topic pages only index what
+is configured there, not what a README mentions.
+
+`qt` `qt6` `cpp` `cpp23` `cmake` `cross-platform` `desktop-application`
+`trading` `etoro` `technical-analysis` `monte-carlo`
+`static-analysis` `axivion` `misra` `clang-tidy` `cppcheck` `sanitizers`
+`code-coverage` `mcdc` `requirements-traceability` `strictdoc` `aspice`
+`functional-safety`
+
+Apply them in one go (needs the GitHub CLI, `gh auth login` once):
+
+```bash
+gh repo edit MartinSch77/TradingApp \
+  --add-topic qt --add-topic qt6 --add-topic cpp --add-topic cpp23 \
+  --add-topic cmake --add-topic cross-platform --add-topic desktop-application \
+  --add-topic trading --add-topic etoro --add-topic technical-analysis \
+  --add-topic monte-carlo --add-topic static-analysis --add-topic axivion \
+  --add-topic misra --add-topic clang-tidy --add-topic cppcheck \
+  --add-topic sanitizers --add-topic code-coverage --add-topic mcdc \
+  --add-topic requirements-traceability --add-topic strictdoc --add-topic aspice \
+  --add-topic functional-safety
+```
+
+GitHub allows at most 20 topics per repository, so if it rejects the tail, drop
+the least specific ones (`cpp`, `cmake`, `cross-platform`) first — the
+quality-toolchain tags are what make this repository findable, since a
+"Qt trading app" is common and a "Qt trading app with MISRA C++, MC/DC coverage
+and requirements-as-code traceability" is not.
 
 ## Disclaimer
 

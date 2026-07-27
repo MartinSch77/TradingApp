@@ -1,0 +1,10 @@
+{
+    "#": "Windows entry point: the shared layers, plus two Windows overrides. Evaluation order is from bottom to top, so a layer listed ABOVE another wins: ci_config_windows.json therefore sits above ci_config.json, and compiler_config_msvc.json replaces the GNU profile. See docs/windows.md.",
+    "_Layers": [
+        "../external_import.py",
+        "../ci_config_windows.json",
+        "../ci_config.json",
+        "../compiler_config_msvc.json",
+        "../rule_config.json"
+    ]
+}

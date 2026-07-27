@@ -16,8 +16,15 @@ rm -f "$OUT"/*.xml
 
 FAIL=0
 for exe in "$ROOT/$BUILD_DIR"/tests/tst_*; do
-    [ -f "$exe" ] && [ -x "$exe" ] || continue   # skip the *_autogen directories
+    [ -f "$exe" ] && [ -x "$exe" ] || continue # skip the *_autogen directories
     name="$(basename "$exe")"
+    # A Linux test binary has no filename extension. Everything else matching
+    # tst_* is a build by-product — and the -x test above does not filter them
+    # out on a DrvFs/9p mount (/mnt/c under WSL), where every file appears
+    # executable. Without this, a Windows build left in the same tree makes the
+    # loop "execute" tst_x.exe.manifest as a shell script and no results at all
+    # get recorded.
+    case "$name" in *.*) continue ;; esac
     echo "=== $name ==="
     if ! "$exe" -o "$OUT/$name.xml,junitxml" -o -,txt; then
         FAIL=1

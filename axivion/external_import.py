@@ -27,13 +27,36 @@
 # registered in axivion_config.json under "_Layers".
 
 import pathlib
+import sys
 
 import axivion.config
 from bauhaus import teecap
 
 analysis = axivion.config.get_analysis()
 
-_ROOT = pathlib.Path(__file__).resolve().parent.parent  # the project directory
+
+def _project_root() -> pathlib.Path:
+    """The project directory, found by walking up to the CMakeLists.txt.
+
+    Not simply parent.parent: this layer is also loaded from the nested
+    Windows configuration directory (axivion/windows/), where the project root
+    is two levels further up.
+    """
+    for candidate in pathlib.Path(__file__).resolve().parents:
+        if (candidate / 'CMakeLists.txt').is_file():
+            return candidate
+    return pathlib.Path(__file__).resolve().parent.parent
+
+
+_ROOT = _project_root()
+
+# The import rule shells out to a "print this file" command. There is no cat on
+# Windows, and `type` is a cmd.exe builtin rather than an executable, so it has
+# to be invoked through the interpreter.
+if sys.platform == 'win32':
+    _CAT_COMMAND, _CAT_ARGS = 'cmd', ['/c', 'type']
+else:
+    _CAT_COMMAND, _CAT_ARGS = 'cat', []
 
 # clang-tidy.txt and clazy.txt hold GCC-style lines: file:line:col: warning: msg [id]
 _GCC_STYLE = (
@@ -52,11 +75,19 @@ _TOOLS = {
     'clang-tidy': ('clang-tidy.txt', _GCC_STYLE),
     'clazy': ('clazy.txt', _GCC_STYLE),
     'gcc-analyzer': ('gcc-analyzer.txt', _GCC_STYLE),
+    # Windows counterpart of gcc-analyzer: MSVC /analyze, normalized to the
+    # same GCC-style lines by tools/msvc_analyze.py. Absent on Linux runs.
+    'msvc-analyze': ('msvc-analyze.txt', _GCC_STYLE),
     'codespell': ('codespell.txt', _PIPE),
     'sonarqube': ('sonarqube.txt', _PIPE),
     'asan-ubsan': ('sanitize-asan-ubsan.txt', _PIPE),
     'tsan': ('sanitize-tsan.txt', _PIPE),
     'valgrind': ('sanitize-valgrind.txt', _PIPE),
+    # Windows: ASan (MSVC /fsanitize=address) and UBSan (clang-cl) are separate
+    # build trees rather than the single combined GCC build, so they report as
+    # separate providers. Absent on Linux runs.
+    'asan': ('sanitize-asan.txt', _PIPE),
+    'ubsan': ('sanitize-ubsan.txt', _PIPE),
 }
 
 for _tool, (_log, _regex) in _TOOLS.items():
@@ -71,8 +102,8 @@ for _tool, (_log, _regex) in _TOOLS.items():
     analysis.copy(
         'ImportExternalAnalysisOutput',
         _import_rule,
-        command='cat',
-        options=[str(_ROOT / 'analysis-results' / _log)],
+        command=_CAT_COMMAND,
+        options=_CAT_ARGS + [str(_ROOT / 'analysis-results' / _log)],
         capture_stdout_provider=_tool,
         check_returncode=False,  # missing log -> nothing to import
         strip_path_prefix=str(_ROOT),  # some logs contain absolute paths

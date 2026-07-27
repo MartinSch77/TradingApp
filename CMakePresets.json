@@ -1,0 +1,155 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 25,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build-${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "qt-from-env",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{QT_PREFIX}"
+            },
+            "warnings": {
+                "dev": false
+            }
+        },
+        {
+            "name": "windows-msvc-debug",
+            "displayName": "Windows · MSVC · Debug (Ninja)",
+            "description": "Default Windows development build. Run from a Developer prompt, or let build_all.ps1 set up the environment. Needs QT_PREFIX.",
+            "inherits": "qt-from-env",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-msvc-release",
+            "displayName": "Windows · MSVC · RelWithDebInfo (Ninja)",
+            "description": "Optimized build for daily use and profiling; frame pointers kept for usable profiler stacks.",
+            "inherits": "qt-from-env",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_FLAGS": "/Oy-"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "visual-studio",
+            "displayName": "Windows · Visual Studio 2022 solution",
+            "description": "Multi-config generator: produces build-vs/TradingApp.sln for the Visual Studio IDE. tools\\make_vs_solution.ps1 wraps this.",
+            "inherits": "qt-from-env",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build-vs",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-gcc-debug",
+            "displayName": "Linux · GCC · Debug (Ninja)",
+            "description": "Reference-platform development build. Needs QT_PREFIX (e.g. ~/Qt/6.10.2/gcc_64).",
+            "inherits": "qt-from-env",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-gcc-release",
+            "displayName": "Linux · GCC · RelWithDebInfo (Ninja)",
+            "inherits": "qt-from-env",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_FLAGS": "-fno-omit-frame-pointer"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-msvc-debug",
+            "configurePreset": "windows-msvc-debug"
+        },
+        {
+            "name": "windows-msvc-release",
+            "configurePreset": "windows-msvc-release"
+        },
+        {
+            "name": "visual-studio",
+            "configurePreset": "visual-studio",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-gcc-debug",
+            "configurePreset": "linux-gcc-debug"
+        },
+        {
+            "name": "linux-gcc-release",
+            "configurePreset": "linux-gcc-release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "windows-msvc-debug",
+            "configurePreset": "windows-msvc-debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "visual-studio",
+            "configurePreset": "visual-studio",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "linux-gcc-debug",
+            "configurePreset": "linux-gcc-debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}

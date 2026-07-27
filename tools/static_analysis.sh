@@ -168,28 +168,10 @@ else
     printf '' > "$OUT/clazy.txt"
 fi
 
-# Merged CSV for the dashboard import: tool;file;line;id;severity;message
-python3 - "$OUT" <<'EOF'
-import csv, re, sys
-from pathlib import Path
-out = Path(sys.argv[1])
-rows = []
-for line in (out / "cppcheck.txt").read_text().splitlines():
-    parts = line.split("|", 4)
-    if len(parts) == 5:
-        rows.append(["cppcheck", parts[0], parts[1], parts[3], parts[2], parts[4]])
-pat = re.compile(r"^(.*?):(\d+):\d+:\s+(warning|error):\s+(.*?)\s+\[(.*)\]$")
-for name in ("clang-tidy", "clazy", "gcc-analyzer"):
-    for line in (out / f"{name}.txt").read_text().splitlines():
-        m = pat.match(line)
-        if m:
-            rows.append([name, m.group(1), m.group(2), m.group(5), m.group(3), m.group(4)])
-with open(out / "external_findings.csv", "w", newline="") as f:
-    w = csv.writer(f, delimiter=";")
-    w.writerow(["tool", "file", "line", "rule", "severity", "message"])
-    w.writerows(rows)
-print(f"merged: {len(rows)} findings -> analysis-results/external_findings.csv")
-EOF
+# Merged CSV for the dashboard import: tool;file;line;id;severity;message.
+# Shared with the Windows script (tools/static_analysis.ps1) so the two cannot
+# drift apart on the merge format.
+python3 "$ROOT/tools/merge_findings.py" "$OUT"
 
 TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CODESPELL_N))
 echo "TOTAL findings: $TOTAL"

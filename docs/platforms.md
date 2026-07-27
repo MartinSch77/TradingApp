@@ -16,19 +16,36 @@ is portable Qt.
 
 ## Windows
 
-Install a Qt 6 kit (MSVC or MinGW) via the Qt Online Installer, then:
+Install a Qt 6 kit (MSVC or MinGW) via the Qt Online Installer — or run
+`.\setup.ps1`, which provisions the whole toolchain — then:
 
-    cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/msvc2022_64
-    cmake --build build --config Release
-    ctest --test-dir build -C Release       # the suite is platform-neutral
+    .\build_all.ps1 build test              # app + tests, kit auto-detected
     cmake --install build --prefix dist     # runs windeployqt automatically
     cd build && cpack                       # ZIP; `cpack -G NSIS` = installer
 
-Portability notes verified by inspection: HTTPS uses the Schannel TLS backend
-that `qt_generate_deploy_app_script` deploys; no POSIX-only calls; file paths
-go through Qt. CI recommendation: a `windows-latest` job running configure +
-build + ctest is the missing automated evidence (tracked as the REQ-N-001 gap
-in the traceability matrix).
+By hand, without the wrapper:
+
+    cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.9.2/msvc2022_64
+    cmake --build build
+    ctest --test-dir build                  # the suite is platform-neutral
+
+Windows is **verified, not merely portable-by-inspection**: MSVC 19.44 builds
+the app and all 12 test executables without warnings, all 12 pass, and the
+window comes up. HTTPS uses the Schannel TLS backend that
+`qt_generate_deploy_app_script` deploys; there are no POSIX-only calls and file
+paths go through Qt.
+
+The complete quality pipeline runs on Windows too — every `*.sh` entry point has
+a PowerShell counterpart. See @ref windows for the script-by-script mapping,
+the tool substitutions (MSVC `/analyze` for `g++ -fanalyzer`, OpenCppCoverage for
+gcov/lcov, ASan+UBSan in two trees for the single GCC sanitizer build), the two
+independent MC/DC measurements (Squish Coco and clang-cl/llvm-cov), and the three
+things that genuinely have no Windows counterpart (clazy, ThreadSanitizer,
+valgrind).
+
+CI recommendation: a `windows-latest` job running `.\build_all.ps1 build test` is
+the remaining automated evidence (tracked as the REQ-N-001 gap in the
+traceability matrix).
 
 ## Android
 

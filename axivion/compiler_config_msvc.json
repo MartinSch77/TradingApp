@@ -1,0 +1,14 @@
+{
+    "Project": {
+        "GNUToolchain": {
+            "_active": false
+        },
+        "MicrosoftToolchain": {
+            "_active": true,
+            "language_cxx": {
+                "native_compiler": "cl"
+            }
+        }
+    },
+    "_Format": "1.0"
+}

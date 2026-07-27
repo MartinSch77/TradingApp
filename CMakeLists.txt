@@ -1,11 +1,30 @@
 cmake_minimum_required(VERSION 4.2)
 
+# cmake_minimum_required(4.2) turns every policy up to 4.2 NEW, including
+# CMP0156 (link-line library de-duplication, new in CMake 3.30). Qt forces
+# CMP0156 back to OLD for non-Apple platforms regardless, and warns once per
+# qt_add_library/qt_add_executable call while doing so — around 20 screens of
+# warnings for this project. Setting it to OLD here matches the behaviour Qt
+# imposes anyway, so the build is unchanged and the warning has nothing to
+# report. (Passing -DQT_FORCE_CMP0156_TO_VALUE=OLD does NOT help: only the
+# value NEW silences that check, and NEW would change how Qt links.)
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 OLD)
+endif()
+
 project(TradingApp
     VERSION 1.0.0
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 23)
+# C++23 everywhere by default. Overridable from the command line for the one
+# consumer that cannot parse it: Squish Coco's instrumenting front end supports
+# up to C++20, so tools/coverage.ps1 configures its build tree with
+# -DCMAKE_CXX_STANDARD=20 (see docs/windows.md). Everything else — including
+# every build whose result ships or is analyzed — stays on 23.
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 23)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -95,6 +114,32 @@ target_link_libraries(TradingApp PRIVATE
 set_target_properties(TradingApp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# ---------------------------------------------------------------------------
+# Visual Studio solution ergonomics
+# ---------------------------------------------------------------------------
+# The .sln is generated (tools/make_vs_solution.ps1 or the "visual-studio"
+# CMake preset), never committed — CMakeLists.txt stays the single description
+# of the build. These two properties only affect the multi-config IDE
+# generators and are ignored by Ninja/Makefiles.
+if(CMAKE_CONFIGURATION_TYPES)
+    # F5 should launch the app, not ALL_BUILD.
+    if(NOT TRADINGAPP_VS_STARTUP_PROJECT)
+        set(TRADINGAPP_VS_STARTUP_PROJECT TradingApp)
+    endif()
+    set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        PROPERTY VS_STARTUP_PROJECT "${TRADINGAPP_VS_STARTUP_PROJECT}")
+
+    # Debugging from the IDE needs the Qt DLLs on PATH; without this the app
+    # starts with a "Qt6Cored.dll was not found" dialog.
+    set_target_properties(TradingApp PROPERTIES
+        VS_DEBUGGER_ENVIRONMENT "PATH=${QT6_INSTALL_PREFIX}/bin;%PATH%"
+        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+    # Group the generated moc/rcc/uic targets so Solution Explorer stays readable.
+    set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+    set_property(GLOBAL PROPERTY AUTOGEN_TARGETS_FOLDER "Qt autogen")
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests (desktop only; see docs/test_spec.md and tools/run_tests.sh)

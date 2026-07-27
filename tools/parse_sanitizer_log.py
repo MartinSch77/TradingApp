@@ -15,6 +15,7 @@ Only findings that can be pinned to a project source line are emitted:
    in the raw log for inspection but not actionable findings)
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -29,12 +30,17 @@ for sub in ("src", "tests"):
         if p.suffix in (".cpp", ".h"):
             BASENAMES.setdefault(p.name, str(p.relative_to(ROOT)))
 
-UBSAN = re.compile(r"^(?P<file>/\S+?):(?P<line>\d+)(?::\d+)?: runtime error: (?P<msg>.*)$")
+# An absolute path in a sanitizer report: POSIX (/usr/…) or Windows (C:\…).
+# The Windows alternative is needed for the MSVC/clang-cl ASan runs — the
+# report grammar is identical, only the paths differ.
+_ABS = r"(?:/|[A-Za-z]:[\\/])\S*?"
+
+UBSAN = re.compile(rf"^(?P<file>{_ABS}):(?P<line>\d+)(?::\d+)?: runtime error: (?P<msg>.*)$")
 SUMMARY = re.compile(
-    r"SUMMARY: (?P<san>\w+)Sanitizer: (?P<kind>.+?) (?P<file>/\S+?):(?P<line>\d+)"
+    rf"SUMMARY: (?P<san>\w+)Sanitizer: (?P<kind>.+?) (?P<file>{_ABS}):(?P<line>\d+)"
 )
 LEAK_HEAD = re.compile(r"^(?P<kind>Direct|Indirect) leak of (?P<bytes>\d+) byte")
-FRAME = re.compile(r"#\d+ 0x\w+ in \S+ (?P<file>/\S+?):(?P<line>\d+)")
+FRAME = re.compile(rf"#\d+ 0x\w+ in \S+ (?P<file>{_ABS}):(?P<line>\d+)")
 VG_PREFIX = re.compile(r"^==\d+==\s?")
 VG_HEADS = [
     ("error", "invalid-read", re.compile(r"^Invalid read of size")),
@@ -54,7 +60,16 @@ def project_path(filename: str) -> str | None:
         try:
             rel = p.resolve().relative_to(ROOT)
         except ValueError:
-            return None
+            # Windows: the toolchain and the shell disagree about the case of
+            # the drive letter and path segments often enough that a plain
+            # relative_to() misses. Fall back to a case-insensitive compare,
+            # then to the basename map.
+            if os.name == "nt":
+                resolved = str(p.resolve())
+                root = str(ROOT)
+                if resolved.lower().startswith(root.lower() + os.sep):
+                    return resolved[len(root) + 1:]
+            return BASENAMES.get(p.name)
         return str(rel)
     return BASENAMES.get(p.name)
 
@@ -104,8 +119,14 @@ def parse_valgrind(lines):
                     yield f, m["line"], severity, f"valgrind-{ident}", msg
 
 
-lines = RAW.read_text(errors="replace").splitlines() if RAW.exists() else []
+lines = RAW.read_text(encoding="utf-8", errors="replace").splitlines() if RAW.exists() else []
 parser = parse_valgrind if KIND == "valgrind" else parse_sanitizer
 rows = sorted(set(parser(lines)))
-OUT.write_text("".join(f"{f}|{ln}|{sev}|{ident}|{msg}\n" for f, ln, sev, ident, msg in rows))
+# newline="\n" is not cosmetic: without it Python writes CRLF on Windows, and
+# the trailing \r ends up inside the message field of every imported finding.
+OUT.write_text(
+    "".join(f"{f}|{ln}|{sev}|{ident}|{msg}\n" for f, ln, sev, ident, msg in rows),
+    encoding="utf-8",
+    newline="\n",
+)
 print(f"{KIND}: {len(rows)} findings -> {OUT}")

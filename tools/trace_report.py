@@ -34,13 +34,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Every artefact in this repository is UTF-8. Python only defaults to UTF-8 on
+# Linux/macOS; on Windows the default is the ANSI code page (cp1252), which
+# fails on the em dashes and arrows in the requirement and design tables. All
+# file access below therefore names the encoding explicitly.
+# newline="\n" on writes keeps the generated matrix byte-identical across
+# platforms instead of flipping to CRLF whenever it is regenerated on Windows.
+UTF8 = {"encoding": "utf-8"}
+UTF8_LF = {"encoding": "utf-8", "newline": "\n"}
+
 REQ_RE = re.compile(r"\bREQ-[FN]-\d{3}\b")
 DES_RE = re.compile(r"\bDES-[A-Z]+-[A-Z0-9]+\b")
 TS_RE = re.compile(r"\bTS-[A-Z]+-\d{3}\b")
 
 
 def parse_requirements():
-    text = (ROOT / "docs/requirements.md").read_text()
+    text = (ROOT / "docs/requirements.md").read_text(**UTF8)
     reqs = {}
     for line in text.splitlines():
         m = REQ_RE.search(line)
@@ -52,7 +61,7 @@ def parse_requirements():
 
 def parse_design():
     """DES id -> set of REQ ids it satisfies (from the design tables)."""
-    text = (ROOT / "docs/design.md").read_text()
+    text = (ROOT / "docs/design.md").read_text(**UTF8)
     design = {}
     for line in text.splitlines():
         if not line.strip().startswith("|"):
@@ -65,7 +74,7 @@ def parse_design():
 
 def parse_test_spec():
     """TS id -> spec row text; section headers carry the REQ/DES context."""
-    text = (ROOT / "docs/test_spec.md").read_text()
+    text = (ROOT / "docs/test_spec.md").read_text(**UTF8)
     spec = {}
     for line in text.splitlines():
         m = TS_RE.search(line)
@@ -84,7 +93,7 @@ def parse_test_impl():
     """
     impl = {}
     for path in sorted(glob.glob(str(ROOT / "tests" / "tst_*.cpp"))):
-        src = Path(path).read_text()
+        src = Path(path).read_text(**UTF8)
         # The @tstid line plus any further comment lines up to the function
         # (the @relation marker uses a plain // comment — StrictDoc's C++
         # parser does not recognize Doxygen-style //! comments).
@@ -228,7 +237,7 @@ test specification and results; gaps are listed, not hidden.</p>
 <th>Tests (spec → impl → result)</th><th>Verdict</th></tr>{''.join(rows)}</table>
 <h2>Gaps</h2><ul>{gaps_html or '<li>none</li>'}</ul>
 </body></html>"""
-    (ROOT / "docs/traceability.html").write_text(out)
+    (ROOT / "docs/traceability.html").write_text(out, **UTF8_LF)
 
     print(summary)
     for g in hard_gaps:

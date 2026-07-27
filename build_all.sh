@@ -40,7 +40,24 @@ JOBS="$(nproc)"
 ALL_STAGES=(build test trace docs coverage analysis sanitize axivion)
 EXTRA_STAGES=(app release) # selectable by name, not part of the default run
 
+# A CMake build tree records the absolute source/binary paths it was generated
+# with and refuses to be reused if either changed. This repository invites that
+# clash: a checkout on a Windows drive is /mnt/c/…/TradingApp from here and
+# C:\…\TradingApp from Windows, and both platforms default to build/. Detect the
+# mismatch and start clean instead of dying with CMake's error.
+reset_stale_cache() {
+    local build="$1" cache="$1/CMakeCache.txt" home
+    [ -f "$cache" ] || return 0
+    home="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$cache" | head -1)"
+    if [ -n "$home" ] && [ "$home" != "$ROOT" ]; then
+        echo "discarding the build tree in $build - it was generated for source dir '$home'"
+        echo "(a tree configured from Windows and one configured from Linux cannot be shared)"
+        rm -rf "$build"
+    fi
+}
+
 stage_build() {
+    reset_stale_cache "$ROOT/build"
     cmake -S "$ROOT" -B "$ROOT/build" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -49,6 +66,7 @@ stage_build() {
 }
 
 stage_app() {
+    reset_stale_cache "$ROOT/build"
     cmake -S "$ROOT" -B "$ROOT/build" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
@@ -59,6 +77,7 @@ stage_app() {
 stage_release() {
     # Optimized build for daily use and profiling. Frame pointers stay in so
     # perf/gperftools produce usable stacks (see tools/profile.sh).
+    reset_stale_cache "$ROOT/build-release"
     cmake -S "$ROOT" -B "$ROOT/build-release" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -131,17 +150,31 @@ if [ ${#SKIP[@]} -gt 0 ]; then
     STAGES=(${FILTERED[@]+"${FILTERED[@]}"})
 fi
 
+# Stage outcomes are tri-state. Exit code 3 means "skipped": the stage needs a
+# tool that is license-bound (Axivion Suite, Squish Coco) or otherwise absent,
+# and could not run. That is reported as `skipped`, NOT as a failure, so the
+# pipeline stays green on a machine without those licenses. Any other non-zero
+# code is a real failure.
+EXIT_SKIPPED=3
 declare -A RESULT
 FAIL=0
+SKIPPED=0
 for s in "${STAGES[@]}"; do
     echo
     echo "==================== $s ===================="
-    if "stage_$s"; then
-        RESULT[$s]=ok
-    else
+    "stage_$s"
+    rc=$?
+    case $rc in
+    0) RESULT[$s]=ok ;;
+    $EXIT_SKIPPED)
+        RESULT[$s]=skipped
+        SKIPPED=$((SKIPPED + 1))
+        ;;
+    *)
         RESULT[$s]=FAILED
         FAIL=1
-    fi
+        ;;
+    esac
 done
 
 echo
@@ -149,4 +182,5 @@ echo "==================== summary ===================="
 for s in "${STAGES[@]}"; do
     printf '  %-10s %s\n' "$s" "${RESULT[$s]}"
 done
+[ $SKIPPED -gt 0 ] && echo "  ($SKIPPED stage(s) skipped — a required tool is unavailable; see the log above)"
 exit $FAIL

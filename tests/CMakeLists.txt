@@ -15,6 +15,14 @@ function(tradingapp_add_test name)
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME ${name} COMMAND ${name})
+    # IDE-only (multi-config generators): collect the test projects in a folder
+    # and put the Qt DLLs on PATH so a test can be debugged straight from the
+    # generated Visual Studio solution. Ignored by Ninja/Makefiles.
+    if(CMAKE_CONFIGURATION_TYPES)
+        set_target_properties(${name} PROPERTIES
+            FOLDER "Tests"
+            VS_DEBUGGER_ENVIRONMENT "PATH=${QT6_INSTALL_PREFIX}/bin;%PATH%")
+    endif()
 endfunction()
 
 # --- unit tests (domain layer only) ----------------------------------------

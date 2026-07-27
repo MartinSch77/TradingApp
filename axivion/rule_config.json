@@ -431,7 +431,7 @@
         },
         "Frameworks-QtSupport": {
             "_active": true,
-            "qtdir": "/home/schulemn/Qt/6.10.2/gcc_64"
+            "qtdir": "$(AXIVION_QTDIR=)"
         },
         "GeneralPurpose-CompilerWarnings": {
             "_active": true,

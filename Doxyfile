@@ -13,7 +13,8 @@ GENERATE_LATEX         = NO
 INPUT                  = src docs/mainpage.md docs/architecture.md \
                          docs/requirements.md docs/design.md docs/test_spec.md \
                          docs/verification.md docs/vmodel.md docs/tools.md \
-                         docs/platforms.md tests README.md
+                         docs/platforms.md docs/windows.md tests README.md \
+                         CONTRIBUTING.md SECURITY.md
 FILE_PATTERNS          = *.h *.cpp *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/mainpage.md

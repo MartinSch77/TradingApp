@@ -8,6 +8,13 @@ with provenance and the version in use on the reference machine (WSL2 Ubuntu
 24.04, captured 2026-07-25). Versions are also echoed by the scripts that
 invoke the tools.
 
+The table below is the **Linux** inventory. The Windows pipeline uses the same
+tools where they exist there, substitutes a documented equivalent where they do
+not (MSVC `/analyze` for `g++ -fanalyzer`, OpenCppCoverage for gcov/lcov), and
+names the three that have no Windows counterpart at all (clazy, ThreadSanitizer,
+valgrind). The Windows inventory and the reasoning behind each substitution are
+in @ref windows.
+
 | Tool | Origin / vendor | Version | Role here |
 |------|-----------------|---------|-----------|
 | Qt (Widgets, Charts, Network, Test) | Qt Group, qt.io | 6.10.2 (gcc_64 kit at `~/Qt`) | Application framework; Qt Test drives the suite |
@@ -38,6 +45,26 @@ invoke the tools.
 | Graphviz (dot) | graphviz.org | Ubuntu 24.04 package | Doxygen graphs, PlantUML layout backend |
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |
 | Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `axivion/import_external.py` |
+
+## Windows-only tools
+
+Versions captured on the Windows reference machine (Windows 11, 2026-07-27).
+Provisioned by `.\setup.ps1`; see @ref windows for how each one is wired in.
+
+| Tool | Origin / vendor | Version | Role here |
+|------|-----------------|---------|-----------|
+| MSVC (`cl`) | Microsoft, Visual Studio 2022 | 19.44.35228 | Default Windows compiler; builds the app and all 12 test executables warning-free |
+| MSVC `/analyze` | Microsoft | with 19.44 | Compiler-native symbolic-execution analyzer, the Windows counterpart of `g++ -fanalyzer`; normalized by `tools/msvc_analyze.py` (dashboard provider `msvc-analyze`) |
+| MSVC AddressSanitizer | Microsoft | with 19.44 | `/fsanitize=address`. Note: **no LeakSanitizer** on Windows (dashboard provider `asan`) |
+| clang-cl / llvm-cov / llvm-profdata | LLVM Project (winget `LLVM.LLVM`) | 22.1.8 | MC/DC coverage (`-fcoverage-mcdc`) and the UBSan build (provider `ubsan`) |
+| Squish Coco | Qt Group (froglogic) | `C:\Program Files\squishcoco`, **licensed** (Full Commercial) | Source-instrumented statement/decision/condition **and true MC/DC** coverage; wrappers `cscl`/`cslib`/`cslink`; parses up to C++20 |
+| cppcheck | Cppcheck team (winget `Cppcheck.Cppcheck`) | 2.21.0 | Same role as on Linux; the newer version reports one finding the Linux 2.13 does not |
+| clang-tidy | LLVM Project | 19.1.5 / 22.1.8 | Same role; newer checks report ~27 additional findings vs clang-tidy 18 |
+| OpenCppCoverage | OpenCppCoverage project (MIT) | optional | PDB-based **line** coverage for MSVC builds — the gcov/lcov substitute (no branch coverage) |
+| Doxygen / Graphviz | doxygen.nl / graphviz.org (winget) | 1.17.0 / 15.1.0 | Same role as on Linux |
+| VSDiagnostics / `wpr`+`wpa` | Microsoft (Visual Studio / Windows Performance Toolkit) | as installed | CPU profiling; records a trace for a GUI analyzer instead of `perf report --stdio` |
+| Axivion Suite | Axivion GmbH / Qt Group | 7.12.x (`C:\Program Files\Bauhaus`) | Same role; uses the built-in `Project/MicrosoftToolchain` profile via `axivion/compiler_config_msvc.json` |
+| winget | Microsoft | shipped with Windows 11 | Package manager `.\setup.ps1` provisions through |
 
 ## Sound runtime-error provers (documented, not installed)
 

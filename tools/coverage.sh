@@ -106,9 +106,11 @@ run_coco() {
     # but not yet runnable here (license expired at the time of writing) —
     # validate the cmcsexeimport/cmreport switches on the first licensed run.
     if ! coco_usable; then
-        echo "Squish Coco not usable: $COCO_DIR/bin/csg++ missing or license invalid" >&2
-        echo "(check: $COCO_DIR/bin/cocolic --check)" >&2
-        exit 2
+        # Exit 3 = "stage skipped" (see build_all.sh). Coco is license-bound and
+        # ./setup.sh cannot install it, so its absence must not fail the run.
+        echo "SKIPPED: Squish Coco not usable — $COCO_DIR/bin/csg++ missing or license invalid"
+        echo "         (check: $COCO_DIR/bin/cocolic --check). License-bound; ./setup.sh cannot install it."
+        exit 3
     fi
     local BUILD="$ROOT/build-cov-coco"
     # csg++ wraps g++; instrumentation only happens with --cs-on. Tests and UI

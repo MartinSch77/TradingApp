@@ -16,5 +16,6 @@ test_spec
 verification
 vmodel
 platforms
+windows
 tools
 ```

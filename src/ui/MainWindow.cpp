@@ -111,6 +111,72 @@ QTableWidgetItem *makePendingPlanItem()
     return it;
 }
 
+// Columns of the decision window's "All instruments, ranked" table — one place
+// for the indices so the fill loop and the in-place repaints can't drift apart
+// (constants rather than an enum, matching the PosCol aliases above).
+constexpr qint32 RankedColInstrument = 0;
+constexpr qint32 RankedColCall = 1;
+constexpr qint32 RankedColComposite = 2;
+constexpr qint32 RankedColConfidence = 3;
+constexpr qint32 RankedColWeb = 4;
+constexpr qint32 RankedColOpen = 5;
+constexpr qint32 RankedColPlan = 6;
+constexpr qint32 RankedColCount = 7;
+
+// TradingView's rating buckets for a recommendation score in [-1, 1].
+QString webRatingWord(double score)
+{
+    if (score >= 0.5) {
+        return QStringLiteral("Strong Buy");
+    }
+    if (score >= 0.1) {
+        return QStringLiteral("Buy");
+    }
+    if (score > -0.1) {
+        return QStringLiteral("Neutral");
+    }
+    if (score > -0.5) {
+        return QStringLiteral("Sell");
+    }
+    return QStringLiteral("Strong Sell");
+}
+
+// Cell for the ranked table's "Web signal" column: the TradingView multi-timeframe
+// technical rating (the same read that feeds the composite), per instrument.
+QTableWidgetItem *makeWebRatingItem(const WebRating &r)
+{
+    auto *it = new QTableWidgetItem();
+    it->setTextAlignment(Qt::AlignCenter);
+    if (!r.valid()) {
+        it->setText(QStringLiteral("n/a"));
+        it->setForeground(trading::ui::kGrey);
+        it->setToolTip(QStringLiteral(
+            "No TradingView rating for this instrument — no rated web symbol or "
+            "proxy exists (or the bulk rating fetch has not returned yet)."));
+        return it;
+    }
+    const double score = r.consensus();
+    it->setText(QStringLiteral("%1 (%2)").arg(webRatingWord(score)).arg(score, 0, 'f', 2));
+    it->setForeground((score >= 0.1) ? trading::ui::kGreen
+                                     : ((score <= -0.1) ? trading::ui::kRed
+                                                        : trading::ui::kGrey));
+    auto tf = [](double v) {
+        return std::isnan(v) ? QStringLiteral("n/a") : QStringLiteral("%1").arg(v, 0, 'f', 2);
+    };
+    // Sequenced into locals: four calls inside one .arg() would be unsequenced.
+    const QString t15 = tf(r.m15);
+    const QString t60 = tf(r.h1);
+    const QString t1d = tf(r.d1);
+    const QString tCons = tf(score);
+    it->setToolTip(QStringLiteral(
+                       "TradingView aggregated technical rating, -1 (Strong Sell) … +1 "
+                       "(Strong Buy).\n15m: %1   1h: %2   1D: %3 — consensus %4.\n"
+                       "For eToro thematic baskets this is the closest liquid ETF/index "
+                       "proxy. Advisory only — it never trades.")
+                       .arg(t15, t60, t1d, tCons));
+    return it;
+}
+
 // Colour for an event-impact direction (+1 bullish, -1 bearish, 0 volatile).
 QColor impactColor(qint32 dir)
 {
@@ -300,20 +366,30 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // The first scan is kicked off from onReady() (once ids are resolving) rather than
     // a fixed delay, so it works whether the app comes up in real or simulation mode.
 
-    // Show the chart window once the main window is up, offset to the side so it
-    // doesn't cover the controls. The user can drag it anywhere (incl. a 2nd screen).
+    // Show the chart and the signals & AI window once the main window is up,
+    // offset to the side so they don't cover the controls. The user can drag
+    // them anywhere (incl. a 2nd screen).
     QTimer::singleShot(0, this, [this] {
         m_chart->move(frameGeometry().topRight() + QPoint(16, 0));
         m_chart->show();
         m_chart->raise();  // bring it to the front on first appearance
+        if (m_signalsWindow != nullptr) {
+            m_signalsWindow->move(m_chart->frameGeometry().bottomLeft() + QPoint(0, 16));
+            m_signalsWindow->show();
+            m_signalsWindow->raise();
+        }
     });
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    // The chart is a separate top-level window; close it too so the app exits.
+    // The chart and the signals & AI panel are separate top-level windows;
+    // close them too so the app exits.
     if (m_chart != nullptr) {
         static_cast<void>(m_chart->close());
+    }
+    if (m_signalsWindow != nullptr) {
+        static_cast<void>(m_signalsWindow->close());
     }
     QMainWindow::closeEvent(event);
 }
@@ -341,16 +417,25 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
 
-    // Reflect the chart window's own show/hide (e.g. its title-bar X) in the toggle.
-    if ((watched == m_chart) && (m_chartToggle != nullptr)) {
+    // Reflect each auxiliary window's own show/hide (e.g. its title-bar X) in
+    // the matching header toggle.
+    QPushButton *toggle = nullptr;
+    if (watched == m_chart) {
+        toggle = m_chartToggle;
+    } else if (watched == m_signalsWindow) {
+        toggle = m_signalsToggle;
+    } else {
+        // not one of the toggled windows
+    }
+    if (toggle != nullptr) {
         if ((event->type() == QEvent::Close) || (event->type() == QEvent::Hide)) {
-            const QSignalBlocker block(m_chartToggle);
-            m_chartToggle->setChecked(false);
+            const QSignalBlocker block(toggle);
+            toggle->setChecked(false);
         } else if (event->type() == QEvent::Show) {
-            const QSignalBlocker block(m_chartToggle);
-            m_chartToggle->setChecked(true);
+            const QSignalBlocker block(toggle);
+            toggle->setChecked(true);
         } else {
-            // other events on the chart window are of no interest here
+            // other events on these windows are of no interest here
         }
     }
     if (event->type() == QEvent::KeyPress) {
@@ -645,12 +730,37 @@ void MainWindow::buildUi()
     static_cast<void>(
         connect(m_decisionButton, &QPushButton::clicked, this, &MainWindow::openDecision));
 
+    // Toggle for the combined signals + AI window (both panels moved out of the
+    // main window into ONE floating, stay-on-top window shown at startup); same
+    // show/hide pattern as the Graph toggle. The window is created further down,
+    // hence the null check at toggle time.
+    m_signalsToggle = new QPushButton(QStringLiteral("Signals && AI"), central);
+    m_signalsToggle->setCheckable(true);
+    m_signalsToggle->setChecked(true);  // window is shown once the app is up
+    m_signalsToggle->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_signalsToggle->setToolTip(
+        QStringLiteral("Show or hide the signals & AI window (per-indicator reads, "
+                       "forecasts, the ensemble call and the AI decision support for "
+                       "the traded instrument). It floats above the other windows."));
+    static_cast<void>(connect(m_signalsToggle, &QPushButton::toggled, this, [this](bool on) {
+        if (m_signalsWindow == nullptr) {
+            return;
+        }
+        if (on) {
+            m_signalsWindow->show();
+            m_signalsWindow->raise();
+        } else {
+            m_signalsWindow->hide();
+        }
+    }));
+
     header->addWidget(m_titleLabel);
     header->addSpacing(12);
     header->addWidget(new QLabel(QStringLiteral("Instrument:"), central));
     header->addWidget(m_instrumentBox);
     header->addSpacing(8);
     header->addWidget(m_chartToggle);
+    header->addWidget(m_signalsToggle);
     header->addWidget(m_screenerButton);
     header->addWidget(m_decisionButton);
     header->addStretch();
@@ -868,8 +978,21 @@ void MainWindow::buildUi()
     sellRow->addWidget(m_armSell, 0);
     autoForm->addRow(QStringLiteral("Sell if price >"), sellRow);
 
-    // Trading-signals panel — buy/sell/close guidance from the instrument's technicals.
-    m_sigBox = new QGroupBox(QStringLiteral("Trading signals — %1").arg(sym), lower);
+    // Trading-signals panel — buy/sell/close guidance from the instrument's
+    // technicals. Shares ONE parentless top-level window with the AI panel
+    // below (same reasoning as the chart: a parented Qt::Window is a transient
+    // child that steals the main window's input focus, blocking the trade
+    // fields while it is open). Stays on top so it is always visible while
+    // trading; shown at startup, toggled via the header "Signals & AI" button,
+    // closed with the app in closeEvent.
+    m_signalsWindow = new QWidget(nullptr);
+    m_signalsWindow->setWindowTitle(QStringLiteral("Trading signals & AI — %1").arg(sym));
+    m_signalsWindow->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+    auto *signalsWinLayout = new QVBoxLayout(m_signalsWindow);
+    m_signalsWindow->installEventFilter(this);  // keep the header toggle in sync
+    m_sigBox = new QGroupBox(QStringLiteral("Trading signals — %1").arg(sym),
+                             m_signalsWindow);
+    signalsWinLayout->addWidget(m_sigBox);
     auto *sigBox = m_sigBox;
     auto *sigForm = new QFormLayout(sigBox);
     sigForm->setVerticalSpacing(2);          // 17 rows — keep them compact so the panel fits
@@ -1001,8 +1124,10 @@ void MainWindow::buildUi()
                  QStringLiteral("Overall call from the same ensemble: BUY or SELL when a clear "
                                 "majority of indicators agree, otherwise NEUTRAL."));
 
-    // --- AI decision-support panel ------------------------------------------
-    m_aiBox = new QGroupBox(QStringLiteral("AI decision support"), lower);
+    // --- AI decision-support panel -------------------------------------------
+    // Shares the floating signals window: one always-visible place for both.
+    m_aiBox = new QGroupBox(QStringLiteral("AI decision support"), m_signalsWindow);
+    signalsWinLayout->addWidget(m_aiBox);
     auto *aiForm = new QFormLayout(m_aiBox);
     aiForm->setVerticalSpacing(2);
     aiForm->setContentsMargins(9, 6, 9, 6);
@@ -1047,11 +1172,11 @@ void MainWindow::buildUi()
                             "with a one-line rationale. Decision support only — always confirm "
                             "and manage your own risk."));
 
-    // Left column: trade panel, auto-orders, then the (tall) signals panel.
+    // Left column: trade panel and auto-orders (the signals panel lives in its
+    // own window now, toggled from the header).
     auto *leftCol = new QVBoxLayout;
     leftCol->addWidget(tradeBox);
     leftCol->addWidget(autoBox);
-    leftCol->addWidget(sigBox);
     leftCol->addStretch();
     controlsRow->addLayout(leftCol, 0);
 
@@ -1088,23 +1213,34 @@ void MainWindow::buildUi()
                                  | QAbstractItemView::EditKeyPressed);
     m_positions->setToolTip(QStringLiteral(
         "Tick one or more trades, then Close marked trades.\n"
-        "Double-click a trade to switch the app to its instrument.\n"
+        "Click the Side cell of a trade to open its gauge window.\n"
+        "Click the Instrument cell to switch the app to that instrument.\n"
         "Double-click a Stop-loss / Take-profit cell to change it (amount in %1; blank clears it).\n"
         "SL is signed P/L: a negative value closes at a loss, a positive value locks in a "
         "profit (stop on the winning side).")
                                 .arg(m_ccy));
     static_cast<void>(connect(m_positionsModel, &PositionsModel::slTpEdited, this,
                               &MainWindow::onPositionSlTpEdited));
-    // Click a trade (outside the mark checkbox / editable SL/TP cells) → the
-    // gauge window: buy value, live value/needle, P/L and SL/TP (REQ-F-024).
+    // Click routing (REQ-F-024): the Side cell opens the gauge window (buy value,
+    // live value/needle, P/L and SL/TP); the Instrument cell switches the app to
+    // that trade's instrument, like picking it from the selector. Other cells do
+    // nothing (mark checkbox / editable SL,TP keep their own interactions).
     static_cast<void>(connect(
         m_positions, &QTableView::clicked, this, [this](const QModelIndex &index) {
-            const qint32 col = index.column();
-            if ((col == PositionsModel::ColMark) || (col >= PositionsModel::ColSl)) {
-                return;
-            }
             const qint32 row = index.row();
             if ((row < 0) || (row >= m_shownPositions.size())) {
+                return;
+            }
+            const qint32 col = index.column();
+            if (col == PositionsModel::ColInstrument) {
+                const QString tradeSym = m_shownPositions[row].symbol;
+                if (!tradeSym.isEmpty()) {
+                    m_autoInstrumentDone = true;  // a manual pick ends the startup auto-load
+                    selectInstrument(tradeSym);
+                }
+                return;
+            }
+            if (col != PositionsModel::ColSide) {
                 return;
             }
             if (m_tradeGauge == nullptr) {
@@ -1115,25 +1251,6 @@ void MainWindow::buildUi()
                 p.symbol.compare(m_client->instrument().symbol, Qt::CaseInsensitive) == 0;
             m_tradeGauge->showTrade(p, (isCurrent && (m_lastPrice > 0.0)) ? m_lastPrice : 0.0,
                                     m_ccy, m_eurPerUsd);
-        }));
-    // Double-click a trade (outside the mark checkbox / editable SL/TP cells) to switch
-    // the app to that instrument, like picking it from the selector.
-    static_cast<void>(connect(
-        m_positions, &QTableView::doubleClicked, this, [this](const QModelIndex &index) {
-            const qint32 col = index.column();
-            if ((col == PositionsModel::ColMark) || (col >= PositionsModel::ColSl)) {
-                return;  // mark checkbox / editable SL,TP
-            }
-            const qint32 row = index.row();
-            if ((row < 0) || (row >= m_shownPositions.size())) {
-                return;
-            }
-            const QString sym = m_shownPositions[row].symbol;
-            if (sym.isEmpty()) {
-                return;
-            }
-            m_autoInstrumentDone = true;  // a manual pick ends the startup auto-load
-            selectInstrument(sym);
         }));
     posLayout->addWidget(m_positions);
 
@@ -1194,12 +1311,11 @@ void MainWindow::buildUi()
     pnlButtons->addWidget(m_pnlDetails);
     pnlLayout->addLayout(pnlButtons);
 
-    // Right column: open trades (stretches) with the closed-trade summary and the AI
-    // decision support beneath it, balancing the tall left-hand signals panel.
+    // Right column: open trades (stretches) with the closed-trade summary beneath
+    // it (the AI decision support lives in its own window now).
     auto *rightCol = new QVBoxLayout;
     rightCol->addWidget(posBox, 1);
     rightCol->addWidget(m_pnlBox, 0);
-    rightCol->addWidget(m_aiBox, 0);
     controlsRow->addLayout(rightCol, 1);
     lowerLayout->addLayout(controlsRow);
 
@@ -1271,31 +1387,30 @@ void MainWindow::buildUi()
                               &MainWindow::startRecommendationScan));
     recoLayout->addWidget(m_recoRefresh);
 
-    // Events + recommendations sit side by side in a draggable splitter: market events
-    // gets the larger share by default, and the user can adjust the split at runtime.
-    auto *eventsSplitter = new QSplitter(Qt::Horizontal, lower);
-    eventsSplitter->addWidget(m_eventsBox);
-    eventsSplitter->addWidget(m_recoBox);
-    eventsSplitter->setChildrenCollapsible(false);  // neither pane can be dragged to zero
-    eventsSplitter->setStretchFactor(0, 3);  // events grows faster than reco on resize
-    eventsSplitter->setStretchFactor(1, 1);
-    eventsSplitter->setSizes({300, 120});     // default ~5:2 width split
-    lowerLayout->addWidget(eventsSplitter);
-
-    // Log panel. Pin the box to its content height (a fixed-height log + margins):
-    // without this the group box expands to soak up all spare vertical space on a
-    // tall window, leaving a huge empty Activity area. Fixed here means the spare
-    // space flows to the open-trades / events panels above instead.
+    // Activity log, sharing the bottom row: its height is bounded like the
+    // events/reco lists so the row stays compact and spare vertical space keeps
+    // flowing to the open-trades panel above.
     auto *logBox = new QGroupBox(QStringLiteral("Activity"), lower);
     auto *logLayout = new QVBoxLayout(logBox);
     logLayout->setContentsMargins(6, 4, 6, 4);
     m_log = new QPlainTextEdit(logBox);
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(500);
-    m_log->setFixedHeight(68);
+    m_log->setMaximumHeight(120);
     logLayout->addWidget(m_log);
-    logBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    lowerLayout->addWidget(logBox);
+
+    // Events, activity log and recommendations side by side in one draggable
+    // splitter row: market events | Activity | Buy / sell now.
+    auto *eventsSplitter = new QSplitter(Qt::Horizontal, lower);
+    eventsSplitter->addWidget(m_eventsBox);
+    eventsSplitter->addWidget(logBox);
+    eventsSplitter->addWidget(m_recoBox);
+    eventsSplitter->setChildrenCollapsible(false);  // no pane can be dragged to zero
+    eventsSplitter->setStretchFactor(0, 3);  // events grows fastest on resize
+    eventsSplitter->setStretchFactor(1, 2);
+    eventsSplitter->setStretchFactor(2, 1);
+    eventsSplitter->setSizes({300, 200, 120});
+    lowerLayout->addWidget(eventsSplitter);
 
     root->addWidget(lower);
 
@@ -1318,6 +1433,10 @@ void MainWindow::onReady(const Instrument &instrument)
     updateTradeHours(instrument.symbol);
     updateTradeButtonsEnabled();  // reflect the new instrument's market-open state
     m_sigBox->setTitle(QStringLiteral("Trading signals — %1").arg(instrument.symbol));
+    if (m_signalsWindow != nullptr) {
+        m_signalsWindow->setWindowTitle(
+            QStringLiteral("Trading signals & AI — %1").arg(instrument.symbol));
+    }
     m_eventsBox->setTitle(
         QStringLiteral("Market events — next 3 trading days (with %1 impact)")
             .arg(instrument.symbol));
@@ -1560,17 +1679,19 @@ void MainWindow::applyUiScale()
     }
 }
 
-// Re-price the open-trades P/L column from a fresh live price, in place, so it tracks
-// the chart between the ~3s portfolio polls. Each shown-instrument row shows its last
-// API P/L plus the account-currency value of the price move since m_pnlAnchorPrice
-// (same value-per-point identity the SL/TP maths uses — FX-free). Positions on other
-// instruments are left as the poll supplied them (no live price for them here).
+// Re-price the open-trades P/L column from fresh live rates, in place, so it tracks
+// the chart between the ~3s portfolio polls. Each shown-instrument row shows eToro's
+// own API P/L plus the value of the marking-side move (long → bid, short → ask)
+// since the rate that P/L was computed at (Position::apiCloseRate) — so the figure
+// matches what eToro itself shows, not a mid-price approximation from a different
+// moment. Positions on other instruments are left as the poll supplied them.
 void MainWindow::updateOpenTradePnl(double price)
 {
     if (m_positionsModel == nullptr) {
         return;
     }
-    m_positionsModel->repriceOpenPnl(m_client->instrument().symbol, price, m_pnlAnchorPrice);
+    m_positionsModel->repriceOpenPnl(m_client->instrument().symbol, m_client->lastBid(),
+                                     m_client->lastAsk(), price, m_pnlAnchorPrice);
 }
 
 void MainWindow::onPortfolio(const QList<Position> &positionsIn)
@@ -1615,8 +1736,9 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // Row-indexed snapshot so the SL/TP editors can map a row back to its trade.
     m_shownPositions = positions;
 
-    // Anchor the just-supplied API P/L to the current live price, so updateOpenTradePnl
-    // can re-price these trades against later ticks without a jump at the next poll.
+    // Fallback anchor for re-pricing: positions normally carry the exact rate their
+    // API P/L was marked at (apiCloseRate); this poll-time price covers the ones
+    // that don't (e.g. simulation mode).
     m_pnlAnchorPrice = m_lastPrice;
 
     // Override a position's SL/TP with the value the user just submitted, until the
@@ -2660,6 +2782,17 @@ void MainWindow::proposeSlTpDefaults(double volPct)
     if (!m_slTpAuto || (volPct <= 0.0) || (m_stopLoss == nullptr)) {
         return;
     }
+    // Never move the fields while the user is editing one of them: a hand edit
+    // only disables the automatics once a keystroke produces a VALID value, so
+    // a focused, text-selected or just-cleared field would be overwritten by
+    // the next poll. Focus can sit on the spin box or its internal QLineEdit,
+    // hence the subtree check.
+    QWidget *fw = QApplication::focusWidget();
+    if ((fw != nullptr)
+        && ((fw == m_stopLoss) || (fw == m_takeProfit) || m_stopLoss->isAncestorOf(fw)
+            || m_takeProfit->isAncestorOf(fw))) {
+        return;
+    }
     const double invest = m_amount->value();
     const double lev = m_leverage->currentText().toDouble();
     if ((invest <= 0.0) || (lev <= 0.0)) {
@@ -3392,11 +3525,11 @@ void MainWindow::openDecision()
 
         lay->addWidget(new QLabel(QStringLiteral("All instruments, ranked by composite:"),
                                   m_decisionDialog));
-        m_decisionRanked = new QTableWidget(0, 6, m_decisionDialog);
+        m_decisionRanked = new QTableWidget(0, RankedColCount, m_decisionDialog);
         m_decisionRanked->setHorizontalHeaderLabels(
             {QStringLiteral("Instrument"), QStringLiteral("Call"), QStringLiteral("Composite"),
-             QStringLiteral("Confidence"), QStringLiteral("Open"),
-             QStringLiteral("Trade plan")});
+             QStringLiteral("Confidence"), QStringLiteral("Web signal"),
+             QStringLiteral("Open"), QStringLiteral("Trade plan")});
         m_decisionRanked->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_decisionRanked->setSelectionBehavior(QAbstractItemView::SelectRows);
         m_decisionRanked->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3412,7 +3545,8 @@ void MainWindow::openDecision()
                 if (sel.isEmpty()) {
                     return;
                 }
-                const QString sym = m_decisionRanked->item(sel.first()->row(), 0)
+                const QString sym = m_decisionRanked->item(sel.first()->row(),
+                                                           RankedColInstrument)
                                         ->data(Qt::UserRole).toString();
                 if (sym.isEmpty() || (sym == m_decisionSelected)) {
                     return;
@@ -3424,7 +3558,7 @@ void MainWindow::openDecision()
         // Double-click → switch the whole app to that instrument.
         static_cast<void>(connect(
             m_decisionRanked, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-                QTableWidgetItem *it = m_decisionRanked->item(row, 0);
+                QTableWidgetItem *it = m_decisionRanked->item(row, RankedColInstrument);
                 if (it == nullptr) {
                     return;
                 }
@@ -3570,12 +3704,15 @@ void MainWindow::rebuildDecision()
         QTableWidgetItem *planItem = (planIt != m_rowPlans.constEnd())
                                          ? makePlanVerdictItem(*planIt)
                                          : makePendingPlanItem();
-        m_decisionRanked->setItem(i, 0, sym);
-        m_decisionRanked->setItem(i, 1, call);
-        m_decisionRanked->setItem(i, 2, comp);
-        m_decisionRanked->setItem(i, 3, conf);
-        m_decisionRanked->setItem(i, 4, openIt);
-        m_decisionRanked->setItem(i, 5, planItem);
+        m_decisionRanked->setItem(i, RankedColInstrument, sym);
+        m_decisionRanked->setItem(i, RankedColCall, call);
+        m_decisionRanked->setItem(i, RankedColComposite, comp);
+        m_decisionRanked->setItem(i, RankedColConfidence, conf);
+        // "Web signal": the TradingView rating this row fed into the composite.
+        m_decisionRanked->setItem(i, RankedColWeb,
+                                  makeWebRatingItem(m_ratingBySymbol.value(d.symbol)));
+        m_decisionRanked->setItem(i, RankedColOpen, openIt);
+        m_decisionRanked->setItem(i, RankedColPlan, planItem);
     }
     dispatchRowPlans(rows);  // fill the "Trade plan" column off the GUI thread
 
@@ -3913,17 +4050,23 @@ void MainWindow::dispatchRowPlans(const QList<trading::DecisionRow> &rows)
 void MainWindow::applyRowPlanVerdicts()
 {
     m_rowPlans = m_rowPlanWatcher.result();
+    // The focus instrument keeps its panel plan: it was built from fresh candles
+    // and live spread, the batch row from the screener snapshot and cached costs.
+    // The cell and the panel must show the same verdict (REQ-F-021).
+    if (!m_lastPlanSymbol.isEmpty() && m_lastPlan.valid) {
+        static_cast<void>(m_rowPlans.insert(m_lastPlanSymbol, m_lastPlan));
+    }
     if (m_decisionRanked == nullptr) {
         return;
     }
     for (qint32 i = 0; i < m_decisionRanked->rowCount(); ++i) {
-        const QTableWidgetItem *symItem = m_decisionRanked->item(i, 0);
+        const QTableWidgetItem *symItem = m_decisionRanked->item(i, RankedColInstrument);
         if (symItem == nullptr) {
             continue;
         }
         const auto it = m_rowPlans.constFind(symItem->text());
         if (it != m_rowPlans.constEnd()) {
-            m_decisionRanked->setItem(i, 5, makePlanVerdictItem(*it));
+            m_decisionRanked->setItem(i, RankedColPlan, makePlanVerdictItem(*it));
         }
     }
 }
@@ -3935,8 +4078,8 @@ void MainWindow::updateDecisionOpenColumn()
         return;
     }
     for (qint32 i = 0; i < m_decisionRanked->rowCount(); ++i) {
-        const QTableWidgetItem *symItem = m_decisionRanked->item(i, 0);
-        QTableWidgetItem *openIt = m_decisionRanked->item(i, 4);
+        const QTableWidgetItem *symItem = m_decisionRanked->item(i, RankedColInstrument);
+        QTableWidgetItem *openIt = m_decisionRanked->item(i, RankedColOpen);
         if ((symItem == nullptr) || (openIt == nullptr)) {
             continue;
         }
@@ -4045,6 +4188,20 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
     }
     m_lastPlan = plan;
     m_lastPlanSymbol = focusSymbol;
+
+    // The ranked table's "Trade plan" cell for this instrument must show the
+    // SAME verdict as this panel: adopt the fresh focus plan — it may have been
+    // built from newer closes/spread than the batch row plan (REQ-F-021).
+    static_cast<void>(m_rowPlans.insert(focusSymbol, plan));
+    if (m_decisionRanked != nullptr) {
+        for (qint32 i = 0; i < m_decisionRanked->rowCount(); ++i) {
+            const QTableWidgetItem *symItem = m_decisionRanked->item(i, RankedColInstrument);
+            if ((symItem != nullptr) && (symItem->text() == focusSymbol)) {
+                m_decisionRanked->setItem(i, RankedColPlan, makePlanVerdictItem(plan));
+                break;
+            }
+        }
+    }
 
     const QString green = QStringLiteral("#25b563");
     const QString red = QStringLiteral("#e35555");

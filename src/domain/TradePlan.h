@@ -40,6 +40,9 @@ struct PlanInput {
     bool eventRisk = false;    // a high-impact calendar event is imminent
     bool fgValid = false;      // a Fear & Greed reading is available
     double fearGreed = 50.0;   // CNN Fear & Greed index, 0 (fear) .. 100 (greed)
+    quint32 mcSeed = 0;        // nonzero → fixed Monte-Carlo seed (tests); 0 → a seed
+                               // derived from closes+price, so identical inputs give
+                               // identical plans (no sampling-noise verdict flips)
 };
 
 struct TradePlan {

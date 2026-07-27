@@ -30,8 +30,9 @@ private:
     double m_price = 0.0;
 };
 
-// Non-modal detail window opened by clicking an open-trades row: gauge plus
-// the buy (open) value, current value, live P/L and the SL/TP amounts.
+// Non-modal detail window opened by clicking the Side cell of an open-trades
+// row: gauge plus the buy (open) value, current value, live P/L and the SL/TP
+// amounts.
 class TradeGaugeDialog : public QDialog
 {
     Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees markers

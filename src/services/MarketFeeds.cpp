@@ -19,8 +19,11 @@
 namespace {
 
 // Map an app instrument symbol to its TradingView ticker for the real-time technical
-// rating. Confirmed working via the TradingView scanner; eToro's proprietary thematic
-// baskets (AI.Leaders, Crypto10, ...) have no TradingView equivalent -> empty = "n/a".
+// rating. Every entry confirmed working via the TradingView scanner (returns non-null
+// Recommend.All values). Indices/FX/commodities map to their own symbol; eToro's
+// thematic baskets map to the closest liquid ETF/index proxy (marked "proxy") — an
+// advisory stand-in, not the basket itself. RUBBER has no rated symbol (SGX TSR20
+// futures return null ratings) -> empty = "n/a".
 QString tradingViewTicker(const QString &symbol)
 {
     static const QHash<QString, QString> map = {
@@ -33,10 +36,22 @@ QString tradingViewTicker(const QString &symbol)
         {QStringLiteral("EUSTX50"), QStringLiteral("TVC:SX5E")},
         {QStringLiteral("RTY"), QStringLiteral("TVC:RUT")},
         {QStringLiteral("HKG50"), QStringLiteral("TVC:HSI")},
+        {QStringLiteral("CHINA50"), QStringLiteral("HKEX:2823")},        // iShares FTSE A50 ETF
         {QStringLiteral("Switzerland20"), QStringLiteral("SIX:SMI")},
+        {QStringLiteral("Canada60"), QStringLiteral("TSX:TX60")},        // S&P/TSX 60 index
+        {QStringLiteral("Sweden30"), QStringLiteral("OMXSTO:OMXS30")},   // OMX Stockholm 30
         {QStringLiteral("USDOLLAR"), QStringLiteral("TVC:DXY")},
         {QStringLiteral("EURUSD"), QStringLiteral("FX:EURUSD")},
         {QStringLiteral("Gold.24-7"), QStringLiteral("TVC:GOLD")},
+        {QStringLiteral("OIL.24-7"), QStringLiteral("FX:USOIL")},        // WTI CFD stream
+        {QStringLiteral("Semiconductors"), QStringLiteral("NASDAQ:SOX")},  // proxy: PHLX semi index
+        {QStringLiteral("AI.Leaders"), QStringLiteral("NASDAQ:AIQ")},      // proxy: Global X AI ETF
+        {QStringLiteral("Cybersecurity"), QStringLiteral("NASDAQ:CIBR")},  // proxy: First Trust cyber ETF
+        {QStringLiteral("Quantum"), QStringLiteral("NASDAQ:QTUM")},        // proxy: Defiance quantum ETF
+        {QStringLiteral("GoldMiners"), QStringLiteral("AMEX:GDX")},        // proxy: VanEck gold miners ETF
+        {QStringLiteral("Nuclear"), QStringLiteral("AMEX:NLR")},           // proxy: VanEck uranium+nuclear ETF
+        {QStringLiteral("Crypto10"), QStringLiteral("CRYPTOCAP:TOTAL")},   // proxy: total crypto market cap
+        {QStringLiteral("Colombia"), QStringLiteral("BVC:ICOLCAP")},       // proxy: iShares COLCAP ETF
     };
     return map.value(symbol);
 }

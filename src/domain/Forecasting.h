@@ -42,7 +42,9 @@ double hurstExponent(const QList<double> &series);
 // and the mirror probability of the stop being struck first. Paths that reach
 // NEITHER barrier within the horizon count towards neither figure — the
 // remainder 1 − pWin − pLose is the chance the trade simply expires between
-// the barriers.
+// the barriers; expiryRetLong/Short report those paths' measured mean final
+// move (signed fraction of price), so expected values need not assume the
+// expiring paths close flat (with a directional drift they don't).
 struct McOutlook {
     bool valid = false;
     double pUp = 0.5;
@@ -52,10 +54,16 @@ struct McOutlook {
     double pWinShort = 0.0;
     double pLoseLong = 0.0;   // long's stop-loss struck before its take-profit
     double pLoseShort = 0.0;  // short's stop-loss struck before its take-profit
+    double expiryRetLong = 0.0;   // mean final move of paths that hit neither long barrier
+    double expiryRetShort = 0.0;  // mean final move of paths that hit neither short barrier
 };
 
+// `seed` nonzero makes the resampling deterministic (tests); 0 = securely
+// seeded, a fresh sequence every call (QRandomGenerator::global() cannot be
+// reseeded, so determinism needs an owned generator — same pattern as
+// SimulationEngine::seedRng).
 McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
-                     double tpFrac, double slFrac, qint32 paths);
+                     double tpFrac, double slFrac, qint32 paths, quint32 seed = 0);
 
 // Logistic squash of x into (0, 1).
 double sigmoid(double x);

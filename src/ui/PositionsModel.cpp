@@ -61,11 +61,9 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     endResetModel();
 }
 
-void PositionsModel::repriceOpenPnl(const QString &symbol, double price, double anchorPrice)
+void PositionsModel::repriceOpenPnl(const QString &symbol, double bid, double ask,
+                                    double midPrice, double anchorPrice)
 {
-    if ((price <= 0.0) || (anchorPrice <= 0.0)) {
-        return;
-    }
     for (qsizetype row = 0; row < m_positions.size(); ++row) {
         const Position &p = m_positions[row];
         if ((p.openRate <= 0.0) || (p.symbol.compare(symbol, Qt::CaseInsensitive) != 0)) {
@@ -75,7 +73,18 @@ void PositionsModel::repriceOpenPnl(const QString &symbol, double price, double 
         if (perPoint <= 0.0) {
             continue;
         }
-        m_plDelta[row] = (p.isBuy ? 1.0 : -1.0) * perPoint * (price - anchorPrice);
+        // Match eToro's own marking: a long is valued at the BID, a short at the
+        // ASK; the anchor is the exact rate the API P/L was computed at
+        // (unrealizedPnL.closeRate — same side), so the shown figure stays eToro's
+        // number plus precisely the price move since. Fall back to the mid price
+        // and the poll-time anchor when either side is unavailable.
+        const double sideNow = p.isBuy ? ((bid > 0.0) ? bid : midPrice)
+                                       : ((ask > 0.0) ? ask : midPrice);
+        const double anchor = (p.apiCloseRate > 0.0) ? p.apiCloseRate : anchorPrice;
+        if ((sideNow <= 0.0) || (anchor <= 0.0)) {
+            continue;
+        }
+        m_plDelta[row] = (p.isBuy ? 1.0 : -1.0) * perPoint * (sideNow - anchor);
         const QModelIndex idx = index(static_cast<qint32>(row), ColPl);
         emit dataChanged(idx, idx);
     }
@@ -192,6 +201,21 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
         }
         return {};
     case Qt::ToolTipRole:
+        if (col == ColPl) {
+            const double profitUsd = p.profit + m_plDelta.value(index.row(), 0.0);
+            return QStringLiteral(
+                       "$%1 in the USD account currency — the figure the eToro app shows "
+                       "(its own live P/L, net of spread and fees, re-priced from the live "
+                       "bid/ask between polls). The column converts it at the live EUR/USD "
+                       "rate.")
+                .arg(QLocale().toString(profitUsd, 'f', 2));
+        }
+        if (col == ColAmount) {
+            return QStringLiteral(
+                       "$%1 invested — USD account currency, as the eToro app shows it; "
+                       "the column converts it at the live EUR/USD rate.")
+                .arg(QLocale().toString(p.amount, 'f', 2));
+        }
         if (col == ColCloseCost) {
             return QStringLiteral(
                 "Estimated cost to close this trade at the current price — eToro attributes "

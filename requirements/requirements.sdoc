@@ -96,7 +96,7 @@ STATEMENT: The app shall obtain crowd sentiment (CNN Fear & Greed, 0–100) and 
 UID: REQ-F-010
 VERIFICATION: T
 TITLE: Costed trade plan with risk factor
-STATEMENT: The app shall build a costed trade plan per instrument: a BUY/SELL/STAY-OUT verdict with reason, Monte-Carlo win/lose probabilities against the proposed barriers, a break-even comparison, a 1–5 risk factor with reasons, and a volatility-targeted leverage recommendation that keeps the loss-at-stop within 25% of the stake, stepped to the instrument's allowed leverage values and cap.
+STATEMENT: 'The app shall build a costed trade plan per instrument: a BUY/SELL/STAY-OUT verdict with reason, Monte-Carlo win/lose probabilities against the proposed barriers, a break-even comparison, a 1–5 risk factor with reasons, and a volatility-targeted leverage recommendation that keeps the loss-at-stop within 25% of the stake, stepped to the instrument''s allowed leverage values and cap. The expected value shall price paths that reach neither barrier at their Monte-Carlo measured mean final move (not a flat-expiry approximation). A BUY/SELL verdict additionally requires ALL of: (a) ensemble confidence of at least 20% after the VIX and event-risk trims, (b) a Monte-Carlo win rate that clears the break-even rate by at least two standard errors of its own estimate (sampling-noise band), and (c) an expected net edge after costs of at least 0.25% of the stake; otherwise the verdict is STAY OUT with the failing gate as the reason.'
 
 [REQUIREMENT]
 UID: REQ-F-011
@@ -106,9 +106,9 @@ STATEMENT: The trade plan's cost bill shall account for half the spread on openi
 
 [REQUIREMENT]
 UID: REQ-F-012
-VERIFICATION: T
+VERIFICATION: T/I
 TITLE: Trade-panel defaults and auto SL/TP
-STATEMENT: The trade panel shall default the invest amount to 3750 (display currency) and auto-propose SL/TP from recent volatility (stop ≈ 1.5σ of the horizon move, TP = 1.5 × SL) until the user edits them; an instrument switch re-enables the automatics.
+STATEMENT: The trade panel shall default the invest amount to 3750 (display currency) and auto-propose SL/TP from recent volatility (stop ≈ 1.5σ of the horizon move, TP = 1.5 × SL) until the user edits them; an instrument switch re-enables the automatics. The automatic proposal shall never overwrite a stop-loss or take-profit field while it is being edited (keyboard focus inside the field).
 
 [REQUIREMENT]
 UID: REQ-F-013
@@ -162,7 +162,7 @@ STATEMENT: 'The app shall obtain market context from public feeds: CBOE VIX, Tra
 UID: REQ-F-021
 VERIFICATION: I
 TITLE: Decision window explains itself in place
-STATEMENT: 'The decision window shall explain its conclusions in place: the trade-plan verdict carries a mouse-over stating what the verdict means and why it was reached (incl. the STAY OUT reason), the "expected edge after costs" figure carries a mouse-over defining it with the plan''s own numbers, each ranked-list call carries a mouse-over with its source breakdown, a Trade-plan column shows every ranked instrument''s own plan verdict (BUY/SELL/STAY OUT, computed off the GUI thread with the same cost and break-even gates as the trade-plan panel), and an Open column shows each instrument''s live market-open state from the quote-freshness poll.'
+STATEMENT: 'The decision window shall explain its conclusions in place: the trade-plan verdict carries a mouse-over stating what the verdict means and why it was reached (incl. the STAY OUT reason), the "expected edge after costs" figure carries a mouse-over defining it with the plan''s own numbers, each ranked-list call carries a mouse-over with its source breakdown, a Trade-plan column shows every ranked instrument''s own plan verdict (BUY/SELL/STAY OUT, computed off the GUI thread with the same cost and break-even gates as the trade-plan panel), a Web signal column shows every ranked instrument''s TradingView multi-timeframe technical rating (the same read that feeds the composite; eToro thematic baskets use the closest liquid ETF/index proxy, n/a where none exists), and an Open column shows each instrument''s live market-open state from the quote-freshness poll.'
 
 [REQUIREMENT]
 UID: REQ-F-022
@@ -180,7 +180,7 @@ STATEMENT: 'For each upcoming calendar event the app shall propose an advisory-o
 UID: REQ-F-024
 VERIFICATION: I
 TITLE: Per-trade gauge window
-STATEMENT: 'Clicking an open-trade row shall open a non-modal gauge window for that trade: a dial whose needle is the live price over a stop-loss→open→take-profit scale (loss zone red, win zone green, open-rate marker), plus the buy (open) value, the current value, the live P/L and the SL/TP values; the gauge follows live price ticks of the shown instrument.'
+STATEMENT: 'Clicking the Side cell of an open-trade row shall open a non-modal gauge window for that trade: a dial whose needle is the live price over a stop-loss→open→take-profit scale (loss zone red, win zone green, open-rate marker), plus the buy (open) value, the current value, the live P/L and the SL/TP values; the gauge follows live price ticks of the shown instrument. Clicking the Instrument cell shall instead switch the app to that trade''s instrument (as if picked from the instrument selector); clicks on other cells shall neither open the gauge nor switch the instrument.'
 
 [[/SECTION]]
 

@@ -156,6 +156,44 @@ private slots:
         }
         QVERIFY(noted);
     }
+
+    //! @tstid TS-PLAN-007 @design DES-DOM-PLAN
+    // @relation(REQ-F-010, scope=function)
+    void TS_PLAN_007_verdictGatesConfidenceAndThinEdge()
+    {
+        // (a) Confidence gate: force a side on a signal-less flat series — the
+        // ensemble keeps ~no agreement, so the verdict must refuse the trade.
+        QList<double> flat;
+        for (qint32 i = 0; i < 120; ++i) {
+            flat.append(100.0 + ((i % 2 == 0) ? 0.01 : -0.01));
+        }
+        PlanInput forced = baseInput(flat);
+        forced.dir = 1;
+        const TradePlan weak = buildTradePlan(forced);
+        QVERIFY(weak.valid);
+        QCOMPARE(weak.verdict, QStringLiteral("STAY OUT"));
+        QVERIFY(weak.verdictReason.contains(QStringLiteral("confidence too low")));
+
+        // (b) Thin-edge gate: identical seeded Monte-Carlo draws (in.mcSeed), so
+        // the only difference between the two plans is the cost bill. Size the
+        // spread so the net edge lands inside (0, 0.25% of stake) — actionable
+        // gross edge, but not worth the risk.
+        PlanInput in = baseInput(trend(120, 1.004, 1.001));
+        in.mcSeed = 7U;
+        const TradePlan base = buildTradePlan(in);
+        QCOMPARE(base.verdict, QStringLiteral("BUY"));  // precondition: clear edge
+        const double minEdge = 0.0025 * in.invest;
+        QVERIFY(base.expectedNet > minEdge);
+        // Bill = 2 half-spreads = invest·lev·spread%/100; leave half the floor.
+        const double targetBill = base.expectedNet - (0.5 * minEdge);
+        in.spreadPct = (targetBill * 100.0) / (in.invest * base.leverage);
+        const TradePlan thin = buildTradePlan(in);
+        QCOMPARE(thin.leverage, base.leverage);  // spread must not move the geometry
+        QVERIFY(thin.expectedNet > 0.0);
+        QVERIFY(thin.expectedNet < minEdge);
+        QCOMPARE(thin.verdict, QStringLiteral("STAY OUT"));
+        QVERIFY(thin.verdictReason.contains(QStringLiteral("too thin")));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestTradePlan)

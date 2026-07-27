@@ -36,7 +36,12 @@ public:
     // Live re-price of the shown instrument's P/L column between polls: each
     // row shows its last API P/L plus the value of the price move since
     // anchorPrice — pure dataChanged, no allocation.
-    void repriceOpenPnl(const QString &symbol, double price, double anchorPrice);
+    // Re-price the shown P/L of `symbol`'s rows from live rates: eToro's API P/L
+    // plus the move of the marking side (long → bid, short → ask) since the rate
+    // the API figure was computed at (Position::apiCloseRate; anchorPrice and
+    // midPrice are the fallbacks when a side or the anchor is unavailable).
+    void repriceOpenPnl(const QString &symbol, double bid, double ask, double midPrice,
+                        double anchorPrice);
 
     // Echo a just-submitted SL/TP edit immediately (the server snapshot
     // catches up on a later poll; see MainWindow::m_pendingSlTp).

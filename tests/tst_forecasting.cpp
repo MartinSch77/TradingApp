@@ -115,6 +115,25 @@ private slots:
         QVERIFY(sigmoid(-10.0) < 0.01);
         QVERIFY(sigmoid(1.0) > sigmoid(0.5));
     }
+
+    //! @tstid TS-FC-008 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
+    void TS_FC_008_monteCarloExpiryResidue()
+    {
+        // Barriers far wider than 5 bars of ≤0.4% drift can reach: every path
+        // expires between them, and the measured mean final move must carry the
+        // drift's sign — the residue the trade-plan EV now prices in.
+        const QList<double> s = upDrift(120);
+        const McOutlook o = monteCarlo(s, s.last(), 5, 0.20, 0.20, 2000);
+        QVERIFY(o.valid);
+        QCOMPARE(o.pWinLong + o.pLoseLong, 0.0);  // nothing decided
+        QVERIFY(o.expiryRetLong > 0.0);           // residue follows the up-drift
+        QVERIFY(o.expiryRetShort > 0.0);          // same paths, short's barriers
+        // Without barriers there are no expiry statistics.
+        const McOutlook nb = monteCarlo(s, s.last(), 5, 0.0, 0.0, 500);
+        QCOMPARE(nb.expiryRetLong, 0.0);
+        QCOMPARE(nb.expiryRetShort, 0.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestForecasting)

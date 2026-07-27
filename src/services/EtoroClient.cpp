@@ -1050,6 +1050,9 @@ void EtoroClient::refreshPortfolioReal()
             if (!pnlVal.isUndefined()) {
                 p.profit = numFrom(pnlVal);
                 p.profitFromApi = true;
+                // The rate this P/L was marked at (long → bid, short → ask): the
+                // exact anchor for re-pricing the figure against later live ticks.
+                p.apiCloseRate = numFrom(pick(upnl, {QStringLiteral("closeRate")}));
             } else {
                 const QJsonValue flat = pick(o, {QStringLiteral("netProfit"),
                                                  QStringLiteral("profit"), QStringLiteral("openPl")});
@@ -1151,6 +1154,17 @@ void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
                     if (close > 0.0) {
                         const double dir = p.isBuy ? 1.0 : -1.0;
                         p.profit = dir * perPoint * (close - p.openRate);
+                    }
+                } else if (p.apiCloseRate > 0.0) {
+                    // The /pnl endpoint serves a CACHED snapshot (observed ~1.5h old
+                    // mid-session), so eToro's figure must be brought current: add the
+                    // marking-side move since the rate the snapshot was computed at,
+                    // then re-anchor so the per-tick re-price continues from here.
+                    const double close = p.isBuy ? bid : ask;
+                    if (close > 0.0) {
+                        const double dir = p.isBuy ? 1.0 : -1.0;
+                        p.profit += dir * perPoint * (close - p.apiCloseRate);
+                        p.apiCloseRate = close;
                     }
                 }
             }

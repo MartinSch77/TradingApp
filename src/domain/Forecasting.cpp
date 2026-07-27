@@ -145,7 +145,7 @@ double hurstExponent(const QList<double> &series)
 }
 
 McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
-                     double tpFrac, double slFrac, qint32 paths)
+                     double tpFrac, double slFrac, qint32 paths, quint32 seed)
 {
     McOutlook o;
     const QList<double> ret = returnsOf(series);
@@ -154,7 +154,9 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     }
     const auto m = static_cast<qint32>(ret.size());
     const bool haveBarriers = (tpFrac > 0.0) && (slFrac > 0.0);
-    QRandomGenerator *rng = QRandomGenerator::global();
+    QRandomGenerator rngOwned =
+        (seed != 0U) ? QRandomGenerator(seed) : QRandomGenerator::securelySeeded();
+    QRandomGenerator *rng = &rngOwned;
 
     QList<double> finals;
     finals.reserve(paths);
@@ -163,6 +165,10 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     qint32 winShort = 0;
     qint32 loseLong = 0;
     qint32 loseShort = 0;
+    qint32 expiryLongCount = 0;
+    qint32 expiryShortCount = 0;
+    double expiryLongSum = 0.0;
+    double expiryShortSum = 0.0;
     for (qint32 p = 0; p < paths; ++p) {
         double cum = 0.0;  // cumulative fractional move from the current price
         bool longDone = false;
@@ -195,6 +201,16 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
                 }
             }
         }
+        // A path that hit neither of a side's barriers expires at its final
+        // move — measure that residue instead of assuming it is flat.
+        if (haveBarriers && !longDone) {
+            expiryLongSum += cum;
+            ++expiryLongCount;
+        }
+        if (haveBarriers && !shortDone) {
+            expiryShortSum += cum;
+            ++expiryShortCount;
+        }
         if (cum > 0.0) {
             ++upCount;
         }
@@ -212,6 +228,12 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     o.pWinShort = static_cast<double>(winShort) / pathsD;
     o.pLoseLong = static_cast<double>(loseLong) / pathsD;
     o.pLoseShort = static_cast<double>(loseShort) / pathsD;
+    if (expiryLongCount > 0) {
+        o.expiryRetLong = expiryLongSum / static_cast<double>(expiryLongCount);
+    }
+    if (expiryShortCount > 0) {
+        o.expiryRetShort = expiryShortSum / static_cast<double>(expiryShortCount);
+    }
     return o;
 }
 

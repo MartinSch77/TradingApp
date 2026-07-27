@@ -4,6 +4,8 @@
 #include "domain/Indicators.h"
 #include "domain/SignalEnsemble.h"
 
+#include <QHashFunctions>
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -16,8 +18,20 @@ constexpr double kSlSigmaMult = 1.5;
 constexpr double kRewardRisk = 1.5;
 // The loss when the stop is hit may consume at most this fraction of the stake.
 constexpr double kRiskBudgetFrac = 0.25;
-// Monte-Carlo paths for the win probability (matches the signals panel's scale).
-constexpr qint32 kMcPaths = 2000;
+// Monte-Carlo paths for the win probability. 6000 paths put the standard error
+// of pWin near ±0.6% — the verdict's noise band shrinks with it. Plans build
+// off the GUI thread (REQ-N-006), so the extra paths cost no responsiveness.
+constexpr qint32 kMcPaths = 6000;
+// A directional call must keep at least this much ensemble confidence AFTER the
+// VIX / event-risk trims to be actionable — the trims now gate the verdict
+// instead of only shrinking a displayed number.
+constexpr double kMinConfidencePct = 20.0;
+// The Monte-Carlo win-rate must clear the break-even rate by this many standard
+// errors of its own estimate; inside that band the "edge" is sampling noise.
+constexpr double kWinRateSigmas = 2.0;
+// The expected net edge must be worth at least this fraction of the stake —
+// below it, model error dominates and the risk isn't paid for.
+constexpr double kMinNetEdgeFrac = 0.0025;
 
 } // namespace
 
@@ -93,8 +107,19 @@ TradePlan buildTradePlan(const PlanInput &in)
     // Three outcomes per path: take-profit struck first (win the TP amount),
     // stop struck first (lose the SL amount), or neither barrier reached within
     // the horizon (the trade expires between them, ≈ flat on average).
-    const McOutlook mc =
-        monteCarlo(in.closes, price, in.horizonHours, tpFrac, slFrac, kMcPaths);
+    // Same inputs → same plan: when the caller didn't pin a seed, derive one
+    // from the data itself. Two plans built over identical closes/price (the
+    // decision panel and its ranked-table row, or two refreshes over unchanged
+    // data) then draw identical paths and can never disagree by sampling noise.
+    quint32 mcSeed = in.mcSeed;
+    if (mcSeed == 0U) {
+        mcSeed = qHashRange(in.closes.cbegin(), in.closes.cend()) ^ qHash(price);
+        if (mcSeed == 0U) {
+            mcSeed = 1U;  // 0 means "securely seeded" to monteCarlo
+        }
+    }
+    const McOutlook mc = monteCarlo(in.closes, price, in.horizonHours, tpFrac, slFrac,
+                                    kMcPaths, mcSeed);
     plan.pWin = mc.valid ? ((side > 0) ? mc.pWinLong : mc.pWinShort) : 0.0;
     plan.pLose = mc.valid ? ((side > 0) ? mc.pLoseLong : mc.pLoseShort) : 0.0;
     plan.breakeven = 1.0 / (1.0 + kRewardRisk);  // sl / (tp + sl)
@@ -139,27 +164,49 @@ TradePlan buildTradePlan(const PlanInput &in)
     plan.costsComplete = spreadKnown && in.feesKnown;
 
     // --- Expected value & verdict --------------------------------------------
-    // Paths that reach neither barrier contribute ≈ 0 (the drift over one day is
-    // small next to the barrier distances), so EV = pWin·TP − pLose·SL.
+    // Decided paths win/lose the TP/SL amounts; paths that reach neither barrier
+    // close at the horizon with their MEASURED mean move (under a directional
+    // drift that residue is systematically non-zero, so assuming "expires flat"
+    // would bias the edge).
     if (mc.valid) {
-        plan.expectedGross = (plan.pWin * plan.tpAmount) - (plan.pLose * plan.slAmount);
+        const double pExpire = std::max(0.0, 1.0 - plan.pWin - plan.pLose);
+        const double expiryRet =
+            (side > 0) ? mc.expiryRetLong : -mc.expiryRetShort;
+        plan.expectedGross = (plan.pWin * plan.tpAmount) - (plan.pLose * plan.slAmount)
+                             + (pExpire * in.invest * lev * expiryRet);
     }
     plan.expectedNet = plan.expectedGross - plan.expectedCosts;
 
     // Of the paths where a barrier IS struck, the fraction that must be wins for
-    // the reward:risk to break even is `breakeven`.
+    // the reward:risk to break even is `breakeven`. The estimated win-rate
+    // carries sampling noise (finite decisive paths), so an actionable call must
+    // clear break-even by kWinRateSigmas standard errors, keep enough ensemble
+    // confidence after the risk trims, and leave a net edge worth the risk.
     const double decided = plan.pWin + plan.pLose;
     const double condWin = (decided > 0.0) ? (plan.pWin / decided) : 0.0;
+    const double decisive = decided * kMcPaths;
+    const double winRateSe =
+        (decisive > 0.0) ? std::sqrt((condWin * (1.0 - condWin)) / decisive) : 0.0;
+    const double minNetEdge = kMinNetEdgeFrac * in.invest;
     if (plan.dir == 0) {
         plan.verdict = QStringLiteral("STAY OUT");
         plan.verdictReason = QStringLiteral("no clear directional signal");
-    } else if (mc.valid && (condWin <= plan.breakeven)) {
+    } else if (plan.confidence < kMinConfidencePct) {
         plan.verdict = QStringLiteral("STAY OUT");
         plan.verdictReason =
-            QStringLiteral("win probability below the break-even rate");
+            QStringLiteral("signal confidence too low (%1% after the risk trims)")
+                .arg(qRound(plan.confidence));
+    } else if (mc.valid && (condWin <= (plan.breakeven + (kWinRateSigmas * winRateSe)))) {
+        plan.verdict = QStringLiteral("STAY OUT");
+        plan.verdictReason =
+            QStringLiteral("win probability not clearly above the break-even rate");
     } else if (mc.valid && (plan.expectedNet <= 0.0)) {
         plan.verdict = QStringLiteral("STAY OUT");
         plan.verdictReason = QStringLiteral("costs eat the expected edge");
+    } else if (mc.valid && (plan.expectedNet < minNetEdge)) {
+        plan.verdict = QStringLiteral("STAY OUT");
+        plan.verdictReason =
+            QStringLiteral("edge after costs too thin to be worth the risk");
     } else {
         plan.verdict = (plan.dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL");
     }

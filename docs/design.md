@@ -18,7 +18,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 | DES-DOM-FC | Statistical forecasting — regression, kNN analogs, Hurst, bootstrap Monte-Carlo with TP/SL barrier outcome split | `Forecasting.h/.cpp` (`linRegForecast`, `knnForecast`, `hurstExponent`, `monteCarlo`, `sigmoid`) | REQ-F-006, REQ-N-002 |
 | DES-DOM-ENS | Directional ensemble vote + VIX confidence haircut | `SignalEnsemble.h/.cpp` (`computeEnsemble`, `applyVixHaircut`) | REQ-F-007 |
 | DES-DOM-DEC | Multi-source composite decision engine incl. crowd tilt, market regime and Yahoo intraday momentum | `DecisionEngine.h/.cpp` (`computeDecisionRows`, `crowdTilt`, `marketRegime`, `newsSentimentScore`, `intradayTilt`, `buildDecisionEvidence`) | REQ-F-008, REQ-F-009, REQ-F-020, REQ-F-022 |
-| DES-DOM-PLAN | Costed trade planner — verdict, probabilities, risk factor, leverage recommendation, SL/TP geometry, cost bill | `TradePlan.h/.cpp` (`buildTradePlan`, `proposedSlFraction`, `recommendLeverage`) | REQ-F-010, REQ-F-011, REQ-F-012 |
+| DES-DOM-PLAN | Costed trade planner — verdict with actionability gates (confidence floor after risk trims, win-rate clear of break-even by 2 SE, minimum net edge), probabilities, risk factor, leverage recommendation, SL/TP geometry, cost bill | `TradePlan.h/.cpp` (`buildTradePlan`, `proposedSlFraction`, `recommendLeverage`) | REQ-F-010, REQ-F-011, REQ-F-012 |
 | DES-DOM-POS | Position/money arithmetic (FX-free value-per-point identity, SL/TP amount↔rate) | `PositionMath.h/.cpp` | REQ-F-003, REQ-F-016 |
 | DES-DOM-EVT | Calendar-event impact heuristics + advisory activity proposal (side + before/after timing) | `EventInsight.h/.cpp` (`parseNum`, `guessImpact`, `eventAbout`, `proposeActivity`) | REQ-F-020, REQ-F-023 |
 | DES-DOM-MODEL | Shared value types (Instrument, Candle, Position, ClosedTrade, InstrumentPnl, MonthlyPnl, WebRating, …) | `Models.h` | REQ-F-014, REQ-N-002 |
@@ -29,7 +29,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 |----|---------|----------------|-----------|
 | DES-SVC-CLIENT | eToro REST client: resolution, rates/candles, orders + confirmation, portfolio/P-L, trade-history pager with spread-cost estimation, fee/spread caches, tradeability inference | `EtoroClient.h/.cpp` | REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-014, REQ-F-015, REQ-F-016, REQ-N-003 |
 | DES-SVC-SIM | Self-contained simulation (synthetic feed, virtual account, SL/TP/trailing execution, closed-trade log) | `SimulationEngine.h/.cpp` | REQ-F-017 |
-| DES-SVC-FEEDS | Public web feeds: VIX, TradingView ratings, news, CNN Fear & Greed, Yahoo reference quote + intraday series | `MarketFeeds.h/.cpp` | REQ-F-009, REQ-F-019, REQ-F-020, REQ-F-022 |
+| DES-SVC-FEEDS | Public web feeds: VIX, TradingView ratings (all 26 instruments — verified tickers, ETF/index proxies for thematic baskets, RUBBER n/a), news, CNN Fear & Greed, Yahoo reference quote + intraday series | `MarketFeeds.h/.cpp` | REQ-F-009, REQ-F-019, REQ-F-020, REQ-F-022 |
 | DES-SVC-HTTP | Shared JSON/HTTP plumbing with idempotent-GET retry/backoff | `JsonHttp.h/.cpp` | REQ-N-003 |
 | DES-SVC-CFG | Layered configuration incl. split secrets file | `Config.h/.cpp` | REQ-F-018, REQ-N-004 |
 | DES-SVC-CAL | Macro-economic calendar feed | `EconomicCalendar.h/.cpp` | REQ-F-020 |
@@ -42,7 +42,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 | DES-UI-MAIN | Main window: trade panel (3750 default, auto SL/TP), signals panel, decision window with trade plan + Apply (plan + Monte-Carlo run off the GUI thread via QtConcurrent), in-place verdict/edge explanations + Stay-out column, event activity proposals, close-proposal watchdog, closed-trades summary + detail dialog, order guards | `MainWindow.h/.cpp` | REQ-F-003, REQ-F-004, REQ-F-012, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-021, REQ-F-023, REQ-N-005 |
 | DES-UI-CHART | Price/change chart windows | `PriceChart.h/.cpp`, `ChartView.h/.cpp` | REQ-F-002 |
 | DES-UI-POSMODEL | Open-trades model (allocation-free per-tick refresh; editors/marks survive polls) | `PositionsModel.h/.cpp` | REQ-N-006 |
-| DES-UI-GAUGE | Per-trade gauge window (QPainter dial: SL→open→TP scale, live needle, P/L read-out) | `TradeGauge.h/.cpp` | REQ-F-024 |
+| DES-UI-GAUGE | Per-trade gauge window (QPainter dial: SL→open→TP scale, live needle, P/L read-out); opened from the Side cell of the open-trades table, Instrument cell switches the app to that instrument (click routing in `MainWindow.cpp`) | `TradeGauge.h/.cpp` | REQ-F-024 |
 | DES-UI-SCREEN | Leverage screener dialog | `ScreenerDialog.h/.cpp` | REQ-F-008 |
 | DES-UI-ROOT | Composition root, platform selection (WSL/xcb), QA screenshot hooks | `main.cpp` | REQ-N-001 |
 

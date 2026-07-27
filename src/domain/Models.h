@@ -60,6 +60,9 @@ struct Position {
     double profit = 0.0;      // current (unrealised) profit/loss in account currency
     bool profitFromApi = false;   // true = profit is eToro's own live P/L (authoritative,
                                   // includes spread + fees), not a locally-derived estimate
+    double apiCloseRate = 0.0;    // the rate eToro marked `profit` at (unrealizedPnL.closeRate,
+                                  // bid for a long / ask for a short); anchor for the live
+                                  // re-price between polls. 0 = not supplied.
     double closingCost = 0.0;     // est. spread cost to close the position now (account ccy)
     double stopLossRate = 0.0;    // auto-close rate for a loss (0 = none)
     double takeProfitRate = 0.0;  // auto-close rate for a profit (0 = none)

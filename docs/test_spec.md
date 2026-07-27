@@ -42,6 +42,7 @@ event loop / local mock HTTP server).
 | TS-FC-005 | U | `monteCarlo` is invalid on a too-short series and valid with barriers on a sufficient one. |
 | TS-FC-006 | U | `monteCarlo` on a strong uptrend: pWinLong > pWinShort; win+lose probabilities per side stay ≤ 1; p5 ≤ p95. |
 | TS-FC-007 | U | `sigmoid` maps 0 → 0.5, is bounded in (0, 1) and monotone. |
+| TS-FC-008 | U | `monteCarlo` reports the measured mean final move of paths expiring between the barriers (sign follows the drift; zero without barriers). |
 
 ## Signal ensemble (tests/tst_signalensemble.cpp, DES-DOM-ENS, REQ-F-007)
 
@@ -73,6 +74,7 @@ event loop / local mock HTTP server).
 | TS-PLAN-004 | U | Cost bill: openCost = closeCost = invest·lev·spread%/2; a Friday "now" marks the weekend crossing and bills the weekend night once instead of an ordinary night. |
 | TS-PLAN-005 | U | A plan whose costs exceed the expected gross edge is verdicted STAY OUT ("costs eat the expected edge"). |
 | TS-PLAN-006 | U | Risk factor rises with elevated VIX, imminent events and crowd extremes, is clamped to [1, 5], and the weekend crossing is noted. |
+| TS-PLAN-007 | U | Verdict gates: a forced side with weak ensemble confidence is STAY OUT ("confidence too low"); with identical seeded Monte-Carlo draws, a cost bill that leaves the net edge below 0.25% of the stake flips an actionable BUY to STAY OUT ("too thin"). |
 
 ## Position math (tests/tst_positionmath.cpp, DES-DOM-POS, REQ-F-003/-016)
 

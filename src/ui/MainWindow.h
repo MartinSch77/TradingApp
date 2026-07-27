@@ -201,6 +201,11 @@ private:
     QComboBox *m_instrumentBox = nullptr;  // instrument selector next to the title
     QPushButton *m_chartToggle = nullptr;  // small show/hide toggle for the chart window
     QPushButton *m_screenerButton = nullptr;  // opens the leverage screener dialog
+    // Floating stay-on-top window holding the signals AND the AI panel
+    // (parentless, like the chart — a parented Qt::Window would steal the main
+    // window's focus). Shown at startup; always visible while trading.
+    QWidget *m_signalsWindow = nullptr;      // holds m_sigBox + m_aiBox
+    QPushButton *m_signalsToggle = nullptr;  // header show/hide ("Signals & AI")
 
     // Leverage screener window (its table/ranking live in ScreenerDialog).
     ScreenerDialog *m_screenerDialog = nullptr;

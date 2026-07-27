@@ -7,15 +7,17 @@ description: Run the Axivion analysis for TradingApp and verify the result on th
 
 ## Running the analysis
 - Exactly ONE run at a time: `./axivion/start_analysis.sh` holds a lock
-  (`~/.axivion-TradingApp.lock`); a second run aborts with "already active".
+  (`${TMPDIR:-/tmp}/.axivion-TradingApp.lock`); a second run aborts with
+  "already active".
   Never run `clean_all.sh` or another `build_all.sh` while it analyses —
   concurrent runs delete each other's `build_axivion/` IR before upload.
 - Full run ≈ 30–60 min. Start it in the background; while it runs, do not
   create or modify repository files (the fossil shadow phase snapshots the
   tree at the end).
 - The run imports every external log present in `analysis-results/`:
-  providers cppcheck, clang-tidy, clazy, gcc-analyzer, asan-ubsan, tsan,
-  valgrind (configured in `axivion/external_import.py` — a Python config
+  providers cppcheck, clang-tidy, clazy, gcc-analyzer, msvc-analyze,
+  codespell, sonarqube, asan-ubsan, tsan, valgrind, asan, ubsan
+  (configured in `axivion/external_import.py` — a Python config
   layer registered in `axivion_config.json`; matchers CANNOT be expressed in
   the JSON files, the Suite validator requires real teecap.Match objects).
   Run `tools/static_analysis.sh build` and/or `tools/sanitize.sh` first if

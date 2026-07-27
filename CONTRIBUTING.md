@@ -12,6 +12,14 @@ keep every leg of it green.
 ./clean_all.sh        # remove everything generated
 ```
 
+On Windows the same pipeline runs natively (see `docs/windows.md`):
+
+```powershell
+.\setup.ps1           # provision the toolchain (winget + pip + aqtinstall)
+.\build_all.ps1       # same stages, same order
+.\clean_all.ps1       # remove everything generated
+```
+
 Individual stages: `./build_all.sh build test` for the quick loop. Copy
 `apiKeyEtoro.example.json` to `apiKeyEtoro.json` for real-API work — without
 it the app runs in a fully functional SIMULATION mode (preferred for
@@ -19,8 +27,9 @@ development).
 
 ## Quality bar for pull requests
 
-1. **Tests pass**: `tools/run_tests.sh build` — all Qt Test binaries, zero
-   failures. New behaviour needs a new test.
+1. **Tests pass**: `tools/run_tests.sh build` (Windows:
+   `tools\run_tests.ps1`) — all Qt Test binaries, zero failures. New
+   behaviour needs a new test.
 2. **Traceability intact**: `python3 tools/trace_report.py` must report no
    hard gaps. New tests carry the tag block (see `docs/test_spec.md`):
    `//! @tstid TS-… @design DES-…` + `// @relation(REQ-…, scope=function)`.

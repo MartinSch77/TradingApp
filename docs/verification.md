@@ -5,7 +5,7 @@
 
 ## Test suite
 
-`tests/` holds 48 requirement-tagged Qt Test cases (see @ref test_spec):
+`tests/` holds 59 requirement-tagged Qt Test cases (see @ref test_spec):
 unit tests over the pure domain layer and integration tests over the services
 (config layering, simulation engine, HTTP retry policy, eToro history pager
 against an in-process mock HTTP server — no network access in tests).
@@ -147,7 +147,11 @@ Adopting one of the sound tools is the documented path to an actual proof.
 - **clazy** — Qt-specific coding rules (levels 0–1: connect syntax, container
   detach, QString misuse …). Runs when installed (`apt install clazy`); it is
   a clang compiler plugin, so it consumes the same compile database.
+- **g++ -fanalyzer** — GCC's symbolic-execution analyzer over every project
+  TU; C++ support is upstream-experimental, so known false-positive patterns
+  are filtered (see @ref tools).
+- **codespell** — typos in comments and docs (config in `.codespellrc`).
 
-All three external tools export their findings to `analysis-results/` as
-plain reports and as a merged CSV that `axivion/import_external.py` maps to
+The external tools export their findings to `analysis-results/` as
+plain reports and as a merged CSV that `axivion/external_import.py` maps to
 the Axivion dashboard's external-findings format (see `axivion/README.md`).

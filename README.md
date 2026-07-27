@@ -69,8 +69,9 @@ The repository has three top-level entry points:
 ```
 
 Stages: `build test trace docs coverage analysis sanitize axivion` (default:
-all, continuing past failing stages with a summary at the end); `app` is an
-extra stage that is only run when named. For a different single CMake target:
+all, continuing past failing stages with a summary at the end); `app` and
+`release` are extra stages that are only run when named, and `build_all.ps1`
+additionally offers `vs` and `deploy`. For a different single CMake target:
 `cmake --build build --target <name>`.
 
 **No licence, no problem.** Stage outcomes are `ok` / `skipped` / `FAILED`. A
@@ -88,7 +89,7 @@ session, so no "x64 Native Tools" prompt is required. Override the kit with
 `$env:QT_PREFIX` or `-QtKit mingw_64`.
 
 Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
-(developed against Qt 6.10.2), CMake ≥ 3.21 and a C++23-capable compiler
+(developed against Qt 6.10.2), CMake ≥ 4.2 and a C++23-capable compiler
 (GCC 13+, Clang 17+, MSVC 19.38+). The sources are
 plain cross-platform Qt/C++ — the same code builds on Linux, Windows, and
 Android; only the Qt kit and the packaging step differ.
@@ -224,6 +225,7 @@ var:
 | API key        | `apiKey`         | `ETORO_API_KEY`        | *(empty → simulation)*              |
 | User key       | `userKey`        | `ETORO_USER_KEY`       | *(empty → simulation)*              |
 | Mode           | `mode`           | `ETORO_MODE`           | `demo`                              |
+| Username       | `username`       | `ETORO_USERNAME`       | *(empty)*                           |
 | Symbol         | `symbol`         | `ETORO_SYMBOL`         | `SPX500`                            |
 | Base URL       | `baseUrl`        | `ETORO_BASE_URL`       | `https://public-api.etoro.com/api`  |
 | Order currency | `orderCurrency`  | `ETORO_ORDER_CURRENCY` | `usd`                               |
@@ -296,6 +298,7 @@ independently unit-testable and shared by every view that shows a signal.
 | [`Forecasting.*`](src/domain/Forecasting.h)       | OLS regression, kNN analogs, Hurst, Monte-Carlo outlook |
 | [`SignalEnsemble.*`](src/domain/SignalEnsemble.h) | The BUY/SELL indicator vote + VIX confidence haircut |
 | [`DecisionEngine.*`](src/domain/DecisionEngine.h) | Weighted multi-source composite + AI evidence prompt |
+| [`TradePlan.*`](src/domain/TradePlan.h)           | Costed trade proposal: verdict, P(win), risk factor, leverage, SL/TP, cost bill |
 | [`PositionMath.*`](src/domain/PositionMath.h)     | SL/TP amount↔rate maths, value-per-point, price decimals |
 | [`EventInsight.*`](src/domain/EventInsight.h)     | Macro-event impact heuristics and descriptions |
 
@@ -319,13 +322,18 @@ independently unit-testable and shared by every view that shows a signal.
 | [`ScreenerDialog.*`](src/ui/ScreenerDialog.h) | Leverage screener window |
 | [`PriceChart.*`](src/ui/PriceChart.h)         | Live time-vs-price Qt Charts widget |
 | [`ChartView.*`](src/ui/ChartView.h)           | Interactive pan/zoom chart view |
+| [`PositionsModel.*`](src/ui/PositionsModel.h) | Open-trades table model, in-place re-price |
+| [`TradeGauge.*`](src/ui/TradeGauge.h)         | Per-trade gauge window |
+| [`Palette.h`](src/ui/Palette.h)               | Shared UI colors |
 | [`main.cpp`](src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
 
 ## QA helper
 
-`TRADINGAPP_SHOT=/path/out.png ./build/TradingApp` grabs the window to a PNG
-after ~2.5 s and exits — handy for headless screenshots
-(`QT_QPA_PLATFORM=offscreen`).
+`TRADINGAPP_SHOT=/path/out.png ./build/TradingApp` grabs every visible window
+to one PNG each (further windows get a `-1`, `-2`, … suffix) after 3000 ms and
+exits — handy for headless screenshots (`QT_QPA_PLATFORM=offscreen`).
+`TRADINGAPP_SHOT_OPEN=1` opens the decision and closed-trades windows first;
+`TRADINGAPP_SHOT_DELAY_MS` overrides the capture delay.
 
 ## Topics / keywords
 

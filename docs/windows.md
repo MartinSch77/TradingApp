@@ -27,12 +27,18 @@ analysis, sanitizers, Axivion — runs natively without WSL.
 | Axivion | `axivion/start_analysis.sh` | `axivion\start_analysis.ps1` |
 | PlantUML fetch | `tools/fetch_plantuml.sh` | `tools\fetch_plantuml.ps1` |
 | IDE project | (Qt Creator opens CMakeLists.txt) | `tools\make_vs_solution.ps1` → `build-vs\TradingApp.sln` |
+| standalone deployment | (not needed — the build tree runs in place) | `tools\deploy_app.ps1` (windeployqt bundle, Windows-only) |
+
+On top of the shared `app` / `release` extra stages, `build_all.ps1` also
+accepts the Windows-only extras `vs` (generate the solution) and `deploy`
+(run `tools\deploy_app.ps1`) — both only when named.
 
 The Python tools (`trace_report.py`, `sdoc_to_md.py`, `parse_sanitizer_log.py`,
 `merge_findings.py`) are shared verbatim — they are platform-neutral and both
 platforms produce byte-identical generated artefacts (explicit `encoding="utf-8"`
-and `newline="\n"` everywhere, so regenerating on Windows does not flip
-`docs/requirements.md` to CRLF).
+and `newline="\n"` — except `merge_findings.py`, whose CSV writer uses
+`newline=""` as the `csv` module requires — so regenerating on Windows does not
+flip `docs/requirements.md` to CRLF).
 
 ## Missing tools: skipped, never fatal
 
@@ -49,7 +55,7 @@ That makes the repository usable without the commercial licences:
 | Axivion Suite | commercial | `axivion` stage → `skipped` with a message naming what to install |
 | Squish Coco | commercial | `coverage -Mode coco` → `skipped`; `-Mode auto` silently uses the other back ends |
 | OpenCppCoverage | open source (installed by `setup.ps1`) | `-Mode msvc` → `skipped` |
-| LLVM | open source (installed by `setup.ps1`) | `-Mode mcdc` and the UBSan run → `skipped` |
+| LLVM | open source (installed by `setup.ps1`) | `-Mode mcdc` → `skipped`; the UBSan stage reports `ok` (it degrades to a no-op and writes an empty findings log) |
 | clazy / TSan / valgrind | n/a on Windows | reported as unavailable, log says why |
 
 Everything **open source** that the pipeline needs is installed by
@@ -273,8 +279,10 @@ reason, and `.gitignore` covers stray `*.csexe`/`*.csmes`.
   session PATH so the scripts work anyway; `setup.ps1` also persists them.
 * **A stage function must not leak command output into its return value.**
   `$ok = Invoke-Native …` would otherwise be "true" for any command that printed
-  something, including failing ones — hence `| Out-Host` in `Invoke-Native` and
-  in every `Invoke-*Stage`.
+  something, including failing ones — hence `| ForEach-Object { Write-Host $_ }`
+  in `Invoke-Native` and in every `Invoke-*Stage`. `| Out-Host` was deliberately
+  rejected: it writes past every redirection, so `*> log.txt` and the CI
+  artifact upload would capture an almost-empty log.
 * **Quote `-D` properties passed to java.** Unquoted, PowerShell splits
   `-Djava.awt.headless=true` at the dot and java reports
   `Could not find or load main class .awt.headless=true`.

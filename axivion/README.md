@@ -27,7 +27,7 @@ travels with the repository. (An earlier custom-rule scaffold under
 `axivion/rules/` was replaced by this official mechanism; see git history.)
 
 Current state (2026-07-25): cppcheck and clang-tidy report **0 findings**
-(40 were fixed in commit history); clazy pending installation (needs sudo).
+(40 were fixed in commit history); clazy 1.11 is installed and wired in.
 The import pipeline was verified end-to-end with synthetic findings — one per
 tool — which appeared on the dashboard under their respective providers and
 disappeared again after re-running with the real, clean logs.

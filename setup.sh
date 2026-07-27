@@ -7,14 +7,15 @@
 #   ./setup.sh status      report found/missing tools and versions (read-only)
 #
 # What it manages
-#   apt    build-essential, ninja, git, curl, clang-18 + LLVM tools,
+#   apt    build-essential, ninja, git, gh, curl, clang-18 + LLVM tools,
 #          clang-tidy, cppcheck, clazy, valgrind, lcov, doxygen, Java (for
 #          PlantUML), python3 + pipx, Qt xcb/OpenGL runtime libraries
 #   pipx   cmake (>= 4.2 — distro cmake is usually too old), strictdoc,
-#          doorstop, aqtinstall
+#          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr
 #   aqt    Qt ${QT_VERSION} (gcc_64 + qtcharts) into ~/Qt — the layout the
 #          build scripts expect (override with QT_PREFIX at build time)
-#   curl   PlantUML jar (pinned in tools/fetch_plantuml.sh)
+#   curl   PlantUML jar (pinned in tools/fetch_plantuml.sh); supply-chain
+#          tools syft / grype / trivy into ~/.local/bin
 #
 # NOT installable here — LICENSE-BOUND, so they are detected and reported, and
 # the stages that need them SKIP with a message instead of failing (exit 3 =

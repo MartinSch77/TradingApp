@@ -5,10 +5,14 @@
 # mechanism (reference manual 6.2.10 "ImportExternalAnalysisOutput" + 6.2.4.4
 # "ExternalAnalysisFormats"):
 #
-#   static   tools/static_analysis.sh -> analysis-results/{cppcheck,clang-tidy,clazy}.txt
-#   dynamic  tools/sanitize.sh        -> analysis-results/sanitize-{asan-ubsan,tsan,valgrind}.txt
+#   static   tools/static_analysis.{sh,ps1} -> analysis-results/
+#            {cppcheck,clang-tidy,clazy,gcc-analyzer,msvc-analyze,codespell}.txt
+#            (+ sonarqube.txt from tools/sonar_scan.{sh,ps1})
+#   dynamic  tools/sanitize.{sh,ps1}  -> analysis-results/
+#            sanitize-{asan-ubsan,tsan,valgrind,asan,ubsan}.txt
 #            (ASan+UBSan+LSan / ThreadSanitizer / valgrind memcheck, normalized
-#            by tools/parse_sanitizer_log.py)
+#            by tools/parse_sanitizer_log.py; asan/ubsan are the Windows split
+#            of the combined Linux asan-ubsan build)
 #
 # One ImportExternalAnalysisOutput copy per tool cats its log during
 # axivion_ci and re-emits every finding line as a style violation — provider

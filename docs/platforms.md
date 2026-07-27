@@ -43,9 +43,10 @@ independent MC/DC measurements (Squish Coco and clang-cl/llvm-cov), and the thre
 things that genuinely have no Windows counterpart (clazy, ThreadSanitizer,
 valgrind).
 
-CI recommendation: a `windows-latest` job running `.\build_all.ps1 build test` is
-the remaining automated evidence (tracked as the REQ-N-001 gap in the
-traceability matrix).
+CI: the `build-windows` job in `.github/workflows/ci.yml` runs on
+`windows-latest` and executes `.\build_all.ps1 build test trace` (plus a
+report-only MSVC `/analyze` + clang-tidy step), providing the automated
+Windows evidence for REQ-N-001.
 
 ## Android
 

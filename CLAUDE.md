@@ -13,7 +13,7 @@ sanitizers on one Axivion dashboard.
 ./clean_all.sh [--deep]        # remove everything generated
 tools/run_tests.sh build       # test suite with JUnit output
 python3 tools/trace_report.py  # traceability matrix; fails on hard gaps
-tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+clazy+g++ -fanalyzer
+tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+clazy+g++ -fanalyzer+codespell
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/profile.sh               # perf/gperftools over build-release/
 ```
@@ -26,6 +26,7 @@ shared Python tool, change its counterpart too — they are meant to stay in
 lockstep.
 
 Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
+`/ax-fixcode` (fix Axivion SVs + refactor the marked/selected code),
 `/add-requirement` (requirements-as-code workflow), `/perf-check` (benchmarks).
 
 ## Non-negotiables
@@ -46,9 +47,11 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no
   clean/build while it runs. External findings import: `axivion/external_import.py`
   (Python layer — matchlist is not expressible in the JSON configs).
-- Stage exit code 3 = "skipped": the stage needs a license-bound or absent tool
-  (Axivion Suite, Squish Coco, OpenCppCoverage, LLVM). Both build_all runners
-  report `skipped` and stay green; any other non-zero code is a real failure.
+- Stage exit code 3 = "skipped" (both build_all runners report it and stay
+  green; any other non-zero code is a real failure). Exit 3 exists in
+  `axivion/start_analysis.{sh,ps1}`, `tools/coverage.{sh,ps1}` (Coco /
+  OpenCppCoverage / LLVM-mcdc) and `tools/make_docs.ps1` (doxygen). Caveat: a
+  missing clang-18 makes the Linux coverage stage FAIL, not skip.
   Every OPEN-SOURCE tool the pipeline needs must be installable by setup.sh /
   setup.ps1 — if you add a tool dependency, add it there too.
 - No machine-specific absolute paths in committed scripts or Axivion configs.

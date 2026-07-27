@@ -26,10 +26,10 @@ in @ref windows.
 | gcovr | gcovr project, gcovr.com | 8.6 | Alternative gcov reporting (CI-friendly XML) |
 | clang-tidy | LLVM Project | 18.1.3 | C++ linting: bugprone/cert/performance checks |
 | cppcheck | Cppcheck team, cppcheck.sourceforge.io | 2.13.0 | Static analysis: warnings, portability |
-| g++ -fanalyzer | GNU/GCC | 13.3.0 | Symbolic-execution analyzer over every project TU (`tools/static_analysis.sh`); C++ support is upstream-experimental — findings triaged on the dashboard (provider `gcc-analyzer`) |
+| g++ -fanalyzer | GNU/GCC | 13.3.0 | Symbolic-execution analyzer over every project TU (`tools/static_analysis.sh`); C++ support is upstream-experimental — findings triaged on the dashboard (provider `gcc-analyzer`). Memory scales hard with TU size (unbounded: ~13 GB peak on MainWindow.cpp — full per-core parallelism OOM-killed the 16 GB CI runner, step exit 143), so TUs > 50 KB run sequentially after the parallel pool with the exploded graph bounded (call summaries + depth params, ~4.4 GB peak, identical finding set); analyzer crashes surface as `gcc-analyzer-failed` findings instead of vanishing |
 | clazy | KDE / clazy project, invent.kde.org/sdk/clazy | 1.11 (Ubuntu package; install: `apt install clazy`) | Qt-specific coding rules (connect syntax, detach, QString…) |
 | Axivion Suite | Axivion GmbH / Qt Group, axivion.com | 7.12.3 (`~/bauhaus-suite`) | MISRA C++ 2023, architecture checks, dashboard; external-findings import |
-| Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco |  at `/opt/SquishCoco` — **license expired**; auto-detected and used by `tools/coverage.sh` once renewed | MC/DC coverage + CocoAI test-case suggestion (documented alternative) |
+| Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco | installed at `/opt/SquishCoco` — **license expired**; auto-detected and used by `tools/coverage.sh` once renewed | MC/DC coverage + CocoAI test-case suggestion (documented alternative) |
 | codespell | codespell-project (GPL-2.0) | pipx | Typos in comments/docs (`.codespellrc`; provider `codespell` on the dashboard) |
 | SonarQube / SonarCloud | Sonar (LGPL server / free cloud tier) | conditional | `tools/sonar_scan.sh` runs only against a reachable server; issues → dashboard provider `sonarqube`; CI via SONAR_TOKEN |
 | CodeQL | GitHub | CI | Security scanning, free for public repositories (.github/workflows/codeql.yml) |
@@ -41,10 +41,10 @@ in @ref windows.
 | StrictDoc | strictdoc.readthedocs.io (Apache-2.0) | 0.27.0 (pipx) | Requirements-as-code: `requirements/requirements.sdoc` → HTML + requirement↔source traceability (`tools/make_requirements.sh`) |
 | Doorstop | doorstop.readthedocs.io (LGPL) | 3.2 (pipx) | Evaluated for versioned requirements in git — not adopted (StrictDoc owns the requirement set; see docs/verification.md) |
 | Doxygen | doxygen.nl | 1.9.8 | API + specification documentation, HTML output |
-| PlantUML | plantuml.com (GPL) | 1.2025.4 (`tools/third-party/plantuml.jar`, downloaded from the official GitHub release; re-fetch with `tools/fetch_plantuml.sh`) | Architecture/sequence diagrams inside Doxygen |
+| PlantUML | plantuml.com (GPL) | 1.2026.0 (`tools/third-party/plantuml.jar`, downloaded from the official GitHub release; re-fetch with `tools/fetch_plantuml.sh`) | Architecture/sequence diagrams inside Doxygen |
 | Graphviz (dot) | graphviz.org | Ubuntu 24.04 package | Doxygen graphs, PlantUML layout backend |
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |
-| Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `axivion/import_external.py` |
+| Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `tools/sdoc_to_md.py`, `tools/parse_sanitizer_log.py`, `tools/merge_findings.py`, `tools/msvc_analyze.py`, `axivion/external_import.py` |
 
 ## Windows-only tools
 

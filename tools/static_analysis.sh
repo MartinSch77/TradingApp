@@ -50,6 +50,13 @@ cppcheck --project="$ROOT/$BUILD_DIR/compile_commands.json" \
     --template='{file}|{line}|{severity}|{id}|{message}' \
     --output-file="$OUT/cppcheck.txt" --quiet
 CPPCHECK_RC=$?
+# No output file = cppcheck never analyzed anything (e.g. the compile DB refers
+# to missing moc autogen files). That must fail loudly — an empty-but-present
+# file is the legitimate "ran and found nothing".
+if [ ! -f "$OUT/cppcheck.txt" ]; then
+    echo "cppcheck did not run: project load failed — build the compile-DB build dir first" >&2
+    exit 1
+fi
 CPPCHECK_N=$(grep -c . "$OUT/cppcheck.txt" || true)
 echo "cppcheck findings: $CPPCHECK_N (analysis-results/cppcheck.txt)"
 

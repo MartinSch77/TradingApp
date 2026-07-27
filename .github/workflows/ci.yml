@@ -111,11 +111,14 @@ jobs:
           sudo apt-get install -y -qq cppcheck clang-tidy clazy
           python3 -m pip install --upgrade cmake ninja
 
-      - name: Configure (compile database for the analyzers)
-        run: >
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      # cppcheck loads the whole compile DB, which references the moc autogen
+      # outputs — so the tree must be BUILT, not just configured.
+      - name: Configure + build (compile database for the analyzers)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build -j"$(nproc)"
 
       - name: codespell (typos in comments and docs)
         run: pipx install codespell && codespell src tests docs/*.md tools *.md *.sh requirements .github

@@ -353,8 +353,8 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // several marked trades at once triggers just one fetch after the last one.
     m_pnlAfterCloseTimer->setSingleShot(true);
     m_pnlAfterCloseTimer->setInterval(10 * 1000);
-    static_cast<void>(
-        connect(m_pnlAfterCloseTimer, &QTimer::timeout, m_client, &EtoroClient::fetchMonthlyPnl));
+    static_cast<void>(connect(m_pnlAfterCloseTimer, &QTimer::timeout, this,
+                              [this] { m_client->fetchClosedTrades(closedLookbackWeeks()); }));
 
     // "Buy / sell now": scan once at startup, then refresh in the background every few
     // minutes. The scan shares eToro's small rate pool with the price poll, so keep the
@@ -1299,8 +1299,8 @@ void MainWindow::buildUi()
 
     auto *pnlButtons = new QHBoxLayout;
     m_pnlRefresh = new QPushButton(QStringLiteral("Refresh closed-trade P/L"), m_pnlBox);
-    static_cast<void>(
-        connect(m_pnlRefresh, &QPushButton::clicked, m_client, &EtoroClient::fetchMonthlyPnl));
+    static_cast<void>(connect(m_pnlRefresh, &QPushButton::clicked, this,
+                              [this] { m_client->fetchClosedTrades(closedLookbackWeeks()); }));
     m_pnlDetails = new QPushButton(QStringLiteral("All trades…"), m_pnlBox);
     m_pnlDetails->setToolTip(QStringLiteral(
         "Every closed trade of the last 7–13 weeks (lookback selectable), with net "
@@ -1486,11 +1486,13 @@ void MainWindow::onReady(const Instrument &instrument)
     }
 
     // Auto-load the closed-trade summary once (the panel also has a Refresh button).
-    // A short delay lets the listed-instrument id resolution progress first, so the
-    // filter to listed instruments is as complete as possible on the first fetch.
+    // The client names the trades when the walk completes, so the concurrent
+    // listed-instrument id resolution doesn't need a head start; the short delay
+    // just keeps the first seconds of API traffic for the price/portfolio setup.
     if (!m_pnlAutoFetched) {
         m_pnlAutoFetched = true;
-        QTimer::singleShot(1500, m_client, &EtoroClient::fetchMonthlyPnl);
+        QTimer::singleShot(1500, this,
+                           [this] { m_client->fetchClosedTrades(closedLookbackWeeks()); });
     }
 }
 
@@ -2911,6 +2913,14 @@ void MainWindow::checkCloseProposals(double price)
 // ---------------------------------------------------------------------------
 // Closed-trades detail window
 // ---------------------------------------------------------------------------
+
+qint32 MainWindow::closedLookbackWeeks() const
+{
+    if ((m_closedDialog != nullptr) && m_closedDialog->isVisible()) {
+        return m_closedWeeks->currentData().toInt();
+    }
+    return 7;  // dialog closed: the summary panel's default window
+}
 
 void MainWindow::openClosedTrades()
 {

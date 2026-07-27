@@ -183,6 +183,10 @@ private:
     // confidence), propose closing that position — banner + log, never auto-close.
     void checkCloseProposals(double price);
     void rebuildClosedTradesTable();  // (re)fill the closed-trades detail window
+    // Lookback for closed-trade refreshes: every fetch feeds the summary panel AND
+    // the details dialog, so while the dialog is open its selector wins — an auto
+    // refresh (startup, post-close) must not shrink the dialog's window to 7 weeks.
+    [[nodiscard]] qint32 closedLookbackWeeks() const;
     void updateTradeHours(const QString &symbol);  // approx. trading-hours label
     void checkAutoOrders(double price);  // fire armed buy-below / sell-above triggers
     // Show the chart's event line while an event is within 10 min before / 5 min after.

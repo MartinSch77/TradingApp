@@ -1,5 +1,7 @@
 #include "MockHttpServer.h"
 
+#include <QTimer>
+
 // Out-of-line definitions: header-inline (comdat) methods get compiled into
 // both the test TU and the automoc TU, and the coverage instrumentation can
 // emit divergent records for them (llvm-cov: "functions have mismatched
@@ -44,6 +46,15 @@ void MockHttpServer::serve(QTcpSocket *sock)
     out += "Content-Length: " + QByteArray::number(r.body.size()) + "\r\n";
     out += "Connection: close\r\n\r\n";
     out += r.body;
+    if (r.delayMs > 0) {
+        // sock as timer context: if the client gave up and the socket died, the
+        // delayed send is dropped with it instead of writing to a dangling pointer.
+        QTimer::singleShot(r.delayMs, sock, [sock, out] {
+            static_cast<void>(sock->write(out));
+            sock->disconnectFromHost();
+        });
+        return;
+    }
     static_cast<void>(sock->write(out));
     sock->disconnectFromHost();
 }

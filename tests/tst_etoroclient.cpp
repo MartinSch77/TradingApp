@@ -225,6 +225,120 @@ private slots:
         QVERIFY(positions[0].profitFromApi);
         QVERIFY(std::abs(positions[0].profit - 42.5) < 1e-9);
     }
+
+    //! @tstid TS-CLI-005 @design DES-SVC-CLIENT
+    // @relation(REQ-F-014, scope=function)
+    void TS_CLI_005_lateIdResolutionStillNamesTrades()
+    {
+        // Regression: trades were named while the history pages were parsed, but
+        // the listed-instrument id resolution runs concurrently at startup — so a
+        // fast history walk froze "#<id>" onto every instrument whose resolution
+        // hadn't landed yet, and the per-instrument summary showed only the
+        // force-mapped current instrument. Naming now happens when the walk
+        // completes. Here the searches answer after 200 ms while the history
+        // pages answer instantly: parse-time naming would see an empty map.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                const QUrlQuery q(QUrl(path).query());
+                const QString sym = q.queryItemValue(QStringLiteral("internalSymbolFull"));
+                QByteArray body = "{\"items\":[]}";
+                if (sym == QLatin1String("SPX500")) {
+                    body = R"({"items":[{"instrumentId":27,"internalSymbolFull":"SPX500",
+                                         "displayname":"SPX500 Index","currentRate":5000.0}]})";
+                } else if (sym == QLatin1String("HKG50")) {
+                    body = R"({"items":[{"instrumentId":38,"internalSymbolFull":"HKG50"}]})";
+                }
+                return MockHttpServer::Response{200, body, {}, /*delayMs=*/200};
+            }
+            if (path.contains(QStringLiteral("/trading/info/trade/history"))) {
+                const QUrlQuery q(QUrl(path).query());
+                const qint32 page = q.queryItemValue(QStringLiteral("page")).toInt();
+                return MockHttpServer::Response{200, historyPage(page), {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                // Slow enough that the searches land during the round-trip.
+                return MockHttpServer::Response{
+                    200,
+                    R"({"rates":[{"instrumentId":27,"bid":100.0,"ask":101.0},
+                                 {"instrumentId":38,"bid":200.0,"ask":201.0}]})",
+                    {}, /*delayMs=*/1000};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg;  // default symbol SPX500
+        cfg.apiKey = QStringLiteral("k");
+        cfg.userKey = QStringLiteral("u");
+        cfg.mode = QStringLiteral("demo");
+        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        EtoroClient client(cfg);
+        client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("HKG50")});
+
+        QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
+        QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
+        client.start();                // id resolution goes out, answers in 200 ms
+        client.fetchClosedTrades(8);   // history pages answer immediately
+        QVERIFY(trades.wait(15000));
+
+        const auto list = trades.takeFirst().at(0).value<QList<ClosedTrade>>();
+        QCOMPARE(list.size(), 3);
+        QCOMPARE(list[0].symbol, QStringLiteral("SPX500"));
+        QVERIFY(list[0].listed);
+        QCOMPARE(list[2].symbol, QStringLiteral("HKG50"));
+        QVERIFY(list[2].listed);
+
+        // Both instruments made it into the listed per-instrument summary
+        // (sorted by net descending: SPX500 nets 90, HKG50 nets 10).
+        const auto pnl = summary.takeLast().at(0).value<MonthlyPnl>();
+        QCOMPARE(pnl.perInstrument.size(), 2);
+        QCOMPARE(pnl.perInstrument[0].symbol, QStringLiteral("SPX500"));
+        QCOMPARE(pnl.perInstrument[0].trades, 2);
+        QCOMPARE(pnl.perInstrument[1].symbol, QStringLiteral("HKG50"));
+        QVERIFY(std::abs(pnl.perInstrument[1].netProfit - 10.0) < 1e-9);
+    }
+
+    //! @tstid TS-CLI-006 @design DES-SVC-CLIENT
+    // @relation(REQ-F-014, scope=function)
+    void TS_CLI_006_busyWalkQueuesLatestLookback()
+    {
+        // Regression: a fetch requested while a walk was paging was silently
+        // dropped — opening the details dialog (13 weeks) during the startup
+        // 7-week walk left the dialog showing 7 weeks of data under a "13 weeks"
+        // selector. The latest overlapping request must run right after the
+        // current walk (and supersede any earlier queued one).
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/trading/info/trade/history"))) {
+                return MockHttpServer::Response{200, "[]", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg;
+        cfg.apiKey = QStringLiteral("k");
+        cfg.userKey = QStringLiteral("u");
+        cfg.mode = QStringLiteral("demo");
+        cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        EtoroClient client(cfg);
+
+        QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
+        const QDate today = QDate::currentDate();
+        client.fetchClosedTrades(8);
+        client.fetchClosedTrades(9);   // walk busy → queued…
+        client.fetchClosedTrades(13);  // …and superseded by the latest request
+        QVERIFY(summary.wait(15000));
+        if (summary.count() < 2) {
+            QVERIFY(summary.wait(15000));
+        }
+        QCOMPARE(summary.count(), 2);  // 8-week walk + queued 13-week walk only
+        const auto first = summary.at(0).at(0).value<MonthlyPnl>();
+        const auto second = summary.at(1).at(0).value<MonthlyPnl>();
+        QCOMPARE(first.fromDate, today.addDays(-7 * 8));
+        QCOMPARE(second.fromDate, today.addDays(-7 * 13));
+        // No third walk: the 9-week request was overwritten, not queued behind.
+        QVERIFY(!summary.wait(300));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

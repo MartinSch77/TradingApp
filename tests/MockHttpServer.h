@@ -21,6 +21,7 @@ public:
         qint32 status = 200;
         QByteArray body;                    // JSON payload
         QList<QByteArray> extraHeaders;     // e.g. "Retry-After: 1"
+        qint32 delayMs = 0;                 // hold the response back (race tests)
     };
     using Handler = std::function<Response(const QByteArray &method, const QString &pathAndQuery)>;
 

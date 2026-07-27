@@ -357,11 +357,6 @@ void EtoroClient::modifyPosition(const QString &positionId, double stopLossRate,
     }
 }
 
-void EtoroClient::fetchMonthlyPnl()
-{
-    fetchClosedTrades(7);
-}
-
 void EtoroClient::fetchClosedTrades(qint32 weeksBack)
 {
     if (m_simulated) {
@@ -369,10 +364,17 @@ void EtoroClient::fetchClosedTrades(qint32 weeksBack)
         emit closedTradesReady({});  // the simulation keeps no per-trade history
         return;
     }
-    // Ignore overlapping requests: the walk pages the shared-pool history endpoint,
-    // so stacking runs (e.g. repeated Refresh clicks) would only burn the rate budget.
+    // Never stack pagers on the shared-pool history endpoint — but never drop the
+    // request either: the details dialog's 13-week fetch used to lose silently
+    // against the startup 7-week walk, leaving the dialog showing a shorter window
+    // than its own lookback selector. Queue the latest request (last one wins) and
+    // run it as soon as the current walk finishes.
     if (m_pnlFetching) {
-        emit log(QStringLiteral("Closed-trade P/L refresh already in progress…"), false);
+        m_pnlPendingWeeks = std::clamp(weeksBack, 1, 26);
+        emit log(QStringLiteral("Closed-trade P/L walk in progress — queued a "
+                                "%1-week refresh behind it…")
+                     .arg(m_pnlPendingWeeks),
+                 false);
         return;
     }
     m_pnlFetching = true;
@@ -1291,6 +1293,7 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
                 QStringLiteral("Closed-trade history fetch failed (%1): %2")
                     .arg(cause,
                          netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError));
+            startPendingClosedTradesWalk();
             return;
         }
         const QJsonArray batch =
@@ -1306,13 +1309,12 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
 
             const qint64 iid =
                 static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
-            const QString sym = m_symbolById.value(iid);
 
-            // Keep the individual trade (all instruments) for the detail list.
+            // Keep the individual trade (all instruments) for the detail list. Its
+            // symbol/listed tag is assigned by nameAndSummarizeTrades once the walk
+            // completes, not here — the id→symbol map may still be filling.
             ClosedTrade ct;
             ct.instrumentId = iid;
-            ct.listed = !sym.isEmpty();
-            ct.symbol = ct.listed ? sym : QStringLiteral("#%1").arg(iid);
             ct.isBuy = pick(o, {QStringLiteral("isBuy")}).toBool(true);
             const double levRaw = numFrom(pick(o, {QStringLiteral("leverage")}));
             ct.leverage = (levRaw > 0.0) ? levRaw : 1.0;
@@ -1329,17 +1331,6 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
             if (iid > 0) {
                 static_cast<void>(acc->instrumentIds.insert(iid));
             }
-
-            // The aggregated summary stays restricted to the app's listed
-            // (selectable) instruments; the account can hold many others.
-            if (sym.isEmpty()) {
-                continue;
-            }
-            InstrumentPnl &r = acc->bySymbol[sym];
-            r.symbol = sym;
-            r.trades++;
-            r.netProfit += net;
-            r.fees += fee;
         }
 
         // A non-empty page may have more behind it; an empty page ends the history.
@@ -1356,8 +1347,10 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
 void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
 {
     if (acc->trades.isEmpty() || acc->instrumentIds.isEmpty()) {
+        nameAndSummarizeTrades(acc);
         emitMonthlyPnl(acc);
         emit closedTradesReady(acc->trades);
+        startPendingClosedTradesWalk();
         return;
     }
     // The history API doesn't report what the spread was, so the open/close costs
@@ -1379,6 +1372,9 @@ void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
     QNetworkReply *reply = apiGet(QStringLiteral("/v1/market-data/instruments/rates"), q);
     handleReply(reply, [this, acc](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                    const QByteArray & /*raw*/, const QString & /*netError*/) {
+        // Name the trades now — after the rates round-trip, as late as possible —
+        // so the concurrent listed-id resolution has had the whole walk to land.
+        nameAndSummarizeTrades(acc);
         if (ok) {
             const QJsonArray arr =
                 asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
@@ -1418,7 +1414,37 @@ void EtoroClient::finishTradeHistory(const QSharedPointer<PnlAccum> &acc)
         }
         emitMonthlyPnl(acc);
         emit closedTradesReady(acc->trades);
+        startPendingClosedTradesWalk();
     }, /*retriesLeft=*/1);
+}
+
+void EtoroClient::nameAndSummarizeTrades(const QSharedPointer<PnlAccum> &acc)
+{
+    for (ClosedTrade &t : acc->trades) {
+        const QString sym = m_symbolById.value(t.instrumentId);
+        t.listed = !sym.isEmpty();
+        t.symbol = t.listed ? sym : QStringLiteral("#%1").arg(t.instrumentId);
+        // The aggregated summary stays restricted to the app's listed
+        // (selectable) instruments; the account can hold many others.
+        if (!t.listed) {
+            continue;
+        }
+        InstrumentPnl &r = acc->bySymbol[t.symbol];
+        r.symbol = t.symbol;
+        r.trades++;
+        r.netProfit += t.netProfit;
+        r.fees += t.fees;
+    }
+}
+
+void EtoroClient::startPendingClosedTradesWalk()
+{
+    if (m_pnlPendingWeeks <= 0) {
+        return;
+    }
+    const qint32 weeks = m_pnlPendingWeeks;
+    m_pnlPendingWeeks = 0;
+    fetchClosedTrades(weeks);
 }
 
 void EtoroClient::emitMonthlyPnl(const QSharedPointer<PnlAccum> &acc)

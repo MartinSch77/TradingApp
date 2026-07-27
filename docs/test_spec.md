@@ -125,6 +125,8 @@ event loop / local mock HTTP server).
 | TS-CLI-002 | I | `closedTradesReady` delivers the individual trades with open/close cost estimates equal to invest·lev·spread%/2 from the bulk-rates spread. |
 | TS-CLI-003 | I | Without credentials, `start()` runs the simulation and publishes a display FX rate (`fxRateUpdated` > 0) — orders must not block on "waiting for the EUR/USD rate" (regression). |
 | TS-CLI-004 | I | The open-trade set comes from the live `/portfolio` view, not from the cached `/pnl` snapshot: a position still listed by `/pnl` but absent from `/portfolio` (closed at eToro, or auto-closed by SL/TP) is dropped, while the surviving position keeps eToro's own P/L overlaid from `/pnl` (regression). |
+| TS-CLI-005 | I | Closed trades are named from the id→symbol map when the walk COMPLETES, not while pages parse: with id resolution answering 200 ms late, the trades still come out listed under their symbols and the per-instrument summary contains every listed instrument, not just the force-mapped current one (regression). |
+| TS-CLI-006 | I | A `fetchClosedTrades` issued while a walk is paging is queued (latest lookback wins) and runs right after it, instead of being silently dropped — the details dialog's 13-week fetch must survive the startup 7-week walk (regression). |
 
 ## Coverage & gaps
 

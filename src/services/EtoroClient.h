@@ -82,13 +82,12 @@ public:
     // leg). trailingStop only matters when a stop-loss rate is set.
     void modifyPosition(const QString &positionId, double stopLossRate,
                         double takeProfitRate, bool trailingStop);
-    // Summarise closed-trade net P/L over the last 7 weeks, restricted to the app's
-    // listed (selectable) instruments; result arrives via monthlyPnlReady.
-    void fetchMonthlyPnl();
     // Walk the closed-trade history `weeksBack` weeks back (clamped to 1..26).
     // Emits BOTH the aggregated monthlyPnlReady summary for the window and
     // closedTradesReady with the individual trades, each carrying open/close
     // spread-cost estimates priced from the instruments' current spreads.
+    // While a walk is paging, the latest overlapping request is queued and runs
+    // right after it (never dropped, never stacked on the shared rate pool).
     void fetchClosedTrades(qint32 weeksBack);
 
     // Re-read the open positions now instead of waiting for the next poll, and
@@ -194,7 +193,13 @@ private:
     // Walk complete: price the trades' open/close cost estimates from one bulk
     // rates call (current spreads), then emit the summary and the trade list.
     void finishTradeHistory(const QSharedPointer<PnlAccum> &acc);
+    // Name each trade from the id→symbol map and aggregate the listed ones into
+    // acc->bySymbol. Runs when the walk COMPLETES: the listed-id resolution races
+    // the history pages at startup, and naming per page froze "#<id>" onto trades
+    // whose resolution landed a moment later (SPX500-only summary in the field).
+    void nameAndSummarizeTrades(const QSharedPointer<PnlAccum> &acc);
     void emitMonthlyPnl(const QSharedPointer<PnlAccum> &acc);  // build MonthlyPnl + emit
+    void startPendingClosedTradesWalk();  // run the queued lookback, if any
     // ---- leverage screener -----------------------------------------------
     void scanInstrumentsReal();
     // Fetch the next queued instrument's candles, emit its screenerRow, then recurse
@@ -254,6 +259,7 @@ private:
 
     bool m_scanActive = false;           // a leverage screener run is in progress
     bool m_pnlFetching = false;          // a closed-trade P/L paging walk is in progress
+    qint32 m_pnlPendingWeeks = 0;        // lookback queued behind the running walk (0 = none)
     // Last known live spread per instrument (percent of mid), kept across
     // closed-trade refreshes: rate rows occasionally arrive without a usable
     // bid/ask (frozen weekend quotes), and the cached value keeps the cost

@@ -176,7 +176,7 @@ an Android kit selected, which fills in the SDK/NDK paths and toolchain. On the
 command line, configure with the Android kit's `qt-cmake` wrapper:
 
 ```bash
-~/Qt/6.10.2/android_arm64_v8a/bin/qt-cmake -S . -B build-android -G Ninja \
+~/Qt/6.11.1/android_arm64_v8a/bin/qt-cmake -S . -B build-android -G Ninja \
       -DQT_ANDROID_ABIS=arm64-v8a
 cmake --build build-android --target apk     # produces the APK
 ```

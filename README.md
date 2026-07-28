@@ -89,7 +89,7 @@ session, so no "x64 Native Tools" prompt is required. Override the kit with
 `$env:QT_PREFIX` or `-QtKit mingw_64`.
 
 Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
-(developed against Qt 6.10.2), CMake ≥ 4.2 and a C++23-capable compiler
+(developed against Qt 6.11.1), CMake ≥ 4.2 and a C++23-capable compiler
 (GCC 13+, Clang 17+, MSVC 19.38+). The sources are
 plain cross-platform Qt/C++ — the same code builds on Linux, Windows, and
 Android; only the Qt kit and the packaging step differ.
@@ -98,7 +98,7 @@ Android; only the Qt kit and the packaging step differ.
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$HOME/Qt/6.10.2/gcc_64
+      -DCMAKE_PREFIX_PATH=$HOME/Qt/6.11.1/gcc_64
 cmake --build build
 ./build/TradingApp
 ```
@@ -118,7 +118,7 @@ Or by hand, from a *Developer* command prompt:
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug `
-      -DCMAKE_PREFIX_PATH=C:\Qt\6.9.2\msvc2022_64
+      -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\msvc2022_64
 cmake --build build
 build\TradingApp.exe
 ```

@@ -14,7 +14,7 @@ is portable Qt.
     cmake --build build && ./build/TradingApp
     cd build && ctest                       # test suite
 
-## Windows
+## Windows (MSVC or MinGW)
 
 Install a Qt 6 kit (MSVC or MinGW) via the Qt Online Installer — or run
 `.\setup.ps1`, which provisions the whole toolchain — then:

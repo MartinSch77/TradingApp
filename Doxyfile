@@ -20,6 +20,15 @@ RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
 EXCLUDE_PATTERNS       = */build*/*
 
+# Heading anchors the GitHub way ("### Packaging (desktop)" -> packaging-desktop),
+# so an intra-document [text](#anchor) link resolves both on github.com and in
+# the generated HTML. Without this doxygen names sections autotoc_mdNN and every
+# such link becomes an "unable to resolve reference for \ref" warning. Page-level
+# @ref targets (@ref windows, @ref architecture, ...) come from the file name and
+# are unaffected. Needs doxygen >= 1.10; older versions ignore the tag with a
+# warning and simply keep the old behaviour.
+MARKDOWN_ID_STYLE      = GITHUB
+
 EXTRACT_ALL            = YES
 EXTRACT_PRIVATE        = YES
 EXTRACT_STATIC         = YES

@@ -16,7 +16,7 @@ description: Run the Axivion analysis for TradingApp and verify the result on th
   tree at the end).
 - The run imports every external log present in `analysis-results/`:
   providers cppcheck, clang-tidy, clazy, gcc-analyzer, msvc-analyze,
-  codespell, sonarqube, asan-ubsan, tsan, valgrind, asan, ubsan
+  codespell, sonarqube, coverity, asan-ubsan, tsan, valgrind, asan, ubsan
   (configured in `axivion/external_import.py` — a Python config
   layer registered in `axivion_config.json`; matchers CANNOT be expressed in
   the JSON files, the Suite validator requires real teecap.Match objects).

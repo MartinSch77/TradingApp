@@ -8,4 +8,5 @@ skip = build*,docs/html,docs/strictdoc,docs/sphinx-html,.git,coverage,analysis-r
 #   HSI  = Hang Seng Index ticker
 #   nD   = "n days" variable in Forecasting
 #   Fo   = the MSVC /Fo (object file) compiler switch, in tools/msvc_analyze.py
-ignore-words-list = nam,hsi,nd,fo
+#   Synopsys = the company (Coverity's vendor before Black Duck), not "synopsis"
+ignore-words-list = nam,hsi,nd,fo,synopsys

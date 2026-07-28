@@ -1,0 +1,174 @@
+# Coverity Scan (scan.coverity.com) — the free cloud tier for public
+# repositories. Self-activating exactly like the SonarCloud workflow: the job
+# runs only when the COVERITY_SCAN_TOKEN and COVERITY_SCAN_EMAIL repository
+# secrets are configured; without them the workflow succeeds as a no-op.
+#
+# The project is registered as "tradingapp":
+#   https://scan.coverity.com/projects/tradingapp/builds
+# This cloud run is the ONLY Coverity integration here — no local cov-analyze, no
+# Coverity Connect server.
+#
+# One-time setup:
+#   1. Project settings -> "Project token" into the repository secret
+#      COVERITY_SCAN_TOKEN; the Coverity Scan account address into
+#      COVERITY_SCAN_EMAIL (it is the address the result mail goes to).
+#   2. Only if the project is ever renamed: set the repository variable
+#      COVERITY_SCAN_PROJECT to the new name.
+#
+# Coverity Scan analyses SERVER-SIDE: this workflow builds the tree under
+# cov-build and uploads the intermediate directory — the defect list appears on
+# the Scan web UI minutes later, not in this job's log. Bringing those defects
+# onto the local Axivion dashboard is therefore a separate step: export the
+# defect list from the Scan web UI ("Export to CSV" on the View Defects page) and
+# run `python3 tools/coverity_findings.py <export>`, which writes
+# analysis-results/coverity.txt for the import layer in
+# axivion/external_import.py (provider "coverity").
+#
+# Quota: the free tier caps submissions per week by project size (this size gets
+# a handful per day). Hence no pull_request trigger and no docs-only runs — a
+# burnt quota means the next real push is rejected.
+name: Coverity Scan
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "requirements/**"
+  schedule:
+    - cron: "41 4 * * 2" # weekly Tuesday, clear of CodeQL's Monday slot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two submissions of the same project at once, and do NOT cancel a
+# running one: a cancelled upload still counts against the weekly quota.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  QT_VERSION: "6.10.2"
+
+jobs:
+  coverity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+      COVERITY_SCAN_EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
+      COVERITY_SCAN_PROJECT: ${{ vars.COVERITY_SCAN_PROJECT || 'tradingapp' }}
+    steps:
+      - name: Check credentials
+        id: token
+        run: |
+          if [ -n "$COVERITY_SCAN_TOKEN" ] && [ -n "$COVERITY_SCAN_EMAIL" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "COVERITY_SCAN_TOKEN / COVERITY_SCAN_EMAIL not set — Coverity Scan skipped."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+
+      - name: Install Qt (with Charts)
+        if: steps.token.outputs.present == 'true'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install CMake >= 4.2 and Ninja
+        if: steps.token.outputs.present == 'true'
+        run: python3 -m pip install --upgrade cmake ninja
+
+      # Deliberately NOT cached: the tool tarball is ~1 GB and would evict the
+      # Qt caches the other workflows depend on (10 GB repository budget).
+      - name: Download the Coverity Scan build tool
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          curl -sS --location \
+            --data-urlencode "token=$COVERITY_SCAN_TOKEN" \
+            --data-urlencode "project=$COVERITY_SCAN_PROJECT" \
+            --output cov-analysis.tar.gz \
+            https://scan.coverity.com/download/cxx/linux64
+          # A wrong token or project name answers 200 with a short text/HTML
+          # body, so size plus "is it really a tarball" is the only real check.
+          size=$(stat -c%s cov-analysis.tar.gz)
+          if [ "$size" -lt 50000000 ] || ! tar tzf cov-analysis.tar.gz >/dev/null 2>&1; then
+            echo "::error::the download did not return the analysis tool ($size bytes) — check COVERITY_SCAN_TOKEN and the project name '$COVERITY_SCAN_PROJECT'"
+            head -c 400 cov-analysis.tar.gz || true
+            exit 1
+          fi
+          mkdir -p "$HOME/cov-analysis"
+          tar xzf cov-analysis.tar.gz --strip-components=1 -C "$HOME/cov-analysis"
+          echo "$HOME/cov-analysis/bin" >> "$GITHUB_PATH"
+          cat "$HOME/cov-analysis/VERSION" 2>/dev/null || true
+
+      # Debug, like the static-analysis job in ci.yml: unoptimised code keeps the
+      # reported lines close to the source the dashboard shows.
+      - name: Configure
+        if: steps.token.outputs.present == 'true'
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
+      - name: cov-build over app, libraries and tests
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          # Teach Coverity the runner's native g++ — without a matching compiler
+          # configuration cov-build watches the build and captures nothing.
+          cov-configure --gcc
+          cov-build --dir cov-int cmake --build build -j"$(nproc)"
+          tail -n 20 cov-int/build-log.txt
+          # cov-build exits 0 even when it emitted zero translation units (the
+          # classic silent-empty-submission failure), so assert on the count.
+          units=$(sed -n 's/.*Emitted \([0-9]\{1,\}\) .*compilation units.*/\1/p' cov-int/build-log.txt | tail -1)
+          units=${units:-0}
+          if [ "$units" -lt 1 ]; then
+            echo "::error::cov-build captured no compilation units — nothing to submit"
+            exit 1
+          fi
+          echo "cov-build emitted $units compilation units."
+
+      - name: Submit the build to Coverity Scan
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          tar czf tradingapp-cov-int.tgz cov-int
+          ls -lh tradingapp-cov-int.tgz
+          # "tradingapp" needs no encoding; a renamed "owner/repo" style project
+          # would, and curl does not encode query strings for us.
+          project_enc="${COVERITY_SCAN_PROJECT//\//%2F}"
+          code=$(curl -sS --output response.txt --write-out '%{http_code}' \
+            --form "token=$COVERITY_SCAN_TOKEN" \
+            --form "email=$COVERITY_SCAN_EMAIL" \
+            --form "file=@tradingapp-cov-int.tgz" \
+            --form "version=${GITHUB_SHA::12}" \
+            --form "description=GitHub Actions ${GITHUB_REF_NAME} run ${GITHUB_RUN_ID}" \
+            "https://scan.coverity.com/builds?project=$project_enc")
+          echo "HTTP $code"
+          cat response.txt || true
+          echo
+          case "$code" in
+            200 | 201 | 202) echo "submitted — build appears at https://scan.coverity.com/projects/$project_enc/builds" ;;
+            *)
+              echo "::error::Coverity Scan rejected the submission (HTTP $code); a 4xx here is usually the weekly build quota"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload the cov-build log
+        if: always() && steps.token.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverity-build-log
+          path: cov-int/build-log.txt
+          if-no-files-found: ignore

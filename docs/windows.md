@@ -24,6 +24,7 @@ analysis, sanitizers, Axivion — runs natively without WSL.
 | profiling | `tools/profile.sh` | `tools\profile.ps1` |
 | supply chain | `tools/supply_chain.sh` | `tools\supply_chain.ps1` |
 | SonarQube | `tools/sonar_scan.sh` | `tools\sonar_scan.ps1` |
+| Coverity export → dashboard | `python3 tools/coverity_findings.py` | same script |
 | Axivion | `axivion/start_analysis.sh` | `axivion\start_analysis.ps1` |
 | PlantUML fetch | `tools/fetch_plantuml.sh` | `tools\fetch_plantuml.ps1` |
 | IDE project | (Qt Creator opens CMakeLists.txt) | `tools\make_vs_solution.ps1` → `build-vs\TradingApp.sln` |
@@ -34,7 +35,7 @@ accepts the Windows-only extras `vs` (generate the solution) and `deploy`
 (run `tools\deploy_app.ps1`) — both only when named.
 
 The Python tools (`trace_report.py`, `sdoc_to_md.py`, `parse_sanitizer_log.py`,
-`merge_findings.py`) are shared verbatim — they are platform-neutral and both
+`merge_findings.py`, `coverity_findings.py`) are shared verbatim — they are platform-neutral and both
 platforms produce byte-identical generated artefacts (explicit `encoding="utf-8"`
 and `newline="\n"` — except `merge_findings.py`, whose CSV writer uses
 `newline=""` as the `csv` module requires — so regenerating on Windows does not

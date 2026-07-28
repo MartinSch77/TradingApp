@@ -7,7 +7,10 @@
 #
 #   static   tools/static_analysis.{sh,ps1} -> analysis-results/
 #            {cppcheck,clang-tidy,clazy,gcc-analyzer,msvc-analyze,codespell}.txt
-#            (+ sonarqube.txt from tools/sonar_scan.{sh,ps1})
+#            (+ sonarqube.txt from tools/sonar_scan.{sh,ps1}, + coverity.txt from
+#            tools/coverity_findings.py — Coverity Scan analyses in the cloud
+#            (.github/workflows/coverity.yml), so its defects arrive as an
+#            export that is converted, not as a local tool run)
 #   dynamic  tools/sanitize.{sh,ps1}  -> analysis-results/
 #            sanitize-{asan-ubsan,tsan,valgrind,asan,ubsan}.txt
 #            (ASan+UBSan+LSan / ThreadSanitizer / valgrind memcheck, normalized
@@ -84,6 +87,9 @@ _TOOLS = {
     'msvc-analyze': ('msvc-analyze.txt', _GCC_STYLE),
     'codespell': ('codespell.txt', _PIPE),
     'sonarqube': ('sonarqube.txt', _PIPE),
+    # Coverity Scan defects, exported from the cloud service and normalized by
+    # tools/coverity_findings.py. Absent until someone runs that converter.
+    'coverity': ('coverity.txt', _PIPE),
     'asan-ubsan': ('sanitize-asan-ubsan.txt', _PIPE),
     'tsan': ('sanitize-tsan.txt', _PIPE),
     'valgrind': ('sanitize-valgrind.txt', _PIPE),

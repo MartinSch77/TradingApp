@@ -32,6 +32,7 @@ in @ref windows.
 | Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco | installed at `/opt/SquishCoco` — **license expired**; auto-detected and used by `tools/coverage.sh` once renewed | MC/DC coverage + CocoAI test-case suggestion (documented alternative) |
 | codespell | codespell-project (GPL-2.0) | pipx | Typos in comments/docs (`.codespellrc`; provider `codespell` on the dashboard) |
 | SonarQube / SonarCloud | Sonar (LGPL server / free cloud tier) | conditional | `tools/sonar_scan.sh` runs only against a reachable server; issues → dashboard provider `sonarqube`; CI via SONAR_TOKEN |
+| Coverity Scan | Black Duck (formerly Synopsys), scan.coverity.com | cloud only — project [`tradingapp`](https://scan.coverity.com/projects/tradingapp/builds) | Fifth static analyser, free tier for public repositories, used **only** as the cloud service (no local `cov-analyze`, no Coverity Connect): `.github/workflows/coverity.yml` builds under `cov-build` and uploads, analysis runs server-side. Defects exported from the web UI → `tools/coverity_findings.py` → dashboard provider `coverity`. Self-activating on COVERITY_SCAN_TOKEN + COVERITY_SCAN_EMAIL; weekly submission quota, so no per-PR runs |
 | CodeQL | GitHub | CI | Security scanning, free for public repositories (.github/workflows/codeql.yml) |
 | Syft / Grype / Trivy | Anchore / Aqua (Apache-2.0) | ~/.local/bin via setup.sh | SBOM (SPDX+CycloneDX), vulnerability scan, repo/misconfig/secret scan (`tools/supply_chain.sh` + CI) |
 | Sphinx + MyST | sphinx-doc.org (BSD) | pipx | Developer handbook over docs/*.md → docs/sphinx-html (tools/make_docs.sh) |
@@ -44,7 +45,7 @@ in @ref windows.
 | PlantUML | plantuml.com (GPL) | 1.2026.0 (`tools/third-party/plantuml.jar`, downloaded from the official GitHub release; re-fetch with `tools/fetch_plantuml.sh`) | Architecture/sequence diagrams inside Doxygen |
 | Graphviz (dot) | graphviz.org | Ubuntu 24.04 package | Doxygen graphs, PlantUML layout backend |
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |
-| Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `tools/sdoc_to_md.py`, `tools/parse_sanitizer_log.py`, `tools/merge_findings.py`, `tools/msvc_analyze.py`, `axivion/external_import.py` |
+| Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `tools/sdoc_to_md.py`, `tools/parse_sanitizer_log.py`, `tools/merge_findings.py`, `tools/msvc_analyze.py`, `tools/coverity_findings.py`, `axivion/external_import.py` |
 
 ## Windows-only tools
 

@@ -7,6 +7,7 @@
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QStyledItemDelegate>
 
 // Model behind the open-trades table (QTableView). Replaces the former
 // QTableWidget item churn: the periodic portfolio poll and the per-tick P/L
@@ -47,6 +48,14 @@ public:
     // catches up on a later poll; see MainWindow::m_pendingSlTp).
     void setSlTpRates(qint32 row, double slRate, double tpRate);
 
+    // An SL/TP cell editor is open (view-side; see SlTpEditGuardDelegate):
+    // while set, NO dataChanged is emitted for that one cell — Qt refreshes an
+    // open editor from the model on dataChanged, which would overwrite what the
+    // user is typing on every poll/re-price. The stored values keep updating;
+    // endCellEdit() emits the deferred dataChanged so the cell catches up.
+    void beginCellEdit(qint32 row, qint32 column);
+    void endCellEdit();
+
     [[nodiscard]] QStringList markedIds() const;
 
     [[nodiscard]] qint32 rowCount(const QModelIndex &parent = QModelIndex()) const override;
@@ -67,12 +76,36 @@ signals:
 private:
     [[nodiscard]] double toDisplay(double usd) const { return usd * m_eurPerUsd; }
     [[nodiscard]] QString displayText(const Position &p, qint32 column, qint32 row) const;
+    // dataChanged over a rectangle, minus the cell currently being edited (up to
+    // four sub-rectangles) — the single place the edit guard is enforced.
+    void emitChangedSkippingEditor(qint32 firstRow, qint32 lastRow, qint32 firstCol,
+                                   qint32 lastCol);
 
     QList<Position> m_positions;
     QList<double> m_plDelta;  // live re-price delta per row (0 when not repriced)
     QSet<QString> m_marked;   // checked position ids (survive snapshot resets)
     QString m_ccy;
     double m_eurPerUsd = 1.0;
+    qint32 m_editRow = -1;    // cell with an open editor (-1 = none); see beginCellEdit
+    qint32 m_editCol = -1;
+};
+
+// Thin delegate for the SL/TP columns: its only job is telling the model when a
+// cell editor opens and closes, so the model can hold back dataChanged for that
+// cell (the view refreshes open editors from the model on dataChanged — every
+// portfolio poll would otherwise overwrite the user's typing mid-edit).
+class SlTpEditGuardDelegate : public QStyledItemDelegate
+{
+    Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees markers
+public:
+    explicit SlTpEditGuardDelegate(PositionsModel *model, QObject *parent = nullptr);
+
+    [[nodiscard]] QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                                        const QModelIndex &index) const override;
+    void destroyEditor(QWidget *editor, const QModelIndex &index) const override;
+
+private:
+    PositionsModel *m_model;
 };
 
 #endif // TRADINGAPP_UI_POSITIONSMODEL_H

@@ -41,7 +41,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 |----|---------|----------------|-----------|
 | DES-UI-MAIN | Main window: trade panel (3750 default, auto SL/TP), signals panel, decision window with trade plan + Apply (plan + Monte-Carlo run off the GUI thread via QtConcurrent), in-place verdict/edge explanations + Stay-out column, event activity proposals, close-proposal watchdog, closed-trades summary + detail dialog, order guards | `MainWindow.h/.cpp` | REQ-F-003, REQ-F-004, REQ-F-012, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-021, REQ-F-023, REQ-N-005 |
 | DES-UI-CHART | Price/change chart windows | `PriceChart.h/.cpp`, `ChartView.h/.cpp` | REQ-F-002 |
-| DES-UI-POSMODEL | Open-trades model (allocation-free per-tick refresh; editors/marks survive polls) | `PositionsModel.h/.cpp` | REQ-N-006 |
+| DES-UI-POSMODEL | Open-trades model (allocation-free per-tick refresh; editors/marks survive polls; an open SL/TP cell editor is shielded from refreshes via the edit-guard delegate) | `PositionsModel.h/.cpp` | REQ-F-012, REQ-N-006 |
 | DES-UI-GAUGE | Per-trade gauge window (QPainter dial: SL→open→TP scale, live needle, P/L read-out); opened from the Side cell of the open-trades table, Instrument cell switches the app to that instrument (click routing in `MainWindow.cpp`) | `TradeGauge.h/.cpp` | REQ-F-024 |
 | DES-UI-SCREEN | Leverage screener dialog | `ScreenerDialog.h/.cpp` | REQ-F-008 |
 | DES-UI-ROOT | Composition root, platform selection (WSL/xcb), QA screenshot hooks | `main.cpp` | REQ-N-001 |

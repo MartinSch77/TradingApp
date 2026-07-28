@@ -85,6 +85,13 @@ event loop / local mock HTTP server).
 | TS-POS-002 | U | `accountValuePerPoint` uses amount×leverage/openRate (FX-free) and falls back to units when the notional is unknown. |
 | TS-POS-003 | U | `slTpAmountText` converts a rate distance to the account/display amount and is empty when the leg is off; `slSignedAmountText` is negative for a losing stop and positive for a stop on the winning side. |
 
+## Positions model (tests/tst_positionsmodel.cpp, DES-UI-POSMODEL, REQ-F-012/REQ-N-006) — headless ui-model unit tests
+
+| ID | L | Case |
+|----|---|------|
+| TS-PM-001 | U | An unchanged position-id set refreshes in place (dataChanged, zero model resets — editors/marks survive by construction); a changed set resets the model. |
+| TS-PM-002 | U | While an SL/TP cell editor is open (`beginCellEdit`), portfolio snapshots, FX updates and SL/TP echoes emit no dataChanged for that one cell (Qt would re-fill the open editor) while every other cell refreshes and the stored value keeps updating; `endCellEdit` emits the single held-back dataChanged. |
+
 ## Event insight (tests/tst_eventinsight.cpp, DES-DOM-EVT, REQ-F-020)
 
 | ID | L | Case |

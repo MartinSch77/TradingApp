@@ -26,9 +26,7 @@ void PositionsModel::setDisplay(const QString &ccySymbol, double eurPerUsd)
         m_eurPerUsd = eurPerUsd;
     }
     if (!m_positions.isEmpty()) {
-        const QModelIndex topLeft = index(0, 0);
-        const QModelIndex bottomRight = index(rowCount() - 1, ColCount - 1);
-        emit dataChanged(topLeft, bottomRight);
+        emitChangedSkippingEditor(0, rowCount() - 1, 0, ColCount - 1);
     }
     emit headerDataChanged(Qt::Horizontal, ColPl, ColTp);
 }
@@ -43,13 +41,15 @@ void PositionsModel::setPositions(const QList<Position> &positions)
         m_positions = positions;
         static_cast<void>(m_plDelta.fill(0.0));
         if (!m_positions.isEmpty()) {
-            // Values changed, identities didn't: open editors/marks survive.
-            const QModelIndex topLeft = index(0, ColAmount);
-            const QModelIndex bottomRight = index(rowCount() - 1, ColCount - 1);
-            emit dataChanged(topLeft, bottomRight);
+            // Values changed, identities didn't: open editors/marks survive (an
+            // SL/TP cell being edited is skipped — the values still updated).
+            emitChangedSkippingEditor(0, rowCount() - 1, ColAmount, ColCount - 1);
         }
         return;
     }
+    // The row set changes: the reset closes any open editor with it.
+    m_editRow = -1;
+    m_editCol = -1;
     beginResetModel();
     m_positions = positions;
     m_plDelta = QList<double>(positions.size(), 0.0);
@@ -97,9 +97,69 @@ void PositionsModel::setSlTpRates(qint32 row, double slRate, double tpRate)
     }
     m_positions[row].stopLossRate = slRate;
     m_positions[row].takeProfitRate = tpRate;
-    const QModelIndex slIndex = index(row, ColSl);
-    const QModelIndex tpIndex = index(row, ColTp);
-    emit dataChanged(slIndex, tpIndex);
+    emitChangedSkippingEditor(row, row, ColSl, ColTp);
+}
+
+void PositionsModel::beginCellEdit(qint32 row, qint32 column)
+{
+    m_editRow = row;
+    m_editCol = column;
+}
+
+void PositionsModel::endCellEdit()
+{
+    const qint32 row = m_editRow;
+    const qint32 col = m_editCol;
+    m_editRow = -1;
+    m_editCol = -1;
+    if ((row >= 0) && (row < rowCount()) && (col >= 0)) {
+        const QModelIndex idx = index(row, col);
+        emit dataChanged(idx, idx);  // catch up on the refreshes held back
+    }
+}
+
+void PositionsModel::emitChangedSkippingEditor(qint32 firstRow, qint32 lastRow,
+                                               qint32 firstCol, qint32 lastCol)
+{
+    const bool editorInRange = (m_editRow >= firstRow) && (m_editRow <= lastRow)
+                               && (m_editCol >= firstCol) && (m_editCol <= lastCol);
+    if (!editorInRange) {
+        emit dataChanged(index(firstRow, firstCol), index(lastRow, lastCol));
+        return;
+    }
+    // Split the rectangle around the edited cell: full-width bands above and
+    // below its row, then the edited row minus the edited column.
+    if (m_editRow > firstRow) {
+        emit dataChanged(index(firstRow, firstCol), index(m_editRow - 1, lastCol));
+    }
+    if (m_editRow < lastRow) {
+        emit dataChanged(index(m_editRow + 1, firstCol), index(lastRow, lastCol));
+    }
+    if (m_editCol > firstCol) {
+        emit dataChanged(index(m_editRow, firstCol), index(m_editRow, m_editCol - 1));
+    }
+    if (m_editCol < lastCol) {
+        emit dataChanged(index(m_editRow, m_editCol + 1), index(m_editRow, lastCol));
+    }
+}
+
+SlTpEditGuardDelegate::SlTpEditGuardDelegate(PositionsModel *model, QObject *parent)
+    : QStyledItemDelegate(parent)
+    , m_model(model)
+{
+}
+
+QWidget *SlTpEditGuardDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                                             const QModelIndex &index) const
+{
+    m_model->beginCellEdit(index.row(), index.column());
+    return QStyledItemDelegate::createEditor(parent, option, index);
+}
+
+void SlTpEditGuardDelegate::destroyEditor(QWidget *editor, const QModelIndex &index) const
+{
+    m_model->endCellEdit();
+    QStyledItemDelegate::destroyEditor(editor, index);
 }
 
 QStringList PositionsModel::markedIds() const

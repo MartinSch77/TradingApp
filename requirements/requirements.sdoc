@@ -108,7 +108,7 @@ STATEMENT: The trade plan's cost bill shall account for half the spread on openi
 UID: REQ-F-012
 VERIFICATION: T/I
 TITLE: Trade-panel defaults and auto SL/TP
-STATEMENT: The trade panel shall default the invest amount to 3750 (display currency) and auto-propose SL/TP from recent volatility (stop ≈ 1.5σ of the horizon move, TP = 1.5 × SL) until the user edits them; an instrument switch re-enables the automatics. The automatic proposal shall never overwrite a stop-loss or take-profit field while it is being edited (keyboard focus inside the field).
+STATEMENT: The trade panel shall default the invest amount to 3750 (display currency) and auto-propose SL/TP from recent volatility (stop ≈ 1.5σ of the horizon move, TP = 1.5 × SL) until the user edits them; an instrument switch re-enables the automatics. The automatic proposal shall never overwrite a stop-loss or take-profit field while it is being edited (keyboard focus inside the field). The same protection applies to the SL/TP cells of the open-trades table: while a cell editor is open, portfolio polls, FX updates and re-prices shall not overwrite that cell's editor; the withheld refresh is applied once editing ends.
 
 [REQUIREMENT]
 UID: REQ-F-013

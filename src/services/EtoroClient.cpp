@@ -1733,10 +1733,13 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
     }
 
     if (units > 0.0) {
+        // 5-dp round, same as modifyPositionReal: a 2-dp round is fine on indices
+        // but destroys the stop on forex rates — EURUSD at 1.1373 with a ~0.0014
+        // stop distance rounded to 1.14 lands the SL nowhere near the set amount.
         if (stopLossAmount > 0.0) {
             const double dist = stopLossAmount / units;
             const double sl = isBuy ? (ref - dist) : (ref + dist);
-            body[QStringLiteral("stopLossRate")] = std::round(sl * 100.0) / 100.0;
+            body[QStringLiteral("stopLossRate")] = std::round(sl * 1e5) / 1e5;
             // eToro trails the stop server-side when the type is "trailing".
             body[QStringLiteral("stopLossType")] =
                 trailingStop ? QStringLiteral("trailing") : QStringLiteral("fixed");
@@ -1744,7 +1747,7 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
         if (takeProfitAmount > 0.0) {
             const double dist = takeProfitAmount / units;
             const double tp = isBuy ? (ref + dist) : (ref - dist);
-            body[QStringLiteral("takeProfitRate")] = std::round(tp * 100.0) / 100.0;
+            body[QStringLiteral("takeProfitRate")] = std::round(tp * 1e5) / 1e5;
         }
     }
 

@@ -41,3 +41,10 @@ tradingapp_add_test(tst_config tst_config.cpp)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
 tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)
+
+# --- unit test over the ui table model (headless: model only, no widgets) ---
+# The ui layer is compiled into the app executable, not a library, so the test
+# compiles PositionsModel directly; Widgets is needed for its thin delegate.
+tradingapp_add_test(tst_positionsmodel tst_positionsmodel.cpp
+    ../src/ui/PositionsModel.cpp ../src/ui/PositionsModel.h)
+target_link_libraries(tst_positionsmodel PRIVATE Qt6::Widgets)

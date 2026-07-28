@@ -1195,6 +1195,12 @@ void MainWindow::buildUi()
     // double-click or F2 on one of those opens the editor.
     m_positions->setEditTriggers(QAbstractItemView::DoubleClicked
                                  | QAbstractItemView::EditKeyPressed);
+    // While an SL/TP editor is open, the model holds back that cell's updates —
+    // otherwise every portfolio poll re-fills the editor and wipes the typing
+    // (the view re-reads open editors from the model on dataChanged).
+    auto *slTpGuard = new SlTpEditGuardDelegate(m_positionsModel, m_positions);
+    m_positions->setItemDelegateForColumn(PositionsModel::ColSl, slTpGuard);
+    m_positions->setItemDelegateForColumn(PositionsModel::ColTp, slTpGuard);
     m_positions->setToolTip(QStringLiteral(
         "Tick one or more trades, then Close marked trades.\n"
         "Click the Side cell of a trade to open its gauge window.\n"

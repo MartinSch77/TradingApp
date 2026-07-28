@@ -105,13 +105,90 @@ function Invoke-Asan {
     # operator delete back out of the main module and cannot find it — Windows
     # then refuses to start the process with
     #   "The procedure entry point ??3@YAXPEAX_K@Z could not be located in <exe>".
-    $ok = Invoke-Configure -BuildDir $build -ExtraArgs @(
-        '-DCMAKE_CXX_FLAGS_DEBUG=/Zi /Ob0 /Od',
-        '-DCMAKE_CXX_FLAGS=/fsanitize=address /Oy-',
-        '-DCMAKE_EXE_LINKER_FLAGS=/fsanitize=address /INCREMENTAL:NO /DEBUG'
-    )
-    if (-not $ok) { return $false }
-    if (-not (Invoke-Native -FilePath 'cmake' -Arguments @('--build', $build, '-j', "$Jobs"))) { return $false }
+    #
+    # Both overrides need a CONFIG-SPECIFIC counterpart, or CMake appends its own
+    # Debug defaults AFTER ours on the same line and the last flag wins:
+    #   * CMAKE_EXE_LINKER_FLAGS_DEBUG defaults to "/debug /INCREMENTAL", which
+    #     landed after our /INCREMENTAL:NO and turned incremental linking back on.
+    #     That is what actually broke every tst_*.exe: the resulting binary cannot
+    #     bind operator delete against the ASan runtime, so Windows kills it before
+    #     main() with STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139) — the
+    #     "??3@YAXPEAX_K@Z could not be located" dialog. Verified by A/B: identical
+    #     flags apart from /INCREMENTAL:NO turn exit 0xC0000139 into exit 0.
+    #     So the non-incremental request has to be made in the Debug-specific
+    #     variable, where nothing can append past it.
+    #   * /RTC1 moved out of CMAKE_CXX_FLAGS_DEBUG into its own abstraction in
+    #     CMake 4.0 (CMAKE_MSVC_RUNTIME_CHECKS, policy CMP0197), so overriding
+    #     CMAKE_CXX_FLAGS_DEBUG silently stopped removing it and ASan builds were
+    #     compiling WITH runtime checks again. Clearing that variable is now the
+    #     only way ("" = no runtime checks). This one is hygiene, not the crash fix:
+    #     MSVC 14.44 accepts /RTC1 next to /fsanitize=address, but the two
+    #     instrument the same stack and /RTC1 is not wanted in a sanitizer build.
+    # Pin the ASan import library to the MSVC toolset, whatever $env:LIB already holds.
+    #
+    # There are TWO incompatible ASan implementations installed side by side, both
+    # shipping a file called clang_rt.asan_dynamic-x86_64.lib:
+    #   * MSVC's       -> the exe imports __asan_delete / __asan_delete_size
+    #   * LLVM/clang's -> the exe imports the mangled ??2@YAPEAX_K@Z / ??3@YAXPEAX_K@Z
+    # Whichever the LINKER picks decides which ABI the binary expects, while the DLL
+    # that LOADS at startup is MSVC's. Link against LLVM's by accident and every
+    # tst_*.exe dies before main() with STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139) —
+    # the modal "??3@YAXPEAX_K@Z ... nicht gefunden" dialog, which HANGS the run.
+    #
+    # This is not hypothetical: tools\coverage.ps1 calls Add-ToLibPath on LLVM's
+    # compiler-rt directory to find clang_rt.profile-x86_64.lib, that same directory
+    # also contains LLVM's clang_rt.asan_dynamic-x86_64.lib, and build_all.ps1 runs
+    # every stage in ONE PowerShell process with `coverage` BEFORE `sanitize`. So a
+    # full build_all run poisoned the ASan link while `sanitize.ps1` on its own was
+    # always fine — which is exactly how this hid for so long.
+    #
+    # MSVC's copy lives in VC\Tools\MSVC\<ver>\lib\x64; every clang compiler-rt
+    # directory has \lib\clang\<major>\lib\windows in its path. Dropping the latter
+    # for the duration of this stage leaves the MSVC one to win.
+    $savedLib = $env:LIB
+    try {
+        $env:LIB = (($env:LIB -split ';') |
+            Where-Object { $_ -and ($_ -notmatch '[\\/]lib[\\/]clang[\\/]') }) -join ';'
+
+        $ok = Invoke-Configure -BuildDir $build -ExtraArgs @(
+            '-DCMAKE_CXX_FLAGS_DEBUG=/Zi /Ob0 /Od',
+            '-DCMAKE_MSVC_RUNTIME_CHECKS=',
+            '-DCMAKE_CXX_FLAGS=/fsanitize=address /Oy-',
+            '-DCMAKE_EXE_LINKER_FLAGS=/fsanitize=address /DEBUG',
+            '-DCMAKE_EXE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO'
+        )
+        if (-not $ok) { return $false }
+        if (-not (Invoke-Native -FilePath 'cmake' -Arguments @('--build', $build, '-j', "$Jobs"))) { return $false }
+    } finally {
+        $env:LIB = $savedLib
+    }
+
+    # Put the ASan runtime NEXT TO the binaries instead of trusting PATH.
+    #
+    # An ASan-instrumented exe loads clang_rt.asan_dynamic-x86_64.dll at startup,
+    # and this machine class carries several incompatible copies (MSVC Hostx64 and
+    # Hostx86, the VS-bundled LLVM, a standalone LLVM). Whichever one PATH resolves
+    # first decides whether the process starts at all:
+    #   * none on PATH        -> exit 0xC0000135 STATUS_DLL_NOT_FOUND
+    #   * a MISMATCHED copy   -> exit 0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND, i.e.
+    #                            the "??3@YAXPEAX_K@Z ... nicht gefunden" dialog
+    # Both are MODAL dialogs, so an interactive run HANGS instead of failing, and
+    # ctest reports nothing useful. The executable's own directory is searched
+    # before PATH, so copying the runtime that belongs to the cl.exe we just built
+    # with makes the run deterministic no matter how the shell is set up (developer
+    # prompt or not, LLVM installed or not).
+    $clPath = (Get-Command cl -ErrorAction SilentlyContinue).Source
+    if ($clPath) {
+        $asanDll = Join-Path (Split-Path $clPath -Parent) 'clang_rt.asan_dynamic-x86_64.dll'
+        if (Test-Path $asanDll) {
+            foreach ($dir in @($build, (Join-Path $build 'tests'))) {
+                if (Test-Path $dir) { Copy-Item $asanDll $dir -Force }
+            }
+            Write-Host "ASan runtime staged next to the binaries: $(Split-Path $asanDll -Leaf)" -ForegroundColor DarkGray
+        } else {
+            Write-Warning "clang_rt.asan_dynamic-x86_64.dll not found beside $clPath — the run now depends on PATH resolving a matching copy."
+        }
+    }
 
     # halt_on_error makes any finding fail the run loudly, as on Linux.
     $env:ASAN_OPTIONS = 'halt_on_error=1'
@@ -154,9 +231,13 @@ function Invoke-Ubsan {
     # analysis-results\sanitize-ubsan.txt, and the Linux ASan+UBSan run remains
     # the source of readable UB diagnostics. vptr additionally needs the C++
     # runtime's RTTI support and is therefore off.
+    # CMAKE_MSVC_RUNTIME_CHECKS is cleared for the same reason as in the ASan stage:
+    # since CMake 4.0 (CMP0197) /RTC1 comes from there, not from CMAKE_CXX_FLAGS_DEBUG,
+    # so overriding the latter alone leaves runtime checks on in a sanitizer build.
     $ok = Invoke-Configure -BuildDir $build -ExtraArgs @(
         "-DCMAKE_CXX_COMPILER=$clangCl",
         '-DCMAKE_CXX_FLAGS_DEBUG=/Zi /Ob0 /Od',
+        '-DCMAKE_MSVC_RUNTIME_CHECKS=',
         '-DCMAKE_CXX_FLAGS=-fsanitize=undefined -fsanitize-trap=undefined -fno-sanitize=vptr /Oy-'
     )
     if (-not $ok) {

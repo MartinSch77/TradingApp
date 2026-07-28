@@ -294,14 +294,77 @@ reason, and `.gitignore` covers stray `*.csexe`/`*.csmes`.
 
 * **`/fsanitize=address` must also be on the LINK line**, not only when
   compiling. It is what makes the linker pull in
-  `clang_rt.asan_dynamic_runtime_thunk`, which exports operator new/delete
-  *from the executable*. Without it the exe still imports
-  `clang_rt.asan_dynamic-x86_64.dll`, but that DLL imports `operator delete`
-  back out of the main module and cannot find it, so Windows refuses to start
-  the process with
-  `The procedure entry point ??3@YAXPEAX_K@Z could not be located in <exe>`.
-  Note this only bites *outside* a developer environment — inside one, the
-  matching runtime is on PATH and the tests appear to pass.
+  `clang_rt.asan_dynamic_runtime_thunk`, so that the exe's `operator new`/
+  `operator delete` resolve against the ASan runtime rather than the plain CRT.
+  Without it the process dies before `main()` with
+  `The procedure entry point ??3@YAXPEAX_K@Z could not be located in <exe>`
+  (`??3@YAXPEAX_K@Z` = `operator delete(void*, size_t)`), i.e. exit code
+  `0xC0000139` / `STATUS_ENTRYPOINT_NOT_FOUND`.
+
+* **THE one that actually bit: `$env:LIB` leaking from the `coverage` stage into
+  the `sanitize` stage.** Two *incompatible* ASan implementations are installed
+  side by side, and both ship a file called `clang_rt.asan_dynamic-x86_64.lib`:
+
+  | implib the linker picked | what the exe then imports |
+  | --- | --- |
+  | MSVC (`VC\Tools\MSVC\<ver>\lib\x64`) | `__asan_delete`, `__asan_delete_size` |
+  | LLVM (`…\lib\clang\<major>\lib\windows`) | mangled `??2@YAPEAX_K@Z`, `??3@YAXPEAX_K@Z` |
+
+  The DLL that *loads* at startup is always MSVC's, and it does not export the
+  mangled names — so a binary linked against LLVM's implib dies before `main()`
+  with `0xC0000139` / `STATUS_ENTRYPOINT_NOT_FOUND`, i.e. the
+  `??3@YAXPEAX_K@Z` dialog.
+
+  How LLVM's directory got onto the ASan link path: `tools\coverage.ps1` calls
+  `Add-ToLibPath` on LLVM's compiler-rt directory to find
+  `clang_rt.profile-x86_64.lib` — and **that same directory also contains LLVM's
+  `clang_rt.asan_dynamic-x86_64.lib`**. `build_all.ps1` runs every stage in ONE
+  PowerShell process, with `coverage` *before* `sanitize`, so the mutation was
+  still in `$env:LIB` when the ASan tree was linked.
+
+  This is why the bug looked haunted: `tools\sanitize.ps1` on its own always
+  passed (clean `$env:LIB`), while a full `build_all.ps1` produced 13 unstartable
+  test binaries. Both sides are fixed — `coverage.ps1` restores `$env:LIB` when
+  its stage ends, and `Invoke-Asan` additionally strips any `\lib\clang\`
+  directory for the duration of its own configure+build, so it cannot be poisoned
+  by whatever ran before it. Reproduced on demand and repaired: prepending LLVM's
+  compiler-rt dir to `$env:LIB` turns the link into `??3@YAXPEAX_K@Z` + exit
+  `0xC0000139`; with the guard, the same polluted environment yields
+  `__asan_delete` + 13/13 passing.
+
+* **The ASan runtime is also staged next to the binaries** rather than looked up
+  on `PATH`. A program's own directory is searched first, so copying the runtime
+  belonging to the very `cl.exe` that built the tree into `build-san\` and
+  `build-san\tests\` removes the *other* startup failure — `0xC0000135` /
+  `STATUS_DLL_NOT_FOUND` when no copy is on `PATH` at all, which is what happens
+  outside a developer prompt. Verified by running all 13 test exes in a plain
+  shell with no MSVC environment.
+
+  Both startup failures are **modal dialogs**, so an interactive run *hangs*
+  instead of failing and `ctest` reports nothing useful. When triaging, get the
+  exit code rather than reading the dialog: `0xC0000135` = runtime missing,
+  `0xC0000139` = runtime present but wrong ABI.
+
+* **Not the cause, kept as hygiene: `/INCREMENTAL:NO` and `/RTC1`.** An earlier
+  diagnosis blamed incremental linking, on an A/B that turned out to be
+  confounded — the "before" binaries came from a poisoned-`$env:LIB` session and
+  the "after" ones from a clean one, so the flag was never the variable under
+  test. `sanitize.ps1` still sets `CMAKE_EXE_LINKER_FLAGS_DEBUG=/debug
+  /INCREMENTAL:NO`, because MSVC advises non-incremental linking for ASan and
+  because the *mechanism* found along the way is real and worth knowing:
+  `CMAKE_EXE_LINKER_FLAGS` is emitted **before** `CMAKE_EXE_LINKER_FLAGS_DEBUG`
+  (default `/debug /INCREMENTAL`), so an `/INCREMENTAL:NO` placed in the
+  config-agnostic variable is silently undone by last-one-wins. That rule applies
+  to any `CMAKE_<LANG>_FLAGS` / `CMAKE_EXE_LINKER_FLAGS` override in a Debug
+  build.
+
+* **CMake 4.0 moved `/RTC1` out of `CMAKE_CXX_FLAGS_DEBUG`** into its own
+  abstraction (`CMAKE_MSVC_RUNTIME_CHECKS`, policy CMP0197). Overriding
+  `CMAKE_CXX_FLAGS_DEBUG` silently stopped removing it, so ASan builds quietly
+  went back to compiling *with* MSVC runtime checks. `sanitize.ps1` now clears
+  `CMAKE_MSVC_RUNTIME_CHECKS` as well. This one is hygiene rather than a crash
+  fix — MSVC 14.44 does accept `/RTC1` alongside `/fsanitize=address`, but the
+  two instrument the same stack and `/RTC1` has no place in a sanitizer build.
 * **CMP0156 warnings are silenced in `CMakeLists.txt`, not on the command line.**
   `cmake_minimum_required(4.2)` turns CMP0156 NEW; Qt forces it back to OLD for
   non-Apple platforms and warns once per `qt_add_library`/`qt_add_executable`

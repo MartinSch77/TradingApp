@@ -91,9 +91,29 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   instrumentation or `cmreport` crashes on the merged database.
 - No clazy, no TSan, no valgrind on Windows — the scripts say so out loud
   rather than skipping quietly.
-- MSVC ASan needs `/fsanitize=address` on the LINK line too, or the exe never
-  exports operator new/delete and Windows refuses to start it (`entry point
-  ??3@YAXPEAX_K@Z not located`). It only shows up outside a developer prompt.
+- MSVC ASan needs `/fsanitize=address` on the LINK line too, or `operator
+  new`/`delete` never bind to the ASan runtime and Windows kills the process
+  before `main()` (`entry point ??3@YAXPEAX_K@Z not located`, exit
+  `0xC0000139`) — as a MODAL dialog, so the run hangs rather than fails.
+- `$env:LIB` MUST NOT leak between build_all stages. MSVC and LLVM both ship a
+  `clang_rt.asan_dynamic-x86_64.lib`; they are ABI-incompatible (MSVC exe imports
+  `__asan_delete`, LLVM exe imports mangled `??3@YAXPEAX_K@Z`) while the DLL that
+  loads is always MSVC's. `coverage.ps1` puts LLVM's compiler-rt dir on `LIB` for
+  `clang_rt.profile-x86_64.lib`, that dir ALSO holds LLVM's ASan implib, and
+  build_all runs `coverage` before `sanitize` in ONE process — which silently made
+  all 13 ASan test exes unstartable (`0xC0000139`). Fixed on both sides: coverage
+  restores `LIB`, and `Invoke-Asan` strips `\lib\clang\` dirs for its own build.
+  Keep both. Symptom-to-cause: `0xC0000135` = ASan runtime missing (staged copy
+  gone), `0xC0000139` = runtime present but linked against the wrong ASan implib.
+- The ASan runtime is COPIED next to the build-san binaries on purpose (own
+  directory beats PATH) so the suite runs outside a developer prompt too.
+- Debug-config flags beat config-agnostic ones: `CMAKE_EXE_LINKER_FLAGS_DEBUG`
+  (default `/debug /INCREMENTAL`) is emitted AFTER `CMAKE_EXE_LINKER_FLAGS`, so
+  an `/INCREMENTAL:NO` put in the latter is silently undone. Override the `_DEBUG`
+  variable. Likewise CMake 4.0 moved `/RTC1` into `CMAKE_MSVC_RUNTIME_CHECKS`
+  (CMP0197), so overriding `CMAKE_CXX_FLAGS_DEBUG` no longer removes it. Both are
+  hygiene, NOT the cause of the `??3@YAXPEAX_K@Z` failure — don't re-diagnose it
+  as incremental linking.
 - CMP0156: silence it with `cmake_policy(SET CMP0156 OLD)` in CMakeLists —
   `-DQT_FORCE_CMP0156_TO_VALUE=OLD` is a no-op, only `NEW` silences the check
   and `NEW` changes linking.

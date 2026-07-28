@@ -157,6 +157,22 @@ function Invoke-MsvcCoverage {
 # ---------------------------------------------------------------------------
 function Invoke-McdcCoverage {
     Write-Stage 'clang-cl source-based coverage with MC/DC'
+    # $env:LIB is restored on the way out (see Add-ToLibPath below). build_all.ps1
+    # runs every stage in ONE PowerShell process, so leaking LLVM's compiler-rt
+    # directory into later stages is not harmless: that directory also holds LLVM's
+    # clang_rt.asan_dynamic-x86_64.lib, and the `sanitize` stage that runs after
+    # `coverage` then linked its ASan binaries against the wrong ASan ABI — every
+    # tst_*.exe died at startup with STATUS_ENTRYPOINT_NOT_FOUND. The ASan stage
+    # defends itself too, but the leak is fixed here at the source.
+    $savedLib = $env:LIB
+    try {
+        return (Invoke-McdcCoverageInner)
+    } finally {
+        $env:LIB = $savedLib
+    }
+}
+
+function Invoke-McdcCoverageInner {
     $llvm = Get-LlvmToolset
     if (-not $llvm) {
         Write-Skip "no complete LLVM toolset found (needs clang-cl + llvm-cov + llvm-profdata; winget install LLVM.LLVM) — MC/DC coverage unavailable"

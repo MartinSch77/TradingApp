@@ -43,7 +43,14 @@ param(
     [string]$Mode = 'install',
 
     # Qt version installed by aqt when no usable kit is found.
-    [string]$QtVersion = $(if ($env:QT_VERSION) { $env:QT_VERSION } else { '6.11.1' }),
+    # 6.10.3, not 6.11.1 like setup.sh: this parameter drives aqtinstall, and aqt
+    # (3.3.0, the newest release) cannot fetch the Windows desktop metadata for
+    # 6.11.x — it fails with "Failed to download checksum for the file
+    # 'Updates.xml'" while linux/mac resolve 6.11.1 fine (verified 2026-07-29).
+    # Qt's own online installer DOES offer 6.11.1 for Windows: a machine that has
+    # it keeps building against it, because the build scripts take the newest kit
+    # present. $env:QT_VERSION overrides this. See docs\windows.md.
+    [string]$QtVersion = $(if ($env:QT_VERSION) { $env:QT_VERSION } else { '6.10.3' }),
 
     # Skip the multi-gigabyte Visual Studio Build Tools install even when no
     # MSVC toolset is present (useful when you intend to build with MinGW).

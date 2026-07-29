@@ -17,7 +17,7 @@ in @ref windows.
 
 | Tool | Origin / vendor | Version | Role here |
 |------|-----------------|---------|-----------|
-| Qt (Widgets, Charts, Network, Test) | Qt Group, qt.io | 6.11.1 (gcc_64 kit at `~/Qt`) | Application framework; Qt Test drives the suite |
+| Qt (Widgets, Charts, Network, Test) | Qt Group, qt.io | 6.11.1 (gcc_64 kit at `~/Qt`); Windows CI uses 6.10.3 — aqtinstall cannot fetch Windows 6.11.x metadata, see @ref windows | Application framework; Qt Test drives the suite |
 | CMake | Kitware, cmake.org | 4.2.x (`cmake --version`) | Build system, CTest test runner |
 | GCC | GNU Project | Ubuntu 24.04 default (g++ 13) | Reference compiler; `--coverage` instrumentation |
 | Clang / LLVM | LLVM Project, llvm.org (Ubuntu pkg) | 18.1.3 | MC/DC coverage (`-fcoverage-mcdc`), clang-tidy host |

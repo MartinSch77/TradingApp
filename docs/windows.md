@@ -384,6 +384,21 @@ reason, and `.gitignore` covers stray `*.csexe`/`*.csmes`.
 The Windows run is not expected to produce the same finding count, because the
 analyzer versions differ. On the reference machine:
 
+* **Qt 6.11.x cannot be installed on Windows with aqtinstall.** `aqt list-qt
+  windows desktop` lists 6.11.0/6.11.1, but resolving either one fails with
+  `Failed to download checksum for the file 'Updates.xml'` — the per-version
+  package metadata is not reachable for the Windows desktop target, while linux
+  and mac resolve 6.11.1 without trouble (aqt 3.3.0, the newest release,
+  verified 2026-07-29). Consequences, all deliberate:
+  * `.\setup.ps1` defaults to **6.10.3** (it provisions through aqt), while
+    `setup.sh` defaults to 6.11.1.
+  * CI carries two pins: `QT_VERSION` (6.11.1, linux + mac) and
+    `QT_VERSION_WINDOWS` (6.10.3) — see `.github/workflows/ci.yml` and
+    `release.yml`. Raise the Windows one as soon as aqt can see 6.11.x.
+  * Qt's **official online installer** does offer 6.11.1 for Windows, so a
+    developer machine can be on it: the build scripts pick the newest installed
+    kit, and `$env:QT_VERSION` / `$env:QT_PREFIX` override everything.
+
 * **cppcheck 2.21** reports one `returnByReference` performance finding in
   `src/ui/TradeGauge.h` that the older Linux cppcheck does not.
 * **clang-tidy 19/22** reports ~27 findings from checks that did not exist in

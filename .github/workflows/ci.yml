@@ -20,7 +20,16 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Qt for the aqt-installed CI kits. Windows is pinned separately and LOWER on
+  # purpose: aqtinstall (3.3.0, the newest release) cannot fetch the Windows
+  # desktop metadata for 6.11.x — `aqt list-qt windows desktop --arch 6.11.1`
+  # answers "Failed to download checksum for the file 'Updates.xml'", while
+  # linux and mac resolve 6.11.1 fine (verified 2026-07-29). Qt's own online
+  # installer does offer 6.11.1 for Windows, so a developer machine can be on
+  # it — the build scripts take the newest kit present, and QT_VERSION /
+  # QT_PREFIX override both. Raise QT_VERSION_WINDOWS as soon as aqt can see it.
   QT_VERSION: "6.11.1"
+  QT_VERSION_WINDOWS: "6.10.3"
 
 jobs:
   build-and-test:
@@ -152,7 +161,7 @@ jobs:
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{ env.QT_VERSION_WINDOWS }}
           arch: win64_msvc2022_64
           modules: qtcharts
           cache: true

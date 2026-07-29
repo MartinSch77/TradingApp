@@ -7,9 +7,10 @@
     1. Release build in build-portable\ (its own tree, so it cannot inherit the
        Debug/coverage/sanitizer flags of the others),
     2. `cmake --install` into a staging directory: that runs windeployqt through
-       the install rules in CMakeLists.txt, which brings the Qt DLLs, the
-       platform plugin (platforms\qwindows.dll), the Schannel TLS backend the
-       eToro API needs, image formats, styles and the compiler runtime,
+       the install rules in CMakeLists.txt, which brings the Qt DLLs next to the
+       exe, the plugins under plugins\ (platforms\qwindows.dll, the Schannel TLS
+       backend the eToro API needs, image formats, styles, iconengines) plus the
+       qt.conf that points Qt at that plugin directory, and the translations,
     3. CMAKE_INSTALL_BINDIR=. so TradingApp.exe sits at the root of the archive
        rather than in bin\ — that is what "portable" means to whoever unzips it,
     4. config.json + apiKeyEtoro.example.json + a short readme alongside it,
@@ -98,10 +99,28 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 # windeployqt is the whole point of this archive: if the platform plugin is
-# missing the app dies with "This application failed to start because no Qt
+# missing, the app dies with "This application failed to start because no Qt
 # platform plugin could be initialized" on the user's machine, not here.
-if (-not (Test-Path (Join-Path $stage 'platforms\qwindows.dll'))) {
-    Write-Error "no platforms\qwindows.dll in $stage — windeployqt did not run"
+#
+# Two layouts are legitimate, and which one appears depends on who ran the tool:
+#   plugins\platforms\qwindows.dll + qt.conf   Qt's CMake deployment (what the
+#       install rules use: windeployqt --plugindir plugins, plus a qt.conf next
+#       to the exe that points Qt at it). The qt.conf is load-bearing here —
+#       without it Qt never looks in plugins\.
+#   platforms\qwindows.dll                     a bare `windeployqt app.exe` run,
+#       which drops the plugin directories beside the executable.
+$flat = Join-Path $stage 'platforms\qwindows.dll'
+$nested = Join-Path $stage 'plugins\platforms\qwindows.dll'
+if (Test-Path $nested) {
+    if (-not (Test-Path (Join-Path $stage 'qt.conf'))) {
+        Write-Error "plugins\platforms\qwindows.dll is there but qt.conf is not — Qt will not find the plugin at run time"
+        exit 1
+    }
+    Write-Host "  platform plugin: plugins\platforms\qwindows.dll (+ qt.conf)" -ForegroundColor DarkGray
+} elseif (Test-Path $flat) {
+    Write-Host "  platform plugin: platforms\qwindows.dll" -ForegroundColor DarkGray
+} else {
+    Write-Error "no qwindows.dll in $stage (neither platforms\ nor plugins\platforms\) — windeployqt did not run"
     exit 1
 }
 

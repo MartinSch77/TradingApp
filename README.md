@@ -11,24 +11,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 
-**build linux / windows / macos** = the three platform jobs of
-[ci.yml](.github/workflows/ci.yml), reported separately because a GitHub badge
-reports a workflow and not a job — and the defects this codebase has hit were
-platform-specific (MSVC rejected code that GCC and clang accepted). Each job
-publishes its own status, failures included, so a red badge names the platform.
-The same run also covers traceability, the sanitizers and the static analysis.
-**tests** = the Qt Test suite on its own
-([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
-number (line coverage of the domain + services layers, published as a badge
-endpoint on the `badges` branch — no third-party coverage service involved).
-**sonarcloud** is the SonarCloud quality gate for project
-`MartinSch77_TradingApp` — note that it comes from SonarCloud's *automatic
-analysis* of this public repository, not from
-[sonarcloud.yml](.github/workflows/sonarcloud.yml), which stays a no-op until the
-`SONAR_TOKEN` secret exists. **coverity** is the Coverity Scan build status;
-that analysis runs server-side on a weekly submission, so the badge trails the
-other ones by design. **latest release** links the downloads below.
-
 A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,
 GER40, …), forex, commodities and eToro's thematic baskets — through the
 **official eToro public API**
@@ -391,6 +373,27 @@ to one PNG each (further windows get a `-1`, `-2`, … suffix) after 3000 ms and
 exits — handy for headless screenshots (`QT_QPA_PLATFORM=offscreen`).
 `TRADINGAPP_SHOT_OPEN=1` opens the decision and closed-trades windows first;
 `TRADINGAPP_SHOT_DELAY_MS` overrides the capture delay.
+
+
+## Additional build information
+**build linux / windows / macos** = the three platform jobs of
+[ci.yml](.github/workflows/ci.yml), reported separately because a GitHub badge
+reports a workflow and not a job — and the defects this codebase has hit were
+platform-specific (MSVC rejected code that GCC and clang accepted). Each job
+publishes its own status, failures included, so a red badge names the platform.
+The same run also covers traceability, the sanitizers and the static analysis.
+**tests** = the Qt Test suite on its own
+([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
+number (line coverage of the domain + services layers, published as a badge
+endpoint on the `badges` branch — no third-party coverage service involved).
+**sonarcloud** is the SonarCloud quality gate for project
+`MartinSch77_TradingApp` — note that it comes from SonarCloud's *automatic
+analysis* of this public repository, not from
+[sonarcloud.yml](.github/workflows/sonarcloud.yml), which stays a no-op until the
+`SONAR_TOKEN` secret exists. **coverity** is the Coverity Scan build status;
+that analysis runs server-side on a weekly submission, so the badge trails the
+other ones by design. **latest release** links the downloads below.
+
 
 ## Topics / keywords
 

@@ -71,7 +71,7 @@ jobs:
             echo "COVERITY_SCAN_TOKEN / COVERITY_SCAN_EMAIL not set — Coverity Scan skipped."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.token.outputs.present == 'true'
 
       - name: Install Qt (with Charts)
@@ -167,7 +167,7 @@ jobs:
 
       - name: Upload the cov-build log
         if: always() && steps.token.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverity-build-log
           path: cov-int/build-log.txt

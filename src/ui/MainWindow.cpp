@@ -3053,7 +3053,11 @@ void MainWindow::rebuildClosedTradesTable()
         auto make = [&t](const QString &text) {
             auto *it = new QTableWidgetItem(text);
             if (!t.listed) {
-                it->setForeground(grey);  // not in the app's selector — context only
+                // The palette constant directly, not the `grey` reference above:
+                // naming a reference inside a lambda is an odr-use, so MSVC wants
+                // it captured (C3493) while clang calls the capture unnecessary.
+                // Using the inline global satisfies both.
+                it->setForeground(trading::ui::kGrey);  // not in the selector — context only
             }
             return it;
         };

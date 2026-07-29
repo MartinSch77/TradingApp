@@ -411,7 +411,7 @@ and requirements-as-code traceability" is not.
 
 ## Coverity Scan Build Status
 
-<a href="https://scan.coverity.com/projects/tradingapp">
+<a href="https://scan.coverity.com/projects/TradingApp">
   <img alt="Coverity Scan Build Status"
        src="https://scan.coverity.com/projects/33200/badge.svg"/>
 </a>

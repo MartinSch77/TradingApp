@@ -3,8 +3,10 @@
 # runs only when the COVERITY_SCAN_TOKEN and COVERITY_SCAN_EMAIL repository
 # secrets are configured; without them the workflow succeeds as a no-op.
 #
-# The project is registered as "tradingapp":
-#   https://scan.coverity.com/projects/tradingapp/builds
+# The project is registered as "TradingApp" (exactly this spelling — the Scan
+# download and upload APIs match the project name case-sensitively, and a
+# mismatch answers with a 0-byte body rather than an error):
+#   https://scan.coverity.com/projects/TradingApp/builds
 # This cloud run is the ONLY Coverity integration here — no local cov-analyze, no
 # Coverity Connect server.
 #
@@ -59,7 +61,7 @@ jobs:
     env:
       COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
       COVERITY_SCAN_EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
-      COVERITY_SCAN_PROJECT: ${{ vars.COVERITY_SCAN_PROJECT || 'tradingapp' }}
+      COVERITY_SCAN_PROJECT: ${{ vars.COVERITY_SCAN_PROJECT || 'TradingApp' }}
     steps:
       - name: Check credentials
         id: token
@@ -142,15 +144,15 @@ jobs:
         if: steps.token.outputs.present == 'true'
         run: |
           set -euo pipefail
-          tar czf tradingapp-cov-int.tgz cov-int
-          ls -lh tradingapp-cov-int.tgz
-          # "tradingapp" needs no encoding; a renamed "owner/repo" style project
+          tar czf TradingApp-cov-int.tgz cov-int
+          ls -lh TradingApp-cov-int.tgz
+          # "TradingApp" needs no encoding; a renamed "owner/repo" style project
           # would, and curl does not encode query strings for us.
           project_enc="${COVERITY_SCAN_PROJECT//\//%2F}"
           code=$(curl -sS --output response.txt --write-out '%{http_code}' \
             --form "token=$COVERITY_SCAN_TOKEN" \
             --form "email=$COVERITY_SCAN_EMAIL" \
-            --form "file=@tradingapp-cov-int.tgz" \
+            --form "file=@TradingApp-cov-int.tgz" \
             --form "version=${GITHUB_SHA::12}" \
             --form "description=GitHub Actions ${GITHUB_REF_NAME} run ${GITHUB_RUN_ID}" \
             "https://scan.coverity.com/builds?project=$project_enc")

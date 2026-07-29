@@ -2,7 +2,7 @@
 """Coverity defects -> analysis-results/coverity.txt for the Axivion import.
 
 Coverity runs here as the cloud service only -- scan.coverity.com project
-"tradingapp", submitted by .github/workflows/coverity.yml -- and it analyses
+"TradingApp", submitted by .github/workflows/coverity.yml -- and it analyses
 server-side, so its defects do not fall out of a local build the way cppcheck's
 or clazy's do. This tool is the bridge onto the one dashboard this project
 insists on: it normalizes the exported defect list into the pipe format

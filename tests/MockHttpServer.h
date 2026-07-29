@@ -39,6 +39,21 @@ public:
         }));
     }
 
+    // Hold every response whose path contains `pathFragment` until `until`
+    // returns true, instead of for a wall-clock duration. An ordering test then
+    // states the ORDER it needs ("answer the rates request only once both
+    // searches were answered") rather than guessing a delay long enough for it —
+    // guessing is what makes such a test pass on a developer machine and fail on
+    // a loaded CI runner. Polled every 10 ms, given up on after 10 s, and the
+    // response is sent anyway then, so a mistaken predicate surfaces as a test
+    // failure rather than a hang. Deliberately NOT a Response field: that struct
+    // is aggregate-initialised at a dozen call sites, and -Wextra rejects every
+    // one of them the moment it grows a member.
+    void holdUntil(const QString &pathFragment, std::function<bool()> until)
+    {
+        m_holds.append({pathFragment, std::move(until)});
+    }
+
     // Base URL of the server, e.g. "http://127.0.0.1:54321".
     // Defined out-of-line (MockHttpServer.cpp) so exactly one TU per test
     // binary instruments it for coverage — duplicate comdat coverage records
@@ -47,6 +62,11 @@ public:
 
 private:
     void serve(QTcpSocket *sock);
+    struct Hold {
+        QString pathFragment;
+        std::function<bool()> until;
+    };
+    QList<Hold> m_holds;
 
     Handler m_handler;
     QHash<QTcpSocket *, QByteArray> m_buffer;

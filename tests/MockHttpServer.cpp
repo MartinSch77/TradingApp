@@ -45,9 +45,35 @@ void MockHttpServer::serve(QTcpSocket *sock)
     out += "Content-Length: " + QByteArray::number(r.body.size()) + "\r\n";
     out += "Connection: close\r\n\r\n";
     out += r.body;
+    // sock as timer context throughout: if the client gave up and the socket
+    // died, a pending send is dropped with it instead of writing to a dangling
+    // pointer.
+    std::function<bool()> gate;
+    for (const Hold &h : m_holds) {
+        if (path.contains(h.pathFragment)) {
+            gate = h.until;
+            break;
+        }
+    }
+    if (gate) {
+        // Poll, never block: this server runs inside the test's own event loop,
+        // so blocking here would stop the very requests the predicate waits for.
+        const auto sendWhenReady = [sock, out](auto &&self, std::function<bool()> ready,
+                                               qint32 waitedMs) -> void {
+            constexpr qint32 kPollMs = 10;
+            constexpr qint32 kGiveUpMs = 10000;
+            if (!ready() && (waitedMs < kGiveUpMs)) {
+                QTimer::singleShot(kPollMs, sock,
+                                   [self, ready, waitedMs] { self(self, ready, waitedMs + kPollMs); });
+                return;
+            }
+            static_cast<void>(sock->write(out));
+            sock->disconnectFromHost();
+        };
+        sendWhenReady(sendWhenReady, gate, 0);
+        return;
+    }
     if (r.delayMs > 0) {
-        // sock as timer context: if the client gave up and the socket died, the
-        // delayed send is dropped with it instead of writing to a dangling pointer.
         QTimer::singleShot(r.delayMs, sock, [sock, out] {
             static_cast<void>(sock->write(out));
             sock->disconnectFromHost();

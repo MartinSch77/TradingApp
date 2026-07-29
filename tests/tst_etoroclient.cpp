@@ -7,6 +7,7 @@
 #include "services/Config.h"
 #include "services/EtoroClient.h"
 
+#include <QSharedPointer>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -244,9 +245,20 @@ private slots:
         // fast history walk froze "#<id>" onto every instrument whose resolution
         // hadn't landed yet, and the per-instrument summary showed only the
         // force-mapped current instrument. Naming now happens when the walk
-        // completes. Here the searches answer after 200 ms while the history
-        // pages answer instantly: parse-time naming would see an empty map.
-        MockHttpServer server([](const QByteArray &, const QString &path) {
+        // completes.
+        //
+        // The ordering that reproduces it: the history pages are parsed BEFORE the
+        // searches answer (so parse-time naming would see an empty map), and the
+        // walk finishes AFTER they do. That order is stated, not timed: the
+        // searches are held until the first history page has been served, and the
+        // rates request — the walk's last step — is held until both searches have
+        // been answered. Timing it instead (searches at 200 ms, rates at 1000 ms)
+        // passed locally for months and then failed on a loaded Windows runner,
+        // where the 600 ms margin was not enough.
+        auto pagesServed = QSharedPointer<qint32>::create(0);
+        auto searchesAnswered = QSharedPointer<qint32>::create(0);
+        MockHttpServer server([pagesServed, searchesAnswered](const QByteArray &,
+                                                             const QString &path) {
             if (path.contains(QStringLiteral("/market-data/search"))) {
                 const QUrlQuery q(QUrl(path).query());
                 const QString sym = q.queryItemValue(QStringLiteral("internalSymbolFull"));
@@ -257,23 +269,36 @@ private slots:
                 } else if (sym == QLatin1String("HKG50")) {
                     body = R"({"items":[{"instrumentId":38,"internalSymbolFull":"HKG50"}]})";
                 }
-                return MockHttpServer::Response{200, body, {}, /*delayMs=*/200};
+                return MockHttpServer::Response{200, body, {}};
             }
             if (path.contains(QStringLiteral("/trading/info/trade/history"))) {
                 const QUrlQuery q(QUrl(path).query());
                 const qint32 page = q.queryItemValue(QStringLiteral("page")).toInt();
+                ++(*pagesServed);
                 return MockHttpServer::Response{200, historyPage(page), {}};
             }
             if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
-                // Slow enough that the searches land during the round-trip.
                 return MockHttpServer::Response{
                     200,
                     R"({"rates":[{"instrumentId":27,"bid":100.0,"ask":101.0},
                                  {"instrumentId":38,"bid":200.0,"ask":201.0}]})",
-                    {}, /*delayMs=*/1000};
+                    {}};
             }
             return MockHttpServer::Response{404, "{}", {}};
         });
+        // The two ordering rules that reproduce the regression, stated rather than
+        // timed: a search answers only once a history page has been served, and
+        // the rates request — the walk's last step — only once both searches have.
+        server.holdUntil(QStringLiteral("/market-data/search"),
+                         [pagesServed, searchesAnswered] {
+                             if (*pagesServed == 0) {
+                                 return false;  // let the history be parsed first
+                             }
+                             ++(*searchesAnswered);
+                             return true;
+                         });
+        server.holdUntil(QStringLiteral("/market-data/instruments/rates"),
+                         [searchesAnswered] { return *searchesAnswered >= 2; });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
         const Config cfg = mockConfig(server);

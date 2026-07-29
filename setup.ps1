@@ -227,6 +227,18 @@ function Show-Status {
     $ax = Get-AxivionSuite
     if ($ax) { Report 'axivion' 'ok' "$($ax.Root) ($($ax.Version))" }
     else { Report 'axivion' 'manual' 'install the Axivion Suite (license required)' }
+    # The Axivion MCP servers in .mcp.json take their paths from the environment
+    # (tools\mcp_env.ps1 resolves them; exit 3 = no Suite installed).
+    # Checks the User environment scope (the durable store), not this process: a
+    # shell started before -Persist ran would otherwise report it as incomplete.
+    & (Join-Path $Root 'tools\mcp_env.ps1') *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $mcpPython = [Environment]::GetEnvironmentVariable('AXIVION_MCP_PYTHON', 'User')
+        if ($mcpPython) { Report 'ax MCP' 'ok' $mcpPython }
+        else { Report 'ax MCP' 'manual' 'run .\tools\mcp_env.ps1 -Persist, then restart the shell/IDE' }
+    } else {
+        Report 'ax MCP' 'n/a' 'no Axivion Suite — the .mcp.json servers stay unavailable'
+    }
     $coco = Find-Coco
     if ($coco) {
         $lic = Join-Path $coco 'cocolic.exe'
@@ -368,6 +380,15 @@ function Add-ToUserPath {
     if (($env:PATH -split ';') -notcontains $Dir) { $env:PATH = "$Dir;$env:PATH" }
 }
 
+# The Axivion MCP servers configured in .mcp.json resolve their paths from the
+# environment, because the JSON must stay free of machine-specific paths and
+# Claude Code's ${VAR} interpolation cannot branch on the platform. Exit 3 =
+# no (license-bound) Suite installed, which is not an error here.
+function Install-AxivionMcpEnv {
+    Write-Stage 'Axivion MCP environment (.mcp.json)'
+    & (Join-Path $Root 'tools\mcp_env.ps1') -Persist
+}
+
 # ---------------------------------------------------------------------------
 
 switch ($Mode) {
@@ -379,6 +400,7 @@ switch ($Mode) {
         Install-PlantUml
         Install-Pmd
         Add-ToolDirsToUserPath
+        Install-AxivionMcpEnv
         Write-Host ""
         Show-Status
         Write-Host ""

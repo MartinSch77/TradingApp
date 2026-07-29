@@ -73,6 +73,55 @@ Provisioned by `.\setup.ps1`; see @ref windows for how each one is wired in.
 | Axivion Suite | Axivion GmbH / Qt Group | 7.12.x (`C:\Program Files\Bauhaus`) | Same role; uses the built-in `Project/MicrosoftToolchain` profile via `axivion/compiler_config_msvc.json` |
 | winget | Microsoft | shipped with Windows 11 | Package manager `.\setup.ps1` provisions through |
 
+## Axivion MCP servers (Claude Code)
+
+`.mcp.json` wires the two MCP servers that ship with the Axivion Suite —
+`axdocumentation` (rule documentation) and `axdashboard` (findings, versions,
+dashboard queries; what the `/axivion-dashboard` and `/ax-fixcode` skills drive).
+Both are license-bound, so they are configured but not installable by setup.
+
+The JSON must stay free of machine-specific absolute paths, and Claude Code's
+`${VAR}` interpolation cannot branch on the platform, so the platform difference
+lives in one script pair instead:
+
+| | Linux | Windows |
+|---|---|---|
+| resolver | `tools/mcp_env.sh --persist` | `.\tools\mcp_env.ps1 -Persist` |
+| written to | a guarded block in `~/.profile` | the **User** environment scope |
+| Suite root | `~/bauhaus-suite` (same search as `axivion/start_analysis.sh`) | newest install found by `Get-AxivionSuite` |
+| MCP venv | `mcps/axivion-mcps/.venv/bin/python` | `mcps\axivion-mcps\.venv\Scripts\python.exe` |
+
+`setup.sh install` / `.\setup.ps1 install` run the resolver, and the `status`
+report carries an `ax MCP` line. Exit 3 = no Suite installed, which is not an
+error. The three variables it exports:
+
+| Variable | Consumed by |
+|---|---|
+| `AXIVION_SUITE_DIR` | `bin/rfgscript` + the two server scripts; passed on as `BAUHAUS_INSTDIR` |
+| `AXIVION_MCP_PYTHON` | the `axdocumentation` command, and `BAUHAUS_PYTHON` for `axdashboard` |
+| `AXIVION_DATABASES_DIR` | `axdashboard` database mode |
+
+Three things about this configuration are load-bearing:
+
+- **`${VAR}`, never `$(VAR)`.** `$(VAR)` is Axivion's *own* config syntax
+  (`axivion/ci_config.json` uses it, with defaults: `$(AXIVION_DASHBOARD_URL=…)`)
+  and Claude Code does not recognise it — it passes the literal string through
+  **without a warning**, and the server dies with a bare "cannot find the path
+  specified" from the shell. `${VAR}` and `${VAR:-default}` are the supported
+  forms; a missing `${VAR}` is reported as `Missing environment variables`.
+- **`BAUHAUS_PYTHON` for `axdashboard`.** That server is started by
+  `bin/rfgscript`, whose interpreter has the `axivion`/`bauhaus` modules but not
+  the MCP venv's `mcp` package. `rfgscript` honours `BAUHAUS_PYTHON` and picks up
+  the venv's site-packages, which is what makes both import sets available in one
+  process. `axdocumentation` needs no such trick — it runs on the venv
+  interpreter directly.
+- **`MCP_TIMEOUT` in `.claude/settings.json`.** Cold start measured on the
+  Windows reference machine: 53 s for `axdocumentation` (it parses the rule
+  documentation) and 37 s for `axdashboard` (it processes the `axivion/` config
+  layers and starts a local dashboard). Warm: 30 s / 9 s. Claude Code's default
+  handshake timeout is 30 s, so both servers fail — with a *timeout*, which looks
+  nothing like a configuration error. The project settings raise it to 180 s.
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |

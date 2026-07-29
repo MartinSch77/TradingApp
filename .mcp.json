@@ -2,26 +2,25 @@
   "mcpServers": {
     "axdocumentation": {
       "type": "stdio",
-      "command": "$(BAUHAUSINSTALLATIONDIR)/mcps/axivion-mcps/.venv/bin/python",
+      "command": "${AXIVION_MCP_PYTHON}",
       "args": [
-        "$(BAUHAUSINSTALLATIONDIR)/mcps/axivion-mcps/ax_documentation/ax_documentation.py"
+        "${AXIVION_SUITE_DIR}/mcps/axivion-mcps/ax_documentation/ax_documentation.py"
       ],
       "env": {
-        "BAUHAUS_INSTDIR": "$(BAUHAUSINSTALLATIONDIR)",
-        "BAUHAUS_PYTHON": "$(BAUHAUSINSTALLATIONDIR)/mcps/axivion-mcps/.venv/bin/python"
+        "BAUHAUS_INSTDIR": "${AXIVION_SUITE_DIR}"
       }
     },
     "axdashboard": {
       "type": "stdio",
-      "command": "$(BAUHAUSINSTALLATIONDIR)/bin/rfgscript",
+      "command": "${AXIVION_SUITE_DIR}/bin/rfgscript",
       "args": [
-        "$(BAUHAUSINSTALLATIONDIR)/mcps/axivion-mcps/ax_dashboard/ax_dashboard.py"
+        "${AXIVION_SUITE_DIR}/mcps/axivion-mcps/ax_dashboard/ax_dashboard.py"
       ],
       "env": {
-        "BAUHAUS_INSTDIR": "$(BAUHAUSINSTALLATIONDIR)",
-        "BAUHAUS_PYTHON": "$(BAUHAUSINSTALLATIONDIR)/mcps/axivion-mcps/.venv/bin/python",
+        "BAUHAUS_INSTDIR": "${AXIVION_SUITE_DIR}",
+        "BAUHAUS_PYTHON": "${AXIVION_MCP_PYTHON}",
         "BAUHAUS_CONFIG": "./axivion",
-        "AXIVION_DATABASES_DIR": "$(AXIVIONDATABASESDIR)"
+        "AXIVION_DATABASES_DIR": "${AXIVION_DATABASES_DIR}"
       }
     }
   }

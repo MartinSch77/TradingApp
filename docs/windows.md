@@ -459,6 +459,30 @@ Layer order matters: `_Layers` is evaluated **bottom to top**, so a layer listed
   a project problem — the same sources compile warning-free with MSVC and analyze
   fine on Linux.
 
+### MCP servers
+
+The Suite's `axdocumentation` / `axdashboard` MCP servers are wired in
+`.mcp.json`, which is byte-identical on both platforms — see @ref tools for the
+full contract. What differs on Windows:
+
+* The MCP venv is `mcps\axivion-mcps\.venv\Scripts\python.exe`; `bin/python` is
+  the Linux layout and does not exist here (not even as `bin\python.exe`).
+* `.\tools\mcp_env.ps1 -Persist` writes the three variables to the **User**
+  environment scope. Already-running processes keep the environment they were
+  started with, so **VS Code / the shell has to be restarted** before Claude Code
+  inherits them — the script says so, and `.\setup.ps1 status` reports the
+  durable value, not this process's.
+* The Axivion Dashboard installer already sets `AXIVIONDATABASESDIR` (no
+  underscores). `mcp_env.ps1` honours it before falling back to
+  `C:/AxivionDashboard/config`.
+* Resolved paths are emitted with forward slashes: the values land in
+  JSON-interpolated command lines, where a backslash is an escape character.
+  Windows accepts either separator.
+
+Verify with `claude mcp list` from the project root — both servers must say
+`✔ Connected`. `Failed to connect` after a 30 s wait is the handshake timeout,
+not a path problem; see the `MCP_TIMEOUT` note in @ref tools.
+
 ### Shared import layer
 
 `axivion/external_import.py` is shared and platform-aware: it uses `cat` on Linux

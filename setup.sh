@@ -126,6 +126,19 @@ status() {
     else
         report "axivion" "manual" "license required; 'axivion' stage reports skipped"
     fi
+    # The Axivion MCP servers in .mcp.json take their paths from the environment
+    # (tools/mcp_env.sh resolves them; exit 3 = no Suite installed).
+    # Checks the durable store (~/.profile), not this process: a shell started
+    # before --persist ran would otherwise report the setup as incomplete.
+    if "$ROOT/tools/mcp_env.sh" >/dev/null 2>&1; then
+        if grep -qF 'TradingApp Axivion MCP env' "$HOME/.profile" 2>/dev/null; then
+            report "ax MCP" "ok" "servers configured; see tools/mcp_env.sh"
+        else
+            report "ax MCP" "manual" "run tools/mcp_env.sh --persist, then a new login shell"
+        fi
+    else
+        report "ax MCP" "n/a" "no Axivion Suite — the .mcp.json servers stay unavailable"
+    fi
     [ -x /opt/SquishCoco/bin/coveragescanner ] &&
         report "coco" "ok" "/opt/SquishCoco ($(/opt/SquishCoco/bin/cocolic --check 2>&1 | head -1))" ||
         report "coco" "manual" "license required; 'coverage.sh coco' reports skipped"
@@ -199,6 +212,15 @@ linuxdeploy_install() {
     "$ROOT/tools/fetch_linuxdeploy.sh"
 }
 
+# The Axivion MCP servers configured in .mcp.json resolve their paths from the
+# environment, because the JSON must stay free of machine-specific paths and
+# Claude Code's ${VAR} interpolation cannot branch on the platform. Exit 3 =
+# no (license-bound) Suite installed, which is not an error here.
+mcp_env_install() {
+    echo "== Axivion MCP environment (.mcp.json) =="
+    "$ROOT/tools/mcp_env.sh" --persist || true
+}
+
 case "$MODE" in
 install)
     apt_install
@@ -208,6 +230,7 @@ install)
     plantuml_install
     pmd_install
     linuxdeploy_install
+    mcp_env_install
     echo
     status
     echo

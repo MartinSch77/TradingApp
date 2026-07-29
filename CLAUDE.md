@@ -20,6 +20,7 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/profile.sh               # perf/gperftools over build-release/
+tools/mcp_env.sh --persist     # env the .mcp.json Axivion MCP servers need
 tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage
 tools/package_portable.ps1     # downloads/TradingApp-<ver>-windows-x64.zip
 ```
@@ -86,6 +87,14 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - No machine-specific absolute paths in committed scripts or Axivion configs.
   The Qt dir for the Frameworks-QtSupport rule comes from `$(AXIVION_QTDIR=)`,
   exported by both start_analysis scripts.
+- `.mcp.json` expands `${VAR}` / `${VAR:-default}` — NOT `$(VAR)`. `$(VAR)` is
+  Axivion's own config syntax; Claude Code passes it through literally with no
+  warning and the server dies with a bare "cannot find the path specified".
+  Its three variables come from `tools/mcp_env.{sh,ps1}` (the venv interpreter
+  is `bin/python` vs `Scripts\python.exe`, and JSON interpolation cannot branch
+  on the platform), so the JSON stays byte-identical on both. Details:
+  docs/tools.md. `MCP_TIMEOUT` in `.claude/settings.json` is load-bearing: both
+  servers need 37-53 s to start cold, well past the 30 s default.
 - Check `.clang-tidy` header comments before disabling checks; disable only
   with a written rationale.
 

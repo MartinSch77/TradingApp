@@ -26,18 +26,17 @@
 # analysis-results/coverity.txt for the import layer in
 # axivion/external_import.py (provider "coverity").
 #
-# Quota: the free tier caps submissions per week by project size (this size gets
-# a handful per day). Hence no pull_request trigger and no docs-only runs — a
-# burnt quota means the next real push is rejected.
+# Quota AND queue: the free tier caps submissions per week by project size, and
+# accepted builds then wait in a shared analysis queue that is regularly one to
+# two hundred builds deep (observed 2026-07-29: "188 builds ahead of it"). A
+# submission per push therefore buys nothing — each one only displaces the
+# previous one in the same queue while spending quota that the next real
+# submission needs. So: the weekly cron is the normal path, and
+# workflow_dispatch is there for "analyse this state now"; there is deliberately
+# no push and no pull_request trigger.
 name: Coverity Scan
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "requirements/**"
   schedule:
     - cron: "41 4 * * 2" # weekly Tuesday, clear of CodeQL's Monday slot
   workflow_dispatch:

@@ -409,13 +409,6 @@ quality-toolchain tags are what make this repository findable, since a
 "Qt trading app" is common and a "Qt trading app with MISRA C++, MC/DC coverage
 and requirements-as-code traceability" is not.
 
-## Coverity Scan Build Status
-
-<a href="https://scan.coverity.com/projects/TradingApp">
-  <img alt="Coverity Scan Build Status"
-       src="https://scan.coverity.com/projects/33200/badge.svg"/>
-</a>
-
 ## Disclaimer
 
 Trading involves risk of financial loss. This is example software provided as-is,

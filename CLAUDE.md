@@ -73,6 +73,9 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no
   clean/build while it runs. External findings import: `axivion/external_import.py`
   (Python layer — matchlist is not expressible in the JSON configs).
+- Coverity Scan runs on its weekly cron or `gh workflow run coverity.yml` only.
+  Do NOT add a push trigger: the free tier's weekly submission cap plus a
+  shared analysis queue (~188 builds deep) make per-push builds pure waste.
 - Stage exit code 3 = "skipped" (both build_all runners report it and stay
   green; any other non-zero code is a real failure). Exit 3 exists in
   `axivion/start_analysis.{sh,ps1}`, `tools/coverage.{sh,ps1}` (Coco /

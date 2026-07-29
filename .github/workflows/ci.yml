@@ -232,7 +232,7 @@ jobs:
           format: spdx-json
           artifact-name: sbom.spdx.json
       - name: Vulnerability scan (grype over the repo)
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@v7
         with:
           path: .
           fail-build: true

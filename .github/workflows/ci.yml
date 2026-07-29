@@ -57,7 +57,7 @@ jobs:
 
       - name: Upload test results + traceability
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: |
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload sanitizer logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sanitizer-logs
           path: analysis-results/sanitize-*
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload analysis results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: analysis-results
           path: analysis-results/
@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload Windows results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-results
           path: |

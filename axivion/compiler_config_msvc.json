@@ -7,8 +7,17 @@
             "_active": true,
             "language_cxx": {
                 "native_compiler": "cl"
-            }
+            },
+            "preincludes": [
+                "preinclude.h"
+            ]
         }
     },
-    "_Format": "1.0"
+    "_Format": "1.0",
+    "_VersionNum": [
+        7,
+        12,
+        3,
+        20347
+    ]
 }

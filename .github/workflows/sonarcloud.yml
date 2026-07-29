@@ -49,8 +49,19 @@ jobs:
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           cmake --build build -j"$(nproc)"
 
+      # The cloud project key and organization are passed here, NOT in
+      # sonar-project.properties: that file is shared with the self-hosted
+      # SonarQube run (tools/sonar_scan.sh), where the key is plain "TradingApp"
+      # and sonar.organization has no meaning. On SonarCloud the project already
+      # exists as MartinSch77_TradingApp in organization martinsch77 (created by
+      # the automatic analysis of this repository) — scanning without these two
+      # would file the results under a second, empty project.
       - name: SonarQube scan
         if: steps.token.outputs.present == 'true'
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=MartinSch77_TradingApp
+            -Dsonar.organization=martinsch77

@@ -4,14 +4,26 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
+[![sonarcloud](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+<a href="https://scan.coverity.com/projects/TradingApp">
+  <img alt="Coverity Scan Build Status"
+       src="https://scan.coverity.com/projects/33200/badge.svg"/>
+</a>
+
+
 
 **build** = the full CI matrix (Linux, Windows, macOS builds + traceability +
 sanitizers + static analysis). **tests** = the Qt Test suite on its own
 ([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
 number (line coverage of the domain + services layers, published as a badge
 endpoint on the `badges` branch — no third-party coverage service involved).
-**latest release** links the downloads below.
+**sonarcloud** is the SonarCloud quality gate for project
+`MartinSch77_TradingApp` — note that it comes from SonarCloud's *automatic
+analysis* of this public repository, not from
+[sonarcloud.yml](.github/workflows/sonarcloud.yml), which stays a no-op until the
+`SONAR_TOKEN` secret exists. **latest release** links the downloads below.
 
 A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,
 GER40, …), forex, commodities and eToro's thematic baskets — through the

@@ -84,6 +84,7 @@ event loop / local mock HTTP server).
 | TS-POS-001 | U | `priceDecimals` gives more decimals for low-priced instruments than for indices. |
 | TS-POS-002 | U | `accountValuePerPoint` uses amount×leverage/openRate (FX-free) and falls back to units when the notional is unknown. |
 | TS-POS-003 | U | `slTpAmountText` converts a rate distance to the account/display amount and is empty when the leg is off; `slSignedAmountText` is negative for a losing stop and positive for a stop on the winning side. |
+| TS-POS-004 | U | `closedSincePreviousIds` reports the position ids that vanished between two portfolio snapshots — in shown order, several at once, none on the first snapshot (no previous set) and never an empty id. This is what triggers the immediate closed-trades refresh (REQ-F-025). |
 
 ## Positions model (tests/tst_positionsmodel.cpp, DES-UI-POSMODEL, REQ-F-012/REQ-N-006) — headless ui-model unit tests
 

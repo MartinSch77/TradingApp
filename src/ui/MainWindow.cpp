@@ -1727,6 +1727,8 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
         sorted.cbegin(), sorted.cend(), 0.0,
         [](double acc, const Position &p) { return acc + p.amount; });
 
+    refreshClosedTradesForVanished(sorted);
+
     // Row-indexed snapshot so the SL/TP editors and the click handler can map a
     // row back to its trade. MUST stay in the same order the model is filled with
     // below, or a click lands on a different trade than the one shown.
@@ -2579,6 +2581,28 @@ void MainWindow::onPositionClosed(bool ok, const QString &message)
     }
     // (Re)arm the delayed closed-trade P/L refresh so the just-closed trade shows up
     // in the summary; restarting collapses a burst of closes into a single fetch.
+    m_pnlAfterCloseTimer->start();
+}
+
+void MainWindow::refreshClosedTradesForVanished(const QList<Position> &current)
+{
+    const QStringList justClosed = trading::closedSincePreviousIds(m_shownPositions, current);
+    if (justClosed.isEmpty()) {
+        return;
+    }
+    appendLog(QStringLiteral("Open trade%1 %2 no longer open — refreshing closed trades.")
+                  .arg(justClosed.size() > 1 ? QStringLiteral("s") : QString(),
+                       justClosed.join(QStringLiteral(", "))));
+    // Immediately, then again on the delayed timer: the broker's trade history
+    // lags its portfolio by seconds, so the first walk can still miss the trade.
+    // The throttle protects the history endpoint's small rate pool when several
+    // trades close at once (or a close is followed by another poll).
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    constexpr qint64 kMinFetchGapMs = 5000;
+    if ((nowMs - m_lastClosedFetchMs) >= kMinFetchGapMs) {
+        m_lastClosedFetchMs = nowMs;
+        m_client->fetchClosedTrades(closedLookbackWeeks());
+    }
     m_pnlAfterCloseTimer->start();
 }
 

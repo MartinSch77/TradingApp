@@ -20,6 +20,8 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/profile.sh               # perf/gperftools over build-release/
+tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage
+tools/package_portable.ps1     # downloads/TradingApp-<ver>-windows-x64.zip
 ```
 
 Windows has a PowerShell counterpart for EVERY one of those (`setup.ps1`,
@@ -55,6 +57,12 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   worsened number, or a stale entry all fail the stage. Regenerate deliberately.
 - PMD CPD (≥ 100 tokens) is the only clone gate — the Axivion configuration here
   is MISRA-only. Fix clones by extracting a helper; do not baseline them.
+- Downloadable builds: `tools/package_appimage.sh` (linuxdeploy; needs
+  `-DTRADINGAPP_SKIP_QT_DEPLOY=ON`, since Qt's own Linux deploy step aborts on
+  RUNPATH length inside an AppDir) and `tools/package_portable.ps1` (windeployqt
+  via the CMake install rules). Both write to git-ignored `downloads/`;
+  `.github/workflows/release.yml` runs THESE scripts on a `v*` tag — never
+  reimplement the packaging in YAML.
 - Header-inline functions that grow logic: define out-of-line in one TU
   (comdat coverage records otherwise break llvm-cov).
 - Layering is linker-enforced: domain (Qt Core only) ← services ← ui.

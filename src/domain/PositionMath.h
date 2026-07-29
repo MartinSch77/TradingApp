@@ -4,6 +4,7 @@
 #include "domain/Models.h"
 
 #include <QString>
+#include <QStringList>
 
 // Money/rate arithmetic for positions and prices. Pure functions shared by the
 // trade panel, the open-trades table and the SL/TP editors.
@@ -34,6 +35,14 @@ QString slTpAmountText(const Position &p, double rate, double eurPerUsd);
 // positive when it closes locked in a profit (stop on the winning side). The sign
 // lets the user place the stop on either side. Empty when the leg is off.
 QString slSignedAmountText(const Position &p, double eurPerUsd);
+
+// The position ids present in `previous` but gone from `current`: the trades that
+// closed between two portfolio snapshots, whoever closed them (this app, eToro's
+// own UI, an SL/TP hit, or a liquidation). Order follows `previous`, so the log
+// reads in the order the rows were shown. Empty on the first snapshot — with no
+// previous set there is nothing to have disappeared.
+QStringList closedSincePreviousIds(const QList<Position> &previous,
+                                   const QList<Position> &current);
 
 } // namespace trading
 

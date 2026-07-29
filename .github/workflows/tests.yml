@@ -1,0 +1,125 @@
+# The Qt Test suite and its line/branch coverage — the two signals the README's
+# "tests" and "coverage" badges show.
+#
+# Why a workflow of its own, when ci.yml also runs the suite: a GitHub badge
+# reports a WORKFLOW, not a job, so "tests passing" needs the test run to be its
+# own workflow to mean what it says. Coverage rides along because the gcov build
+# has to run the same tests anyway — one build, two honest signals.
+#
+# The coverage number is published as a shields.io endpoint JSON on the orphan
+# `badges` branch: no third-party coverage service, no token beyond the default
+# GITHUB_TOKEN, and the README stays a static file.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # only to update the badges branch
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.11.1"
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install build + coverage tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build lcov
+          python3 -m pip install --upgrade cmake gcovr
+
+      # tools/coverage.sh gcov does exactly this locally: a --coverage build,
+      # the full suite, then lcov/genhtml. Here the build and run are explicit so
+      # the test result and the coverage number come from one pass.
+      - name: Configure + build (coverage instrumentation)
+        env:
+          QT_PREFIX: ${{ env.QT_ROOT_DIR }}
+        run: |
+          cmake -S . -B build-cov -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DCMAKE_CXX_FLAGS="--coverage" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+          cmake --build build-cov -j"$(nproc)"
+
+      - name: Qt Test suite (JUnit output)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./tools/run_tests.sh build-cov
+
+      # Coverage of the layers the suite actually targets — domain + services.
+      # The ui layer is only reachable through the widgets and would dilute the
+      # number into meaninglessness (see docs/verification.md).
+      - name: Coverage (gcovr)
+        id: cov
+        run: |
+          set -euo pipefail
+          mkdir -p coverage-html
+          gcovr --root . --filter 'src/domain/' --filter 'src/services/' \
+            --exclude-unreachable-branches --print-summary \
+            --json-summary coverage-summary.json \
+            --html-details coverage-html/index.html build-cov | tee gcovr.log
+          pct="$(python3 -c "import json; d=json.load(open('coverage-summary.json')); print(f\"{d['line_percent']:.1f}\")")"
+          echo "percent=$pct" >> "$GITHUB_OUTPUT"
+          echo "line coverage: $pct%"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-and-test-results
+          path: |
+            test-results/
+            coverage-html/
+            coverage-summary.json
+
+      # shields.io endpoint format. Only on main: a PR must not move the badge.
+      - name: Publish the coverage badge
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PCT: ${{ steps.cov.outputs.percent }}
+        run: |
+          set -euo pipefail
+          colour=red
+          awk "BEGIN { exit !($PCT >= 50) }" && colour=orange
+          awk "BEGIN { exit !($PCT >= 65) }" && colour=yellow
+          awk "BEGIN { exit !($PCT >= 80) }" && colour=green
+          awk "BEGIN { exit !($PCT >= 90) }" && colour=brightgreen
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
+            "$PCT" "$colour" > "$RUNNER_TEMP/coverage.json"
+
+          # Built in a throwaway repository, not in this checkout: the badge data
+          # has no business in main's history, and rewriting the working tree to
+          # push an orphan branch is how a workflow deletes its own sources.
+          # Force-pushed, so the branch never accumulates history.
+          cd "$RUNNER_TEMP"
+          rm -rf badges && mkdir badges && cd badges
+          cp "$RUNNER_TEMP/coverage.json" .
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.json
+          git commit -q -m "coverage: $PCT% (${GITHUB_SHA::7})"
+          git push -q --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges:badges
+          echo "badge published: $PCT% ($colour)"

@@ -1,6 +1,7 @@
 #include "domain/PositionMath.h"
 
 #include <QLocale>
+#include <QSet>
 
 #include <cmath>
 
@@ -52,6 +53,26 @@ QString slSignedAmountText(const Position &p, double eurPerUsd)
                        * ((eurPerUsd > 0.0) ? eurPerUsd : 1.0);
     return ((pnl < 0.0) ? QStringLiteral("-") : QStringLiteral("+"))
            + QLocale().toString(std::abs(pnl), 'f', 2);
+}
+
+QStringList closedSincePreviousIds(const QList<Position> &previous,
+                                   const QList<Position> &current)
+{
+    if (previous.isEmpty()) {
+        return {};  // first snapshot: nothing can have disappeared yet
+    }
+    QSet<QString> open;
+    open.reserve(current.size());
+    for (const Position &p : current) {
+        static_cast<void>(open.insert(p.positionId));
+    }
+    QStringList gone;
+    for (const Position &p : previous) {
+        if (!p.positionId.isEmpty() && !open.contains(p.positionId)) {
+            gone.append(p.positionId);
+        }
+    }
+    return gone;
 }
 
 } // namespace trading

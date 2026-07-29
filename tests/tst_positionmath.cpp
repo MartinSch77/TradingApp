@@ -74,6 +74,45 @@ private slots:
         sl.isBuy = false;
         QVERIFY(slSignedAmountText(sl, 0.0).startsWith(QLatin1Char('-')));
     }
+
+    //! @tstid TS-POS-004 @design DES-DOM-POS
+    // @relation(REQ-F-025, scope=function)
+    void TS_POS_004_closedSincePreviousIds()
+    {
+        const auto pos = [](const QString &id) {
+            Position p;
+            p.positionId = id;
+            return p;
+        };
+        const QList<Position> before{pos(QStringLiteral("1")), pos(QStringLiteral("2")),
+                                    pos(QStringLiteral("3"))};
+
+        // Nothing closed: same set, order irrelevant.
+        QVERIFY(closedSincePreviousIds(before, {pos(QStringLiteral("3")),
+                                                pos(QStringLiteral("2")),
+                                                pos(QStringLiteral("1"))})
+                    .isEmpty());
+
+        // One gone, reported by id; a newly opened trade does not confuse it.
+        QCOMPARE(closedSincePreviousIds(before, {pos(QStringLiteral("1")),
+                                                pos(QStringLiteral("3")),
+                                                pos(QStringLiteral("4"))}),
+                 QStringList{QStringLiteral("2")});
+
+        // Several gone at once, in the order they were shown.
+        QCOMPARE(closedSincePreviousIds(before, {pos(QStringLiteral("2"))}),
+                 QStringList({QStringLiteral("1"), QStringLiteral("3")}));
+
+        // The whole portfolio closed.
+        QCOMPARE(closedSincePreviousIds(before, {}).size(), 3);
+
+        // First snapshot: no previous set, so nothing can have disappeared —
+        // otherwise every app start would fire a closed-trades refresh.
+        QVERIFY(closedSincePreviousIds({}, before).isEmpty());
+
+        // An empty id is not a trade and must never be reported as closed.
+        QVERIFY(closedSincePreviousIds({pos(QString())}, {}).isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPositionMath)

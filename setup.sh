@@ -33,7 +33,7 @@ set -uo pipefail
 
 MODE="${1:-install}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-QT_VERSION="${QT_VERSION:-6.10.2}"
+QT_VERSION="${QT_VERSION:-6.11.1}"
 QT_DIR="$HOME/Qt"
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -113,6 +113,9 @@ status() {
     [ -x "$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)" ] &&
         report "pmd" "ok" "$(version_of pmd)" ||
         report "pmd" "missing" "copy-paste detection skips; ./setup.sh install fetches it"
+    [ -x "$ROOT/tools/third-party/linuxdeploy-x86_64.AppImage" ] &&
+        report "linuxdeploy" "ok" "tools/third-party" ||
+        report "linuxdeploy" "missing" "AppImage packaging; ./setup.sh install fetches it"
     echo "== no Linux counterpart =="
     report "OpenCppCov" "n/a" "Windows-only; gcov+lcov is the Linux line/branch tool"
     echo "== license-bound (manual) — the stages that need these report 'skipped' =="
@@ -189,6 +192,13 @@ pmd_install() {
     "$ROOT/tools/fetch_pmd.sh"
 }
 
+# linuxdeploy + its Qt plugin: what tools/package_appimage.sh bundles the
+# AppImage with. Windows needs no counterpart — windeployqt ships with Qt.
+linuxdeploy_install() {
+    echo "== linuxdeploy (AppImage packaging) =="
+    "$ROOT/tools/fetch_linuxdeploy.sh"
+}
+
 case "$MODE" in
 install)
     apt_install
@@ -197,6 +207,7 @@ install)
     qt_install
     plantuml_install
     pmd_install
+    linuxdeploy_install
     echo
     status
     echo
@@ -225,6 +236,9 @@ update)
     echo "== PMD =="
     echo "pinned to the version in tools/fetch_pmd.sh — bump VERSION there and"
     echo "rerun ./setup.sh install (the fetch script drops the old dist)."
+    echo "== linuxdeploy =="
+    echo "pinned (tag + sha256) in tools/fetch_linuxdeploy.sh — bump both there,"
+    echo "delete tools/third-party/linuxdeploy*.AppImage and rerun ./setup.sh install."
     echo
     status
     ;;

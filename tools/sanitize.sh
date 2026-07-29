@@ -27,7 +27,7 @@ set -uo pipefail
 
 MODE="${1:-all}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.10.2/gcc_64}"
+QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
 JOBS="$(nproc)"
 OUT="$ROOT/analysis-results"
 mkdir -p "$OUT"

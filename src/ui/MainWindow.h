@@ -127,6 +127,11 @@ private:
     void handleOrderButton(bool isBuy);
     void appendLog(const QString &message, bool isError = false);
     [[nodiscard]] QStringList markedPositionIds() const;  // position ids of ticked open-trade rows
+    // A trade missing from the newest portfolio snapshot has been closed (by this
+    // app, by eToro's UI, by an SL/TP hit or by a liquidation): log it and refresh
+    // the closed-trades list at once. Compares against m_shownPositions, so call
+    // it BEFORE that is replaced.
+    void refreshClosedTradesForVanished(const QList<Position> &current);
     void handleQuickKey(qint32 key);        // double-tap detection for the s/b shortcut
     void updateSignals();               // recompute the SPX500 technical signals panel
     void updateOpenCost();              // refresh the estimated opening (spread) cost
@@ -271,6 +276,10 @@ private:
     bool m_pnlAutoFetched = false;  // auto-fetch the summary once, on first ready
     QTimer *m_pnlAfterCloseTimer = nullptr;  // refreshes the summary ~10s after a close,
                                              // coalescing a burst of closes into one fetch
+    // Throttle for the immediate refresh that a vanished open trade triggers:
+    // the trade-history endpoint sits in the small 60-requests/60s rate pool, so
+    // a flurry of closes must not turn into a flurry of history walks.
+    qint64 m_lastClosedFetchMs = 0;
 
     // Closed-trades detail window: every trade of the last N weeks (N selectable
     // 7–13), with the API's net P/L + fees and the app's open/close cost estimates.

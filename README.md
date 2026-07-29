@@ -1,7 +1,17 @@
 # eToro Trader (Qt)
 
-![CI](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml/badge.svg)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+[![build](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/ci.yml?branch=main&label=build)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
+[![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**build** = the full CI matrix (Linux, Windows, macOS builds + traceability +
+sanitizers + static analysis). **tests** = the Qt Test suite on its own
+([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
+number (line coverage of the domain + services layers, published as a badge
+endpoint on the `badges` branch — no third-party coverage service involved).
+**latest release** links the downloads below.
 
 A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,
 GER40, …), forex, commodities and eToro's thematic baskets — through the
@@ -196,11 +206,42 @@ Caveats specific to Android:
   the app's data dir (bundle a `config.json` via `QT_ANDROID_PACKAGE_SOURCE_DIR`,
   or write to `AppConfigLocation`) — private builds only; never publish keys.
 
+### Download a ready-made build
+
+| Platform | Artifact | How to run it |
+|---|---|---|
+| Linux (x86-64) | `TradingApp-<version>-x86_64.AppImage` | `chmod +x` it and run — one file, no install, Qt bundled |
+| Windows (x64) | `TradingApp-<version>-windows-x64.zip` | unzip anywhere and run `TradingApp.exe` — every DLL is inside, no Qt and no MSVC redistributable needed |
+
+Both are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
+each with a `.sha256` next to it. Build them yourself into `downloads/`:
+
+```bash
+tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-x86_64.AppImage
+```
+```powershell
+.\tools\package_portable.ps1       # Windows -> downloads\TradingApp-<version>-windows-x64.zip
+```
+
+`downloads/` is git-ignored — the artifacts belong to a release, not to the
+history. Both scripts build their own Release tree, bundle the Qt runtime
+(linuxdeploy + its Qt plugin on Linux, windeployqt on Windows) and print a
+SHA-256; `.github/workflows/release.yml` runs these same two scripts on a `v*`
+tag and attaches the results to the release. Without API keys the app starts in
+SIMULATION mode, so a downloaded build is safe to try.
+
+Two caveats worth knowing: the AppImage is built on Ubuntu 22.04, so it needs
+glibc ≥ 2.35 (any distro from 2022 onwards), and it deliberately does **not**
+bundle OpenSSL — Qt loads the system libssl for HTTPS, which keeps the download
+out of the business of shipping a frozen TLS stack.
+
 ### Packaging (desktop)
 
 `cmake --install build --prefix dist` produces a self-contained folder with the
 binary and every Qt library/plugin it needs, ready to zip or hand to `cpack`. It
-runs **windeployqt** on Windows and **macdeployqt** on macOS automatically.
+runs **windeployqt** on Windows and **macdeployqt** on macOS automatically
+(`-DTRADINGAPP_SKIP_QT_DEPLOY=ON` turns that step off, which is what the AppImage
+build does — linuxdeploy handles the bundling there).
 
 ## Configuration / API keys
 

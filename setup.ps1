@@ -43,7 +43,7 @@ param(
     [string]$Mode = 'install',
 
     # Qt version installed by aqt when no usable kit is found.
-    [string]$QtVersion = $(if ($env:QT_VERSION) { $env:QT_VERSION } else { '6.9.2' }),
+    [string]$QtVersion = $(if ($env:QT_VERSION) { $env:QT_VERSION } else { '6.11.1' }),
 
     # Skip the multi-gigabyte Visual Studio Build Tools install even when no
     # MSVC toolset is present (useful when you intend to build with MinGW).

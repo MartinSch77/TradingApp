@@ -34,6 +34,18 @@ constexpr double kWinRateSigmas = 2.0;
 // below it, model error dominates and the risk isn't paid for.
 constexpr double kMinNetEdgeFrac = 0.0025;
 
+// Deterministic Monte-Carlo seed derived from the plan's own inputs, so two
+// plans over identical data draw identical paths (see buildTradePlan). Folding
+// the 64-bit hash into 32 bits is deliberate — a seed needs no more — and
+// written out, because MSVC /W4 is right to warn about an implicit narrowing
+// (C4267). Never returns 0: monteCarlo reads that as "seed me securely".
+quint32 planSeed(const QList<double> &closes, double price)
+{
+    const auto folded = static_cast<quint32>(
+        (qHashRange(closes.cbegin(), closes.cend()) ^ qHash(price)) & 0xFFFFFFFFU);
+    return (folded == 0U) ? 1U : folded;
+}
+
 } // namespace
 
 namespace trading {
@@ -113,13 +125,7 @@ TradePlan buildTradePlan(const PlanInput &in)
     // from the data itself. Two plans built over identical closes/price (the
     // decision panel and its ranked-table row, or two refreshes over unchanged
     // data) then draw identical paths and can never disagree by sampling noise.
-    quint32 mcSeed = in.mcSeed;
-    if (mcSeed == 0U) {
-        mcSeed = qHashRange(in.closes.cbegin(), in.closes.cend()) ^ qHash(price);
-        if (mcSeed == 0U) {
-            mcSeed = 1U;  // 0 means "securely seeded" to monteCarlo
-        }
-    }
+    const quint32 mcSeed = (in.mcSeed != 0U) ? in.mcSeed : planSeed(in.closes, price);
     const McOutlook mc = monteCarlo(in.closes, price, in.horizonHours, tpFrac, slFrac,
                                     kMcPaths, mcSeed);
     plan.pWin = mc.valid ? ((side > 0) ? mc.pWinLong : mc.pWinShort) : 0.0;

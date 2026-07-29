@@ -38,6 +38,12 @@ docs/traceability.html
 docs/strictdoc/
 docs/sphinx-html/
 tools/third-party/
+# Release artifacts (AppImage / portable ZIP) — they belong to a GitHub
+# release, not to the history. tools/package_*.{sh,ps1} write them here.
+downloads/
+# Packaging build trees
+build-appimage/
+build-portable/
 analysis-results/
 build-san/
 build-san-tsan/

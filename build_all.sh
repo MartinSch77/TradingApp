@@ -28,13 +28,13 @@
 # Usage: ./build_all.sh [stage ...]          default: all stages in the order above
 #        ./build_all.sh --skip axivion       everything except a stage (repeatable);
 #                                            the Axivion run is by far the slowest
-#        QT_PREFIX=<qt-kit> ./build_all.sh   (default: ~/Qt/6.10.2/gcc_64)
+#        QT_PREFIX=<qt-kit> ./build_all.sh   (default: ~/Qt/6.11.1/gcc_64)
 #
 # Counterpart: ./clean_all.sh removes everything these stages generate.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-export QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.10.2/gcc_64}"
+export QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
 JOBS="$(nproc)"
 
 ALL_STAGES=(build test trace docs coverage analysis sanitize axivion)

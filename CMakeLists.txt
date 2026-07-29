@@ -30,7 +30,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Qt 6.10.2 lives under ~/Qt on this machine; allow overriding via -DCMAKE_PREFIX_PATH.
+# Qt 6.11.1 lives under ~/Qt on this machine; allow overriding via -DCMAKE_PREFIX_PATH.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent)
 
 qt_standard_project_setup()
@@ -239,13 +239,23 @@ if(NOT ANDROID AND NOT IOS)
 
     # Generates a CMake script, run at install time, that collects and copies the
     # Qt runtime dependencies. NO_UNSUPPORTED_PLATFORM_ERROR makes it a no-op
-    # where no deploy tool exists (e.g. plain Linux) instead of erroring.
-    qt_generate_deploy_app_script(
-        TARGET TradingApp
-        OUTPUT_SCRIPT deploy_script
-        NO_UNSUPPORTED_PLATFORM_ERROR
-    )
-    install(SCRIPT ${deploy_script})
+    # where no deploy tool exists instead of erroring.
+    #
+    # TRADINGAPP_SKIP_QT_DEPLOY exists for the AppImage: linuxdeploy and its Qt
+    # plugin do the bundling there (tools/package_appimage.sh), and Qt's generic
+    # Linux deployment cannot be used for it anyway — it patches RUNPATH in place
+    # and aborts with "The replacement path is too long for the RUNPATH entry" on
+    # the plugins it just copied into an AppDir.
+    option(TRADINGAPP_SKIP_QT_DEPLOY
+        "Skip Qt's install-time runtime deployment (AppImage packaging bundles with linuxdeploy)" OFF)
+    if(NOT TRADINGAPP_SKIP_QT_DEPLOY)
+        qt_generate_deploy_app_script(
+            TARGET TradingApp
+            OUTPUT_SCRIPT deploy_script
+            NO_UNSUPPORTED_PLATFORM_ERROR
+        )
+        install(SCRIPT ${deploy_script})
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

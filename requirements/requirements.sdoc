@@ -186,7 +186,7 @@ STATEMENT: 'Clicking the Side cell of an open-trade row shall open a non-modal g
 UID: REQ-F-025
 VERIFICATION: T
 TITLE: Open trades mirror the live portfolio
-STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh; eToro's authoritative per-position P/L shall be overlaid onto the positions that are still open and re-anchored to the live close rate.
+STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh; eToro's authoritative per-position P/L shall be overlaid onto the positions that are still open and re-anchored to the live close rate. When a position disappears from the portfolio, the app shall refresh the closed-trades list immediately — at most one history walk per 5 s, and the delayed refresh stays armed because the broker's trade history lags the portfolio.
 
 [[/SECTION]]
 

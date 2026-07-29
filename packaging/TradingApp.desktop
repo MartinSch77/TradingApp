@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=eToro Trader
+GenericName=Trading terminal
+Comment=Trade eToro instruments via the official public API
+Exec=TradingApp
+Icon=tradingapp
+Terminal=false
+Categories=Office;Finance;
+Keywords=trading;etoro;stocks;cfd;charts;
+StartupWMClass=TradingApp

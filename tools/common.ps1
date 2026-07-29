@@ -352,6 +352,29 @@ function Reset-StaleCMakeCache {
     }
 }
 
+# --- PMD (copy-paste detection) --------------------------------------------
+
+# The PMD launcher inside the dist that tools\fetch_pmd.ps1 unpacks under
+# tools\third-party\. $env:PMD_HOME wins, as it does for tools/cpd_scan.py, and
+# a PMD on PATH is the last resort. Newest dist first, so a leftover older
+# version never shadows the pinned one.
+function Get-PmdLauncher {
+    if ($env:PMD_HOME) {
+        $fromEnv = Join-Path $env:PMD_HOME 'bin\pmd.bat'
+        if (Test-Path $fromEnv) { return $fromEnv }
+    }
+    $bundled = Get-ChildItem (Join-Path (Get-RepoRoot) 'tools\third-party') -Directory `
+        -Filter 'pmd-bin-*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName 'bin\pmd.bat' } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+    if ($bundled) { return $bundled }
+    $onPath = Get-Command pmd -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    return $null
+}
+
 # --- Axivion Suite ---------------------------------------------------------
 
 # More than one Suite can be installed side by side, and the install directory

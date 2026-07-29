@@ -82,6 +82,18 @@ _TOOLS = {
     'clang-tidy': ('clang-tidy.txt', _GCC_STYLE),
     'clazy': ('clazy.txt', _GCC_STYLE),
     'gcc-analyzer': ('gcc-analyzer.txt', _GCC_STYLE),
+    # The Clang Static Analyzer run standalone (tools/clang_analyzer.py): the
+    # off-by-default checkers plus a deeper search than clang-tidy's inline
+    # clang-analyzer-* checks can be configured for.
+    'clang-analyzer': ('clang-analyzer.txt', _GCC_STYLE),
+    # Code metrics (tools/lizard_metrics.py): per-function complexity, length
+    # and parameter count over threshold. Ratcheted against
+    # tools/lizard_baseline.json, so these arrive as visible-but-known debt.
+    'lizard': ('lizard.txt', _PIPE),
+    # Copy-paste detection (tools/cpd_scan.py). This project's Axivion
+    # configuration is MISRA-only, so clone findings (issue type CL) come from
+    # PMD CPD instead.
+    'pmd-cpd': ('pmd-cpd.txt', _PIPE),
     # Windows counterpart of gcc-analyzer: MSVC /analyze, normalized to the
     # same GCC-style lines by tools/msvc_analyze.py. Absent on Linux runs.
     'msvc-analyze': ('msvc-analyze.txt', _GCC_STYLE),

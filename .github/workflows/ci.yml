@@ -108,8 +108,11 @@ jobs:
       - name: Install analyzers and CMake
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cppcheck clang-tidy clazy
-          python3 -m pip install --upgrade cmake ninja
+          sudo apt-get install -y -qq cppcheck clang-tidy clang-tools clazy
+          python3 -m pip install --upgrade cmake ninja lizard
+          # PMD CPD is a Java tool (the runner already has a JRE); the fetch
+          # script pins the version and unpacks it where tools/cpd_scan.py looks.
+          ./tools/fetch_pmd.sh
 
       # cppcheck loads the whole compile DB, which references the moc autogen
       # outputs — so the tree must be BUILT, not just configured.
@@ -125,7 +128,7 @@ jobs:
 
       # Report, don't gate: dashboard-triaged findings must not brick CI while
       # they are being worked; the local pipeline (build_all.sh) gates hard.
-      - name: cppcheck + clang-tidy + clazy + g++ -fanalyzer
+      - name: cppcheck + clang-tidy + Clang Static Analyzer + clazy + g++ -fanalyzer + lizard + PMD CPD
         continue-on-error: true
         run: ./tools/static_analysis.sh build
 

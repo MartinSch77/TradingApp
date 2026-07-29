@@ -4,6 +4,8 @@
 
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace trading;
 
 namespace {
@@ -28,6 +30,19 @@ ScreenerRow row(const QString &sym, const QList<double> &closes, qint32 maxLev =
     r.maxLeverage = maxLev;
     r.ok = true;
     return r;
+}
+
+// The row for one symbol, or a default-constructed row when it is absent (all
+// "have…" flags false, so the assertions below fail on a miss). Returning a
+// value keeps the analyzers out of a dead end: neither cppcheck nor the Clang
+// Static Analyzer can see that QVERIFY returns early on failure, so the
+// idiomatic "QVERIFY(found); use(*found)" reads to them as a null dereference /
+// out-of-bounds access.
+DecisionRow rowFor(const QList<DecisionRow> &rows, const QString &symbol)
+{
+    const auto it = std::find_if(rows.cbegin(), rows.cend(),
+                                 [&symbol](const DecisionRow &d) { return d.symbol == symbol; });
+    return (it == rows.cend()) ? DecisionRow{} : *it;
 }
 
 } // namespace
@@ -117,21 +132,15 @@ private slots:
         m.fgValid = true;
         m.fearGreed = 95.0;
         const QList<DecisionRow> greedy = computeDecisionRows(m);
-        const DecisionRow *up = nullptr;
-        for (const DecisionRow &d : greedy) {
-            if (d.symbol == QStringLiteral("UP")) {
-                up = &d;
-            }
-        }
-        QVERIFY(up != nullptr);
-        QVERIFY(up->haveCrowd);
-        QVERIFY(up->crowd < -0.4);
+        const DecisionRow up = rowFor(greedy, QStringLiteral("UP"));
+        QVERIFY(up.haveCrowd);
+        QVERIFY(up.crowd < -0.4);
         // With the bearish crowd source blended in, the composite must drop.
-        QVERIFY(up->composite < plain[0].composite);
+        QVERIFY(up.composite < plain.value(0).composite);
         // And the weights renormalise over the grown source set: the crowd
         // enters at 0.10 and the divisor grows from 0.50 to 0.60.
-        const double crowdBlend = ((0.35 * techSigned) + (0.10 * up->crowd)) / 0.60;
-        QVERIFY(std::abs(up->composite - crowdBlend) < 1e-9);
+        const double crowdBlend = ((0.35 * techSigned) + (0.10 * up.crowd)) / 0.60;
+        QVERIFY(std::abs(up.composite - crowdBlend) < 1e-9);
     }
 
     //! @tstid TS-DEC-005 @design DES-DOM-DEC
@@ -171,9 +180,9 @@ private slots:
         m.intradayBySymbol.insert(QStringLiteral("UP"), rising);
         const QList<DecisionRow> with = computeDecisionRows(m);
         QVERIFY(!with.isEmpty());
-        QVERIFY(with[0].haveYahoo);
-        QVERIFY(with[0].yahoo > 0.5);
-        QVERIFY(with[0].composite > without[0].composite);
+        QVERIFY(with.value(0).haveYahoo);
+        QVERIFY(with.value(0).yahoo > 0.5);
+        QVERIFY(with.value(0).composite > without.value(0).composite);
     }
 };
 

@@ -45,8 +45,28 @@ void addToChart(QChart *chart, QAbstractSeries *s, QAbstractAxis *x, QAbstractAx
 }
 }  // namespace
 
+// The initialiser list follows PriceChart.h's declaration order — that IS the
+// order the members are initialized in (anything else is -Wreorder), and the
+// axes/marker items take their chart as parent, so the two charts have to come
+// first.
 PriceChart::PriceChart(QWidget *parent)
-    : QWidget(parent), m_series(new QLineSeries(this)), m_chart(new QChart()), m_axisX(new QDateTimeAxis(m_chart)), m_axisY(new QValueAxis(m_chart)), m_levelSeries(new QLineSeries(this)), m_eventSeries(new QLineSeries(this)), m_markerBg(new QGraphicsRectItem(m_chart)), m_markerText(new QGraphicsSimpleTextItem(m_chart)), m_arrow(new QGraphicsSimpleTextItem(m_chart)), m_eventText(new QGraphicsSimpleTextItem(m_chart)), m_changeSeries(new QLineSeries(this)), m_changeChart(new QChart()), m_changeAxisX(new QDateTimeAxis(m_changeChart)), m_changeAxisY(new QValueAxis(m_changeChart)), m_changeHp(new QLineSeries(this)), m_changeView(new QChartView(m_changeChart, this))
+    : QWidget(parent)
+    , m_chart(new QChart())
+    , m_series(new QLineSeries(this))
+    , m_levelSeries(new QLineSeries(this))
+    , m_axisX(new QDateTimeAxis(m_chart))
+    , m_axisY(new QValueAxis(m_chart))
+    , m_changeChart(new QChart())
+    , m_changeView(new QChartView(m_changeChart, this))
+    , m_changeSeries(new QLineSeries(this))
+    , m_changeHp(new QLineSeries(this))
+    , m_changeAxisX(new QDateTimeAxis(m_changeChart))
+    , m_changeAxisY(new QValueAxis(m_changeChart))
+    , m_markerBg(new QGraphicsRectItem(m_chart))
+    , m_markerText(new QGraphicsSimpleTextItem(m_chart))
+    , m_arrow(new QGraphicsSimpleTextItem(m_chart))
+    , m_eventSeries(new QLineSeries(this))
+    , m_eventText(new QGraphicsSimpleTextItem(m_chart))
 {
     // Keep this window above the others (reinforced by MainWindow); intrinsic to
     // the chart so it holds even if the window is re-parented or re-shown.

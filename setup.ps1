@@ -88,6 +88,7 @@ $PipPkgs = [ordered]@{
     'myst-parser' = ''          # library only, imported by sphinx
     'gcovr'       = 'gcovr'
     'aqtinstall'  = 'aqt'
+    'lizard'      = 'lizard'
 }
 
 # The supply-chain scanners used to be fetched from GitHub releases into
@@ -139,6 +140,14 @@ function Get-ToolVersion {
                 if ("$out" -match '(\d+\.\d[\d.]*)') { return $matches[1] }
                 return ''
             }
+            'pmd' {
+                # PMD prints an ASCII banner before the version line.
+                $bat = Get-PmdLauncher
+                if (-not $bat) { return '' }
+                $out = (& $bat --version 2>&1) -join ' '
+                if ("$out" -match 'PMD (\d+(?:\.\d+)+)') { return $matches[1] }
+                return ''
+            }
             default {
                 # Some tools print the version on a later line (LLVM prints a
                 # banner first), so match over the whole output, and stop the
@@ -170,7 +179,8 @@ function Show-Status {
     Write-Host "== toolchain status ==" -ForegroundColor Cyan
     foreach ($t in @('cl', 'cmake', 'ninja', 'git', 'gh', 'clang-cl', 'clang-tidy',
             'llvm-cov', 'cppcheck', 'doxygen', 'dot', 'java', 'python',
-            'strictdoc', 'doorstop', 'codespell', 'sphinx-build', 'gcovr', 'aqt')) {
+            'strictdoc', 'doorstop', 'codespell', 'sphinx-build', 'gcovr', 'aqt',
+            'lizard')) {
         if ($t -eq 'cl') {
             if (Test-Path env:VSINSTALLDIR) { Report 'cl (MSVC)' 'ok' (Get-ToolVersion 'cl') }
             else { Report 'cl (MSVC)' 'MISSING' 'install the VS 2022 C++ workload' }
@@ -186,6 +196,12 @@ function Show-Status {
         Report 'plantuml' 'ok' (Get-ToolVersion 'plantuml')
     } else {
         Report 'plantuml' 'missing' 'fetched on demand by tools\make_docs.ps1'
+    }
+
+    if (Get-PmdLauncher) {
+        Report 'pmd' 'ok' (Get-ToolVersion 'pmd')
+    } else {
+        Report 'pmd' 'missing' 'copy-paste detection skips; .\setup.ps1 install fetches it'
     }
 
     foreach ($t in $SupplyChainTools) {
@@ -290,6 +306,13 @@ function Install-Qt {
     if ($LASTEXITCODE -ne 0) { Write-Warning "  aqt exited $LASTEXITCODE" }
 }
 
+# PMD CPD: the copy-paste detector tools\cpd_scan.py drives (a Java tool — it
+# needs the JRE winget installs above).
+function Install-Pmd {
+    Write-Stage 'PMD (copy-paste detection)'
+    & (Join-Path $Root 'tools\fetch_pmd.ps1')
+}
+
 function Install-PlantUml {
     Write-Stage 'PlantUML'
     if (Test-Path (Join-Path $Root 'tools\third-party\plantuml.jar')) {
@@ -347,6 +370,7 @@ switch ($Mode) {
         Install-PipPackages
         Install-Qt
         Install-PlantUml
+        Install-Pmd
         Add-ToolDirsToUserPath
         Write-Host ""
         Show-Status
@@ -374,6 +398,9 @@ switch ($Mode) {
         Write-Stage 'PlantUML'
         Write-Host "pinned to the version in tools\fetch_plantuml.ps1 — bump `$Version there,"
         Write-Host "delete tools\third-party\plantuml.jar and rerun .\setup.ps1 install."
+        Write-Stage 'PMD'
+        Write-Host "pinned to the version in tools\fetch_pmd.ps1 — bump `$Version there and"
+        Write-Host "rerun .\setup.ps1 install (the fetch script drops the old dist)."
         Write-Host ""
         Show-Status
     }

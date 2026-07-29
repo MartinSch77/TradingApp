@@ -1,0 +1,13 @@
+# clang-tidy for the test sources. Inherits every check from the root
+# .clang-tidy (InheritParentConfig) and only turns off the one check that Qt
+# Test's structure makes impossible to satisfy.
+#
+# Disabled, with reason:
+#   readability-convert-member-functions-to-static  a Qt Test case IS a private
+#       slot: moc requires non-static member functions, and QTEST_GUILESS_MAIN
+#       invokes them through the meta-object. Most test functions never touch
+#       `this`, so the check fires on nearly every one of them (62 hits,
+#       measured 2026-07-29) and every "fix" would break the test runner.
+InheritParentConfig: true
+Checks: >
+  -readability-convert-member-functions-to-static

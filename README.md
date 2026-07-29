@@ -42,8 +42,8 @@ Windows-specific notes.
 
 On a naked Debian/Ubuntu Linux, `./setup.sh` installs every required tool
 and dependency (compilers, CMake, Qt 6 incl. Charts via aqtinstall, the
-clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, Doxygen + Java,
-StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
+clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, lizard, PMD, Doxygen +
+Java, StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
 latest versions and `./setup.sh status` reports what is present. On Windows,
 `.\setup.ps1` does the same through winget + pip + aqtinstall. License-bound
 tools (Axivion Suite, Squish Coco) are detected and reported but must be

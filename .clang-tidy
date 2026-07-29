@@ -3,17 +3,26 @@
 # exports). Findings land on the Axivion dashboard via the external import.
 #
 # Check families: the analyzer + bug/performance/portability classes plus the
-# modernize/readability/cppcoreguidelines style families (target: modern C++,
-# up to C++23 as set in CMakeLists.txt). Auto-fixable findings can be applied
-# with tools/static_analysis.sh --fix.
+# modernize/readability/cppcoreguidelines/misc style families (target: modern
+# C++, up to C++23 as set in CMakeLists.txt) and the handful of google-*/hicpp-*
+# checks that are NOT aliases of something already enabled. Auto-fixable
+# findings can be applied with tools/static_analysis.sh --fix.
+#
+# The test sources are analysed too (tests/.clang-tidy inherits this file and
+# exempts what Qt Test's moc-driven layout requires).
+#
+# clang-analyzer-* stays enabled here, and tools/clang_analyzer.py additionally
+# runs the Clang Static Analyzer standalone with the off-by-default checkers and
+# deeper exploration limits (provider `clang-analyzer`) — clang-tidy cannot pass
+# -analyzer-config knobs. Overlapping findings therefore arrive from two
+# providers; that is deliberate, the standalone pass is the strict one.
 #
 # Disabled, with reason:
 #   bugprone-easily-swappable-parameters   API-shape noise, no fix suggested
-#   *narrowing-conversions                 Qt int/qsizetype mixing — churn
-#   cert-err58-cpp                         static Qt objects are idiomatic
+#                                          (16 hits, measured 2026-07-29)
 #   performance-enum-size                  micro-optimisation, hurts clarity
 #   clang-analyzer-optin.performance.Padding  layout noise
-#   modernize-use-trailing-return-type     pure style churn, no gain
+#   modernize-use-trailing-return-type     pure style churn, no gain (403 hits)
 #   *magic-numbers                         trading constants / UI layout values
 #   readability-identifier-length          Qt idiom (ok, e, i, ui…)
 #   cppcoreguidelines-owning-memory        Qt parent/child ownership model
@@ -25,11 +34,31 @@
 #                                          the supported Qt idiom there
 #   readability-avoid-nested-conditional-operator  the codebase's established
 #                                          three-way mapping idiom
-#                                          (dir>0 ? A : dir<0 ? B : C) — 76
+#                                          (dir>0 ? A : dir<0 ? B : C) — 77
 #                                          hits, pure churn to rewrite
-#   readability-function-cognitive-complexity  complexity is already tracked
-#                                          by the Axivion McCabe metric on the
-#                                          dashboard — no second gate here
+#   readability-function-cognitive-complexity  complexity is already tracked by
+#                                          the Axivion McCabe metric AND by
+#                                          tools/lizard_metrics.py (CCN/NLOC/
+#                                          params, ratcheted) — no third gate
+#   misc-include-cleaner                   IWYU-style include hygiene against
+#                                          Qt's umbrella headers: 295 hits
+#                                          (measured 2026-07-29), a project of
+#                                          its own, and its "add this header"
+#                                          fixes fight Qt's <QtWidgets> style
+#   misc-non-private-member-variables-in-classes  the domain layer is built from
+#                                          plain aggregates (MarketSnapshot,
+#                                          DecisionRow …). The cppcoreguidelines
+#                                          alias, which exempts classes whose
+#                                          members are ALL public, stays active
+#                                          and covers the real case: a class
+#                                          that mixes public data with methods
+#   google-default-arguments               NOT enabled (google-* is opt-in here):
+#                                          QAbstractItemModel overrides must
+#                                          repeat the base class's defaults
+#                                          (data(idx, role = DisplayRole) …)
+#
+# Re-enabled 2026-07-29 after re-measuring at 0 hits (both were "churn" when the
+# code still mixed int/qsizetype freely): *narrowing-conversions, cert-err58-cpp.
 Checks: >
   clang-analyzer-*,
   bugprone-*,
@@ -40,11 +69,17 @@ Checks: >
   modernize-*,
   cppcoreguidelines-*,
   readability-*,
-  misc-unused-using-decls,
+  misc-*,
+  google-build-namespaces,
+  google-explicit-constructor,
+  google-global-names-in-headers,
+  google-runtime-int,
+  google-runtime-operator,
+  hicpp-exception-baseclass,
+  hicpp-multiway-paths-covered,
+  hicpp-no-assembler,
+  hicpp-signed-bitwise,
   -bugprone-easily-swappable-parameters,
-  -bugprone-narrowing-conversions,
-  -cppcoreguidelines-narrowing-conversions,
-  -cert-err58-cpp,
   -performance-enum-size,
   -clang-analyzer-optin.performance.Padding,
   -modernize-use-trailing-return-type,
@@ -55,7 +90,11 @@ Checks: >
   -readability-redundant-access-specifiers,
   -cppcoreguidelines-pro-type-static-cast-downcast,
   -readability-avoid-nested-conditional-operator,
-  -readability-function-cognitive-complexity
-WarningsAsErrors: ''
-HeaderFilterRegex: 'src/(domain|services|ui)/.*'
+  -readability-function-cognitive-complexity,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes
+# Any finding is an error: the pipeline gates on a zero finding count, so a
+# direct clang-tidy run (IDE, run-clang-tidy) must exit nonzero as well.
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(src/(domain|services|ui)|tests)/.*'
 FormatStyle: none

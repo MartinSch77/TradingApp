@@ -54,7 +54,7 @@ void AiAdvisor::requestDecision(const QString &evidencePrompt)
                                                 QStringLiteral("rationale")}},
         {QStringLiteral("additionalProperties"), false},
     };
-    QJsonObject body{
+    const QJsonObject body{
         {QStringLiteral("model"), QStringLiteral("claude-opus-4-8")},
         {QStringLiteral("max_tokens"), 1024},
         {QStringLiteral("system"),

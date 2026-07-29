@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 
 namespace trading {
@@ -66,16 +67,13 @@ double intradayTilt(const QList<double> &closes)
     if (closes.size() < kMinPoints) {
         return 0.0;
     }
-    double sum = 0.0;
-    for (const double c : closes) {
-        sum += c;
-    }
-    const double mean = sum / static_cast<double>(closes.size());
-    double var = 0.0;
-    for (const double c : closes) {
-        var += (c - mean) * (c - mean);
-    }
-    const double sigma = std::sqrt(var / static_cast<double>(closes.size()));
+    const double mean = std::accumulate(closes.cbegin(), closes.cend(), 0.0)
+                        / static_cast<double>(closes.size());
+    const double var =
+        std::accumulate(closes.cbegin(), closes.cend(), 0.0,
+                        [mean](double acc, double c) { return acc + ((c - mean) * (c - mean)); })
+        / static_cast<double>(closes.size());
+    const double sigma = std::sqrt(var);
     if (sigma <= 0.0) {
         return 0.0;  // flat series — no read
     }

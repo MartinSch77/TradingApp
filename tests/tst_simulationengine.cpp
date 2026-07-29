@@ -17,9 +17,9 @@ private slots:
     {
         SimulationEngine sim;
         QSignalSpy history(&sim, &SimulationEngine::historyReady);
-        QSignalSpy price(&sim, &SimulationEngine::priceUpdated);
-        QSignalSpy cash(&sim, &SimulationEngine::cashUpdated);
-        QSignalSpy leverage(&sim, &SimulationEngine::leverageOptions);
+        const QSignalSpy price(&sim, &SimulationEngine::priceUpdated);
+        const QSignalSpy cash(&sim, &SimulationEngine::cashUpdated);
+        const QSignalSpy leverage(&sim, &SimulationEngine::leverageOptions);
 
         const Instrument inst =
             sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true);

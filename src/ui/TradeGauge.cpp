@@ -92,7 +92,7 @@ void TradeGaugeWidget::paintEvent(QPaintEvent * /*event*/)
     auto drawZone = [&](double fromValue, double toValue, QColor color) {
         const double a0 = valueToAngle(fromValue, lo, hi);
         const double a1 = valueToAngle(toValue, lo, hi);
-        QPen pen(color, side * 0.055, Qt::SolidLine, Qt::FlatCap);
+        const QPen pen(color, side * 0.055, Qt::SolidLine, Qt::FlatCap);
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
         p.drawArc(face, qRound(a0 * 16.0), qRound((a1 - a0) * 16.0));

@@ -1,6 +1,27 @@
 // cppcheck suppressions — each entry documents why it is safe to silence.
+// The run is --enable=all --check-level=exhaustive --inconclusive, so this list
+// is the complete record of what is deliberately not gated on.
+//
 // Qt's parent-child ownership: 'new' widgets/objects with a parent are owned
-// and deleted by the parent, not leaked.
-// (handled by --library=qt; add project-specific entries below)
+// and deleted by the parent, not leaked. (handled by --library=qt)
+
+// System/Qt headers are not on cppcheck's include path by design — it analyses
+// the project, not the framework.
 missingIncludeSystem
+
+// AUTOMOC generates <target>_autogen/include/*.moc during the build, and the
+// build tree is excluded from the analysis (-i), so every `#include "x.moc"`
+// reads as missing to cppcheck while the compiler resolves it fine. Include
+// resolution is the build's job here, not cppcheck's — 13 hits, all moc.
+missingInclude
+
+// unusedFunction needs whole-program visibility to be right, and it does not
+// have it here: Qt slots are called through the meta-object, the domain and
+// services libraries are also linked into the test executables, and the public
+// API of a static library has no caller inside that library.
 unusedFunction
+
+// The run summary ("Active checkers: N/592"), not a finding about the code. The
+// actual checker list is written to analysis-results/cppcheck-checkers.txt by
+// --checkers-report, which is the evidence that matters.
+checkersReport

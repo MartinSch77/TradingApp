@@ -2,7 +2,9 @@
 
 Qt 6 / C++23 desktop app trading eToro instruments via the official public
 API; SIMULATION mode without keys. Quality toolchain is the point of this
-repo: requirements-as-code, full traceability, four static analyzers + three
+repo: requirements-as-code, full traceability, seven static analyzers
+(cppcheck, clang-tidy, Clang Static Analyzer, g++ -fanalyzer, clazy, Axivion,
+Coverity Scan) + code metrics (lizard) + clone detection (PMD CPD) + three
 sanitizers on one Axivion dashboard.
 
 ## Entry points
@@ -13,7 +15,9 @@ sanitizers on one Axivion dashboard.
 ./clean_all.sh [--deep]        # remove everything generated
 tools/run_tests.sh build       # test suite with JUnit output
 python3 tools/trace_report.py  # traceability matrix; fails on hard gaps
-tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+clazy+g++ -fanalyzer+codespell
+tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
+                               # g++ -fanalyzer+lizard+PMD CPD+codespell
+tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/profile.sh               # perf/gperftools over build-release/
 ```
@@ -37,6 +41,20 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   `// @relation(REQ-…, scope=function)` (plain `//` — StrictDoc ignores `//!`).
   Test classes write `Q_OBJECT;` (semicolon = tree-sitter parse anchor).
 - Keep every boolean decision ≤ 6 conditions (clang-18 MC/DC limit).
+- Analyzer configs are strict by construction: every disabled check in
+  `.clang-tidy` / `tools/cppcheck-suppressions.txt` carries a written reason AND
+  the measured hit count that justifies it. Do not silence a check without both.
+  `tests/.clang-tidy` inherits the root config and turns off exactly one check.
+- The compiler is an analyzer too: `-Wall -Wextra` + the Qt-relevant extras in
+  CMakeLists, fatal under `-DTRADINGAPP_WARNINGS_AS_ERRORS=ON` (what build_all
+  configures). GCC-only `-W…` spellings must be gated by compiler id — clang
+  reads the same compile database. NEVER add `-Wpedantic`: it reports the
+  required `Q_OBJECT;` anchor as an extra `;`.
+- The lizard metrics gate is a ratchet, not a threshold: over-limit functions are
+  recorded in `tools/lizard_baseline.json` with their numbers. New debt, a
+  worsened number, or a stale entry all fail the stage. Regenerate deliberately.
+- PMD CPD (≥ 100 tokens) is the only clone gate — the Axivion configuration here
+  is MISRA-only. Fix clones by extracting a helper; do not baseline them.
 - Header-inline functions that grow logic: define out-of-line in one TU
   (comdat coverage records otherwise break llvm-cov).
 - Layering is linker-enforced: domain (Qt Core only) ← services ← ui.

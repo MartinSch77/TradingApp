@@ -1,6 +1,7 @@
 #include "domain/Indicators.h"
 
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <utility>
 
@@ -125,11 +126,8 @@ double volatilityPct(const QList<double> &values, qsizetype n)
     if (r.isEmpty()) {
         return 0.0;
     }
-    double mean = 0.0;
-    for (const double x : std::as_const(r)) {
-        mean += x;
-    }
-    mean /= static_cast<double>(r.size());
+    const double mean =
+        std::accumulate(r.cbegin(), r.cend(), 0.0) / static_cast<double>(r.size());
     double var = 0.0;
     for (const double x : std::as_const(r)) {
         const double d = x - mean;

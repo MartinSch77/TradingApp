@@ -128,21 +128,47 @@ absence for idiomatic Qt C++ (Frama-C EVA is C-only; CBMC does not scale to
 Qt). What this project provides instead, and states as such:
 
 - sanitizer + valgrind clean runs (dynamic evidence on tested paths),
-- cppcheck + clang-tidy + Axivion static analysis (unsound but effective
-  bug-finders),
+- cppcheck + clang-tidy + the Clang Static Analyzer + g++ -fanalyzer + Axivion
+  static analysis (unsound but effective bug-finders),
 - MISRA C++ 2023 conformance monitoring via Axivion.
 
 Adopting one of the sound tools is the documented path to an actual proof.
 
 ## Static analysis
 
-    tools/static_analysis.sh          # cppcheck + clang-tidy (+ clazy if installed)
+    tools/static_analysis.sh   # cppcheck + clang-tidy + Clang Static Analyzer +
+                               # g++ -fanalyzer + lizard + PMD CPD (+ clazy,
+                               # codespell when installed)
 
+Everything below runs over the **app and the test sources**. The gate is zero
+findings; the one exception is the metrics ratchet, which is spelled out below.
+
+- **the compiler** — the first analyzer: `-Wall -Wextra` plus the Qt-relevant
+  extras (`-Woverloaded-virtual`, `-Wsuggest-override`, `-Wnon-virtual-dtor`,
+  `-Wshadow` …), `/W4 /permissive-` on MSVC, all set in `CMakeLists.txt`.
+  `build_all` configures with `-DTRADINGAPP_WARNINGS_AS_ERRORS=ON`, so a warning
+  fails the build. `-Wpedantic` is deliberately not in the set: it reports the
+  `Q_OBJECT;` semicolon — the traceability tooling's parse anchor — as an extra
+  `;` (37 hits).
 - **Axivion Suite** — MISRA C++ 2023 style checks, architecture verification;
   configuration under `axivion/`, results on the Axivion dashboard.
-- **clang-tidy** — checks configured in `.clang-tidy` (bugprone-*, cert-*,
-  performance-*, readability subset); runs over the compile database.
-- **cppcheck** — `--enable=warning,performance,portability`, suppressions in
+- **clang-tidy** — checks configured in `.clang-tidy`: the analyzer plus the
+  bugprone/cert/concurrency/performance/portability/modernize/cppcoreguidelines/
+  readability/misc families and the google-*/hicpp-* checks that are not aliases
+  of those, with `WarningsAsErrors: '*'`. Every disabled check carries a written
+  reason and the hit count that justifies it; `tests/.clang-tidy` inherits the
+  lot and switches off only `readability-convert-member-functions-to-static`,
+  which no Qt Test slot can satisfy (moc needs non-static members).
+- **Clang Static Analyzer** — the same engine standalone
+  (`tools/clang_analyzer.py`, provider `clang-analyzer`), because clang-tidy
+  cannot pass `-analyzer-config`: off-by-default checkers
+  (`optin.cplusplus.UninitializedObject`, `optin.cplusplus.VirtualCall`,
+  `security.*`, `nullability.Nullable*`, `valist.*`) and a deeper search
+  (400k exploration nodes, loop widening and unrolling). A TU the analyzer
+  cannot finish is reported as a finding, never as silence.
+- **cppcheck** — `--enable=all --check-level=exhaustive --inconclusive`, with
+  `--checkers-report` as the record of which checkers ran; the four remaining
+  suppressions are id-scoped and documented in
   `tools/cppcheck-suppressions.txt`.
 - **clazy** — Qt-specific coding rules (levels 0–1: connect syntax, container
   detach, QString misuse …). Runs when installed (`apt install clazy`); it is
@@ -150,6 +176,21 @@ Adopting one of the sound tools is the documented path to an actual proof.
 - **g++ -fanalyzer** — GCC's symbolic-execution analyzer over every project
   TU; C++ support is upstream-experimental, so known false-positive patterns
   are filtered (see @ref tools).
+- **lizard (code metrics)** — cyclomatic complexity, function length and
+  parameter count per function; the full measurement lands in
+  `analysis-results/lizard-metrics.csv`. Limits are CCN 15, NLOC 100, 5
+  parameters, and the gate is a **ratchet**, not a threshold: the functions that
+  exceed a limit today are recorded with their numbers in
+  `tools/lizard_baseline.json`, and the run fails when a function appears that is
+  not in that file, when a recorded number gets worse, or when an entry no
+  longer violates anything (delete it — that is how the ratchet tightens).
+  Every violation still reaches the dashboard, so the debt stays visible.
+  Regenerate the file deliberately with
+  `tools/lizard_metrics.py . analysis-results --update-baseline`.
+- **PMD CPD (copy-paste detection)** — token-based clone detection at ≥ 100
+  tokens. It closes a real gap: the Axivion configuration here is MISRA-only, so
+  clones (issue type CL) had no gate at all. The five clone pairs it found on
+  introduction were removed by extracting shared helpers, not baselined.
 - **codespell** — typos in comments and docs (config in `.codespellrc`).
 
 The external tools export their findings to `analysis-results/` as

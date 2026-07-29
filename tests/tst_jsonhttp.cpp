@@ -23,7 +23,7 @@ struct Outcome {
 };
 
 // Issue the request and wait (event loop) until the handler reports the outcome.
-Outcome roundTrip(QNetworkAccessManager &nam, JsonHttp &http, QNetworkReply *reply,
+Outcome roundTrip(const QNetworkAccessManager &nam, JsonHttp &http, QNetworkReply *reply,
                   qint32 retries, qint32 timeoutMs = 15000)
 {
     static_cast<void>(nam);

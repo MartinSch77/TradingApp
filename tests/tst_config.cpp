@@ -8,6 +8,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <array>
+
 namespace {
 
 void writeFile(const QString &path, const QByteArray &content)
@@ -19,10 +21,12 @@ void writeFile(const QString &path, const QByteArray &content)
 
 // The env vars Config::load consults; cleared around every test so the host
 // environment (and test order) cannot leak into the results.
-const char *kEnvVars[] = {"ETORO_CONFIG", "ETORO_API_KEY", "ETORO_USER_KEY",
-                          "ETORO_USERNAME", "ETORO_MODE", "ETORO_SYMBOL",
-                          "ETORO_BASE_URL", "ETORO_ORDER_CURRENCY",
-                          "ETORO_POLL_MS", "ETORO_LEVERAGE", "ANTHROPIC_API_KEY"};
+constexpr std::array kEnvVars{"ETORO_CONFIG",     "ETORO_API_KEY",
+                              "ETORO_USER_KEY",   "ETORO_USERNAME",
+                              "ETORO_MODE",       "ETORO_SYMBOL",
+                              "ETORO_BASE_URL",   "ETORO_ORDER_CURRENCY",
+                              "ETORO_POLL_MS",    "ETORO_LEVERAGE",
+                              "ANTHROPIC_API_KEY"};
 
 } // namespace
 
@@ -53,7 +57,7 @@ private slots:
     // @relation(REQ-F-017, REQ-F-018, scope=function)
     void TS_CFG_001_defaultsWithoutFiles()
     {
-        QTemporaryDir dir;  // empty: no config.json, no apiKeyEtoro.json
+        const QTemporaryDir dir;  // empty: no config.json, no apiKeyEtoro.json
         QVERIFY(QDir::setCurrent(dir.path()));
         const Config cfg = Config::load();
         QCOMPARE(cfg.mode, QStringLiteral("demo"));
@@ -67,7 +71,7 @@ private slots:
     // @relation(REQ-F-018, REQ-N-004, scope=function)
     void TS_CFG_002_secretsFileLayersOverConfig()
     {
-        QTemporaryDir dir;
+        const QTemporaryDir dir;
         writeFile(dir.filePath(QStringLiteral("config.json")),
                   R"({"mode":"real","symbol":"NSDQ100","defaultLeverage":10})");
         writeFile(dir.filePath(QStringLiteral("apiKeyEtoro.json")),
@@ -88,7 +92,7 @@ private slots:
     // @relation(REQ-F-018, scope=function)
     void TS_CFG_003_envOverridesFiles()
     {
-        QTemporaryDir dir;
+        const QTemporaryDir dir;
         writeFile(dir.filePath(QStringLiteral("config.json")),
                   R"({"mode":"real","symbol":"NSDQ100"})");
         writeFile(dir.filePath(QStringLiteral("apiKeyEtoro.json")),
@@ -106,7 +110,7 @@ private slots:
     // @relation(REQ-F-017, scope=function)
     void TS_CFG_004_liveRequiresCredentialsAndRealMode()
     {
-        QTemporaryDir dir;
+        const QTemporaryDir dir;
         QVERIFY(QDir::setCurrent(dir.path()));
         qputenv("ETORO_API_KEY", "k");
         qputenv("ETORO_USER_KEY", "u");

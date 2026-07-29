@@ -31,7 +31,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    QApplication app(argc, argv);
+    // const: the instance is never mutated through this name — the app is
+    // driven through QApplication's static API (setApplicationName, exec).
+    const QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("eToro Trader"));
     QApplication::setOrganizationName(QStringLiteral("TradingApp"));
 

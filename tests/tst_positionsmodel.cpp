@@ -53,8 +53,8 @@ private slots:
         model.setPositions({makePosition(QStringLiteral("1"), 1.13, 1.15),
                             makePosition(QStringLiteral("2"), 0.0, 0.0)});
 
-        QSignalSpy resets(&model, &QAbstractItemModel::modelAboutToBeReset);
-        QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+        const QSignalSpy resets(&model, &QAbstractItemModel::modelAboutToBeReset);
+        const QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
 
         // Same ids in the same order: values refresh via dataChanged, no reset —
         // open editors and checkbox marks survive by construction.

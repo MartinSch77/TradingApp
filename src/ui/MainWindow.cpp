@@ -54,6 +54,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <utility>
 
@@ -210,11 +211,13 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     , m_client(client)
     , m_feeds(feeds)
     , m_aiAdvisor(aiAdvisor)
-    , m_orderCooldownTimer(new QTimer(this))
+    // Declaration order (MainWindow.h), which is the order the members are
+    // really initialized in — anything else is a -Wreorder warning.
+    , m_pnlAfterCloseTimer(new QTimer(this))
     , m_calendar(new EconomicCalendar(this))
     , m_eventTimer(new QTimer(this))
-    , m_pnlAfterCloseTimer(new QTimer(this))
     , m_recoTimer(new QTimer(this))
+    , m_orderCooldownTimer(new QTimer(this))
 {
     buildUi();
 
@@ -392,7 +395,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         const qint32 wheelDelta = we->angleDelta().y();
         if (ctrlHeld && (wheelDelta != 0) && (QApplication::activeWindow() != nullptr)) {
             QWidget *w = qobject_cast<QWidget *>(watched);
-            QWidget *top = (w != nullptr) ? w->window() : nullptr;
+            const QWidget *top = (w != nullptr) ? w->window() : nullptr;
             if ((top != nullptr) && (top != m_chart)) {
                 const double steps = static_cast<double>(wheelDelta) / 120.0;  // one notch = 120
                 setUiScale(m_uiScale * std::pow(1.1, steps));  // wheel up → larger
@@ -618,9 +621,9 @@ void MainWindow::buildUi()
     m_instrumentBox->setToolTip(QStringLiteral("Switch the traded instrument"));
     auto *instModel = new QStandardItemModel(m_instrumentBox);
     QStringList tradableSymbols;
-    auto addInstGroup = [instModel, &tradableSymbols](const QString &header,
+    auto addInstGroup = [instModel, &tradableSymbols](const QString &groupLabel,
                                                       const QStringList &symbols) {
-        auto *h = new QStandardItem(header);
+        auto *h = new QStandardItem(groupLabel);
         h->setFlags(Qt::NoItemFlags);  // non-selectable category header
         QFont hf = h->font();
         hf.setBold(true);
@@ -654,9 +657,9 @@ void MainWindow::buildUi()
     }
     // textActivated fires only on user selection, not the programmatic setup above.
     static_cast<void>(
-        connect(m_instrumentBox, &QComboBox::textActivated, this, [this](const QString &sym) {
+        connect(m_instrumentBox, &QComboBox::textActivated, this, [this](const QString &picked) {
             m_autoInstrumentDone = true;  // a manual pick ends the startup auto-load
-            selectInstrument(sym);
+            selectInstrument(picked);
         }));
 
     m_priceLabel = new QLabel(QStringLiteral("—"), central);
@@ -1339,13 +1342,13 @@ void MainWindow::buildUi()
         // Double-click a recommendation → switch to that instrument (like the screener).
         static_cast<void>(
             connect(list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *it) {
-                const QString sym =
+                const QString picked =
                     (it != nullptr) ? it->data(Qt::UserRole).toString() : QString();
-                if (sym.isEmpty()) {
+                if (picked.isEmpty()) {
                     return;
                 }
                 m_autoInstrumentDone = true;  // a manual pick ends the startup auto-load
-                selectInstrument(sym);
+                selectInstrument(picked);
             }));
         return list;
     };
@@ -1686,14 +1689,15 @@ void MainWindow::updateOpenTradePnl(double price)
                                      m_client->lastAsk(), price, m_pnlAnchorPrice);
 }
 
-void MainWindow::onPortfolio(const QList<Position> &positionsIn)
+void MainWindow::onPortfolio(const QList<Position> &positions)
 {
     // Show trades in a fixed order by position number, so the rows never reshuffle
     // just because the API returned them differently between polls (a reshuffle would
     // force a full rebuild, clearing the ticked checkboxes and any open SL/TP editor).
-    QList<Position> positions = positionsIn;
-    const auto sortBegin = positions.begin();
-    const auto sortEnd = positions.end();
+    // Sorted copy: the parameter is const and the row order must stay stable.
+    QList<Position> sorted = positions;
+    const auto sortBegin = sorted.begin();
+    const auto sortEnd = sorted.end();
     std::sort(sortBegin, sortEnd, [](const Position &a, const Position &b) {
         const qint64 aId = a.positionId.toLongLong();
         const qint64 bId = b.positionId.toLongLong();
@@ -1707,7 +1711,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     const QString shown = m_client->instrument().symbol;
     QList<QPointF> buyEntries;
     QList<QPointF> sellEntries;
-    for (const Position &p : std::as_const(positions)) {
+    for (const Position &p : std::as_const(sorted)) {
         if ((p.openRate <= 0.0) || (p.symbol.compare(shown, Qt::CaseInsensitive) != 0)) {
             continue;
         }
@@ -1719,14 +1723,14 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     m_chart->setOpenTrades(buyEntries, sellEntries);
 
     // Authoritative open-trades exposure, used by placeOrder() to enforce the cap.
-    double openTotal = 0.0;
-    for (const Position &p : std::as_const(positions)) {
-        openTotal += p.amount;
-    }
-    m_openTradesTotal = openTotal;
+    m_openTradesTotal = std::accumulate(
+        sorted.cbegin(), sorted.cend(), 0.0,
+        [](double acc, const Position &p) { return acc + p.amount; });
 
-    // Row-indexed snapshot so the SL/TP editors can map a row back to its trade.
-    m_shownPositions = positions;
+    // Row-indexed snapshot so the SL/TP editors and the click handler can map a
+    // row back to its trade. MUST stay in the same order the model is filled with
+    // below, or a click lands on a different trade than the one shown.
+    m_shownPositions = sorted;
 
     // Fallback anchor for re-pricing: positions normally carry the exact rate their
     // API P/L was marked at (apiCloseRate); this poll-time price covers the ones
@@ -1741,7 +1745,7 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
         const double scale = std::max({std::abs(a), std::abs(b), 1.0});
         return std::abs(a - b) <= scale * 1e-4;  // absorbs 2dp/5dp round-trip rounding
     };
-    auto withPending = [this, nowMs, kPendingTtlMs, &ratesClose](const Position &src) -> Position {
+    auto withPending = [this, nowMs, &ratesClose](const Position &src) -> Position {
         Position p = src;
         const auto it = m_pendingSlTp.find(p.positionId);
         if (it == m_pendingSlTp.end()) {
@@ -1762,8 +1766,8 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // update in place — open SL/TP editors and checkbox marks survive; a changed
     // set resets the model (marks survive by id inside the model).
     QList<Position> pinned;
-    pinned.reserve(positions.size());
-    for (const Position &p : std::as_const(positions)) {
+    pinned.reserve(sorted.size());
+    for (const Position &p : std::as_const(sorted)) {
         pinned.append(withPending(p));
     }
     m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);  // keep the FX rate fresh
@@ -1772,8 +1776,8 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // Drop pins for positions no longer open (e.g. closed), so the map can't grow.
     if (!m_pendingSlTp.isEmpty()) {
         QSet<QString> openIds;
-        openIds.reserve(positions.size());
-        for (const Position &p : std::as_const(positions)) {
+        openIds.reserve(sorted.size());
+        for (const Position &p : std::as_const(sorted)) {
             static_cast<void>(openIds.insert(p.positionId));
         }
         for (auto it = m_pendingSlTp.begin(); it != m_pendingSlTp.end();) {
@@ -1790,8 +1794,8 @@ void MainWindow::onPortfolio(const QList<Position> &positionsIn)
     // triggered by the switch itself — must never override the current view.
     if (!m_autoInstrumentDone) {
         m_autoInstrumentDone = true;
-        if (!positions.isEmpty()) {
-            const QString top = positions.first().symbol;
+        if (!sorted.isEmpty()) {
+            const QString top = sorted.first().symbol;
             if (!top.isEmpty()
                 && (top.compare(m_client->config().symbol, Qt::CaseInsensitive) != 0)) {
                 selectInstrument(top);
@@ -1813,8 +1817,8 @@ void MainWindow::onPositionSlTpEdited(qint32 row, qint32 column, const QString &
     }
 
     // Parse a signed display-currency amount (blank / 0 / unparsable = clear).
-    auto parseAmount = [this](const QString &text) -> double {
-        QString t = text.trimmed();
+    auto parseAmount = [this](const QString &raw) -> double {
+        QString t = raw.trimmed();
         static_cast<void>(t.remove(m_ccy));
         // Trailing-stop marker "⇅" — not part of the amount.
         static_cast<void>(t.remove(QChar(0x21C5)));
@@ -1933,7 +1937,7 @@ void MainWindow::renderMonteCarlo(const trading::McOutlook &mc)
                                     ? QStringLiteral("favourable")
                                     : ((edge < -0.02) ? QStringLiteral("unfavourable")
                                                       : QStringLiteral("marginal"));
-        const long edgePct = std::lround(edge * 100.0);
+        const qint64 edgePct = std::llround(edge * 100.0);
         const QString edgeStr = ((edgePct >= 0) ? QStringLiteral("+") : QString())
                                 + QString::number(edgePct);
         m_aiEdge->setText(colored(
@@ -1999,11 +2003,11 @@ void MainWindow::updateSignals()
             m_sigRegime->setText(txt);
         }
 
-        qint32 newsCount = 0;
         const QList<NewsHeadline> news = m_newsBySymbol.value(m_client->config().symbol);
         if (news.isEmpty()) {
             m_sigNews->setText(QStringLiteral("<span style='color:%1'>n/a</span>").arg(grey));
         } else {
+            qint32 newsCount = 0;
             const double s = trading::newsSentimentScore(news, newsCount);
             const QString word = (s > 0.1) ? QStringLiteral("Positive ▲")
                                            : ((s < -0.1) ? QStringLiteral("Negative ▼")
@@ -2633,7 +2637,7 @@ void MainWindow::onExternalSignal(bool available, double score, const QString &r
                           .arg(score, 0, 'f', 2));
 }
 
-void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
+void MainWindow::onMonthlyPnl(const MonthlyPnl &summary)
 {
     const QString ccy = m_ccy;  // figures are USD from the API; shown in euro
     auto colorFor = [](double v) {
@@ -2648,10 +2652,10 @@ void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
     };
 
     // Fill the per-instrument rows (already sorted by net P/L, descending).
-    const auto pnlRows = static_cast<qint32>(s.perInstrument.size());
+    const auto pnlRows = static_cast<qint32>(summary.perInstrument.size());
     m_pnlTable->setRowCount(pnlRows);
     for (qint32 i = 0; i < pnlRows; ++i) {
-        const InstrumentPnl &r = s.perInstrument[i];
+        const InstrumentPnl &r = summary.perInstrument[i];
         auto *name = new QTableWidgetItem(r.symbol);
         auto *trades = new QTableWidgetItem(QString::number(r.trades));
         trades->setTextAlignment(Qt::AlignCenter);
@@ -2674,34 +2678,35 @@ void MainWindow::onMonthlyPnl(const MonthlyPnl &s)
 
     // Headline summary above the table; the box title names the actual window
     // (the detail dialog can re-fetch with a 7–13 week lookback).
-    const QString fromText = s.fromDate.toString(Qt::ISODate);
-    const QString toText = s.toDate.toString(Qt::ISODate);
-    const qint32 weeks = qRound(static_cast<double>(s.fromDate.daysTo(s.toDate)) / 7.0);
+    const QString fromText = summary.fromDate.toString(Qt::ISODate);
+    const QString toText = summary.toDate.toString(Qt::ISODate);
+    const qint32 weeks = qRound(static_cast<double>(summary.fromDate.daysTo(summary.toDate)) / 7.0);
     m_pnlBox->setTitle(QStringLiteral("Closed trades — last %1 weeks (listed instruments)")
                            .arg(weeks));
-    if (s.accountTrades == 0) {
+    if (summary.accountTrades == 0) {
         m_pnlSummary->setText(QStringLiteral("<b>No closed trades in this window "
                                              "(%1 → %2).</b>")
                                   .arg(fromText, toText));
         return;
     }
-    const QString netColor = colorFor(s.netProfit).name();
-    const QString netText = signed2(s.netProfit);
+    const QString netColor = colorFor(summary.netProfit).name();
+    const QString netText = signed2(summary.netProfit);
     // Total costs across the listed instruments: estimated open+close spread
     // plus the rollover fees eToro reports (same figures as the Costs column).
-    double totalCosts = 0.0;
-    for (const InstrumentPnl &r : s.perInstrument) {
-        totalCosts += r.fees + r.estSpreadCosts;
-    }
+    const double totalCosts =
+        std::accumulate(summary.perInstrument.cbegin(), summary.perInstrument.cend(), 0.0,
+                        [](double acc, const InstrumentPnl &r) {
+                            return acc + r.fees + r.estSpreadCosts;
+                        });
     const QString costsText = QLocale().toString(toDisplay(totalCosts), 'f', 2);
     QString html = QStringLiteral(
                        "<b>Net P/L (listed): <span style='color:%1'>%2 %3</span>"
                        " &nbsp;·&nbsp; total costs %4 %3</b>"
                        " &nbsp;·&nbsp; %5 closed trades &nbsp;·&nbsp; %6 → %7")
                        .arg(netColor, netText, ccy, costsText)
-                       .arg(s.trades)
+                       .arg(summary.trades)
                        .arg(fromText, toText);
-    if (s.perInstrument.isEmpty()) {
+    if (summary.perInstrument.isEmpty()) {
         html += QStringLiteral(
             "<br/><span style='color:#9a9a9a'>(no closed trades on listed instruments)</span>");
     }
@@ -3021,7 +3026,7 @@ void MainWindow::rebuildClosedTradesTable()
     m_closedTable->setRowCount(rows);
     for (qint32 i = 0; i < rows; ++i) {
         const ClosedTrade &t = m_closedTrades[i];
-        auto make = [&t, &grey](const QString &text) {
+        auto make = [&t](const QString &text) {
             auto *it = new QTableWidgetItem(text);
             if (!t.listed) {
                 it->setForeground(grey);  // not in the app's selector — context only
@@ -3156,15 +3161,13 @@ void MainWindow::onScreenerRow(const ScreenerRow &row)
 {
     // Replace any existing row for the same symbol (a rescan), else append; then
     // re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
-    bool replaced = false;
-    for (auto & m_screenerRow : m_screenerRows) {
-        if (m_screenerRow.symbol == row.symbol) {
-            m_screenerRow = row;
-            replaced = true;
-            break;
-        }
-    }
-    if (!replaced) {
+    const auto known = std::find_if(m_screenerRows.begin(), m_screenerRows.end(),
+                                    [&row](const ScreenerRow &r) {
+                                        return r.symbol == row.symbol;
+                                    });
+    if (known != m_screenerRows.end()) {
+        *known = row;
+    } else {
         m_screenerRows.append(row);
     }
     if (m_screenerDialog != nullptr) {  // leverage-screener window, if ever opened
@@ -3404,6 +3407,49 @@ void MainWindow::rebuildRecommendations()
 // ---------------------------------------------------------------------------
 
 namespace {
+// One source of truth for how a direction renders (dir > 0 long, dir < 0 short,
+// 0 flat): the ranked decision table and the focus panel show it identically.
+QColor callColour(qint32 dir)
+{
+    return (dir > 0) ? trading::ui::kGreen : ((dir < 0) ? trading::ui::kRed : trading::ui::kGrey);
+}
+
+QString callWord(qint32 dir)
+{
+    return (dir > 0) ? QStringLiteral("BUY")
+                     : ((dir < 0) ? QStringLiteral("SELL") : QStringLiteral("—"));
+}
+
+// The decision row for one symbol, or nullptr. The three renderers below all
+// need it, and rows arrive confidence-sorted, so the first match is the ranked
+// one. (Pointer into the caller's list — valid while that list lives.)
+const trading::DecisionRow *rowForSymbol(const QList<trading::DecisionRow> &rows,
+                                         const QString &symbol)
+{
+    const auto it = std::find_if(rows.cbegin(), rows.cend(),
+                                 [&symbol](const trading::DecisionRow &d) {
+                                     return d.symbol == symbol;
+                                 });
+    return (it == rows.cend()) ? nullptr : &*it;
+}
+
+// The highest-ranked row that actually calls a direction (dir != 0).
+const trading::DecisionRow *firstDirectionalRow(const QList<trading::DecisionRow> &rows)
+{
+    const auto it = std::find_if(rows.cbegin(), rows.cend(),
+                                 [](const trading::DecisionRow &d) { return d.dir != 0; });
+    return (it == rows.cend()) ? nullptr : &*it;
+}
+
+// The screener row carrying the close series for one symbol, or nullptr.
+// (ScreenerRow lives in the global namespace — domain/Models.h is not namespaced.)
+const ScreenerRow *screenerRowFor(const QList<ScreenerRow> &rows, const QString &symbol)
+{
+    const auto it = std::find_if(rows.cbegin(), rows.cend(),
+                                 [&symbol](const ScreenerRow &r) { return r.symbol == symbol; });
+    return (it == rows.cend()) ? nullptr : &*it;
+}
+
 // TradingView rating bucket for a score in [-1, 1].
 QString decisionRatingWord(double s)
 {
@@ -3605,17 +3651,6 @@ void MainWindow::rebuildDecision()
         return;
     }
 
-    const QColor &green = trading::ui::kGreen;
-    const QColor &red = trading::ui::kRed;
-    const QColor &grey = trading::ui::kGrey;
-    auto callColour = [&green, &red, &grey](qint32 dir) {
-        return (dir > 0) ? green : ((dir < 0) ? red : grey);
-    };
-    auto callWord = [](qint32 dir) {
-        return (dir > 0) ? QStringLiteral("BUY")
-                         : ((dir < 0) ? QStringLiteral("SELL") : QStringLiteral("—"));
-    };
-
     const QList<trading::DecisionRow> rows = trading::computeDecisionRows(marketSnapshot());
 
     // Fill the ranked table (all instruments), guarded so the programmatic refill isn't
@@ -3705,28 +3740,15 @@ void MainWindow::rebuildDecision()
 
     // Resolve the focus instrument: the user's manual pick if it's still listed, else
     // the recommendation (Claude's actionable pick, else the top composite).
-    auto rowFor = [&rows](const QString &s) -> const trading::DecisionRow * {
-        for (const trading::DecisionRow &d : rows) {
-            if (d.symbol == s) {
-                return &d;
-            }
-        }
-        return nullptr;
-    };
     const bool aiActionable = m_aiDecision.ok
                               && (m_aiDecision.action.compare(QStringLiteral("HOLD"),
                                                               Qt::CaseInsensitive) != 0);
-    const trading::DecisionRow *topRow = nullptr;
-    for (const trading::DecisionRow &d : rows) {
-        if (d.dir != 0) {
-            topRow = &d;
-            break;
-        }
-    }
+    const trading::DecisionRow *topRow = firstDirectionalRow(rows);
     QString focus;
-    if (!m_decisionSelected.isEmpty() && (rowFor(m_decisionSelected) != nullptr)) {
+    if (!m_decisionSelected.isEmpty()
+        && (rowForSymbol(rows, m_decisionSelected) != nullptr)) {
         focus = m_decisionSelected;
-    } else if (aiActionable && (rowFor(m_aiDecision.symbol) != nullptr)) {
+    } else if (aiActionable && (rowForSymbol(rows, m_aiDecision.symbol) != nullptr)) {
         focus = m_aiDecision.symbol;
     } else if (topRow != nullptr) {
         focus = topRow->symbol;
@@ -3753,24 +3775,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         return;
     }
 
-    const QColor &green = trading::ui::kGreen;
-    const QColor &red = trading::ui::kRed;
-    const QColor &grey = trading::ui::kGrey;
-    auto callColour = [&green, &red, &grey](qint32 dir) {
-        return (dir > 0) ? green : ((dir < 0) ? red : grey);
-    };
-    auto callWord = [](qint32 dir) {
-        return (dir > 0) ? QStringLiteral("BUY")
-                         : ((dir < 0) ? QStringLiteral("SELL") : QStringLiteral("—"));
-    };
-
-    const trading::DecisionRow *focus = nullptr;
-    for (const trading::DecisionRow &d : rows) {
-        if (d.symbol == focusSymbol) {
-            focus = &d;
-            break;
-        }
-    }
+    const trading::DecisionRow *focus = rowForSymbol(rows, focusSymbol);
     const bool manual = !m_decisionSelected.isEmpty() && (focusSymbol == m_decisionSelected);
 
     if (m_decisionSourcesLabel != nullptr) {
@@ -3810,14 +3815,14 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
             (focus->rating > 0) ? 1 : ((focus->rating < 0) ? -1 : 0);
         const QString ratingRead =
             focus->haveRating ? decisionRatingWord(focus->rating) : QStringLiteral("n/a");
-        const QColor ratingColor = focus->haveRating ? callColour(ratingDir) : grey;
+        const QColor ratingColor = focus->haveRating ? callColour(ratingDir) : trading::ui::kGrey;
         const QString ratingConf =
             focus->haveRating ? QStringLiteral("%1").arg(focus->rating, 0, 'f', 2) : QString();
         setSrc(1, QStringLiteral("TradingView rating"), ratingRead, ratingColor, ratingConf,
                QStringLiteral("15m / 1h / 1D consensus"));
         const qint32 newsDir =
             (focus->newsScore > 0.1) ? 1 : ((focus->newsScore < -0.1) ? -1 : 0);
-        const QColor newsColor = focus->haveNews ? callColour(newsDir) : grey;
+        const QColor newsColor = focus->haveNews ? callColour(newsDir) : trading::ui::kGrey;
         const QString newsConf =
             focus->haveNews ? QStringLiteral("%1").arg(focus->newsScore, 0, 'f', 2) : QString();
         const QString newsNote = QStringLiteral("%1 headlines").arg(focus->newsCount);
@@ -3847,7 +3852,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         const QString crowdRead =
             focus->haveCrowd ? QStringLiteral("%1/100 %2").arg(qRound(m_fg)).arg(m_fgRating)
                              : QStringLiteral("n/a");
-        const QColor crowdColor = focus->haveCrowd ? callColour(crowdDir) : grey;
+        const QColor crowdColor = focus->haveCrowd ? callColour(crowdDir) : trading::ui::kGrey;
         const QString crowdConf =
             focus->haveCrowd ? QStringLiteral("%1").arg(focus->crowd, 0, 'f', 2) : QString();
         setSrc(4, QStringLiteral("Crowd (Fear & Greed)"), crowdRead, crowdColor, crowdConf,
@@ -3861,7 +3866,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                                   : ((yahooDir < 0) ? QStringLiteral("below session mean")
                                                     : QStringLiteral("at session mean")))
                 : QStringLiteral("n/a");
-        const QColor yahooColor = focus->haveYahoo ? callColour(yahooDir) : grey;
+        const QColor yahooColor = focus->haveYahoo ? callColour(yahooDir) : trading::ui::kGrey;
         const QString yahooConf =
             focus->haveYahoo ? QStringLiteral("%1").arg(focus->yahoo, 0, 'f', 2) : QString();
         setSrc(5, QStringLiteral("Yahoo intraday"), yahooRead, yahooColor, yahooConf,
@@ -3872,7 +3877,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
             QStringLiteral("News sentiment"),     QStringLiteral("VIX / calendar regime"),
             QStringLiteral("Crowd (Fear & Greed)"), QStringLiteral("Yahoo intraday")};
         for (qint32 r = 0; r < static_cast<qint32>(names.size()); ++r) {
-            setSrc(r, names[r], QStringLiteral("—"), grey, QString(),
+            setSrc(r, names[r], QStringLiteral("—"), trading::ui::kGrey, QString(),
                    m_screenerRows.isEmpty() ? QStringLiteral("scanning…") : QString());
         }
     }
@@ -3885,7 +3890,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
     const QString aiRead =
         m_aiDecision.ok ? QStringLiteral("%1 %2").arg(m_aiDecision.action, m_aiDecision.symbol)
                         : QStringLiteral("n/a");
-    const QColor aiColor = aiActionable ? callColour(aiBuy ? 1 : -1) : grey;
+    const QColor aiColor = aiActionable ? callColour(aiBuy ? 1 : -1) : trading::ui::kGrey;
     const QString aiConf =
         m_aiDecision.ok ? QStringLiteral("%1%").arg(qRound(m_aiDecision.confidence)) : QString();
     const QString aiNote =
@@ -3941,13 +3946,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                    .arg(m_ccy)
                    .arg(qRound(toDisplay(amount)));
         // Overall recommendation basis, for context.
-        const trading::DecisionRow *topRow = nullptr;
-        for (const trading::DecisionRow &d : rows) {
-            if (d.dir != 0) {
-                topRow = &d;
-                break;
-            }
-        }
+        const trading::DecisionRow *topRow = firstDirectionalRow(rows);
         QStringList basis;
         if (topRow != nullptr) {
             basis << QStringLiteral("algorithmic top: %1 %2 (%3%)")
@@ -3986,13 +3985,7 @@ void MainWindow::dispatchRowPlans(const QList<trading::DecisionRow> &rows)
     QList<QPair<QString, trading::PlanInput>> inputs;
     inputs.reserve(rows.size());
     for (const trading::DecisionRow &d : rows) {
-        const ScreenerRow *row = nullptr;
-        for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
-            if (r.symbol == d.symbol) {
-                row = &r;
-                break;
-            }
-        }
+        const ScreenerRow *row = screenerRowFor(m_screenerRows, d.symbol);
         if ((row == nullptr) || row->closes.isEmpty()) {
             continue;
         }
@@ -4095,13 +4088,7 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
         return;
     }
     // The close series behind the focus row (the same one its ensemble used).
-    const ScreenerRow *row = nullptr;
-    for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
-        if (r.symbol == focusSymbol) {
-            row = &r;
-            break;
-        }
-    }
+    const ScreenerRow *row = screenerRowFor(m_screenerRows, focusSymbol);
     if ((row == nullptr) || row->closes.isEmpty()) {
         m_decisionPlanLabel->setText(QString());
         return;

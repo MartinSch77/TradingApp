@@ -1,0 +1,110 @@
+{
+  "src/domain/DecisionEngine.cpp::trading::buildDecisionEvidence": {
+    "ccn": 17
+  },
+  "src/domain/DecisionEngine.cpp::trading::computeDecisionRows": {
+    "ccn": 19
+  },
+  "src/domain/Forecasting.cpp::trading::monteCarlo": {
+    "ccn": 23,
+    "params": 7
+  },
+  "src/domain/SignalEnsemble.cpp::trading::computeEnsemble": {
+    "ccn": 29
+  },
+  "src/domain/TradePlan.cpp::trading::buildTradePlan": {
+    "ccn": 52,
+    "nloc": 138
+  },
+  "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
+    "ccn": 17
+  },
+  "src/services/EtoroClient.cpp::EtoroClient::finalizePortfolioPl": {
+    "ccn": 29
+  },
+  "src/services/EtoroClient.cpp::EtoroClient::openPosition": {
+    "params": 6
+  },
+  "src/services/EtoroClient.cpp::EtoroClient::openPositionReal": {
+    "ccn": 33,
+    "nloc": 134,
+    "params": 6
+  },
+  "src/services/JsonHttp.cpp::JsonHttp::handleReply": {
+    "ccn": 20
+  },
+  "src/services/SimulationEngine.cpp::SimulationEngine::openPosition": {
+    "params": 6
+  },
+  "src/services/SimulationEngine.cpp::SimulationEngine::tick": {
+    "ccn": 18
+  },
+  "src/ui/MainWindow.cpp::MainWindow::MainWindow": {
+    "nloc": 125
+  },
+  "src/ui/MainWindow.cpp::MainWindow::buildUi": {
+    "ccn": 24,
+    "nloc": 685
+  },
+  "src/ui/MainWindow.cpp::MainWindow::checkCloseProposals": {
+    "ccn": 25
+  },
+  "src/ui/MainWindow.cpp::MainWindow::eventFilter": {
+    "ccn": 27
+  },
+  "src/ui/MainWindow.cpp::MainWindow::onPortfolio": {
+    "ccn": 19
+  },
+  "src/ui/MainWindow.cpp::MainWindow::onPositionSlTpEdited": {
+    "ccn": 20
+  },
+  "src/ui/MainWindow.cpp::MainWindow::openDecision": {
+    "nloc": 114
+  },
+  "src/ui/MainWindow.cpp::MainWindow::rebuildClosedTradesTable": {
+    "ccn": 21,
+    "nloc": 104
+  },
+  "src/ui/MainWindow.cpp::MainWindow::rebuildDecision": {
+    "ccn": 24,
+    "nloc": 106
+  },
+  "src/ui/MainWindow.cpp::MainWindow::rebuildEventsView": {
+    "ccn": 20
+  },
+  "src/ui/MainWindow.cpp::MainWindow::rebuildRecommendations": {
+    "ccn": 46,
+    "nloc": 138
+  },
+  "src/ui/MainWindow.cpp::MainWindow::renderDecisionFocus": {
+    "ccn": 72,
+    "nloc": 191
+  },
+  "src/ui/MainWindow.cpp::MainWindow::renderMonteCarlo": {
+    "ccn": 18
+  },
+  "src/ui/MainWindow.cpp::MainWindow::renderTradePlanResult": {
+    "ccn": 30,
+    "nloc": 160
+  },
+  "src/ui/MainWindow.cpp::MainWindow::updateSignals": {
+    "ccn": 101,
+    "nloc": 351
+  },
+  "src/ui/PositionsModel.cpp::PositionsModel::data": {
+    "ccn": 22
+  },
+  "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
+    "ccn": 19
+  },
+  "src/ui/PriceChart.cpp::PriceChart::PriceChart": {
+    "nloc": 177
+  },
+  "src/ui/PriceChart.cpp::PriceChart::recomputeChange": {
+    "ccn": 16
+  },
+  "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
+    "ccn": 20,
+    "nloc": 101
+  }
+}

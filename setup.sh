@@ -56,7 +56,7 @@ APT_PKGS=(
 # Keep in sync with $PipPkgs in setup.ps1 so both platforms carry the same
 # python-based tooling (gcovr is the CI-friendly gcov reporter named in
 # docs/tools.md).
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr)
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -70,6 +70,9 @@ version_of() {
     aqt) aqt version 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 ;;
     clang-18) clang-18 --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 ;;
     qt) [ -d "$QT_DIR/$QT_VERSION/gcc_64" ] && echo "$QT_VERSION" ;;
+    # PMD prints a banner before the version line.
+    pmd) local pmd_bin; pmd_bin="$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)"
+        [ -x "$pmd_bin" ] && "$pmd_bin" --version 2>/dev/null | grep -oE 'PMD [0-9.]+' | head -1 | awk '{print $2}' ;;
     plantuml) [ -f "$ROOT/tools/third-party/plantuml.jar" ] && java -jar "$ROOT/tools/third-party/plantuml.jar" -version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9.]+' | head -1 ;;
     axivion) [ -x "$HOME/bauhaus-suite/bin/axivion_ci" ] && "$HOME/bauhaus-suite/bin/axivion_ci" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9.]+' | head -1 ;;
     coco) [ -x /opt/SquishCoco/bin/coveragescanner ] && /opt/SquishCoco/bin/coveragescanner --cs-version 2>/dev/null | head -1 ;;
@@ -89,7 +92,7 @@ status() {
     # report the same set of tools.
     for t in g++ cmake ninja git gh clang-18 clang-tidy cppcheck clazy-standalone \
         valgrind lcov gcovr doxygen dot java python3 pipx \
-        strictdoc doorstop codespell sphinx-build aqt syft grype trivy; do
+        strictdoc doorstop codespell sphinx-build aqt lizard syft grype trivy; do
         if have "$t"; then
             report "$t" "ok" "$(version_of "$t")"
         else
@@ -107,6 +110,9 @@ status() {
     [ -f "$ROOT/tools/third-party/plantuml.jar" ] &&
         report "plantuml" "ok" "$(version_of plantuml)" ||
         report "plantuml" "missing" "fetched on demand by tools/make_docs.sh"
+    [ -x "$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)" ] &&
+        report "pmd" "ok" "$(version_of pmd)" ||
+        report "pmd" "missing" "copy-paste detection skips; ./setup.sh install fetches it"
     echo "== no Linux counterpart =="
     report "OpenCppCov" "n/a" "Windows-only; gcov+lcov is the Linux line/branch tool"
     echo "== license-bound (manual) — the stages that need these report 'skipped' =="
@@ -176,6 +182,13 @@ plantuml_install() {
     "$ROOT/tools/fetch_plantuml.sh"
 }
 
+# PMD CPD: the copy-paste detector tools/cpd_scan.py drives (Java tool, runs on
+# the default-jre-headless installed above).
+pmd_install() {
+    echo "== PMD (copy-paste detection) =="
+    "$ROOT/tools/fetch_pmd.sh"
+}
+
 case "$MODE" in
 install)
     apt_install
@@ -183,6 +196,7 @@ install)
     supply_chain_install
     qt_install
     plantuml_install
+    pmd_install
     echo
     status
     echo
@@ -208,6 +222,9 @@ update)
     echo "== PlantUML =="
     echo "pinned to the version in tools/fetch_plantuml.sh — bump VERSION there,"
     echo "delete tools/third-party/plantuml.jar and rerun ./setup.sh install."
+    echo "== PMD =="
+    echo "pinned to the version in tools/fetch_pmd.sh — bump VERSION there and"
+    echo "rerun ./setup.sh install (the fetch script drops the old dist)."
     echo
     status
     ;;

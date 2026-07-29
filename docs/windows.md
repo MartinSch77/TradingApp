@@ -207,6 +207,9 @@ print the reason at the point where the Linux tool would have run.
 | cppcheck | cppcheck | same tool, same flags |
 | clang-tidy | clang-tidy | same tool; newer upstream versions report extra checks (see below) |
 | `g++ -fanalyzer` | **MSVC `/analyze`** | same role — a second, compiler-native symbolic-execution pass over every TU. `tools/msvc_analyze.py` normalizes the C6xxx diagnostics to the GCC-style line format, dashboard provider `msvc-analyze`. |
+| Clang Static Analyzer | Clang Static Analyzer | same shared driver `tools/clang_analyzer.py`; it picks the clang matching the compile database's dialect (clang-cl for an MSVC database, clang++ for MinGW) and prints "skipped" when no clang driver is installed. Provider `clang-analyzer`. |
+| lizard | lizard | same shared driver `tools/lizard_metrics.py`, same limits and the same `tools/lizard_baseline.json` ratchet. Installed by `.\setup.ps1` through pip. |
+| PMD CPD | PMD CPD | same shared driver `tools/cpd_scan.py`. PMD is a Java tool: `.\setup.ps1` fetches the pinned dist into `tools\third-party\` (`tools\fetch_pmd.ps1`), `Get-PmdLauncher` in `tools\common.ps1` locates it. |
 | clazy | *nothing* | no Windows build exists. Not a coverage gap: Axivion's `Qt-*` ruleset (~180 rules, including the clazy checks) runs on every `axivion_ci`. |
 | gcov + lcov | **OpenCppCoverage** | GCC-only toolchain. OpenCppCoverage reads the PDBs and gives LINE coverage but no branch coverage; branch + MC/DC come from the two MC/DC back ends instead. |
 | clang-18 `-fcoverage-mcdc` | clang-cl `-fcoverage-mcdc` + llvm-cov | works; see MC/DC below |

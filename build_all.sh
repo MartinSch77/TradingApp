@@ -61,7 +61,8 @@ stage_build() {
     cmake -S "$ROOT" -B "$ROOT/build" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON &&
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DTRADINGAPP_WARNINGS_AS_ERRORS=ON &&
         cmake --build "$ROOT/build" -j"$JOBS"
 }
 
@@ -70,7 +71,8 @@ stage_app() {
     cmake -S "$ROOT" -B "$ROOT/build" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON &&
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DTRADINGAPP_WARNINGS_AS_ERRORS=ON &&
         cmake --build "$ROOT/build" --target TradingApp -j"$JOBS"
 }
 

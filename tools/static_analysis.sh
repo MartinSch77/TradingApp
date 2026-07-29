@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Static analysis over the app sources: cppcheck + clang-tidy, plus clazy
-# (Qt coding rules) when installed. Reports land in analysis-results/ as one
-# plain-text log per tool — the next axivion_ci run imports those onto the
-# Axivion dashboard (see axivion/external_import.py) — plus one merged CSV as
-# a single-file overview. Exit code 1 when any tool reported findings.
+# Static analysis over the app AND test sources: cppcheck + clang-tidy + the
+# Clang Static Analyzer + g++ -fanalyzer + code metrics (lizard) + copy-paste
+# detection (PMD CPD), plus clazy (Qt coding rules) and codespell when
+# installed. Reports land in analysis-results/ as one plain-text log per tool —
+# the next axivion_ci run imports those onto the Axivion dashboard (see
+# axivion/external_import.py) — plus one merged CSV as a single-file overview.
+# Exit code 1 when any tool reported findings.
 #
 # Usage: tools/static_analysis.sh [build-dir] [--fix]
 #        (needs compile_commands.json; configure with
@@ -22,7 +24,10 @@ BUILD_DIR="${ARGS[0]:-build}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/analysis-results"
 mkdir -p "$OUT"
-SOURCES=("$ROOT"/src/domain/*.cpp "$ROOT"/src/services/*.cpp "$ROOT"/src/ui/*.cpp "$ROOT"/src/main.cpp)
+# The test sources are analysed like production code (tests/.clang-tidy exempts
+# only what Qt Test's moc-driven layout forces).
+SOURCES=("$ROOT"/src/domain/*.cpp "$ROOT"/src/services/*.cpp "$ROOT"/src/ui/*.cpp
+    "$ROOT"/src/main.cpp "$ROOT"/tests/*.cpp)
 
 if [ "$FIX" -eq 1 ]; then
     echo "== clang-tidy --fix (sequential: checks edit shared headers) =="
@@ -34,19 +39,27 @@ if [ "$FIX" -eq 1 ]; then
 fi
 
 echo "== cppcheck ($(cppcheck --version)) =="
-# Core flags: --project (compile database, so Qt include paths and defines
-# match the real build), --enable=warning,performance,portability,
-# --inconclusive, --error-exitcode=1 (any finding fails the run). On top:
-# --library=qt (Qt function semantics), the autogen/tests suppressions (moc
-# noise) and the pipe template that feeds the Axivion dashboard import.
+# Core flags: --project (compile database, so Qt include paths and defines match
+# the real build), --enable=all (every check class, i.e. style and information
+# on top of warning/performance/portability), --check-level=exhaustive (the
+# deeper value-flow search; the default "normal" bails out early on big
+# functions), --inconclusive, --error-exitcode=1 (any finding fails the run).
+# On top: --library=qt (Qt function semantics), the id-scoped suppressions with
+# their written rationale, and the pipe template that feeds the Axivion
+# dashboard import. --checkers-report records which of cppcheck's ~590 checkers
+# were actually active — evidence that the run was as strict as claimed.
+# The test sources are analysed too; only the build tree is excluded (-i), which
+# is where the moc/autogen output lives.
 cppcheck --project="$ROOT/$BUILD_DIR/compile_commands.json" \
-    --enable=warning,performance,portability \
+    --enable=all \
+    --check-level=exhaustive \
     --inconclusive \
     --error-exitcode=1 \
     --inline-suppr \
     --suppressions-list="$ROOT/tools/cppcheck-suppressions.txt" \
     --library=qt \
-    -i "$ROOT/$BUILD_DIR" --suppress='*:*autogen*' --suppress='*:*/tests/*' \
+    -i "$ROOT/$BUILD_DIR" \
+    --checkers-report="$OUT/cppcheck-checkers.txt" \
     --template='{file}|{line}|{severity}|{id}|{message}' \
     --output-file="$OUT/cppcheck.txt" --quiet
 CPPCHECK_RC=$?
@@ -63,10 +76,14 @@ echo "cppcheck findings: $CPPCHECK_N (analysis-results/cppcheck.txt)"
 echo "== clang-tidy ($(clang-tidy --version | head -1)) =="
 # One process per source file, in parallel; per-file temp logs keep the
 # concurrent output from interleaving mid-line.
+# --extra-arg: the compile database is GCC's, so it carries GCC-only warning
+# spellings (-Wduplicated-cond, -Wlogical-op …). clang reports each as an unknown
+# warning option, which says nothing about the code.
 TIDY_TMP="$(mktemp -d)"
 printf '%s\n' "${SOURCES[@]}" | xargs -P "$(nproc)" -I{} sh -c '
-    clang-tidy -p "$1" "$2" 2>/dev/null | grep -E "warning:|error:" \
-        > "$0/$(basename "$2").log" || true' "$TIDY_TMP" "$ROOT/$BUILD_DIR" {}
+    clang-tidy -p "$1" --extra-arg=-Wno-unknown-warning-option "$2" 2>/dev/null \
+        | grep -E "warning:|error:" > "$0/$(basename "$2").log" || true' \
+    "$TIDY_TMP" "$ROOT/$BUILD_DIR" {}
 cat "$TIDY_TMP"/*.log | sort -u > "$OUT/clang-tidy.txt"
 rm -rf "$TIDY_TMP"
 TIDY_N=$(grep -c . "$OUT/clang-tidy.txt" || true)
@@ -88,6 +105,9 @@ entries = [e for e in json.load(open(db_path))
 located = re.compile(r"^(/[^:]+):(\d+):(\d+): warning: .*\[-Wanalyzer-[^\]]+\]$")
 
 def run(entry, extra=()):
+    # -Werror is dropped: it is a build policy (TRADINGAPP_WARNINGS_AS_ERRORS),
+    # and with it every analyzer warning turns the exit code nonzero, which this
+    # stage would then report as "the TU was never fully analyzed".
     args, skip = [], False
     for a in shlex.split(entry["command"]):
         if skip:
@@ -95,6 +115,8 @@ def run(entry, extra=()):
             continue
         if a == "-o":
             skip = True
+            continue
+        if a == "-Werror" or a.startswith("-Werror="):
             continue
         args.append(a)
     args += ["-fanalyzer", *extra, "-o", "/dev/null"]
@@ -157,6 +179,42 @@ EOF
 GCCA_N=$(grep -c . "$OUT/gcc-analyzer.txt" || true)
 echo "g++ -fanalyzer findings: $GCCA_N (analysis-results/gcc-analyzer.txt)"
 
+echo "== Clang Static Analyzer =="
+# The analyzer standalone, with the off-by-default checkers and a deeper search
+# than clang-tidy's inline clang-analyzer-* checks can be given (clang-tidy has
+# no way to pass -analyzer-config). Driver, checker list and the rationale for
+# what is NOT enabled: tools/clang_analyzer.py. Shared with the Windows script.
+python3 "$ROOT/tools/clang_analyzer.py" \
+    "$ROOT/$BUILD_DIR/compile_commands.json" "$ROOT" "$OUT/clang-analyzer.txt"
+CSA_RC=$?
+if [ "$CSA_RC" -ne 0 ] && [ "$CSA_RC" -ne 3 ]; then
+    echo "ERROR: clang_analyzer.py failed (rc=$CSA_RC)" >&2
+    exit 1
+fi
+CSA_N=$(grep -c . "$OUT/clang-analyzer.txt" || true)
+echo "clang-analyzer findings: $CSA_N (analysis-results/clang-analyzer.txt)"
+
+echo "== lizard (code metrics) =="
+# Cyclomatic complexity / function length / parameter count over src and tests.
+# Gate is a ratchet against tools/lizard_baseline.json, so the finding count is
+# deliberately NOT summed into TOTAL — the exit code is what decides (0 ok,
+# 1 new or regressed debt, 3 lizard not installed). See tools/lizard_metrics.py.
+python3 "$ROOT/tools/lizard_metrics.py" "$ROOT" "$OUT"
+LIZARD_RC=$?
+LIZARD_N=$(grep -c . "$OUT/lizard.txt" 2>/dev/null || true)
+
+echo "== PMD CPD (copy-paste detection) =="
+# Token-based clone detection; Axivion's configuration here is MISRA-only, so
+# this is the project's only clone gate. See tools/cpd_scan.py.
+python3 "$ROOT/tools/cpd_scan.py" "$ROOT" "$OUT/pmd-cpd.txt"
+CPD_RC=$?
+if [ "$CPD_RC" -ne 0 ] && [ "$CPD_RC" -ne 3 ]; then
+    echo "ERROR: cpd_scan.py failed (rc=$CPD_RC)" >&2
+    exit 1
+fi
+CPD_N=$(grep -c . "$OUT/pmd-cpd.txt" || true)
+echo "pmd-cpd findings: $CPD_N (analysis-results/pmd-cpd.txt)"
+
 CODESPELL_N=0
 if command -v codespell >/dev/null 2>&1; then
     echo "== codespell ($(codespell --version 2>&1)) =="
@@ -193,10 +251,11 @@ else
 fi
 
 # Every stage above tolerates its own tool failing (|| true) — so before
-# summing, prove the run actually produced all five logs. A vanished
+# summing, prove the run actually produced all eight logs. A vanished
 # analysis-results/ (e.g. a concurrent clean) once yielded "TOTAL: 0"/exit 0
 # with half the logs missing: a green-washed non-run.
-for f in cppcheck.txt clang-tidy.txt gcc-analyzer.txt codespell.txt clazy.txt; do
+for f in cppcheck.txt clang-tidy.txt gcc-analyzer.txt clang-analyzer.txt \
+    lizard.txt pmd-cpd.txt codespell.txt clazy.txt; do
     if [ ! -f "$OUT/$f" ]; then
         echo "ERROR: $OUT/$f missing — the analysis did not complete (concurrent clean?)" >&2
         exit 1
@@ -211,6 +270,16 @@ if ! python3 "$ROOT/tools/merge_findings.py" "$OUT"; then
     exit 1
 fi
 
-TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CODESPELL_N))
+TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N))
 echo "TOTAL findings: $TOTAL"
-[ "$TOTAL" -eq 0 ] && [ "${CPPCHECK_RC:-0}" -eq 0 ]
+# The lizard metrics are reported separately: their violations are ratcheted
+# against a recorded baseline, so a nonzero count is expected — the gate is the
+# script's exit code, not the count.
+echo "code metrics: $LIZARD_N over-threshold findings, ratchet $(
+    case "$LIZARD_RC" in
+    0) echo "clean" ;;
+    3) echo "SKIPPED (lizard not installed)" ;;
+    *) echo "FAILED — see the lizard GATE lines above" ;;
+    esac)"
+[ "$TOTAL" -eq 0 ] && [ "${CPPCHECK_RC:-0}" -eq 0 ] &&
+    { [ "${LIZARD_RC:-0}" -eq 0 ] || [ "${LIZARD_RC:-0}" -eq 3 ]; }

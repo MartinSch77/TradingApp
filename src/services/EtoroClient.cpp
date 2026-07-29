@@ -107,6 +107,104 @@ QString errorText(const QByteArray &raw, const QString &netError)
     return netError.isEmpty() ? QString::fromUtf8(raw.left(200)) : netError;
 }
 
+// The leverages one eligibility entry offers, sorted ascending and
+// de-duplicated. This app trades CFDs, so CFD settlement wins; when the
+// instrument has no CFD config, every configured leverage counts. Shared by the
+// single-instrument lookup (which offers them all) and the screener (which only
+// wants the maximum, i.e. the last element).
+QList<qint32> eligibleLeverages(const QJsonObject &eligibility)
+{
+    QList<qint32> cfd;
+    QList<qint32> all;
+    const QJsonArray leverageConfigs =
+        eligibility.value(QStringLiteral("leverageConfigs")).toArray();
+    for (const auto &lcv : leverageConfigs) {
+        const QJsonObject lc = lcv.toObject();
+        const bool isCfd = lc.value(QStringLiteral("settlementType"))
+                               .toString()
+                               .compare(QLatin1String("cfd"), Qt::CaseInsensitive) == 0;
+        const QJsonArray leverageValues = lc.value(QStringLiteral("leverageValues")).toArray();
+        for (const auto &lv : leverageValues) {
+            const qint32 v = lv.toInt();
+            if (v <= 0) {
+                continue;
+            }
+            all.append(v);
+            if (isCfd) {
+                cfd.append(v);
+            }
+        }
+    }
+    QList<qint32> values = cfd.isEmpty() ? all : cfd;
+    // begin()/end() once each: repeating them on a Qt container repeats the
+    // detach check.
+    const auto sortBegin = values.begin();
+    const auto sortEnd = values.end();
+    std::sort(sortBegin, sortEnd);
+    const auto uniqueEnd = std::unique(sortBegin, sortEnd);
+    static_cast<void>(values.erase(uniqueEnd, sortEnd));
+    return values;
+}
+
+// The public, unauthenticated trade-config feed the eToro web app uses; it
+// carries the per-unit overnight/weekend rollover fees. One request builder so
+// the URL and the browser headers cannot drift between its two callers.
+QNetworkRequest tradeConfigRequest(qint64 instrumentId)
+{
+    QNetworkRequest req(QUrl(
+        QStringLiteral("https://api.etorostatic.com/sapi/trade-real/instruments/%1")
+            .arg(instrumentId)));
+    JsonHttp::setBrowserHeaders(req);
+    return req;
+}
+
+// The four rollover fees out of a trade-config reply (see tradeConfigRequest).
+InstrumentFees feesFromTradeConfig(const QJsonDocument &doc)
+{
+    const QJsonObject inst = doc.object().value(QStringLiteral("Instrument")).toObject();
+    InstrumentFees fees;
+    fees.buyOvernight = inst.value(QStringLiteral("BuyOverNightFee")).toDouble();
+    fees.sellOvernight = inst.value(QStringLiteral("SellOverNightFee")).toDouble();
+    fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
+    fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
+    return fees;
+}
+
+// Candles out of a history reply, oldest first, dropping any without a usable
+// close. eToro nests one level: { candles: [ { instrumentId, candles: [ {ohlc} ] } ] }.
+QList<Candle> candlesFrom(const QJsonDocument &doc)
+{
+    QJsonArray arr = asArray(doc, {QStringLiteral("candles"), QStringLiteral("data")});
+    const QJsonValue firstEntry = arr.isEmpty() ? QJsonValue() : arr.first();
+    if (firstEntry.isObject()) {
+        const QJsonValue inner = pick(firstEntry.toObject(), {QStringLiteral("candles")});
+        if (inner.isArray()) {
+            arr = inner.toArray();
+        }
+    }
+    QList<Candle> candles;
+    candles.reserve(arr.size());
+    for (const auto &v : std::as_const(arr)) {
+        const QJsonObject o = v.toObject();
+        Candle c;
+        c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"), QStringLiteral("timestamp"),
+                                        QStringLiteral("date")}));
+        c.open = numFrom(pick(o, {QStringLiteral("open")}));
+        c.high = numFrom(pick(o, {QStringLiteral("high")}));
+        c.low = numFrom(pick(o, {QStringLiteral("low")}));
+        c.close = numFrom(
+            pick(o, {QStringLiteral("close"), QStringLiteral("rate"), QStringLiteral("mid")}));
+        if (c.close > 0.0) {
+            candles << c;
+        }
+    }
+    const auto sortBegin = candles.begin();
+    const auto sortEnd = candles.end();
+    std::sort(sortBegin, sortEnd,
+              [](const Candle &a, const Candle &b) { return a.timestamp < b.timestamp; });
+    return candles;
+}
+
 } // namespace
 
 // Accumulates closed-trade P/L across the paged trade-history responses. Held in a
@@ -607,33 +705,7 @@ void EtoroClient::fetchLeverageReal()
                 numFrom(pick(e, {QStringLiteral("maxUnitsPerOrder")}));
         }
 
-        // Prefer CFD configs (how this app trades); fall back to all if none.
-        QList<qint32> cfd;
-        QList<qint32> all;
-        const QJsonArray leverageConfigs = e.value(QStringLiteral("leverageConfigs")).toArray();
-        for (const auto &lcv : leverageConfigs) {
-            const QJsonObject lc = lcv.toObject();
-            const bool isCfd = lc.value(QStringLiteral("settlementType"))
-                                   .toString()
-                                   .compare(QLatin1String("cfd"), Qt::CaseInsensitive) == 0;
-            const QJsonArray leverageValues = lc.value(QStringLiteral("leverageValues")).toArray();
-            for (const auto &lv : leverageValues) {
-                const qint32 v = lv.toInt();
-                if (v <= 0) {
-                    continue;
-                }
-                all.append(v);
-                if (isCfd) {
-                    cfd.append(v);
-                }
-            }
-        }
-        QList<qint32> values = cfd.isEmpty() ? all : cfd;
-        const auto sortBegin = values.begin();
-        const auto sortEnd = values.end();
-        std::sort(sortBegin, sortEnd);
-        const auto uniqueEnd = std::unique(sortBegin, sortEnd);
-        static_cast<void>(values.erase(uniqueEnd, sortEnd));
+        const QList<qint32> values = eligibleLeverages(e);
         if (!values.isEmpty()) {
             emit leverageOptions(values);
         }
@@ -650,21 +722,13 @@ void EtoroClient::fetchFeesReal()
     // the per-unit overnight/weekend rollover fees the trade ticket displays.
     // Not part of the rate-limited public API — a browser User-Agent suffices.
     const qint64 wantId = m_instrument.instrumentId;
-    QNetworkRequest req(QUrl(QStringLiteral(
-        "https://api.etorostatic.com/sapi/trade-real/instruments/%1").arg(wantId)));
-    JsonHttp::setBrowserHeaders(req);
-    QNetworkReply *reply = m_nam->get(req);
+    QNetworkReply *reply = m_nam->get(tradeConfigRequest(wantId));
     handleReply(reply, [this, wantId](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                       const QByteArray & /*raw*/, const QString & /*netError*/) {
         if (!ok || (m_instrument.instrumentId != wantId)) {
             return;  // transient failure, or the user switched instruments meanwhile
         }
-        const QJsonObject inst = doc.object().value(QStringLiteral("Instrument")).toObject();
-        InstrumentFees fees;
-        fees.buyOvernight = inst.value(QStringLiteral("BuyOverNightFee")).toDouble();
-        fees.sellOvernight = inst.value(QStringLiteral("SellOverNightFee")).toDouble();
-        fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
-        fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
+        const InstrumentFees fees = feesFromTradeConfig(doc);
         if (fees.isValid()) {
             static_cast<void>(m_feesById.insert(wantId, fees));  // shared cache (see feesFor/requestFees)
             emit feesUpdated(fees);
@@ -696,22 +760,14 @@ void EtoroClient::requestFees(const QString &symbol)
     }
     static_cast<void>(m_feesInFlight.insert(id));
     // Same public trade-config feed as fetchFeesReal, keyed to any listed symbol.
-    QNetworkRequest req(QUrl(QStringLiteral(
-        "https://api.etorostatic.com/sapi/trade-real/instruments/%1").arg(id)));
-    JsonHttp::setBrowserHeaders(req);
-    QNetworkReply *reply = m_nam->get(req);
+    QNetworkReply *reply = m_nam->get(tradeConfigRequest(id));
     handleReply(reply, [this, id, symbol](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                           const QByteArray & /*raw*/, const QString & /*netError*/) {
         static_cast<void>(m_feesInFlight.remove(id));
         if (!ok) {
             return;  // transient — the next plan render will re-request
         }
-        const QJsonObject inst = doc.object().value(QStringLiteral("Instrument")).toObject();
-        InstrumentFees fees;
-        fees.buyOvernight = inst.value(QStringLiteral("BuyOverNightFee")).toDouble();
-        fees.sellOvernight = inst.value(QStringLiteral("SellOverNightFee")).toDouble();
-        fees.buyWeekend = inst.value(QStringLiteral("BuyEndOfWeekFee")).toDouble();
-        fees.sellWeekend = inst.value(QStringLiteral("SellEndOfWeekFee")).toDouble();
+        const InstrumentFees fees = feesFromTradeConfig(doc);
         if (fees.isValid()) {
             static_cast<void>(m_feesById.insert(id, fees));
             emit instrumentFeesUpdated(symbol, fees);
@@ -808,38 +864,7 @@ void EtoroClient::fetchCandles(const QString &interval, qint32 count,
             cb({});
             return;
         }
-        QJsonArray arr = asArray(doc, {QStringLiteral("candles"), QStringLiteral("data")});
-        // eToro nests one level: { candles: [ { instrumentId, candles: [ {ohlc} ] } ] }
-        const QJsonValue firstEntry = arr.isEmpty() ? QJsonValue() : arr.first();
-        if (firstEntry.isObject()) {
-            const QJsonObject firstObj = firstEntry.toObject();
-            const QJsonValue inner = pick(firstObj, {QStringLiteral("candles")});
-            if (inner.isArray()) {
-                arr = inner.toArray();
-            }
-        }
-        QList<Candle> candles;
-        candles.reserve(arr.size());
-        for (const auto &v : std::as_const(arr)) {
-            const QJsonObject o = v.toObject();
-            Candle c;
-            c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
-                                            QStringLiteral("timestamp"),
-                                            QStringLiteral("date")}));
-            c.open = numFrom(pick(o, {QStringLiteral("open")}));
-            c.high = numFrom(pick(o, {QStringLiteral("high")}));
-            c.low = numFrom(pick(o, {QStringLiteral("low")}));
-            c.close = numFrom(pick(o, {QStringLiteral("close"), QStringLiteral("rate"),
-                                       QStringLiteral("mid")}));
-            if (c.close > 0.0) {
-                candles << c;
-            }
-        }
-        const auto sortBegin = candles.begin();
-        const auto sortEnd = candles.end();
-        std::sort(sortBegin, sortEnd,
-                  [](const Candle &a, const Candle &b) { return a.timestamp < b.timestamp; });
-        cb(candles);
+        cb(candlesFrom(doc));
     });
 }
 
@@ -1541,34 +1566,10 @@ void EtoroClient::scanInstrumentsReal()
                 const QJsonObject e = ev.toObject();
                 const qint64 id =
                     static_cast<qint64>(numFrom(pick(e, {QStringLiteral("instrumentId")})));
-                // Prefer CFD leverage (how this app trades); fall back to all.
-                QList<qint32> cfd;
-                QList<qint32> all;
-                const QJsonArray leverageConfigs =
-                    e.value(QStringLiteral("leverageConfigs")).toArray();
-                for (const auto &lcv : leverageConfigs) {
-                    const QJsonObject lc = lcv.toObject();
-                    const bool isCfd = lc.value(QStringLiteral("settlementType"))
-                                           .toString()
-                                           .compare(QLatin1String("cfd"), Qt::CaseInsensitive) == 0;
-                    const QJsonArray leverageValues =
-                        lc.value(QStringLiteral("leverageValues")).toArray();
-                    for (const auto &lv : leverageValues) {
-                        const qint32 v = lv.toInt();
-                        if (v <= 0) {
-                            continue;
-                        }
-                        all.append(v);
-                        if (isCfd) {
-                            cfd.append(v);
-                        }
-                    }
-                }
-                qint32 mx = 0;
-                const QList<qint32> &pool = cfd.isEmpty() ? all : cfd;
-                for (const qint32 v : pool) {
-                    mx = std::max(mx, v);
-                }
+                // The screener column shows the cap only: sorted ascending, so
+                // the highest eligible leverage is the last element.
+                const QList<qint32> values = eligibleLeverages(e);
+                const qint32 mx = values.isEmpty() ? 0 : values.constLast();
                 if ((id > 0) && (mx > 0)) {
                     static_cast<void>(st->maxLevById.insert(id, mx));
                 }
@@ -1607,34 +1608,7 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
         row.symbol = item.symbol;
         row.maxLeverage = st->maxLevById.value(item.id, 0);
         if (ok) {
-            QJsonArray arr = asArray(doc, {QStringLiteral("candles"), QStringLiteral("data")});
-            // eToro nests one level: { candles: [ { instrumentId, candles: [ … ] } ] }.
-            const QJsonValue firstEntry = arr.isEmpty() ? QJsonValue() : arr.first();
-            if (firstEntry.isObject()) {
-                const QJsonObject firstObj = firstEntry.toObject();
-                const QJsonValue inner = pick(firstObj, {QStringLiteral("candles")});
-                if (inner.isArray()) {
-                    arr = inner.toArray();
-                }
-            }
-            QList<Candle> candles;
-            candles.reserve(arr.size());
-            for (const auto &v : std::as_const(arr)) {
-                const QJsonObject o = v.toObject();
-                Candle c;
-                c.timestamp = timeFrom(pick(o, {QStringLiteral("fromDate"),
-                                                QStringLiteral("timestamp"),
-                                                QStringLiteral("date")}));
-                c.close = numFrom(pick(o, {QStringLiteral("close"), QStringLiteral("rate"),
-                                           QStringLiteral("mid")}));
-                if (c.close > 0.0) {
-                    candles << c;
-                }
-            }
-            const auto sortBegin = candles.begin();
-            const auto sortEnd = candles.end();
-            std::sort(sortBegin, sortEnd,
-                      [](const Candle &a, const Candle &b) { return a.timestamp < b.timestamp; });
+            const QList<Candle> candles = candlesFrom(doc);
             row.closes.reserve(candles.size());
             for (const Candle &c : std::as_const(candles)) {
                 row.closes.append(c.close);

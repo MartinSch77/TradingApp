@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <numeric>
 #include <utility>
 
 namespace {
@@ -208,10 +209,8 @@ void MarketFeeds::fetchVix()
         // there is too little history.
         double baseline = 0.0;
         if (closes.size() >= 5) {
-            for (const double c : std::as_const(closes)) {
-                baseline += c;
-            }
-            baseline /= static_cast<double>(closes.size());
+            baseline = std::accumulate(closes.cbegin(), closes.cend(), 0.0)
+                       / static_cast<double>(closes.size());
         } else {
             baseline = meta.value(QStringLiteral("chartPreviousClose")).toDouble();
         }

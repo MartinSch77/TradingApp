@@ -4,7 +4,9 @@
     app sources.
 
 .DESCRIPTION
-    cppcheck + clang-tidy + MSVC /analyze, plus codespell when installed.
+    cppcheck + clang-tidy + the Clang Static Analyzer + MSVC /analyze + code
+    metrics (lizard) + copy-paste detection (PMD CPD), plus codespell when
+    installed. The app AND test sources are analysed.
     Reports land in analysis-results\ as one plain-text log per tool — the next
     axivion_ci run imports those onto the Axivion dashboard (see
     axivion/external_import.py) — plus one merged CSV as a single-file overview.
@@ -13,6 +15,14 @@
     Tool mapping against the Linux script:
       cppcheck      same tool, same flags
       clang-tidy    same tool (LLVM for Windows, or the pip clang-tidy wheel)
+      clang-analyzer  same shared driver (tools\clang_analyzer.py). It picks the
+                      clang that matches the compile database's flag dialect —
+                      clang-cl for an MSVC database — and reports "skipped" when
+                      no clang driver is installed.
+      lizard        same shared driver (tools\lizard_metrics.py), same
+                    thresholds and the same ratchet baseline
+      pmd-cpd       same shared driver (tools\cpd_scan.py); PMD is a Java tool,
+                    fetched by .\setup.ps1 into tools\third-party\
       g++ -fanalyzer  ->  MSVC /analyze (tools\msvc_analyze.py), provider
                           "msvc-analyze" — the same role: a second, compiler-
                           native symbolic-execution pass over every TU
@@ -54,8 +64,11 @@ if (-not (Test-Path $Db)) {
     exit 1
 }
 
+# The test sources are analysed like production code (tests\.clang-tidy exempts
+# only what Qt Test's moc-driven layout forces).
 $Sources = @()
-foreach ($pat in @('src\domain\*.cpp', 'src\services\*.cpp', 'src\ui\*.cpp', 'src\main.cpp')) {
+foreach ($pat in @('src\domain\*.cpp', 'src\services\*.cpp', 'src\ui\*.cpp', 'src\main.cpp',
+        'tests\*.cpp')) {
     $Sources += @(Get-ChildItem (Join-Path $Root $pat) -File -ErrorAction SilentlyContinue |
             ForEach-Object { $_.FullName })
 }
@@ -85,17 +98,23 @@ $cppcheckLog = Join-Path $Out 'cppcheck.txt'
 if (Test-Tool 'cppcheck') {
     Write-Stage "cppcheck ($(& cppcheck --version))"
     # Same core flags as the Linux script: --project (compile database, so Qt
-    # include paths and defines match the real build), the warning/performance/
-    # portability set, --inconclusive, --error-exitcode=1, --library=qt, the
-    # autogen/tests suppressions and the pipe template the dashboard imports.
+    # include paths and defines match the real build), --enable=all (every check
+    # class, i.e. style and information on top of warning/performance/
+    # portability), --check-level=exhaustive (the deeper value-flow search),
+    # --inconclusive, --error-exitcode=1, --library=qt, the id-scoped
+    # suppressions with their written rationale, --checkers-report as evidence
+    # of which checkers ran, and the pipe template the dashboard imports. Only
+    # the build tree is excluded (-i) — that is where the moc/autogen output is.
     & cppcheck "--project=$Db" `
-        --enable=warning,performance,portability `
+        --enable=all `
+        --check-level=exhaustive `
         --inconclusive `
         --error-exitcode=1 `
         --inline-suppr `
         "--suppressions-list=$(Join-Path $Root 'tools\cppcheck-suppressions.txt')" `
         --library=qt `
-        -i (Join-Path $Root $BuildDir) --suppress='*:*autogen*' --suppress='*:*/tests/*' `
+        -i (Join-Path $Root $BuildDir) `
+        "--checkers-report=$(Join-Path $Out 'cppcheck-checkers.txt')" `
         --template='{file}|{line}|{severity}|{id}|{message}' `
         "--output-file=$cppcheckLog" --quiet
     $cppcheckRc = $LASTEXITCODE
@@ -142,6 +161,58 @@ if (Test-Tool 'clang-tidy') {
     Write-Skip "clang-tidy not installed (winget install LLVM.LLVM, or pip install clang-tidy)"
     Write-TextFile $tidyLog ''
 }
+
+# ---------------------------------------------------------------------------
+# Clang Static Analyzer (standalone: off-by-default checkers + deeper search)
+# ---------------------------------------------------------------------------
+$csaN = 0
+$csaLog = Join-Path $Out 'clang-analyzer.txt'
+Write-Stage 'Clang Static Analyzer'
+# The driver itself decides whether a usable clang exists and exits 3 ("stage
+# skipped") when it does not, so there is nothing to probe here. Any OTHER
+# nonzero exit is a real failure and must not pass as "no findings".
+$global:LASTEXITCODE = 0
+$csaRan = Invoke-Python -Arguments @((Join-Path $Root 'tools\clang_analyzer.py'), $Db, $Root, $csaLog)
+$csaRc = $LASTEXITCODE
+if (-not $csaRan -and $csaRc -ne 3) {
+    Write-Error "clang_analyzer.py failed (rc=$csaRc)"
+    exit 1
+}
+if (-not (Test-Path $csaLog)) { Write-TextFile $csaLog '' }
+$csaN = Get-LineCount $csaLog
+Write-Host "clang-analyzer findings: $csaN (analysis-results\clang-analyzer.txt)"
+
+# ---------------------------------------------------------------------------
+# lizard (code metrics: complexity, function length, parameter count)
+# ---------------------------------------------------------------------------
+# Ratcheted against tools\lizard_baseline.json, so the finding count is
+# deliberately NOT summed into the total — the driver's exit code is the gate.
+Write-Stage 'lizard (code metrics)'
+$global:LASTEXITCODE = 0
+$lizardRan = Invoke-Python -Arguments @((Join-Path $Root 'tools\lizard_metrics.py'), $Root, $Out)
+# 0 = clean, 1 = new/regressed/stale metric debt (fails), 3 = lizard not
+# installed (stage skipped, stays green).
+$lizardRc = $LASTEXITCODE
+$lizardOk = ($lizardRan -or ($lizardRc -eq 3))
+$lizardLog = Join-Path $Out 'lizard.txt'
+if (-not (Test-Path $lizardLog)) { Write-TextFile $lizardLog '' }
+$lizardN = Get-LineCount $lizardLog
+
+# ---------------------------------------------------------------------------
+# PMD CPD (copy-paste detection)
+# ---------------------------------------------------------------------------
+Write-Stage 'PMD CPD (copy-paste detection)'
+$cpdLog = Join-Path $Out 'pmd-cpd.txt'
+$global:LASTEXITCODE = 0
+$cpdRan = Invoke-Python -Arguments @((Join-Path $Root 'tools\cpd_scan.py'), $Root, $cpdLog)
+$cpdRc = $LASTEXITCODE
+if (-not $cpdRan -and $cpdRc -ne 3) {
+    Write-Error "cpd_scan.py failed (rc=$cpdRc)"
+    exit 1
+}
+if (-not (Test-Path $cpdLog)) { Write-TextFile $cpdLog '' }
+$cpdN = Get-LineCount $cpdLog
+Write-Host "pmd-cpd findings: $cpdN (analysis-results\pmd-cpd.txt)"
 
 # ---------------------------------------------------------------------------
 # MSVC /analyze  (the Windows stand-in for g++ -fanalyzer)
@@ -213,8 +284,12 @@ Write-TextFile (Join-Path $Out 'clazy.txt') ''
 # ---------------------------------------------------------------------------
 Invoke-Python -Arguments @((Join-Path $Root 'tools\merge_findings.py'), $Out) | Out-Null
 
-$total = $cppcheckN + $tidyN + $msvcN + $codespellN
+$total = $cppcheckN + $tidyN + $csaN + $cpdN + $msvcN + $codespellN
 Write-Host ""
 Write-Host "TOTAL findings: $total" -ForegroundColor $(if ($total -eq 0) { 'Green' } else { 'Yellow' })
-if ($total -eq 0 -and $cppcheckRc -eq 0) { exit 0 }
+# The lizard metrics are reported separately: their violations are ratcheted
+# against a recorded baseline, so a nonzero count is expected — the gate is
+# whether the driver succeeded, not the count.
+Write-Host "code metrics: $lizardN over-threshold findings, ratchet $(if ($lizardOk) { 'clean' } else { 'FAILED — see the lizard GATE lines above' })"
+if ($total -eq 0 -and $cppcheckRc -eq 0 -and $lizardOk) { exit 0 }
 exit 1

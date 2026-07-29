@@ -43,7 +43,7 @@ public:
     // Defined out-of-line (MockHttpServer.cpp) so exactly one TU per test
     // binary instruments it for coverage — duplicate comdat coverage records
     // made llvm-cov report "functions have mismatched data".
-    QString baseUrl() const;
+    [[nodiscard]] QString baseUrl() const;
 
 private:
     void serve(QTcpSocket *sock);

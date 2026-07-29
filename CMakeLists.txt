@@ -36,6 +36,51 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent)
 qt_standard_project_setup()
 
 # ---------------------------------------------------------------------------
+# Compiler diagnostics: the compiler is the first static analyzer, so it runs
+# with a full warning set instead of the default one. The list is what this
+# codebase is clean against (measured 2026-07-29: 20 -Wreorder and 4 -Wshadow
+# hits, all fixed), and it deliberately includes the warnings that catch the
+# classic Qt mistakes — -Woverloaded-virtual for a mistyped override,
+# -Wsuggest-override, -Wnon-virtual-dtor.
+#
+# Deliberately NOT enabled:
+#   -Wpedantic / -Wextra-semi   report the `Q_OBJECT;` semicolon as an extra
+#                               ';' (37 hits). That semicolon is required here:
+#                               it is the tree-sitter parse anchor the
+#                               traceability tooling keys on (see CLAUDE.md).
+#   -Wold-style-cast, -Wuseless-cast   Qt's own macros and QVariant round-trips
+#                               generate both by construction.
+#   -Wconversion                the int/qsizetype mixing that clang-tidy's
+#                               *-narrowing-conversions already governs.
+#
+# TRADINGAPP_WARNINGS_AS_ERRORS turns the set fatal. Off by default so a newer
+# compiler's brand-new warning cannot break someone's local build; the quality
+# pipeline (build_all.sh / build_all.ps1) turns it on.
+option(TRADINGAPP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+if(MSVC)
+    add_compile_options(/W4 /permissive-)
+    if(TRADINGAPP_WARNINGS_AS_ERRORS)
+        add_compile_options(/WX)
+    endif()
+else()
+    add_compile_options(
+        -Wall -Wextra
+        -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual -Wsuggest-override
+        -Wimplicit-fallthrough -Wmisleading-indentation
+        -Wformat=2 -Wdouble-promotion -Wcast-qual)
+    # GCC-only spellings. clang rejects an unknown -W… outright, and the flags
+    # reach it through the compile database (clang-tidy, the Clang Static
+    # Analyzer, the clang sanitizer builds) — so they must be GCC-gated, not
+    # merely "supported by the compiler that builds".
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(-Wduplicated-cond -Wduplicated-branches -Wlogical-op)
+    endif()
+    if(TRADINGAPP_WARNINGS_AS_ERRORS)
+        add_compile_options(-Werror)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Layered architecture, enforced by the linker:
 #   domain   -> pure trading logic (Qt Core only; no I/O, no UI)
 #   services -> integration: eToro REST, web feeds, calendar, config (adds Network)

@@ -120,13 +120,15 @@ function Invoke-CMakeBuild {
 # boolean, or the summary prints "True" instead of "ok".
 function Invoke-BuildStage {
     if (-not (Invoke-CMakeConfigure -BuildDir "$Root\build" -ExtraArgs @(
-                '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'))) { return 'FAILED' }
+                '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
+                '-DTRADINGAPP_WARNINGS_AS_ERRORS=ON'))) { return 'FAILED' }
     return (ConvertFrom-Bool (Invoke-CMakeBuild -BuildDir "$Root\build"))
 }
 
 function Invoke-AppStage {
     if (-not (Invoke-CMakeConfigure -BuildDir "$Root\build" -ExtraArgs @(
-                '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'))) { return 'FAILED' }
+                '-DCMAKE_BUILD_TYPE=Debug', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
+                '-DTRADINGAPP_WARNINGS_AS_ERRORS=ON'))) { return 'FAILED' }
     return (ConvertFrom-Bool (Invoke-CMakeBuild -BuildDir "$Root\build" -Target 'TradingApp'))
 }
 

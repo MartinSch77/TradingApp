@@ -7,6 +7,7 @@
 #include <QHashFunctions>
 
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <utility>
 
@@ -56,13 +57,14 @@ qint32 recommendLeverage(double slFrac, double riskBudgetFrac, qint32 maxLeverag
     if (allowed.isEmpty()) {
         allowed = {1, 2, 5, 10, 20};
     }
-    qint32 best = 1;
-    for (const qint32 step : std::as_const(allowed)) {
-        if ((step <= cap) && (static_cast<double>(step) <= raw) && (step > best)) {
-            best = step;
-        }
-    }
-    return best;
+    // Fold to the largest offered step that fits both the account cap and the
+    // risk-derived maximum; 1 when nothing fits.
+    return std::accumulate(allowed.cbegin(), allowed.cend(), 1,
+                           [cap, raw](qint32 best, qint32 step) {
+                               const bool fits = (step <= cap)
+                                                 && (static_cast<double>(step) <= raw);
+                               return (fits && (step > best)) ? step : best;
+                           });
 }
 
 TradePlan buildTradePlan(const PlanInput &in)

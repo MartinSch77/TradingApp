@@ -89,7 +89,7 @@ private slots:
         EtoroClient client(cfg);
 
         QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
-        QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
+        const QSignalSpy trades(&client, &EtoroClient::closedTradesReady);
         client.fetchClosedTrades(8);
         QVERIFY(summary.wait(kWaitMs));
         QCOMPARE(trades.count(), 1);
@@ -159,7 +159,7 @@ private slots:
         // Without credentials the client runs the simulation — which must
         // publish a display FX rate, otherwise the UI blocks every order
         // with "waiting for the EUR/USD rate" (regression test).
-        Config cfg;  // no apiKey/userKey -> simulation mode
+        const Config cfg;  // no apiKey/userKey -> simulation mode
         EtoroClient client(cfg);
         QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
         QSignalSpy ready(&client, &EtoroClient::ready);
@@ -340,8 +340,8 @@ private slots:
         QCOMPARE(summary.count(), 2);  // 8-week walk + queued 13-week walk only
         const auto first = summary.at(0).at(0).value<MonthlyPnl>();
         const auto second = summary.at(1).at(0).value<MonthlyPnl>();
-        QCOMPARE(first.fromDate, today.addDays(-7 * 8));
-        QCOMPARE(second.fromDate, today.addDays(-7 * 13));
+        QCOMPARE(first.fromDate, today.addDays(-7LL * 8));
+        QCOMPARE(second.fromDate, today.addDays(-7LL * 13));
         // No third walk: the 9-week request was overwritten, not queued behind.
         QVERIFY(!summary.wait(300));
     }

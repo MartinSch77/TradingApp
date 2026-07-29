@@ -45,6 +45,25 @@ public:
 
 private:
     void rescaleAxes();
+    // The view has stopped auto-fitting (the user panned or zoomed): bring
+    // everything that depends on the visible window in line with where they put it.
+    void applyManualView();
+    // The plot rectangle moved or resized (window resize, dock/float).
+    void applyPlotGeometry();
+    // Feeds the three data series the currently visible window only, decimated to
+    // roughly one point per screen pixel (see decimateWindow in the .cpp). The
+    // full-resolution data lives in m_prices/m_changes/m_hp; QtCharts never sees
+    // it. This is a pure performance measure: handing the series their full
+    // 40 000 points costs ~2.4 us per point on every single tick (measured), so a
+    // live tick took ~100 ms of GUI-thread time once the buffers had filled up.
+    // Must run after the axes have their final range — it decimates to that range.
+    void refreshVisibleSeries();
+    // Derives the per-tick change and high-pass samples for one new price point
+    // from its predecessor. In one place because the live path (addPoint) and the
+    // seeding path (setHistory) have to apply the same rule: the high-pass filter
+    // is recursive, so its incremental state is only correct if nothing else
+    // appends to m_hp by another route.
+    void appendDerived(const QPointF &prev, const QPointF &cur);
     // In a manually panned/zoomed view (auto-fit off), slide the time window left so
     // the newest point stays at the right border — but only while the view is still
     // following the live tail (see addPoint). newX = newest point time (ms since
@@ -102,6 +121,18 @@ private:
     QGraphicsSimpleTextItem *m_eventText = nullptr;
     qint64 m_eventMs = 0;   // event time (ms since epoch); 0 = no active event
     QString m_eventLabel;
+
+    // Full-resolution data, ascending in x, each capped at kMaxPoints. The series
+    // above hold a decimated view of the visible window instead — plain QList
+    // scans over these cost tens of nanoseconds per point, whereas every point
+    // handed to a QXYSeries is re-laid-out by QtCharts on every change.
+    QList<QPointF> m_prices;   // (msSinceEpoch, price)
+    QList<QPointF> m_changes;  // (msSinceEpoch, change since the previous point in %)
+    QList<QPointF> m_hp;       // (msSinceEpoch, high-pass filtered price in % of price)
+    // Running state h of the high-pass filter, i.e. its value after the last
+    // point in m_hp — that is what makes appending a sample O(1) instead of a
+    // rebuild over the whole series.
+    double m_hpState = 0.0;
 
     double m_lastPrice = 0.0;
     qint32 m_predDir = 0;  // current prediction direction: +1 up, -1 down, 0 none

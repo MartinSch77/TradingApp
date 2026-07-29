@@ -100,9 +100,6 @@
   "src/ui/PriceChart.cpp::PriceChart::PriceChart": {
     "nloc": 177
   },
-  "src/ui/PriceChart.cpp::PriceChart::recomputeChange": {
-    "ccn": 16
-  },
   "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
     "ccn": 20,
     "nloc": 101

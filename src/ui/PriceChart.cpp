@@ -22,10 +22,97 @@
 #include <QValueAxis>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace {
+// A sampling gap this large (minutes) is a seam, not a move: the seeded history
+// mixes hourly bars with recent minute bars, and the live feed can pause. Both
+// derived series treat such a step as a restart rather than an instantaneous jump.
+constexpr qreal kCoarseGapMin = 5.0;
+// Feedback factor of the first-order high-pass filter on the change strip.
+constexpr double kHpAlpha = 0.6;
+
+// Reduces an ascending-in-x series to what the given window can actually show.
+// Points are bucketed by x into `columns` buckets and each bucket contributes its
+// lowest and highest point (in x order), so the vertical extent — the spikes one
+// looks at a change strip for — survives while the point count drops to ~2 per
+// bucket. With one bucket per two screen pixels the result is visually
+// indistinguishable from the full series; see PriceChart::refreshVisibleSeries
+// for why that matters so much.
+QList<QPointF> decimateWindow(const QList<QPointF> &src, qreal xmin, qreal xmax,
+                              qint32 columns)
+{
+    if (src.isEmpty() || (columns <= 0) || (xmax <= xmin)) {
+        return {};
+    }
+
+    // Ascending in x, so the window is a binary search rather than a scan. One
+    // point beyond each edge is kept so the line reaches the plot border instead
+    // of stopping just short of it.
+    const auto byX = [](const QPointF &p, qreal x) { return p.x() < x; };
+    auto first = std::lower_bound(src.cbegin(), src.cend(), xmin, byX);
+    if (first != src.cbegin()) {
+        --first;
+    }
+    auto last = std::lower_bound(first, src.cend(), xmax, byX);
+    if (last != src.cend()) {
+        ++last;
+    }
+
+    const qsizetype n = last - first;
+    if (n <= (2 * static_cast<qsizetype>(columns))) {
+        return {first, last};  // already at or below the budget
+    }
+
+    const qreal span = (last - 1)->x() - first->x();
+    if (span <= 0.0) {
+        return {first, last};  // all at one instant — nothing to bucket by
+    }
+    const qreal bucketWidth = span / static_cast<qreal>(columns);
+
+    QList<QPointF> out;
+    out.reserve(2 * static_cast<qsizetype>(columns) + 2);
+    qint32 bucket = -1;
+    QPointF lowest;
+    QPointF highest;
+    const auto flush = [&out, &lowest, &highest, &bucket] {
+        if (bucket < 0) {
+            return;
+        }
+        // In x order, so the polyline still runs left to right.
+        if (lowest.x() <= highest.x()) {
+            out.append(lowest);
+            if (highest != lowest) {
+                out.append(highest);
+            }
+        } else {
+            out.append(highest);
+            out.append(lowest);
+        }
+    };
+    for (auto it = first; it != last; ++it) {
+        const auto idx = static_cast<qint32>((it->x() - first->x()) / bucketWidth);
+        if (idx != bucket) {
+            flush();
+            bucket = idx;
+            lowest = *it;
+            highest = *it;
+            continue;
+        }
+        if (it->y() < lowest.y()) {
+            lowest = *it;
+        }
+        if (it->y() > highest.y()) {
+            highest = *it;
+        }
+    }
+    flush();
+    return out;
+}
+
 // Decimals appropriate to a price's magnitude (indices ~thousands need 2, forex ~1
 // needs 4), so the tooltip reads sensibly across instruments.
 QString formatPrice(double v)
@@ -143,13 +230,12 @@ PriceChart::PriceChart(QWidget *parent)
     // The user's pan/zoom takes over from auto-fitting; double-click restores it.
     static_cast<void>(connect(view, &ChartView::interacted, this, [this] {
         m_autoScale = false;
-        updatePriceMarker();
-        syncChangeX();          // keep the change strip aligned with the panned/zoomed view
-        refreshTradeMarkers();  // re-pin the entry lane to the bottom of the new view
+        applyManualView();
     }));
     static_cast<void>(connect(view, &ChartView::resetRequested, this, [this] {
         m_autoScale = true;
         rescaleAxes();
+        refreshVisibleSeries();
     }));
 
     // Right-side price tag: a filled amber box with the price, pinned to the
@@ -181,7 +267,7 @@ PriceChart::PriceChart(QWidget *parent)
 
     // Keep the tag glued to the axis as the plot area moves (resize, dock/float).
     static_cast<void>(
-        connect(m_chart, &QChart::plotAreaChanged, this, [this] { updatePriceMarker(); }));
+        connect(m_chart, &QChart::plotAreaChanged, this, [this] { applyPlotGeometry(); }));
 
     // --- Change strip below the price chart ---------------------------------
     // Shows the per-tick % change with an adaptive ±2σ "strong move" filter, so
@@ -319,38 +405,52 @@ void PriceChart::setHistory(const QList<Candle> &candles)
     m_buyMarkers->clear();
     m_sellMarkers->clear();
 
-    m_series->clear();
-    QList<QPointF> points;
-    points.reserve(candles.size());
+    m_prices.clear();
+    m_prices.reserve(candles.size());
     for (const Candle &c : candles) {
         if (!c.timestamp.isValid()) {
             continue;
         }
-        points.append(QPointF(static_cast<qreal>(c.timestamp.toMSecsSinceEpoch()), c.close));
+        m_prices.append(QPointF(static_cast<qreal>(c.timestamp.toMSecsSinceEpoch()), c.close));
     }
-    m_series->replace(points);
-    if (!points.isEmpty()) {
-        m_lastPrice = points.last().y();
+    if (!m_prices.isEmpty()) {
+        m_lastPrice = m_prices.last().y();
     }
 
-    // Build the per-tick % change from consecutive closes. The seed mixes coarse
-    // (hourly) context with fine (1-minute) recent bars, so skip the large hourly
-    // steps (gap > 5 min) — the change strip should reflect intraday moves only.
-    QList<QPointF> changes;
-    changes.reserve(points.size());
-    for (qsizetype i = 1; i < points.size(); ++i) {
-        const QPointF &cur = points[i];
-        const QPointF &before = points[i - 1];
-        const double prev = before.y();
-        const qreal gapMin = (cur.x() - before.x()) / 60000.0;
-        if ((prev > 0.0) && (gapMin <= 5.0)) {
-            changes.append(QPointF(cur.x(), ((cur.y() - prev) / prev) * 100.0));
-        }
+    // Derive the per-tick % change and the high-pass series from consecutive
+    // closes, with the filter starting from rest. appendDerived() is the same code
+    // the live path runs, so a seeded series and a series grown tick by tick are
+    // identical — which is what lets addPoint() extend the filter incrementally.
+    m_changes.clear();
+    m_changes.reserve(m_prices.size());
+    m_hp.clear();
+    m_hp.reserve(m_prices.size());
+    m_hpState = 0.0;
+    for (qsizetype i = 1; i < m_prices.size(); ++i) {
+        appendDerived(m_prices.at(i - 1), m_prices.at(i));
     }
-    m_changeSeries->replace(changes);
 
     rescaleAxes();
     recomputeChange();
+}
+
+void PriceChart::appendDerived(const QPointF &prev, const QPointF &cur)
+{
+    const double prevPrice = prev.y();
+    const double price = cur.y();
+    const qreal gapMin = (cur.x() - prev.x()) / 60000.0;
+    if (gapMin > kCoarseGapMin) {
+        m_hpState = 0.0;  // don't carry the filter across a coarse sampling gap
+    } else {
+        if (prevPrice > 0.0) {
+            m_changes.append(QPointF(cur.x(), ((price - prevPrice) / prevPrice) * 100.0));
+        }
+        // h[n] = a*(h[n-1] + p[n] - p[n-1]); with a flat price the p[n]-p[n-1] term
+        // is zero and h decays as a*h[n-1], so the line returns to 0 when nothing
+        // moves.
+        m_hpState = kHpAlpha * ((m_hpState + price) - prevPrice);
+    }
+    m_hp.append(QPointF(cur.x(), (price != 0.0) ? ((m_hpState / price) * 100.0) : 0.0));
 }
 
 void PriceChart::addPoint(const QDateTime &time, double price)
@@ -363,20 +463,22 @@ void PriceChart::addPoint(const QDateTime &time, double price)
     // Remember the newest point's time before appending: the manual-view follow below
     // uses it to tell whether the view was still tracking the live edge.
     qreal prevLastX = x;
-    if (m_series->count() > 0) {
-        prevLastX = m_series->points().last().x();
+    if (!m_prices.isEmpty()) {
+        prevLastX = m_prices.last().x();
     }
 
-    m_series->append(x, price);
-    if (m_series->count() > kMaxPoints) {
-        m_series->removePoints(0, m_series->count() - kMaxPoints);
+    const QPointF point(x, price);
+    if (!m_prices.isEmpty()) {
+        appendDerived(m_prices.last(), point);
     }
+    m_prices.append(point);
 
-    // Per-tick % change relative to the previous price.
-    if (m_lastPrice > 0.0) {
-        m_changeSeries->append(x, ((price - m_lastPrice) / m_lastPrice) * 100.0);
-        if (m_changeSeries->count() > kMaxPoints) {
-            m_changeSeries->removePoints(0, m_changeSeries->count() - kMaxPoints);
+    // Cap all three buffers. These are plain lists, so trimming is a memmove
+    // rather than a series re-layout.
+    constexpr auto kCap = static_cast<qsizetype>(kMaxPoints);
+    for (QList<QPointF> *buffer : {&m_prices, &m_changes, &m_hp}) {
+        if (buffer->size() > kCap) {
+            buffer->remove(0, buffer->size() - kCap);
         }
     }
 
@@ -479,7 +581,7 @@ void PriceChart::showTradeTooltip(QPointF point, bool isBuy, bool entered)
 
 void PriceChart::rescaleAxes()
 {
-    const QList<QPointF> pts = m_series->points();
+    const QList<QPointF> &pts = m_prices;
     if (pts.isEmpty()) {
         return;
     }
@@ -638,7 +740,10 @@ void PriceChart::setPredictionDirection(qint32 dir)
 
 void PriceChart::recomputeChange()
 {
-    const QList<QPointF> pts = m_changeSeries->points();
+    // The statistics run over the FULL-resolution data, not over what the series
+    // ends up showing: a plain scan is nanoseconds per point, and the threshold
+    // would otherwise depend on the current zoom level via the decimation.
+    const QList<QPointF> &pts = m_changes;
 
     // Scale everything to the currently VISIBLE window so off-screen data (e.g. the
     // coarse hourly seed, whose big steps dwarf intraday ticks) can't flatten the strip.
@@ -670,11 +775,75 @@ void PriceChart::recomputeChange()
     }
     m_changeThr = 2.0 * sigma;
 
-    // Split out the points beyond ±threshold as strong up / down moves.
+    // The high-pass line itself is maintained incrementally by appendDerived(); all
+    // that is needed here is how far it reaches inside the visible window.
+    for (const QPointF &p : std::as_const(m_hp)) {
+        if (visible(p.x())) {
+            maxAbs = std::max(maxAbs, std::abs(p.y()));
+        }
+    }
+
+    // Symmetric Y range around 0, sized to the visible data / band (small floor so a
+    // dead-flat window still has a sane scale rather than collapsing onto the axis).
+    double m = std::max(maxAbs, m_changeThr);
+    if (m <= 0.0) {
+        m = 0.02;
+    }
+    m_changeAxisY->setRange(-m * 1.2, m * 1.2);
+    syncChangeX();
+    // Last: the threshold above decides which points are strong moves, and the
+    // axis ranges decide what the decimation buckets by.
+    refreshVisibleSeries();
+}
+
+void PriceChart::applyManualView()
+{
+    updatePriceMarker();
+    syncChangeX();          // keep the change strip aligned with the panned/zoomed view
+    refreshTradeMarkers();  // re-pin the entry lane to the bottom of the new view
+    // Panning moves the window, so what the series should show moves with it.
+    // Deliberately NOT a full recomputeChange(): this runs on every mouse-move of a
+    // drag, and the ±2σ band is meant to settle on the next tick rather than
+    // rescale the strip under the cursor.
+    refreshVisibleSeries();
+}
+
+void PriceChart::applyPlotGeometry()
+{
+    updatePriceMarker();
+    // A wider plot earns more decimation buckets — the point budget is measured in
+    // pixel columns — so re-derive what the series show.
+    refreshVisibleSeries();
+}
+
+void PriceChart::refreshVisibleSeries()
+{
+    const qreal xmin = static_cast<qreal>(m_axisX->min().toMSecsSinceEpoch());
+    const qreal xmax = static_cast<qreal>(m_axisX->max().toMSecsSinceEpoch());
+
+    // One bucket per two pixels: each contributes its high and its low, so the
+    // result is about one point per pixel column — the finest detail the plot can
+    // show. The fallback covers the first call, before the plot area has a size.
+    constexpr qreal kPixelsPerBucket = 2.0;
+    constexpr qint32 kFallbackColumns = 600;
+    const qreal plotWidth = m_chart->plotArea().width();
+    const qint32 columns = (plotWidth >= kPixelsPerBucket)
+                               ? static_cast<qint32>(plotWidth / kPixelsPerBucket)
+                               : kFallbackColumns;
+
+    m_series->replace(decimateWindow(m_prices, xmin, xmax, columns));
+    const QList<QPointF> changes = decimateWindow(m_changes, xmin, xmax, columns);
+    m_changeSeries->replace(changes);
+    m_changeHp->replace(decimateWindow(m_hp, xmin, xmax, columns));
+
+    // Strong-move markers come from the decimated set on purpose: bucketing keeps
+    // each column's extremes, which is exactly where the outliers are, and it caps
+    // the markers at two per column instead of stacking hundreds of overlapping
+    // circles on the same pixel.
     QList<QPointF> up;
     QList<QPointF> down;
     if (m_changeThr > 0.0) {
-        for (const QPointF &p : pts) {
+        for (const QPointF &p : changes) {
             if (p.y() > m_changeThr) {
                 up.append(p);
             } else if (p.y() < (-m_changeThr)) {
@@ -686,43 +855,6 @@ void PriceChart::recomputeChange()
     }
     m_strongUp->replace(up);
     m_strongDown->replace(down);
-
-    // First-order high-pass filter of the price series, expressed as % of price.
-    // h[n] = a*(h[n-1] + p[n] - p[n-1]); with a flat price the p[n]-p[n-1] term is
-    // zero and h decays as a*h[n-1], so the line returns to 0 when nothing moves.
-    // Reset across coarse gaps (>5 min) so the hourly seed boundaries aren't mistaken
-    // for huge instantaneous moves (which would spike the filter and the Y range).
-    constexpr double kHpAlpha = 0.6;
-    const QList<QPointF> pricePts = m_series->points();
-    QList<QPointF> hp;
-    hp.reserve(pricePts.size());
-    double h = 0.0;
-    for (qsizetype i = 1; i < pricePts.size(); ++i) {
-        const QPointF &cur = pricePts[i];
-        const QPointF &before = pricePts[i - 1];
-        const double p = cur.y();
-        const qreal gapMin = (cur.x() - before.x()) / 60000.0;
-        if (gapMin > 5.0) {
-            h = 0.0;  // don't carry the filter across a coarse sampling gap
-        } else {
-            h = kHpAlpha * ((h + p) - before.y());
-        }
-        const double hpct = (p != 0.0) ? ((h / p) * 100.0) : 0.0;
-        hp.append(QPointF(cur.x(), hpct));
-        if (visible(cur.x())) {
-            maxAbs = std::max(maxAbs, std::abs(hpct));
-        }
-    }
-    m_changeHp->replace(hp);
-
-    // Symmetric Y range around 0, sized to the visible data / band (small floor so a
-    // dead-flat window still has a sane scale rather than collapsing onto the axis).
-    double m = std::max(maxAbs, m_changeThr);
-    if (m <= 0.0) {
-        m = 0.02;
-    }
-    m_changeAxisY->setRange(-m * 1.2, m * 1.2);
-    syncChangeX();
 }
 
 void PriceChart::syncChangeX()

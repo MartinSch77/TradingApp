@@ -746,6 +746,11 @@ InstrumentFees EtoroClient::feesFor(const QString &symbol) const
     return m_feesById.value(m_idBySymbol.value(symbol, 0), InstrumentFees{});
 }
 
+qint64 EtoroClient::instrumentIdFor(const QString &symbol) const
+{
+    return m_idBySymbol.value(symbol, 0);
+}
+
 void EtoroClient::requestFees(const QString &symbol)
 {
     if (m_simulated) {

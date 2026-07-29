@@ -256,9 +256,7 @@ private slots:
         // passed locally for months and then failed on a loaded Windows runner,
         // where the 600 ms margin was not enough.
         auto pagesServed = QSharedPointer<qint32>::create(0);
-        auto searchesAnswered = QSharedPointer<qint32>::create(0);
-        MockHttpServer server([pagesServed, searchesAnswered](const QByteArray &,
-                                                             const QString &path) {
+        MockHttpServer server([pagesServed](const QByteArray &, const QString &path) {
             if (path.contains(QStringLiteral("/market-data/search"))) {
                 const QUrlQuery q(QUrl(path).query());
                 const QString sym = q.queryItemValue(QStringLiteral("internalSymbolFull"));
@@ -286,24 +284,23 @@ private slots:
             }
             return MockHttpServer::Response{404, "{}", {}};
         });
-        // The two ordering rules that reproduce the regression, stated rather than
-        // timed: a search answers only once a history page has been served, and
-        // the rates request — the walk's last step — only once both searches have.
-        server.holdUntil(QStringLiteral("/market-data/search"),
-                         [pagesServed, searchesAnswered] {
-                             if (*pagesServed == 0) {
-                                 return false;  // let the history be parsed first
-                             }
-                             ++(*searchesAnswered);
-                             return true;
-                         });
-        server.holdUntil(QStringLiteral("/market-data/instruments/rates"),
-                         [searchesAnswered] { return *searchesAnswered >= 2; });
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
         const Config cfg = mockConfig(server);
         EtoroClient client(cfg);
         client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("HKG50")});
+
+        // The two ordering rules that reproduce the regression, stated rather than
+        // timed. The second one asks the CLIENT, not the mock: a response having
+        // been written to the socket says nothing about the client having applied
+        // it, and gating on the write is what still let the walk finish first on a
+        // loaded Windows runner.
+        server.holdUntil(QStringLiteral("/market-data/search"),
+                         [pagesServed] { return *pagesServed > 0; });
+        server.holdUntil(QStringLiteral("/market-data/instruments/rates"), [&client] {
+            return (client.instrumentIdFor(QStringLiteral("SPX500")) > 0)
+                   && (client.instrumentIdFor(QStringLiteral("HKG50")) > 0);
+        });
 
         QSignalSpy summary(&client, &EtoroClient::monthlyPnlReady);
         QSignalSpy trades(&client, &EtoroClient::closedTradesReady);

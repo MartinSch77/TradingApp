@@ -65,6 +65,13 @@ public:
     [[nodiscard]] double spreadPctFor(const QString &symbol) const;
     // Cached per-unit rollover fees for any listed symbol (invalid while unknown).
     [[nodiscard]] InstrumentFees feesFor(const QString &symbol) const;
+
+    // The instrumentId the startup search resolved for an app symbol, 0 while it
+    // is still unresolved. The resolutions land independently and asynchronously,
+    // so this is also how a test observes that one of them has been APPLIED —
+    // seeing the search response go out over the wire says nothing about whether
+    // the client has processed it yet (TS-CLI-005).
+    [[nodiscard]] qint64 instrumentIdFor(const QString &symbol) const;
     // Fetch the rollover fees for a listed symbol if they aren't cached yet
     // (public etorostatic feed — cheap, outside the rate-limited API). The result
     // arrives via instrumentFeesUpdated; a no-op in simulation mode.

@@ -92,7 +92,9 @@ jobs:
             coverage-html/
             coverage-summary.json
 
-      # shields.io endpoint format. Only on main: a PR must not move the badge.
+      # Only on main: a PR must not move the badge. The publisher is shared with
+      # ci.yml's per-platform badges and is additive — see tools/publish_badge.sh
+      # for why an orphan force-push would delete the other badges.
       - name: Publish the coverage badge
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
@@ -105,21 +107,4 @@ jobs:
           awk "BEGIN { exit !($PCT >= 65) }" && colour=yellow
           awk "BEGIN { exit !($PCT >= 80) }" && colour=green
           awk "BEGIN { exit !($PCT >= 90) }" && colour=brightgreen
-          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
-            "$PCT" "$colour" > "$RUNNER_TEMP/coverage.json"
-
-          # Built in a throwaway repository, not in this checkout: the badge data
-          # has no business in main's history, and rewriting the working tree to
-          # push an orphan branch is how a workflow deletes its own sources.
-          # Force-pushed, so the branch never accumulates history.
-          cd "$RUNNER_TEMP"
-          rm -rf badges && mkdir badges && cd badges
-          cp "$RUNNER_TEMP/coverage.json" .
-          git init -q -b badges
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add coverage.json
-          git commit -q -m "coverage: $PCT% (${GITHUB_SHA::7})"
-          git push -q --force \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges:badges
-          echo "badge published: $PCT% ($colour)"
+          ./tools/publish_badge.sh coverage.json coverage "$PCT%" "$colour"

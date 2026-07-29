@@ -1,6 +1,8 @@
 # eToro Trader (Qt)
 
-[![build](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/ci.yml?branch=main&label=build)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build linux](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-windows.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build macos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-macos.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
@@ -9,8 +11,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 
-**build** = the full CI matrix (Linux, Windows, macOS builds + traceability +
-sanitizers + static analysis). **tests** = the Qt Test suite on its own
+**build linux / windows / macos** = the three platform jobs of
+[ci.yml](.github/workflows/ci.yml), reported separately because a GitHub badge
+reports a workflow and not a job — and the defects this codebase has hit were
+platform-specific (MSVC rejected code that GCC and clang accepted). Each job
+publishes its own status, failures included, so a red badge names the platform.
+The same run also covers traceability, the sanitizers and the static analysis.
+**tests** = the Qt Test suite on its own
 ([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
 number (line coverage of the domain + services layers, published as a badge
 endpoint on the `badges` branch — no third-party coverage service involved).

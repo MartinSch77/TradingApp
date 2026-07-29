@@ -253,3 +253,45 @@ jobs:
           scan-ref: .
           exit-code: '1'
           scanners: vuln,misconfig,secret
+
+  # ---------------------------------------------------------------------------
+  # Per-platform build badges
+  # ---------------------------------------------------------------------------
+  # A GitHub badge reports a WORKFLOW, not a job, so "build passing" for this
+  # workflow says nothing about WHICH platform passed — and the Windows-only
+  # defects this repo has hit (MSVC C4267, C3493) are exactly what a per-platform
+  # badge has to show. Rather than duplicating the builds into separate workflows,
+  # this job reads the results of the jobs that already ran and publishes one
+  # shields.io endpoint badge per platform onto the `badges` branch.
+  #
+  # if: always() — a FAILING platform must publish "failing"; a badge that only
+  # updates on success would freeze at "passing" the moment something breaks.
+  badges:
+    needs: [build-and-test, build-windows, build-macos]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # only the badges branch
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish build status per platform
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX: ${{ needs.build-and-test.result }}
+          WINDOWS: ${{ needs.build-windows.result }}
+          MACOS: ${{ needs.build-macos.result }}
+        run: |
+          set -euo pipefail
+          publish() { # file, label, job-result
+            case "$3" in
+            success) msg=passing; colour=brightgreen ;;
+            failure) msg=failing; colour=red ;;
+            cancelled) msg=cancelled; colour=lightgrey ;;
+            skipped) msg=skipped; colour=lightgrey ;;
+            *) msg="$3"; colour=yellow ;;
+            esac
+            ./tools/publish_badge.sh "$1" "$2" "$msg" "$colour"
+          }
+          publish build-linux.json "build linux" "$LINUX"
+          publish build-windows.json "build windows" "$WINDOWS"
+          publish build-macos.json "build macos" "$MACOS"

@@ -784,11 +784,15 @@ void EtoroClient::refreshTradeabilityReal()
 {
     // Which markets are open *now*. eToro's public API exposes no live session flag
     // (eligibility.allowOpenPosition is a static account permission — it stays true for
-    // e.g. SPX500 all weekend), so we infer it from quote freshness: while a market is
-    // open eToro re-stamps the rate's `date` continuously (age ≈ 0s); once it closes the
-    // price freezes and `date` goes stale (hours over a weekend, ~1h in the daily index
-    // break). A quote fresher than the threshold ⇒ the market is open. One bulk rates
-    // call (≤100 ids) covers every resolved instrument.
+    // e.g. SPX500 all weekend), so we infer it from the rate's `date`: while a market is
+    // open eToro keeps re-stamping it, once the session ends the price freezes and the
+    // timestamp stops moving (hours over a weekend, ~1h in the daily index break).
+    //
+    // We compare against the PREVIOUS poll's timestamp, not against the wall clock:
+    // the public feed publishes minutes behind real time, so an open market's quote is
+    // never "age ≈ 0" and any absolute-age threshold near that is a false "closed" for
+    // every instrument at once (see kFirstPollMaxAgeSecs). One bulk rates call (≤100
+    // ids) covers every resolved instrument.
     if (m_symbolById.isEmpty()) {
         return;
     }
@@ -807,10 +811,13 @@ void EtoroClient::refreshTradeabilityReal()
             return;  // transient — keep the last known open/closed set
         }
 
-        // A quote older than this counts as a closed market. Open eToro CFDs re-stamp
-        // `date` every few seconds, so this sits far above any intra-session gap yet
-        // well below the ~1h daily index break and the multi-hour weekend.
-        constexpr qint64 kQuoteFreshSecs = 300;
+        // Stand-in for the very first poll, when no previous timestamp exists to compare
+        // against: accept a quote younger than this as open. It has to clear eToro's own
+        // publishing delay (~6 min on the indices, ~19 min on the .24-7 variants as
+        // measured on 2026-07-29) while staying under the multi-hour weekend freeze. Only
+        // the first poll leans on it — 60 s later the advancement test has its baseline
+        // and corrects any misjudgement (a market frozen mid-break included).
+        constexpr qint64 kFirstPollMaxAgeSecs = 1800;
         const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
 
         QJsonArray arr = asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
@@ -838,10 +845,21 @@ void EtoroClient::refreshTradeabilityReal()
             }
             const QDateTime quoteTime = QDateTime::fromString(
                 pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
-            // Fail open: a missing/unparsable timestamp must not falsely block trading.
-            const bool fresh = !quoteTime.isValid()
-                               || (quoteTime.secsTo(nowUtc) < kQuoteFreshSecs);
-            if (fresh) {
+            const QDateTime prevTime = m_lastQuoteTime.value(id);  // invalid on first poll
+            bool live = false;
+            if (!quoteTime.isValid()) {
+                live = true;  // fail open: an unparsable timestamp must not block trading
+            } else if (prevTime.isValid()) {
+                live = quoteTime > prevTime;  // the feed is still publishing ⇒ session on
+            } else {
+                live = quoteTime.secsTo(nowUtc) < kFirstPollMaxAgeSecs;  // no baseline yet
+            }
+            if (quoteTime.isValid()) {
+                // Keep the baseline even while judged closed, so the session's first
+                // re-stamped quote is recognised as the market opening again.
+                static_cast<void>(m_lastQuoteTime.insert(id, quoteTime));
+            }
+            if (live) {
                 static_cast<void>(open.insert(sym));
             }
         }

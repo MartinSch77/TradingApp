@@ -367,6 +367,102 @@ private slots:
         // No third walk: the 9-week request was overwritten, not queued behind.
         QVERIFY(!summary.wait(300));
     }
+
+    //! @tstid TS-CLI-007 @design DES-SVC-CLIENT
+    // @relation(REQ-F-015, scope=function)
+    void TS_CLI_007_marketOpenFollowsQuoteAdvance()
+    {
+        // Regression: market-open was judged from the ABSOLUTE age of the quote
+        // against a 300 s threshold. eToro's public rates feed then began publishing
+        // minutes behind real time (~6 min on the indices), so every quote looked
+        // frozen, every instrument read "closed" at once and BUY/SELL stayed locked
+        // through an open session. What decides it now is whether the timestamp
+        // ADVANCES between two polls — a property no feed delay can fake.
+        //
+        // All three instruments are stamped behind real time. SPX500's stamp moves on
+        // every reply (session live), HKG50's is frozen at its first value (session
+        // over, the feed still serving the last price), EURUSD's is two days old
+        // (weekend, i.e. stale on the very first look).
+        auto frozenStamp = QSharedPointer<QString>::create();
+        auto weekendStamp = QSharedPointer<QString>::create();
+        MockHttpServer server([frozenStamp, weekendStamp](const QByteArray &,
+                                                         const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                const QUrlQuery q(QUrl(path).query());
+                const QString sym = q.queryItemValue(QStringLiteral("internalSymbolFull"));
+                QByteArray body = "{\"items\":[]}";
+                if (sym == QLatin1String("SPX500")) {
+                    body = R"({"items":[{"instrumentId":27,"internalSymbolFull":"SPX500",
+                                         "displayname":"SPX500 Index","currentRate":5000.0}]})";
+                } else if (sym == QLatin1String("HKG50")) {
+                    body = R"({"items":[{"instrumentId":38,"internalSymbolFull":"HKG50"}]})";
+                } else if (sym == QLatin1String("EURUSD")) {
+                    body = R"({"items":[{"instrumentId":1,"internalSymbolFull":"EURUSD"}]})";
+                }
+                return MockHttpServer::Response{200, body, {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                constexpr qint64 kFeedDelaySecs = 370;  // the real feed's lag, past the old gate
+                const QDateTime now = QDateTime::currentDateTimeUtc();
+                const QString live = now.addSecs(-kFeedDelaySecs).toString(Qt::ISODate);
+                if (frozenStamp->isEmpty()) {
+                    // Both closed markets get their stamp fixed on the first reply: a
+                    // session that has ended leaves the timestamp standing where it
+                    // stopped, which is precisely what makes it detectable.
+                    *frozenStamp = live;
+                    *weekendStamp = now.addDays(-2).toString(Qt::ISODate);
+                }
+                // Answers with all three rows whatever ids were asked for: the request
+                // carries the ids resolved when it was BUILT, and the subject here is
+                // the open/closed classification, not the batching.
+                const QByteArray body =
+                    QStringLiteral(R"({"rates":[
+                        {"instrumentId":27,"bid":100.0,"ask":101.0,"date":"%1"},
+                        {"instrumentId":38,"bid":200.0,"ask":201.0,"date":"%2"},
+                        {"instrumentId":1,"bid":1.1,"ask":1.2,"date":"%3"}]})")
+                        .arg(live, *frozenStamp, *weekendStamp)
+                        .toUtf8();
+                return MockHttpServer::Response{200, body, {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 25;  // the poll re-checks every 60 ticks → ~1.5 s apart
+        EtoroClient client(cfg);
+        client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("HKG50"),
+                                   QStringLiteral("EURUSD")});
+        // Stated, not timed: the first rates reply waits until the CLIENT holds all
+        // three ids, so the first classification covers all three instruments. Gating
+        // on the mock's write would not prove the client had applied them.
+        server.holdUntil(QStringLiteral("/market-data/instruments/rates"), [&client] {
+            return (client.instrumentIdFor(QStringLiteral("SPX500")) > 0)
+                   && (client.instrumentIdFor(QStringLiteral("HKG50")) > 0)
+                   && (client.instrumentIdFor(QStringLiteral("EURUSD")) > 0);
+        });
+
+        QSignalSpy tradeable(&client, &EtoroClient::tradeabilityUpdated);
+        client.start();
+        QVERIFY(tradeable.wait(kWaitMs));
+
+        // Poll 1 has no earlier timestamp to compare against, so the delay-absorbing
+        // fallback decides: the two quotes minutes behind real time pass, the one two
+        // days behind does not.
+        const auto first = tradeable.at(0).at(0).value<QSet<QString>>();
+        QVERIFY(first.contains(QStringLiteral("SPX500")));
+        QVERIFY(first.contains(QStringLiteral("HKG50")));
+        QVERIFY(!first.contains(QStringLiteral("EURUSD")));
+
+        // Poll 2 has its baseline, and now advancement alone decides.
+        while (tradeable.count() < 2) {
+            QVERIFY(tradeable.wait(kWaitMs));
+        }
+        const auto second = tradeable.at(1).at(0).value<QSet<QString>>();
+        QVERIFY(second.contains(QStringLiteral("SPX500")));  // minutes behind, yet moving
+        QVERIFY(!second.contains(QStringLiteral("HKG50")));  // stamp never moved ⇒ closed
+        QVERIFY(!second.contains(QStringLiteral("EURUSD")));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

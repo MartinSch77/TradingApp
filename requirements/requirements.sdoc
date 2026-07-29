@@ -126,7 +126,7 @@ STATEMENT: The app shall list closed trades over a selectable 7–13-week lookba
 UID: REQ-F-015
 VERIFICATION: T
 TITLE: Market-open inference blocks orders
-STATEMENT: The app shall infer per-instrument market-open state from quote freshness and block opening orders on closed markets.
+STATEMENT: The app shall infer per-instrument market-open state from whether the instrument's quote timestamp ADVANCES between successive polls — the public rates feed lags real time by minutes, so an absolute quote age must not decide it — and block opening orders on closed markets. Where no previous timestamp is known yet (first poll after start), a quote age generous enough to absorb that feed delay shall stand in until the next poll supplies a baseline.
 
 [REQUIREMENT]
 UID: REQ-F-016
@@ -187,6 +187,12 @@ UID: REQ-F-025
 VERIFICATION: T
 TITLE: Open trades mirror the live portfolio
 STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh; eToro's authoritative per-position P/L shall be overlaid onto the positions that are still open and re-anchored to the live close rate. When a position disappears from the portfolio, the app shall refresh the closed-trades list immediately — at most one history walk per 5 s, and the delayed refresh stays armed because the broker's trade history lags the portfolio.
+
+[REQUIREMENT]
+UID: REQ-F-026
+VERIFICATION: I
+TITLE: Manual market-closed override
+STATEMENT: 'While the market-open inference reports the selected instrument closed, the app shall offer an explicit "Trade anyway" override that re-enables BUY/SELL, so a wrong closed verdict can never lock the user out of a market that is in fact open. Arming and clearing the override shall be logged, every order placed through it shall be logged as overridden, the double-press confirmation gate shall stay in force, and the override shall clear itself on an instrument switch so it can never carry over to another market.'
 
 [[/SECTION]]
 

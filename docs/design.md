@@ -27,7 +27,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 
 | ID | Element | Implementation | satisfies |
 |----|---------|----------------|-----------|
-| DES-SVC-CLIENT | eToro REST client: resolution, rates/candles, orders + confirmation, portfolio/P-L (live-portfolio position set with the P/L snapshot overlaid), trade-history pager with spread-cost estimation, fee/spread caches, tradeability inference | `EtoroClient.h/.cpp` | REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-014, REQ-F-015, REQ-F-016, REQ-F-025, REQ-N-003 |
+| DES-SVC-CLIENT | eToro REST client: resolution, rates/candles, orders + confirmation, portfolio/P-L (live-portfolio position set with the P/L snapshot overlaid), trade-history pager with spread-cost estimation, fee/spread caches, tradeability inference (quote timestamp advancing between polls — delay-tolerant) | `EtoroClient.h/.cpp` | REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-014, REQ-F-015, REQ-F-016, REQ-F-025, REQ-N-003 |
 | DES-SVC-SIM | Self-contained simulation (synthetic feed, virtual account, SL/TP/trailing execution, closed-trade log) | `SimulationEngine.h/.cpp` | REQ-F-017 |
 | DES-SVC-FEEDS | Public web feeds: VIX, TradingView ratings (all 26 instruments — verified tickers, ETF/index proxies for thematic baskets, RUBBER n/a), news, CNN Fear & Greed, Yahoo reference quote + intraday series | `MarketFeeds.h/.cpp` | REQ-F-009, REQ-F-019, REQ-F-020, REQ-F-022 |
 | DES-SVC-HTTP | Shared JSON/HTTP plumbing with idempotent-GET retry/backoff | `JsonHttp.h/.cpp` | REQ-N-003 |
@@ -39,7 +39,7 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 
 | ID | Element | Implementation | satisfies |
 |----|---------|----------------|-----------|
-| DES-UI-MAIN | Main window: trade panel (3750 default, auto SL/TP), signals panel, decision window with trade plan + Apply (plan + Monte-Carlo run off the GUI thread via QtConcurrent), in-place verdict/edge explanations + Stay-out column, event activity proposals, close-proposal watchdog, closed-trades summary + detail dialog, order guards | `MainWindow.h/.cpp` | REQ-F-003, REQ-F-004, REQ-F-012, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-021, REQ-F-023, REQ-N-005 |
+| DES-UI-MAIN | Main window: trade panel (3750 default, auto SL/TP), signals panel, decision window with trade plan + Apply (plan + Monte-Carlo run off the GUI thread via QtConcurrent), in-place verdict/edge explanations + Stay-out column, event activity proposals, close-proposal watchdog, closed-trades summary + detail dialog, order guards incl. the logged "Trade anyway" market-closed override | `MainWindow.h/.cpp` | REQ-F-003, REQ-F-004, REQ-F-012, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-021, REQ-F-023, REQ-F-026, REQ-N-005 |
 | DES-UI-CHART | Price/change chart windows | `PriceChart.h/.cpp`, `ChartView.h/.cpp` | REQ-F-002 |
 | DES-UI-POSMODEL | Open-trades model (allocation-free per-tick refresh; editors/marks survive polls; an open SL/TP cell editor is shielded from refreshes via the edit-guard delegate) | `PositionsModel.h/.cpp` | REQ-F-012, REQ-N-006 |
 | DES-UI-GAUGE | Per-trade gauge window (QPainter dial: SL→open→TP scale, live needle, P/L read-out); opened from the Side cell of the open-trades table, Instrument cell switches the app to that instrument (click routing in `MainWindow.cpp`) | `TradeGauge.h/.cpp` | REQ-F-024 |

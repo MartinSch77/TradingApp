@@ -540,21 +540,32 @@ void MainWindow::updateTradeButtonsEnabled()
     // Unknown state (before the first eligibility check) counts as open so trading is
     // never blocked just because the check hasn't landed yet.
     const bool marketOpen = !m_tradeabilityKnown || m_tradeableNow.contains(cur);
+    const bool overridden = marketClosedOverridden();  // user vouches the market is trading
     const bool cooldown = (m_orderCooldownTimer != nullptr) && m_orderCooldownTimer->isActive();
-    const bool enabled = marketOpen && !cooldown && !m_instrumentResolving;
+    const bool enabled = (marketOpen || overridden) && !cooldown && !m_instrumentResolving;
     m_buyButton->setEnabled(enabled);
     m_sellButton->setEnabled(enabled);
-    if (m_marketClosedLabel != nullptr) {
-        m_marketClosedLabel->setVisible(m_tradeabilityKnown && !marketOpen);
+    // The warning row stays up while overriding — the override is a deliberate exception,
+    // not a reason to hide that the app still reads this market as closed.
+    if (m_marketClosedRow != nullptr) {
+        m_marketClosedRow->setVisible(m_tradeabilityKnown && !marketOpen);
     }
     if (m_instrumentResolving) {
         const QString tip = QStringLiteral("%1 is still resolving — trading unlocks once the "
                                            "instrument is confirmed.").arg(cur);
         m_buyButton->setToolTip(tip);
         m_sellButton->setToolTip(tip);
+    } else if (overridden) {
+        const QString tip = QStringLiteral("%1 reads closed, but \"Trade anyway\" is armed — "
+                                           "orders WILL be submitted (press twice within "
+                                           "650 ms). eToro rejects them if the market really "
+                                           "is closed.").arg(cur);
+        m_buyButton->setToolTip(tip);
+        m_sellButton->setToolTip(tip);
     } else if (!marketOpen) {
         const QString tip = QStringLiteral("%1's market is currently closed — eToro does not "
-                                           "accept opening orders right now.").arg(cur);
+                                           "accept opening orders right now. Tick \"Trade "
+                                           "anyway\" if you know it is trading.").arg(cur);
         m_buyButton->setToolTip(tip);
         m_sellButton->setToolTip(tip);
     } else {
@@ -563,6 +574,60 @@ void MainWindow::updateTradeButtonsEnabled()
         m_buyButton->setToolTip(dblTip);
         m_sellButton->setToolTip(dblTip);
     }
+}
+
+QWidget *MainWindow::buildMarketClosedRow(QWidget *parent)
+{
+    // Shown only when the selected instrument's market is currently closed (eToro
+    // rejects opening orders then); the BUY/SELL buttons are disabled alongside it.
+    m_marketClosedLabel = new QLabel(
+        QStringLiteral("⚠ Market closed — opening trades unavailable right now"), parent);
+    m_marketClosedLabel->setStyleSheet(QStringLiteral("color:#e35555; font-weight:bold;"));
+    m_marketClosedLabel->setAlignment(Qt::AlignCenter);
+    m_marketClosedLabel->setWordWrap(true);
+    // The verdict is inferred from a broker feed we do not control, so it can be wrong
+    // (it was: a delay added to the public rates feed read as "frozen quote" and locked
+    // every instrument mid-session). This override is the way out — REQ-F-026.
+    m_marketClosedOverride = new QCheckBox(QStringLiteral("Trade anyway"), parent);
+    m_marketClosedOverride->setChecked(false);
+    m_marketClosedOverride->setToolTip(QStringLiteral(
+        "Re-enable BUY/SELL although the market reads closed. The open/closed state is "
+        "inferred from whether eToro's quote timestamps keep advancing, so it can be "
+        "wrong — tick this when you know the market is trading. eToro still rejects "
+        "orders into a genuinely closed market, and the double-press confirmation "
+        "stays in force. Clears itself when you switch instruments."));
+    static_cast<void>(connect(m_marketClosedOverride, &QCheckBox::toggled, this,
+                              [this](bool on) { onMarketClosedOverrideToggled(on); }));
+    // One row, shown/hidden as a unit by updateTradeButtonsEnabled(): the warning is
+    // pointless without its way out, and the override is meaningless without the warning.
+    m_marketClosedRow = new QWidget(parent);
+    auto *rowLayout = new QHBoxLayout(m_marketClosedRow);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->addWidget(m_marketClosedLabel, 1);
+    rowLayout->addWidget(m_marketClosedOverride);
+    m_marketClosedRow->setVisible(false);
+    return m_marketClosedRow;
+}
+
+void MainWindow::onMarketClosedOverrideToggled(bool on)
+{
+    // Log both directions: an armed override changes what BUY/SELL will do, so it must
+    // be visible in the console rather than only in a checkbox state.
+    appendLog(on ? QStringLiteral("Market-closed override ARMED for %1 — BUY/SELL enabled "
+                                  "despite the closed verdict.")
+                       .arg(m_client->config().symbol)
+                 : QStringLiteral("Market-closed override cleared."));
+    updateTradeButtonsEnabled();
+}
+
+bool MainWindow::marketClosedOverridden() const
+{
+    if ((m_marketClosedOverride == nullptr) || !m_marketClosedOverride->isChecked()) {
+        return false;
+    }
+    // Only an actual closed verdict is overridden. On an open market the checkbox is
+    // hidden and irrelevant, so it must not read as "something is being bypassed".
+    return m_tradeabilityKnown && !m_tradeableNow.contains(m_client->config().symbol);
 }
 
 void MainWindow::buildUi()
@@ -880,15 +945,7 @@ void MainWindow::buildUi()
     buttonRow->addWidget(m_sellButton);
     tradeForm->addRow(buttonRow);
 
-    // Shown only when the selected instrument's market is currently closed (eToro
-    // rejects opening orders then); the BUY/SELL buttons are disabled alongside it.
-    m_marketClosedLabel = new QLabel(
-        QStringLiteral("⚠ Market closed — opening trades unavailable right now"), tradeBox);
-    m_marketClosedLabel->setStyleSheet(QStringLiteral("color:#e35555; font-weight:bold;"));
-    m_marketClosedLabel->setAlignment(Qt::AlignCenter);
-    m_marketClosedLabel->setWordWrap(true);
-    m_marketClosedLabel->setVisible(false);
-    tradeForm->addRow(m_marketClosedLabel);
+    tradeForm->addRow(buildMarketClosedRow(tradeBox));
 
     // Estimated opening cost: opening a CFD crosses the bid/ask spread, so the
     // position starts down by roughly spread × units. Shown per side (a buy fills
@@ -4511,6 +4568,11 @@ void MainWindow::selectInstrument(const QString &sym)
     m_forecastTarget = 0.0;     // old corridor no longer applies (watchdog stands down)
     m_lastSignalDir = 0;
     m_webQuotePrice = 0.0;      // old instrument's reference quote no longer applies
+    // A closed-market override is vouched for ONE market: never let it carry over to the
+    // next instrument, whose session may genuinely be shut (REQ-F-026).
+    if ((m_marketClosedOverride != nullptr) && m_marketClosedOverride->isChecked()) {
+        m_marketClosedOverride->setChecked(false);  // toggled → logs + refreshes the buttons
+    }
     if (m_sigWebQuote != nullptr) {
         m_sigWebQuote->setText(QStringLiteral("…"));
     }
@@ -4581,12 +4643,19 @@ void MainWindow::placeOrder(bool isBuy)
 
     // Guard 0 — market closed: the buttons are already disabled then, but the keyboard
     // double-tap and armed auto-orders reach placeOrder() directly, so block here too.
+    // "Trade anyway" (REQ-F-026) lets the user overrule the verdict; the order is then
+    // logged as overridden, because the console is the record of what was sent and why.
     const QString sym = m_client->config().symbol;
     if (m_tradeabilityKnown && !m_tradeableNow.contains(sym)) {
-        appendLog(side + QStringLiteral(" blocked — %1's market is closed; eToro isn't "
-                                        "accepting opening orders right now.").arg(sym),
-                  true);
-        return;
+        if (!marketClosedOverridden()) {
+            appendLog(side + QStringLiteral(" blocked — %1's market is closed; eToro isn't "
+                                            "accepting opening orders right now. Tick "
+                                            "\"Trade anyway\" to submit regardless.").arg(sym),
+                      true);
+            return;
+        }
+        appendLog(QStringLiteral("%1 on %2 submitted with the market-closed override — the "
+                                 "app reads this market as closed.").arg(side, sym));
     }
 
     // The trade inputs are in euro (display currency); the eToro API works in the

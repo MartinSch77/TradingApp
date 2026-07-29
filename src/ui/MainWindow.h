@@ -139,6 +139,14 @@ private:
     // instrument's market is currently open. Respects the order cooldown and treats an
     // unknown tradeability state (before the first eligibility check) as "open".
     void updateTradeButtonsEnabled();
+    // True when the selected instrument's market reads closed but the user armed the
+    // "Trade anyway" override — orders then go through and are logged as overridden.
+    [[nodiscard]] bool marketClosedOverridden() const;
+    // The "market closed" warning and its "Trade anyway" override as one row (REQ-F-026),
+    // built here rather than inline in buildUi() to keep that function off the metrics
+    // ratchet. updateTradeButtonsEnabled() shows and hides the row as a unit.
+    [[nodiscard]] QWidget *buildMarketClosedRow(QWidget *parent);
+    void onMarketClosedOverrideToggled(bool on);  // log the change, re-gate the buttons
     // Live-refresh the open-trades P/L cells from a new price, without waiting for the
     // next portfolio poll. Only the shown instrument's rows move (the only live price
     // we have); each is anchored to the last API P/L so the value stays net of
@@ -234,11 +242,16 @@ private:
     QLabel *m_feeCost = nullptr;   // overnight/weekend rollover fees for this order size
     InstrumentFees m_fees;         // per-unit fees for the current instrument (real mode)
     QLabel *m_marketClosedLabel = nullptr;  // shown under BUY/SELL when the market is closed
+    QWidget *m_marketClosedRow = nullptr;   // holds the label + its override, shown as a unit
+    // "Trade anyway": re-enables BUY/SELL against a closed verdict (REQ-F-026). The
+    // inference reads a broker feed we do not control, so a wrong "closed" must never
+    // be the last word; every use is logged and selectInstrument() clears it.
+    QCheckBox *m_marketClosedOverride = nullptr;
     QPushButton *m_buyButton = nullptr;
     QPushButton *m_sellButton = nullptr;
-    // App symbols whose market is currently open (from eligibility.allowOpenPosition);
-    // m_tradeabilityKnown stays false until the first update, so trading isn't blocked
-    // before the state is known.
+    // App symbols whose market is currently open (inferred from the quote timestamp
+    // advancing between polls); m_tradeabilityKnown stays false until the first update,
+    // so trading isn't blocked before the state is known.
     QSet<QString> m_tradeableNow;
     bool m_tradeabilityKnown = false;
 

@@ -168,10 +168,11 @@ private:
     void resolveListedInstrumentIds();  // learn id<->symbol for every tradable instrument
     void fetchLeverageReal();  // query the instrument's allowed leverage values
     // One bulk market-rates call over every resolved instrument id → the set of app
-    // symbols whose market is currently open, inferred from quote freshness (a stale
-    // `date` means the price has frozen, i.e. the market is closed). Emitted via
-    // tradeabilityUpdated. eligibility.allowOpenPosition is unusable here — it is a
-    // static account permission that stays true even when the exchange is closed.
+    // symbols whose market is currently open, inferred from whether the quote's `date`
+    // ADVANCED since the previous poll (a frozen `date` means the price no longer
+    // updates, i.e. the market is closed). Emitted via tradeabilityUpdated.
+    // eligibility.allowOpenPosition is unusable here — it is a static account
+    // permission that stays true even when the exchange is closed.
     void refreshTradeabilityReal();
     void fetchHistoryReal();
     // Fetch `count` candles at `interval` (ascending), then hand them to cb (empty on
@@ -273,10 +274,18 @@ private:
     // estimates stable instead of flickering to "unknown".
     QHash<qint64, double> m_spreadPctById;
 
-    // Symbols whose last bulk-rates quote was fresh (market open), from the same
+    // Symbols whose last bulk-rates quote was live (market open), from the same
     // poll that feeds tradeabilityUpdated. Lets the closed-trades cost estimator
     // flag spreads captured from frozen (widened) after-hours quotes.
     QSet<QString> m_freshQuoteSymbols;
+
+    // Previous poll's quote timestamp per instrument — the baseline the market-open
+    // inference compares against. Absolute age cannot decide it: eToro's public rates
+    // feed publishes minutes behind real time (measured ~6 min on the indices,
+    // ~19 min on the .24-7 variants), so an open market's quote is never "age ≈ 0".
+    // A timestamp that MOVED between two polls means the feed is still publishing,
+    // whatever its offset; a frozen one means the session has ended.
+    QHash<qint64, QDateTime> m_lastQuoteTime;
 
     // Candle sort direction (newest-first). The chart is seeded from two resolutions
     // merged in fetchHistoryReal: hourly for ~1 month of context, plus the most recent

@@ -126,7 +126,7 @@ event loop / local mock HTTP server).
 | TS-HTTP-002 | I | A 429 with Retry-After on an idempotent GET is retried and succeeds on the second attempt (one callback, ok=true). |
 | TS-HTTP-003 | I | A POST failing with 500 is NOT retried; the callback reports ok=false with the status. |
 
-## eToro client (tests/tst_etoroclient.cpp, DES-SVC-CLIENT, REQ-F-014/-017/-025, REQ-N-003) — integration, local mock server
+## eToro client (tests/tst_etoroclient.cpp, DES-SVC-CLIENT, REQ-F-014/-015/-017/-025, REQ-N-003) — integration, local mock server
 
 | ID | L | Case |
 |----|---|------|
@@ -136,13 +136,16 @@ event loop / local mock HTTP server).
 | TS-CLI-004 | I | The open-trade set comes from the live `/portfolio` view, not from the cached `/pnl` snapshot: a position still listed by `/pnl` but absent from `/portfolio` (closed at eToro, or auto-closed by SL/TP) is dropped, while the surviving position keeps eToro's own P/L overlaid from `/pnl` (regression). |
 | TS-CLI-005 | I | Closed trades are named from the id→symbol map when the walk COMPLETES, not while pages parse: with the mock holding the id resolution until after the history pages were parsed and the walk's last request until after the resolution landed — an order stated through MockHttpServer::holdUntil rather than timed — the trades still come out listed under their symbols and the per-instrument summary contains every listed instrument, not just the force-mapped current one, with the open+close spread estimates rolled up per symbol (`estSpreadCosts`) (regression). |
 | TS-CLI-006 | I | A `fetchClosedTrades` issued while a walk is paging is queued (latest lookback wins) and runs right after it, instead of being silently dropped — the details dialog's 13-week fetch must survive the startup 7-week walk (regression). |
+| TS-CLI-007 | I | Market-open follows the quote timestamp ADVANCING between polls, not its absolute age: with every quote stamped ~6 min behind real time (eToro's public feed lags, which the old 300 s age gate read as "frozen" and used to lock BUY/SELL on every instrument mid-session), an instrument whose stamp moves counts as open, one whose stamp is frozen counts as closed from the second poll on, and one stamped two days back is closed already on the first — where no baseline exists yet, the delay-absorbing age fallback decides (regression). |
 
 ## Coverage & gaps
 
-UI-level requirements (REQ-F-001, -002, -004, -013, -015, -019, -021, -024,
+UI-level requirements (REQ-F-001, -002, -004, -013, -019, -021, -024, -026,
 REQ-N-001, -002, -005) are exercised manually / by the offscreen screenshot
 QA aid and are reported as *gaps* in the traceability matrix until automated
 GUI tests exist — the matrix makes this visible rather than hiding it.
+REQ-F-015's inference is covered at the service level by TS-CLI-007; only its
+BUY/SELL lock in the trade panel remains a manual check.
 REQ-F-003 and REQ-F-016 show as covered because their SL/TP and currency
 conversion *math* is unit-tested (TS-POS-002/-003); their UI legs (the guarded
 order flow, the EUR display itself) remain manual like the list above.

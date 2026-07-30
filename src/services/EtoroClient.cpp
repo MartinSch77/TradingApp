@@ -19,6 +19,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <utility>
@@ -49,6 +50,56 @@ double numFrom(const QJsonValue &v)
         return ok ? d : 0.0;
     }
     return 0.0;
+}
+
+// Human-readable reason for a rejected request: the API's ProblemDetails message,
+// falling back to the raw body and then to the network error. Validation failures
+// (ASP.NET ValidationProblemDetails) carry a generic title and put the per-field
+// reasons under "errors": {field: [msg, …]} — those get flattened in, so the message
+// names the actual offending field(s) instead of just "One or more validation errors".
+QString rejectionReason(const QJsonDocument &doc, const QByteArray &raw, const QString &netError)
+{
+    QString reason;
+    if (doc.isObject()) {
+        const QJsonObject o = doc.object();
+        reason = pick(o, {QStringLiteral("detail"), QStringLiteral("message"),
+                          QStringLiteral("error")})
+                     .toString();
+        const QJsonValue errs = pick(o, {QStringLiteral("errors")});
+        if (errs.isObject()) {
+            QStringList parts;
+            const QJsonObject fields = errs.toObject();
+            for (auto it = fields.constBegin(); it != fields.constEnd(); ++it) {
+                QStringList msgs;
+                if (it.value().isArray()) {
+                    const QJsonArray a = it.value().toArray();
+                    for (const auto &m : a) {
+                        msgs << m.toString();
+                    }
+                } else {
+                    msgs << it.value().toVariant().toString();
+                }
+                const QString joined = msgs.join(QStringLiteral("; "));
+                parts << (it.key().isEmpty() ? joined
+                                             : QStringLiteral("%1: %2").arg(it.key(), joined));
+            }
+            if (!parts.isEmpty()) {
+                const QString detail = parts.join(QStringLiteral(" | "));
+                reason = reason.isEmpty() ? detail
+                                          : QStringLiteral("%1 (%2)").arg(reason, detail);
+            }
+        }
+        if (reason.isEmpty()) {
+            reason = pick(o, {QStringLiteral("title")}).toString();
+        }
+    }
+    if (reason.isEmpty()) {
+        reason = QString::fromUtf8(raw.left(300)).trimmed();
+    }
+    if (reason.isEmpty()) {
+        reason = netError;
+    }
+    return reason;
 }
 
 // eToro sometimes wraps payloads in {"data": ...}. Unwrap arrays/objects.
@@ -240,7 +291,16 @@ EtoroClient::EtoroClient(Config config, QObject *parent)
     , m_http(new JsonHttp(m_nam, this))
     , m_sim(new SimulationEngine(this))
     , m_pollTimer(new QTimer(this))
+    , m_pendingTimer(new QTimer(this))
 {
+    // Resting limit orders get their own fixed 4 s refresh, independent of the price-poll
+    // interval: this list is what tells the user whether an order still waits, triggered
+    // or was refused, so its freshness must not depend on a configurable poll setting.
+    // emitPendingOrders() starts and stops it with the registry.
+    m_pendingTimer->setInterval(4000);
+    static_cast<void>(connect(m_pendingTimer, &QTimer::timeout, this,
+                              [this] { refreshPendingOrdersReal(); }));
+
     // Abort any request that stalls with no data for 30s so its finished() always
     // fires: without this a hung reply (e.g. a Cloudflare-blocked trade/history call)
     // never invokes handleReply's callback, leaving guards like m_pnlFetching stuck
@@ -265,6 +325,8 @@ EtoroClient::EtoroClient(Config config, QObject *parent)
                               this, &EtoroClient::cashUpdated));
     static_cast<void>(connect(m_sim, &SimulationEngine::orderResult,
                               this, &EtoroClient::orderResult));
+    static_cast<void>(connect(m_sim, &SimulationEngine::pendingOrdersUpdated,
+                              this, &EtoroClient::pendingOrdersUpdated));
     static_cast<void>(connect(m_sim, &SimulationEngine::positionClosed,
                               this, &EtoroClient::positionClosed));
     static_cast<void>(connect(m_sim, &SimulationEngine::leverageOptions,
@@ -420,22 +482,122 @@ void EtoroClient::onPollTimeout()
             }
             ++m_tradeTick;
         }
+        // Resting limit orders have their own 4 s timer (see m_pendingTimer) — the price
+        // poll cadence is configurable and would otherwise decide how fresh that list is.
     }
 }
 
-void EtoroClient::openPosition(bool isBuy, double amount, double leverage, double stopLossAmount,
-                               double takeProfitAmount, bool trailingStop)
+void EtoroClient::openPosition(const OrderRequest &req)
 {
-    if (amount <= 0.0) {
+    if (req.amount <= 0.0) {
         emit orderResult(false, QStringLiteral("Amount must be greater than zero."));
         return;
     }
-    if (m_simulated) {
-        m_sim->openPosition(isBuy, amount, leverage, stopLossAmount, takeProfitAmount,
-                            trailingStop);
+    if (!m_simulated) {
+        openPositionReal(req);
+    } else if (req.isLimit()) {
+        m_sim->placePendingOrder(req);
     } else {
-        openPositionReal(isBuy, amount, leverage, stopLossAmount, takeProfitAmount, trailingStop);
+        m_sim->openPosition(req);
     }
+}
+
+void EtoroClient::cancelPendingOrder(const QString &orderId)
+{
+    if (orderId.isEmpty()) {
+        emit orderResult(false, QStringLiteral("No pending order selected."));
+        return;
+    }
+    if (m_simulated) {
+        m_sim->cancelPendingOrder(orderId);
+    } else {
+        cancelPendingOrderReal(orderId);
+    }
+}
+
+void EtoroClient::modifyPendingOrder(const QString &orderId, double triggerRate,
+                                     double stopLossAmount, double takeProfitAmount)
+{
+    if (m_simulated) {
+        m_sim->modifyPendingOrder(orderId, triggerRate, stopLossAmount, takeProfitAmount);
+        return;
+    }
+    if (!m_pendingOrders.contains(orderId)) {
+        emit orderResult(false, QStringLiteral("Limit order %1 is no longer resting — nothing "
+                                              "to adjust.").arg(orderId));
+        return;
+    }
+    // The replacement is placed on the ORDER's own instrument, whatever the app happens to
+    // be showing: a limit order is priced off its trigger rate, so it needs no live quote
+    // of that instrument (openPositionReal enforces that only limit orders may do this).
+    PendingOrder rest = m_pendingOrders.value(orderId);
+    if (rest.instrumentId == 0) {
+        emit orderResult(false, QStringLiteral("Limit order %1 cannot be adjusted — the app "
+                                              "does not know which instrument it is on.")
+                                    .arg(orderId));
+        return;
+    }
+    rest.triggerRate = triggerRate;
+    rest.stopLossAmount = stopLossAmount;
+    rest.takeProfitAmount = takeProfitAmount;
+
+    // No update-order endpoint exists, so: cancel, then re-place with the new values.
+    // Cancel FIRST — placing first would leave two live orders for one intended trade
+    // if the cancel then failed.
+    const QString path = QStringLiteral("/v2/trading/execution%1/orders/%2")
+                             .arg(accountSegment(), orderId);
+    QNetworkReply *reply = apiDelete(path);
+    handleReply(reply, [this, orderId, rest](bool ok, qint32 status, const QJsonDocument &doc,
+                                             const QByteArray &raw, const QString &netError) {
+        if (!ok) {
+            emit orderResult(false,
+                             QStringLiteral("Limit order %1 unchanged — eToro would not cancel it "
+                                            "for the replacement (HTTP %2): %3. It may have "
+                                            "triggered already.")
+                                 .arg(orderId)
+                                 .arg(status)
+                                 .arg(rejectionReason(doc, raw, netError)));
+            refreshPendingOrdersReal();
+            return;
+        }
+        m_pendingOrders.remove(orderId);
+        emitPendingOrders();
+        replacePendingOrderReal(rest);
+    });
+}
+
+void EtoroClient::replacePendingOrderReal(const PendingOrder &rest)
+{
+    emit log(QStringLiteral("Limit order cancelled for the adjustment — re-placing %1 %2 at %3 "
+                            "with the new SL/TP (it comes back under a new order id).")
+                 .arg(rest.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"), rest.symbol)
+                 .arg(rest.triggerRate, 0, 'f', trading::priceDecimals(rest.triggerRate)),
+             false);
+    OrderRequest req;
+    req.isBuy = rest.isBuy;
+    req.instrumentId = rest.instrumentId;  // the order's own, not whatever is on screen
+    req.amount = rest.amount;
+    req.leverage = rest.leverage;
+    req.stopLossAmount = rest.stopLossAmount;
+    req.takeProfitAmount = rest.takeProfitAmount;
+    req.trailingStop = rest.trailingStop;
+    req.triggerRate = rest.triggerRate;
+    openPositionReal(req);  // reports its own success/failure; a failure leaves NO order
+}
+
+QList<PendingOrder> EtoroClient::pendingOrders() const
+{
+    if (m_simulated) {
+        return m_sim->pendingOrders();
+    }
+    // In placement order (the simulation reports the same), so a row does not jump
+    // around under the cursor when another order lands or resolves. QHash iteration
+    // order is arbitrary, hence the explicit sort.
+    QList<PendingOrder> out = m_pendingOrders.values();
+    std::sort(out.begin(), out.end(), [](const PendingOrder &a, const PendingOrder &b) {
+        return a.submitted < b.submitted;
+    });
+    return out;
 }
 
 void EtoroClient::closePosition(const QString &positionId)
@@ -534,6 +696,11 @@ QNetworkReply *EtoroClient::apiPatch(const QString &path, const QJsonObject &bod
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
     return m_nam->sendCustomRequest(req, "PATCH", payload);
+}
+
+QNetworkReply *EtoroClient::apiDelete(const QString &path)
+{
+    return m_nam->deleteResource(makeRequest(QUrl(m_config.baseUrl + path)));
 }
 
 void EtoroClient::handleReply(QNetworkReply *reply, JsonHandler cb, qint32 retriesLeft)
@@ -741,6 +908,33 @@ double EtoroClient::spreadPctFor(const QString &symbol) const
     return m_spreadPctById.value(m_idBySymbol.value(symbol, 0), 0.0);
 }
 
+QString EtoroClient::instrumentLabel(qint64 instrumentId) const
+{
+    // The instrument on screen names itself; another one (a re-placed limit order) comes
+    // from the id→symbol map, and one outside the app's list reads "#<id>", as closed
+    // trades on unlisted instruments already do.
+    if ((instrumentId == m_instrument.instrumentId) && !m_instrument.symbol.isEmpty()) {
+        return m_instrument.symbol;
+    }
+    QString listed = m_symbolById.value(instrumentId);  // non-const: returned by move
+    if (!listed.isEmpty()) {
+        return listed;
+    }
+    return (instrumentId == m_instrument.instrumentId)
+               ? m_config.symbol
+               : QStringLiteral("#%1").arg(instrumentId);
+}
+
+double EtoroClient::lastRateFor(qint64 instrumentId) const
+{
+    // The instrument on screen has a per-tick price of its own — fresher than the bulk
+    // snapshot — so prefer it. Everything else comes from the last bulk rates poll.
+    if ((instrumentId == m_instrument.instrumentId) && (m_lastPrice > 0.0)) {
+        return m_lastPrice;
+    }
+    return m_lastRateById.value(instrumentId, 0.0);
+}
+
 InstrumentFees EtoroClient::feesFor(const QString &symbol) const
 {
     return m_feesById.value(m_idBySymbol.value(symbol, 0), InstrumentFees{});
@@ -842,6 +1036,10 @@ void EtoroClient::refreshTradeabilityReal()
             if ((bid > 0.0) && (ask > bid)) {
                 static_cast<void>(
                     m_spreadPctById.insert(id, ((ask - bid) / ((ask + bid) / 2.0)) * 100.0));
+                // …and the last mid rate per instrument, so the resting-order list can
+                // show what each order's market is doing — including instruments other
+                // than the one on screen, which have no per-tick price poll of their own.
+                static_cast<void>(m_lastRateById.insert(id, (ask + bid) / 2.0));
             }
             const QDateTime quoteTime = QDateTime::fromString(
                 pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
@@ -1056,8 +1254,121 @@ void EtoroClient::refreshPortfolioReal()
             // the table on a transient error. The next poll retries.
             return;
         }
+        // The same payload lists the account's PENDING orders, and that list is the
+        // broker's own — the only way to see limit orders placed in an earlier session
+        // or in eToro's own UI (there is no "list my orders" endpoint).
+        mergeBrokerPendingOrders(doc);
         overlayPnlOntoLivePositions(parsePositionsPayload(doc));
     }, /*retriesLeft=*/2);  // ride out a transient 429/5xx rather than logging an error
+}
+
+void EtoroClient::mergeBrokerPendingOrders(const QJsonDocument &doc)
+{
+    // clientPortfolio.orders[]: orderID, instrumentID, isBuy, rate (the trigger rate),
+    // amount, leverage, units, stopLossRate / takeProfitRate (RATES, unlike the amounts
+    // the app's own registry carries) and isTslEnabled.
+    const QJsonObject clientPortfolio =
+        pick(doc.object(), {QStringLiteral("clientPortfolio")}).toObject();
+    const QJsonValue ordersValue = pick(clientPortfolio, {QStringLiteral("orders")});
+    if (!ordersValue.isArray()) {
+        return;  // shape not as documented — keep what we know rather than blanking it
+    }
+
+    QHash<QString, PendingOrder> fromBroker;
+    const QJsonArray orders = ordersValue.toArray();
+    for (const auto &value : orders) {
+        const QJsonObject o = value.toObject();
+        const PendingOrder order = pendingOrderFrom(o);
+        if (!order.orderId.isEmpty()) {
+            static_cast<void>(fromBroker.insert(order.orderId, order));
+        }
+    }
+
+    // The broker's list decides what exists. Two exceptions, both about lag: an order
+    // submitted seconds ago may not be in this (polled) snapshot yet, and one this app
+    // knows the status of keeps that wording. kGraceMs is the window in which a locally
+    // known order survives being absent — measured from when it was submitted.
+    static constexpr qint64 kGraceMs = 20000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool changed = false;
+    for (auto it = m_pendingOrders.cbegin(); it != m_pendingOrders.cend();) {
+        const bool known = fromBroker.contains(it.key());
+        const bool young = it->submitted.isValid()
+                           && ((now - it->submitted.toMSecsSinceEpoch()) < kGraceMs);
+        if (known || young) {
+            ++it;
+            continue;
+        }
+        it = m_pendingOrders.erase(it);  // gone at the broker: triggered, cancelled or refused
+        changed = true;
+    }
+    for (auto it = fromBroker.cbegin(); it != fromBroker.cend(); ++it) {
+        const auto mine = m_pendingOrders.constFind(it.key());
+        PendingOrder merged = it.value();
+        if (mine != m_pendingOrders.constEnd()) {
+            merged.status = mine->status;  // the lookup's wording beats a generic default
+            if (merged.symbol.startsWith(QLatin1Char('#'))) {
+                merged.symbol = mine->symbol;  // keep a resolved symbol over "#<id>"
+            }
+            if (*mine == merged) {
+                continue;
+            }
+        }
+        m_pendingOrders.insert(it.key(), merged);
+        changed = true;
+    }
+    if (changed) {
+        emitPendingOrders();
+    }
+}
+
+PendingOrder EtoroClient::pendingOrderFrom(const QJsonObject &o) const
+{
+    PendingOrder order;
+    order.orderId = pick(o, {QStringLiteral("orderID"), QStringLiteral("orderId")})
+                        .toVariant().toString();
+    order.instrumentId = static_cast<qint64>(
+        numFrom(pick(o, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
+    // Instruments outside the app's selector still have to be VISIBLE — an order the app
+    // hides is an order nobody cancels — so they read as "#<id>", like closed trades.
+    order.symbol = m_symbolById.value(order.instrumentId,
+                                      QStringLiteral("#%1").arg(order.instrumentId));
+    order.isBuy = pick(o, {QStringLiteral("isBuy")}).toBool();
+    order.triggerRate = numFrom(pick(o, {QStringLiteral("rate"), QStringLiteral("triggerRate")}));
+    order.amount = numFrom(pick(o, {QStringLiteral("amount")}));
+    order.leverage = numFrom(pick(o, {QStringLiteral("leverage")}));
+    order.trailingStop = pick(o, {QStringLiteral("isTslEnabled")}).toBool();
+    order.status = QStringLiteral("Waiting for rate");
+    const QString opened = pick(o, {QStringLiteral("openDateTime")}).toString();
+    order.submitted = QDateTime::fromString(opened, Qt::ISODateWithMs);
+    if (!order.submitted.isValid()) {
+        order.submitted = QDateTime::fromString(opened, Qt::ISODate);
+    }
+
+    // eToro states the order's SL/TP as RATES; the panel and the editor work in
+    // account-currency AMOUNTS, which is rate distance × units. Units are given, but fall
+    // back to the notional identity (amount × leverage / rate) when they are not.
+    double units = numFrom(pick(o, {QStringLiteral("units")}));
+    if ((units <= 0.0) && (order.triggerRate > 0.0)) {
+        units = (order.amount * order.leverage) / order.triggerRate;
+    }
+    const double slRate = numFrom(pick(o, {QStringLiteral("stopLossRate")}));
+    const double tpRate = numFrom(pick(o, {QStringLiteral("takeProfitRate")}));
+    if (units > 0.0) {
+        // A "no stop" order carries a sentinel rate (0, or 1e-05 for a long) rather than
+        // a real one; anything on the wrong side of the trigger is such a sentinel.
+        const bool slSet = order.isBuy ? ((slRate > 0.0) && (slRate < order.triggerRate))
+                                       : (slRate > order.triggerRate);
+        const bool tpSet = order.isBuy ? (tpRate > order.triggerRate)
+                                       : ((tpRate > 0.0) && (tpRate < order.triggerRate));
+        if (slSet) {
+            order.stopLossAmount = std::abs(order.triggerRate - slRate) * units;
+        }
+        if (tpSet) {
+            order.takeProfitAmount = std::abs(tpRate - order.triggerRate) * units;
+        }
+    }
+    return order;
 }
 
 // Fetch the cached /pnl snapshot and copy eToro's own P/L onto the live set,
@@ -1648,10 +1959,29 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
     }, /*retriesLeft=*/2);  // ride out a transient 429 on the shared market-data pool
 }
 
-void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
-                                   double stopLossAmount, double takeProfitAmount,
-                                   bool trailingStop)
+void EtoroClient::openPositionReal(const OrderRequest &req)
 {
+    const bool isBuy = req.isBuy;
+    const double leverage = req.leverage;
+    const double stopLossAmount = req.stopLossAmount;
+    const double takeProfitAmount = req.takeProfitAmount;
+    const double triggerRate = req.triggerRate;
+    const bool trailingStop = req.trailingStop;
+    const bool isLimit = req.isLimit();
+    double amount = req.amount;  // shrunk below if it exceeds eToro's per-order unit cap
+
+    // Which instrument this order is for. Normally the one being traded; a LIMIT order may
+    // name another one (re-placing a resting order after an edit), which is safe because a
+    // limit order is priced off its own trigger rate and needs no live quote. A MARKET
+    // order must not: it would be priced from the shown instrument's bid/ask.
+    const qint64 instrumentId =
+        (req.instrumentId != 0) ? req.instrumentId : m_instrument.instrumentId;
+    if (!isLimit && (instrumentId != m_instrument.instrumentId)) {
+        emit orderResult(false, QStringLiteral("A market order can only be placed on the "
+                                              "instrument currently being traded."));
+        return;
+    }
+
     // UnifiedOrderRequest (POST /v2/trading/execution/orders):
     //  * identify the instrument by EXACTLY ONE of symbol/instrumentId — sending
     //    both is rejected, so we send instrumentId only;
@@ -1663,9 +1993,18 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
     // ("sell" / "buyToCover" are the *closing* transactions and are rejected here —
     // positions are closed via the market-close endpoint instead.)
     body[QStringLiteral("transaction")] = isBuy ? QStringLiteral("buy") : QStringLiteral("sellShort");
-    body[QStringLiteral("instrumentId")] = static_cast<qint32>(m_instrument.instrumentId);
+    body[QStringLiteral("instrumentId")] = static_cast<qint32>(instrumentId);
     body[QStringLiteral("settlementType")] = QStringLiteral("cfd");
-    body[QStringLiteral("orderType")] = QStringLiteral("mkt");
+    // "mkt" executes now; "mit" (market-if-touched, eToro's "limit order") rests at
+    // the broker until the feed publishes triggerRate or better and executes at market
+    // then. triggerRate is REQUIRED for mit and must be absent for mkt.
+    body[QStringLiteral("orderType")] = isLimit ? QStringLiteral("mit") : QStringLiteral("mkt");
+    if (isLimit) {
+        // 5-dp round like the SL/TP rates below: a rate computed from a percentage
+        // ("1% above the market") carries binary float noise, and a broker validating
+        // against a tick size has no reason to accept 5858.000000000001.
+        body[QStringLiteral("triggerRate")] = std::round(triggerRate * 1e5) / 1e5;
+    }
     body[QStringLiteral("amount")] = amount;
     // The order amount must be in the account currency; prefer the real currency
     // learned from the API over a (possibly stale/mismatched) config value.
@@ -1683,15 +2022,21 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
     // Price the SL/TP (and units) off the side the position actually opens at — a buy
     // fills near the ask, a sell near the bid — not the mid. Using the mid leaves a
     // half-spread error, so the SL shown on the open trade drifts from the set amount.
+    //
+    // A limit order opens at its TRIGGER rate, not at today's price, so that is the
+    // reference its SL/TP (and its unit count) must be priced off — otherwise a stop
+    // set 100 away from the current price lands 100 away from a rate the position
+    // never opened at.
     double ref = isBuy ? m_lastAsk : m_lastBid;
     if (ref <= 0.0) {
         ref = (m_lastPrice > 0.0) ? m_lastPrice : m_instrument.currentRate;
     }
+    if (isLimit) {
+        ref = triggerRate;
+    }
     double units = (ref > 0.0) ? ((amount * leverage) / ref) : 0.0;
 
-    // Name the instrument actually traded (falling back to the configured symbol).
-    const QString symbolLabel =
-        !m_instrument.symbol.isEmpty() ? m_instrument.symbol : m_config.symbol;
+    const QString symbolLabel = instrumentLabel(instrumentId);
 
     // eToro caps the units per single order (eligibility's maxUnitsPerOrder, e.g. 20
     // for GOLD). An oversized order is accepted here (an orderId is created) but then
@@ -1700,8 +2045,11 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
     // that fits (shaved 0.5% so a price move before execution can't tip it back over)
     // and log the reduction; the "order submitted" message then reports the amount
     // actually sent. Skipped while the cap (or a live rate) is still unknown; eToro's
-    // own validation remains the backstop then.
-    const double maxUnits = m_instrument.maxUnitsPerOrder;
+    // own validation remains the backstop then — which also covers an order on an
+    // instrument other than the one on screen, whose cap the app has not queried.
+    const double maxUnits = (instrumentId == m_instrument.instrumentId)
+                                ? m_instrument.maxUnitsPerOrder
+                                : 0.0;
     if ((maxUnits > 0.0) && (units > maxUnits)) {
         const double maxAmount = std::floor(((maxUnits * ref) / leverage) * 0.995);
         if (maxAmount < 1.0) {
@@ -1748,10 +2096,24 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
         }
     }
 
+    // Everything the pending registry needs is known before the POST goes out; only
+    // the broker's orderId is missing, so the reply handler captures ONE value instead
+    // of a dozen. Built after the unit-cap shrink above, so `amount` is what was sent.
+    PendingOrder rest;
+    rest.instrumentId = instrumentId;
+    rest.symbol = symbolLabel;
+    rest.isBuy = isBuy;
+    rest.triggerRate = triggerRate;
+    rest.amount = amount;
+    rest.leverage = leverage;
+    rest.stopLossAmount = stopLossAmount;
+    rest.takeProfitAmount = takeProfitAmount;
+    rest.trailingStop = trailingStop;
+
     const QString path =
         QStringLiteral("/v2/trading/execution%1/orders").arg(accountSegment());
     QNetworkReply *reply = apiPost(path, body);
-    handleReply(reply, [this, isBuy, amount, symbolLabel, orderCurrency](
+    handleReply(reply, [this, isBuy, amount, symbolLabel, orderCurrency, isLimit, rest](
                            bool ok, qint32 status, const QJsonDocument &doc,
                            const QByteArray &raw, const QString &netError) {
         if (ok) {
@@ -1762,6 +2124,12 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
             const QJsonObject submitted = doc.object();
             const qint64 orderId =
                 static_cast<qint64>(numFrom(pick(submitted, {QStringLiteral("orderId")})));
+
+            if (isLimit) {
+                registerRestingOrder(rest, orderId);
+                return;
+            }
+
             emit orderResult(true,
                              QStringLiteral("%1 order submitted (id %5): %2 %3 %4 — confirming…")
                                  .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
@@ -1777,56 +2145,48 @@ void EtoroClient::openPositionReal(bool isBuy, double amount, double leverage,
             refreshPortfolioReal();
             refreshBalanceReal();
         } else {
-            // Prefer the API's ProblemDetails message; fall back to the raw body / net error.
-            QString reason;
-            if (doc.isObject()) {
-                const QJsonObject o = doc.object();
-                reason = pick(o, {QStringLiteral("detail"), QStringLiteral("message"),
-                                  QStringLiteral("error")})
-                             .toString();
-                // Validation failures (ASP.NET ValidationProblemDetails) carry a generic
-                // title and put the per-field reasons under "errors": {field: [msg, …]}.
-                // Flatten those so the message names the actual offending field(s).
-                const QJsonValue errs = pick(o, {QStringLiteral("errors")});
-                if (errs.isObject()) {
-                    QStringList parts;
-                    const QJsonObject fields = errs.toObject();
-                    for (auto it = fields.constBegin(); it != fields.constEnd(); ++it) {
-                        QStringList msgs;
-                        if (it.value().isArray()) {
-                            const QJsonArray a = it.value().toArray();
-                            for (const auto &m : a) {
-                                msgs << m.toString();
-                            }
-                        } else {
-                            msgs << it.value().toVariant().toString();
-                        }
-                        const QString joined = msgs.join(QStringLiteral("; "));
-                        parts << (it.key().isEmpty()
-                                      ? joined
-                                      : QStringLiteral("%1: %2").arg(it.key(), joined));
-                    }
-                    if (!parts.isEmpty()) {
-                        const QString detail = parts.join(QStringLiteral(" | "));
-                        reason = reason.isEmpty()
-                                     ? detail
-                                     : QStringLiteral("%1 (%2)").arg(reason, detail);
-                    }
-                }
-                if (reason.isEmpty()) {
-                    reason = pick(o, {QStringLiteral("title")}).toString();
-                }
-            }
-            if (reason.isEmpty()) {
-                reason = QString::fromUtf8(raw.left(300)).trimmed();
-            }
-            if (reason.isEmpty()) {
-                reason = netError;
-            }
-            emit orderResult(false,
-                             QStringLiteral("Order rejected (HTTP %1): %2").arg(status).arg(reason));
+            emit orderResult(false, QStringLiteral("%1 rejected (HTTP %2): %3")
+                                        .arg(isLimit ? QStringLiteral("Limit order")
+                                                     : QStringLiteral("Order"))
+                                        .arg(status)
+                                        .arg(rejectionReason(doc, raw, netError)));
         }
     });
+}
+
+void EtoroClient::registerRestingOrder(const PendingOrder &rest, qint64 orderId)
+{
+    // A resting order is SUPPOSED to stay pending — possibly for days — so it goes into
+    // the pending registry and is status-polled alongside the portfolio, instead of
+    // being chased by confirmOrderReal's seconds-long loop. Nothing opened yet either,
+    // so portfolio and balance need no refresh here.
+    PendingOrder placed = rest;
+    placed.orderId = QString::number(orderId);
+    placed.status = QStringLiteral("Submitted");
+    placed.submitted = QDateTime::currentDateTime();
+    if (orderId > 0) {
+        m_pendingOrders.insert(placed.orderId, placed);
+        emitPendingOrders();  // shows at once, and starts the 4 s status cycle
+        // HTTP 200 only means eToro CREATED the order; a validation rejection lands a
+        // moment later. One check ahead of the 4 s cycle so a dead order is never
+        // presented as resting for even one full cycle.
+        const QString id = placed.orderId;
+        QTimer::singleShot(1500, this, [this, id] {
+            if (m_pendingOrders.contains(id)) {
+                lookupPendingOrderReal(id);
+            }
+        });
+    }
+    emit orderResult(true, QStringLiteral("Limit %1 %2 accepted by eToro (order id %3): %4 at "
+                                          "x%5, resting until the rate reaches %6. eToro executes "
+                                          "it even with this app closed.")
+                               .arg(placed.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
+                                    placed.symbol)
+                               .arg(orderId)
+                               .arg(placed.amount, 0, 'f', 2)
+                               .arg(placed.leverage)
+                               .arg(placed.triggerRate, 0, 'f',
+                                    trading::priceDecimals(placed.triggerRate)));
 }
 
 void EtoroClient::confirmOrderReal(qint64 orderId, bool isBuy, const QString &symbolLabel,
@@ -1915,6 +2275,163 @@ void EtoroClient::confirmOrderReal(qint64 orderId, bool isBuy, const QString &sy
 
         keepWaiting();  // received / placed / waiting-for-market / … → check again
     }, /*retriesLeft=*/1);
+}
+
+void EtoroClient::cancelPendingOrderReal(const QString &orderId)
+{
+    // DELETE /v2/trading/execution{seg}/orders/{orderId} — "cancels an order before it
+    // is executed". Non-GETs are never auto-retried (REQ-N-003): a retried cancel could
+    // race an execution, and the pending refresh reports the true state anyway.
+    const QString path = QStringLiteral("/v2/trading/execution%1/orders/%2")
+                             .arg(accountSegment(), orderId);
+    QNetworkReply *reply = apiDelete(path);
+    handleReply(reply, [this, orderId](bool ok, qint32 status, const QJsonDocument &doc,
+                                       const QByteArray &raw, const QString &netError) {
+        if (ok) {
+            const PendingOrder gone = m_pendingOrders.take(orderId);
+            emit orderResult(true, QStringLiteral("Limit order %1 cancelled%2.")
+                                       .arg(orderId,
+                                            gone.symbol.isEmpty()
+                                                ? QString()
+                                                : QStringLiteral(" (%1 %2)")
+                                                      .arg(gone.isBuy ? QStringLiteral("BUY")
+                                                                      : QStringLiteral("SELL"),
+                                                           gone.symbol)));
+            emitPendingOrders();
+            return;
+        }
+        // A cancel can legitimately fail because the order just executed; the status
+        // refresh below then reports what really happened, so this stays a plain error.
+        emit orderResult(false, QStringLiteral("Could not cancel limit order %1 (HTTP %2): %3")
+                                    .arg(orderId)
+                                    .arg(status)
+                                    .arg(rejectionReason(doc, raw, netError)));
+        refreshPendingOrdersReal();
+    });
+}
+
+void EtoroClient::refreshPendingOrdersReal()
+{
+    if (m_pendingOrders.isEmpty()) {
+        return;
+    }
+    // At most two orders per 4 s tick, continuing where the last tick stopped: the
+    // lookup's rate pool is shared with the closed-trade endpoints, and refreshing every
+    // order on every tick would spend the whole budget once a few orders rest.
+    static constexpr qint32 kOrdersPerTick = 2;
+    QStringList ids = m_pendingOrders.keys();
+    std::sort(ids.begin(), ids.end());  // QHash order is arbitrary; the cursor needs stability
+    if (m_pendingCursor >= static_cast<qint32>(ids.size())) {
+        m_pendingCursor = 0;
+    }
+    const qint32 count = std::min<qint32>(kOrdersPerTick, static_cast<qint32>(ids.size()));
+    for (qint32 i = 0; i < count; ++i) {
+        lookupPendingOrderReal(ids.at((m_pendingCursor + i) % ids.size()));
+    }
+    m_pendingCursor = static_cast<qint32>((m_pendingCursor + count) % ids.size());
+}
+
+void EtoroClient::emitPendingOrders()
+{
+    emit pendingOrdersUpdated(pendingOrders());
+    if (m_simulated || (m_pendingTimer == nullptr)) {
+        return;  // the simulation is authoritative and emits on every change itself
+    }
+    // Run the 4 s cycle only while something rests: an empty registry has nothing to
+    // poll, and a timer left running would burn rate budget on nothing.
+    if (m_pendingOrders.isEmpty()) {
+        m_pendingTimer->stop();
+        m_pendingCursor = 0;
+    } else if (!m_pendingTimer->isActive()) {
+        m_pendingTimer->start();
+    }
+}
+
+void EtoroClient::lookupPendingOrderReal(const QString &orderId)
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("orderId"), orderId);
+    const QString path =
+        QStringLiteral("/v2/trading/info%1/orders:lookup").arg(accountSegment());
+    QNetworkReply *reply = apiGet(path, query);
+    handleReply(reply, [this, orderId](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                       const QByteArray & /*raw*/, const QString & /*netError*/) {
+        // A transient failure is not evidence about the order — leave it resting
+        // and re-read it on the next refresh.
+        if (ok) {
+            applyPendingOrderStatus(orderId, doc);
+        }
+    }, /*retriesLeft=*/1);
+}
+
+void EtoroClient::applyPendingOrderStatus(const QString &orderId, const QJsonDocument &doc)
+{
+    if (!m_pendingOrders.contains(orderId)) {
+        return;  // cancelled between the request and its reply
+    }
+    const QJsonObject st = pick(doc.object(), {QStringLiteral("status")}).toObject();
+    const qint32 statusId = static_cast<qint32>(numFrom(pick(st, {QStringLiteral("id")})));
+    const QString statusName = pick(st, {QStringLiteral("name")}).toString();
+    const PendingOrder rest = m_pendingOrders.value(orderId);
+    const QString side = rest.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+
+    // Status ids (GetOrderInfoStatus): 3 Filled / 5 PartiallyFilled = it triggered and
+    // opened; 4 Rejected, 7 Canceled, 8 Expired, 9/10 the partially-filled variants =
+    // it is gone; 1/2/6/11/12 = still resting.
+    static const QSet<qint32> kFilled{3, 5};
+    static const QSet<qint32> kGone{4, 7, 8, 9, 10};
+    if (kFilled.contains(statusId)) {
+        m_pendingOrders.remove(orderId);
+        emit orderResult(true, QStringLiteral("Limit %1 %2 triggered at %3 — order %4 filled, "
+                                              "the position is now open.")
+                                   .arg(side, rest.symbol)
+                                   .arg(rest.triggerRate, 0, 'f',
+                                        trading::priceDecimals(rest.triggerRate))
+                                   .arg(orderId));
+        emitPendingOrders();
+        refreshPortfolioReal();
+        refreshBalanceReal();
+        return;
+    }
+    if (kGone.contains(statusId)) {
+        m_pendingOrders.remove(orderId);
+        emitPendingOrders();
+        // 7 Canceled / 9 CanceledPartiallyFilled is normally the user's own cancel and is
+        // already reported by cancelPendingOrder; a REJECTION or expiry is news, and
+        // eToro's own reason for it is the one thing that explains why the order the app
+        // showed as resting will never open — so it goes out as an error, with that text.
+        const QString why = pick(st, {QStringLiteral("errorMessage")}).toString();
+        const qint32 errorCode =
+            static_cast<qint32>(numFrom(pick(st, {QStringLiteral("errorCode")})));
+        if ((statusId == 7) || (statusId == 9)) {
+            emit log(QStringLiteral("Limit %1 %2 (order %3) is no longer resting — %4.")
+                         .arg(side, rest.symbol, orderId,
+                              statusName.isEmpty() ? QStringLiteral("cancelled") : statusName),
+                     false);
+            return;
+        }
+        emit orderResult(false,
+                         QStringLiteral("eToro did NOT accept the limit %1 %2 at %3 (order %4): "
+                                        "%5%6. Nothing is resting for it any more.")
+                             .arg(side, rest.symbol)
+                             .arg(rest.triggerRate, 0, 'f',
+                                  trading::priceDecimals(rest.triggerRate))
+                             .arg(orderId,
+                                  why.isEmpty() ? (statusName.isEmpty()
+                                                       ? QStringLiteral("rejected")
+                                                       : statusName)
+                                                : why)
+                             .arg((errorCode != 0) ? QStringLiteral(" [code %1]").arg(errorCode)
+                                                   : QString()));
+        return;
+    }
+    // Still resting: keep the broker's own wording visible in the table.
+    if (!statusName.isEmpty() && (statusName != rest.status)) {
+        PendingOrder updated = rest;
+        updated.status = statusName;
+        m_pendingOrders.insert(orderId, updated);
+        emitPendingOrders();
+    }
 }
 
 void EtoroClient::closePositionReal(const QString &positionId)

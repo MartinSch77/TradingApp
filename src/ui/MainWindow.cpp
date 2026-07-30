@@ -26,6 +26,7 @@
 #include <QTime>
 #include <QTimeZone>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QKeyEvent>
@@ -72,6 +73,15 @@ constexpr double kMaxOpenExposure = 17000.0;
 // keep the SL/TP edit handling readable.
 constexpr qint32 PosColSl = PositionsModel::ColSl;
 constexpr qint32 PosColTp = PositionsModel::ColTp;
+
+// Resting-limit-order table: Side | Instrument | Trigger | Now | Amount | SL | TP | Status.
+// A click in the Trigger…TP span opens the order's editor, and "Now" (the instrument's
+// live rate) is refreshed in place on every price tick rather than by a rebuild (REQ-F-027).
+constexpr qint32 kPendingColumns = 8;
+constexpr qint32 kPendingInstrumentColumn = 1;
+constexpr qint32 kPendingTriggerColumn = 2;
+constexpr qint32 kPendingNowColumn = 3;
+constexpr qint32 kPendingTpColumn = 6;
 
 QString colored(const QString &text, const QString &hexColor)
 {
@@ -429,7 +439,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         auto *ke = static_cast<QKeyEvent *>(event);  // guarded by type() above
         if (!ke->isAutoRepeat() && ((ke->key() == Qt::Key_S) || (ke->key() == Qt::Key_B))) {
             QWidget *fw = QApplication::focusWidget();
-            // Numeric spin fields (amount, SL/TP, auto-order prices) reject letters
+            // Numeric spin fields (amount, SL/TP, limit rates) reject letters
             // anyway, so the quick keys stay live there — that is exactly where focus
             // sits after typing an amount (and after startup). A spin box edits
             // through an internal QLineEdit, so recognize it via the parent too.
@@ -545,6 +555,14 @@ void MainWindow::updateTradeButtonsEnabled()
     const bool enabled = (marketOpen || overridden) && !cooldown && !m_instrumentResolving;
     m_buyButton->setEnabled(enabled);
     m_sellButton->setEnabled(enabled);
+    // The limit buttons ignore the market-open verdict — a resting order is meant to be
+    // placed ahead of a session — but still respect the cooldown and the resolution gate
+    // (the order carries an instrumentId, so it must be the confirmed one).
+    if (m_limitBuyButton != nullptr) {
+        const bool limitEnabled = !cooldown && !m_instrumentResolving;
+        m_limitBuyButton->setEnabled(limitEnabled);
+        m_limitSellButton->setEnabled(limitEnabled);
+    }
     // The warning row stays up while overriding — the override is a deliberate exception,
     // not a reason to hide that the app still reads this market as closed.
     if (m_marketClosedRow != nullptr) {
@@ -574,6 +592,361 @@ void MainWindow::updateTradeButtonsEnabled()
         m_buyButton->setToolTip(dblTip);
         m_sellButton->setToolTip(dblTip);
     }
+}
+
+QGroupBox *MainWindow::buildLimitOrderBox(QWidget *parent)
+{
+    // A limit order is placed AT ETORO (API orderType "mit" + triggerRate): the broker
+    // watches its own feed and executes at market once the rate is touched. That is why
+    // this replaced the app's old "armed" price watch — the watch needed the app running,
+    // and it fired off quotes this app polls minutes behind the real market (REQ-F-027).
+    auto *box = new QGroupBox(QStringLiteral("Limit orders (placed at eToro)"), parent);
+    auto *form = new QFormLayout(box);
+
+    const QString rateTip =
+        QStringLiteral("Rate at which eToro shall open the trade. eToro fills at \"this rate or "
+                       "better\" — lower for a buy, higher for a sell — so a buy waits for the "
+                       "price to fall to it and a sell for it to rise. A rate already on that "
+                       "side of the market can fill immediately; the log warns first. Size, "
+                       "leverage, SL and TP come from the trade panel above, and the SL/TP "
+                       "amounts are measured from THIS rate, because that is where the position "
+                       "opens. eToro holds the order and executes it even with this app closed.");
+
+    m_limitBuyRate = new QDoubleSpinBox(box);
+    m_limitBuyRate->setRange(0.0, 10'000'000.0);
+    m_limitBuyRate->setDecimals(2);
+    m_limitBuyRate->setSpecialValueText(QStringLiteral("off"));  // shown when 0
+    m_limitBuyRate->setToolTip(rateTip);
+    m_limitBuyButton = new QPushButton(QStringLiteral("Place limit BUY"), box);
+    m_limitBuyButton->setToolTip(
+        QStringLiteral("Send a BUY limit order to eToro (press twice within 650 ms)."));
+    static_cast<void>(connect(m_limitBuyButton, &QPushButton::clicked, this,
+                              [this] { handleOrderButton(true, /*limit=*/true); }));
+    auto *buyRow = new QHBoxLayout;
+    buyRow->addWidget(m_limitBuyRate, 1);
+    buyRow->addWidget(m_limitBuyButton, 0);
+    form->addRow(QStringLiteral("Buy at rate"), buyRow);
+
+    m_limitSellRate = new QDoubleSpinBox(box);
+    m_limitSellRate->setRange(0.0, 10'000'000.0);
+    m_limitSellRate->setDecimals(2);
+    m_limitSellRate->setSpecialValueText(QStringLiteral("off"));
+    m_limitSellRate->setToolTip(rateTip);
+    m_limitSellButton = new QPushButton(QStringLiteral("Place limit SELL"), box);
+    m_limitSellButton->setToolTip(
+        QStringLiteral("Send a SELL (short) limit order to eToro (press twice within 650 ms)."));
+    static_cast<void>(connect(m_limitSellButton, &QPushButton::clicked, this,
+                              [this] { handleOrderButton(false, /*limit=*/true); }));
+    auto *sellRow = new QHBoxLayout;
+    sellRow->addWidget(m_limitSellRate, 1);
+    sellRow->addWidget(m_limitSellButton, 0);
+    form->addRow(QStringLiteral("Sell at rate"), sellRow);
+
+    buildPendingOrdersView(box, form);
+
+    // The table is a pure view of the client's resting-order list; wired here, with the
+    // widgets it feeds, rather than among the constructor's other client connections.
+    static_cast<void>(connect(m_client, &EtoroClient::pendingOrdersUpdated, this,
+                              &MainWindow::onPendingOrders));
+    return box;
+}
+
+void MainWindow::buildPendingOrdersView(QWidget *parent, QFormLayout *form)
+{
+    // What is actually resting at the broker right now. eToro publishes no "list my
+    // open orders" endpoint, so this shows the orders THIS app placed (and their live
+    // status from the per-order lookup) — see EtoroClient::pendingOrders().
+    m_pendingTable = new QTableWidget(0, kPendingColumns, parent);
+    m_pendingTable->setHorizontalHeaderLabels({QStringLiteral("Side"),
+                                               QStringLiteral("Instr."),
+                                               QStringLiteral("Trigger"),
+                                               QStringLiteral("Now"),
+                                               QStringLiteral("Amount (%1)").arg(m_ccy),
+                                               QStringLiteral("SL (%1)").arg(m_ccy),
+                                               QStringLiteral("TP (%1)").arg(m_ccy),
+                                               QStringLiteral("Status")});
+    // Eight columns do not fit a stretched panel width without truncating the headers, so
+    // each is sized to its content and the last one takes the slack.
+    m_pendingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_pendingTable->horizontalHeader()->setStretchLastSection(true);
+    m_pendingTable->verticalHeader()->setVisible(false);
+    m_pendingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_pendingTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_pendingTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_pendingTable->setMaximumHeight(120);
+    m_pendingTable->setToolTip(QStringLiteral(
+        "The account's limit orders still waiting at eToro — including ones placed in a "
+        "previous session or in eToro's own interface, since they come from the broker's "
+        "portfolio. \"Now\" is the instrument's current rate, so how far the order still "
+        "has to travel is visible at a glance. Click a Trigger / Now / SL / TP cell (or "
+        "use \"Adjust…\") to change the order's values — eToro cannot change a resting "
+        "order, so it is cancelled and placed again under a new id. Click an order's Instr. "
+        "cell to trade and chart that instrument."));
+    // Click routing exactly like the open-trades table: the Instrument cell switches the
+    // app to that order's instrument, the value columns open the editor, and any other
+    // cell just selects the row (which is what the Cancel button acts on). The switch
+    // matters because an order can only be adjusted while its own instrument is the one
+    // being traded — the re-placement is priced from it.
+    static_cast<void>(connect(m_pendingTable, &QTableWidget::cellClicked, this,
+                              [this](int row, int column) {
+                                  if (column == kPendingInstrumentColumn) {
+                                      switchToPendingOrderInstrument(row);
+                                  } else if ((column >= kPendingTriggerColumn)
+                                             && (column <= kPendingTpColumn)) {
+                                      openPendingOrderEditor(row);
+                                  }
+                              }));
+    form->addRow(m_pendingTable);
+
+    m_editPendingButton = new QPushButton(QStringLiteral("Adjust SL / TP…"), parent);
+    m_editPendingButton->setEnabled(false);
+    m_editPendingButton->setToolTip(
+        QStringLiteral("Change the selected resting order's trigger rate, stop loss and take "
+                       "profit. eToro cannot change a resting order, so it is cancelled and "
+                       "placed again with the new values — it returns under a new order id. "
+                       "Works for any listed order, whichever instrument is on screen."));
+    static_cast<void>(connect(m_editPendingButton, &QPushButton::clicked, this,
+                              [this] { openPendingOrderEditor(selectedPendingRow()); }));
+
+    m_cancelPendingButton = new QPushButton(QStringLiteral("Cancel selected limit order"), parent);
+    m_cancelPendingButton->setEnabled(false);
+    m_cancelPendingButton->setToolTip(
+        QStringLiteral("Ask eToro to cancel the selected resting order. It can fail if the "
+                       "order just triggered — the status line then says what happened."));
+    static_cast<void>(connect(m_cancelPendingButton, &QPushButton::clicked, this,
+                              &MainWindow::cancelSelectedPendingOrder));
+
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(m_editPendingButton, 1);
+    buttons->addWidget(m_cancelPendingButton, 1);
+    form->addRow(buttons);
+
+    // Track the mark by order id, not by row: the 4 s refresh rebuilds the rows, and an
+    // order that triggered meanwhile shifts every row below it.
+    static_cast<void>(connect(m_pendingTable, &QTableWidget::itemSelectionChanged, this, [this] {
+        const QList<QTableWidgetItem *> marked = m_pendingTable->selectedItems();
+        const qsizetype row = marked.isEmpty() ? -1 : marked.constFirst()->row();
+        m_selectedPendingId = ((row >= 0) && (row < m_pendingShown.size()))
+                                  ? m_pendingShown[row].orderId
+                                  : QString();
+        const bool hasSelection = !m_selectedPendingId.isEmpty();
+        m_cancelPendingButton->setEnabled(hasSelection);
+        m_editPendingButton->setEnabled(hasSelection);
+    }));
+}
+
+void MainWindow::switchToPendingOrderInstrument(qint32 row)
+{
+    if ((row < 0) || (row >= m_pendingShown.size())) {
+        return;
+    }
+    const PendingOrder &order = m_pendingShown[row];
+    // "#<id>" means the order sits on an instrument outside the app's selector: it can be
+    // listed, adjusted and cancelled, but there is nothing here to switch the app to.
+    if (order.symbol.startsWith(QLatin1Char('#'))) {
+        appendLog(QStringLiteral("Limit order %1 is on instrument %2, which is not in this "
+                                 "app's instrument list — it can be adjusted and cancelled "
+                                 "here, but not charted.")
+                      .arg(order.orderId, order.symbol),
+                  true);
+        return;
+    }
+    if (order.symbol.compare(m_client->config().symbol, Qt::CaseInsensitive) == 0) {
+        return;  // already the traded instrument — nothing to do
+    }
+    appendLog(QStringLiteral("Switching to %1 — the instrument of limit order %2.")
+                  .arg(order.symbol, order.orderId));
+    selectInstrument(order.symbol);
+}
+
+void MainWindow::updatePendingOrderRates()
+{
+    if ((m_pendingTable == nullptr)
+        || (m_pendingTable->rowCount() != static_cast<qint32>(m_pendingShown.size()))) {
+        return;
+    }
+    // In place, cell by cell — this runs on every price tick, and rebuilding the table
+    // that often would fight the user's selection and churn allocations (REQ-N-006).
+    for (qsizetype row = 0; row < m_pendingShown.size(); ++row) {
+        const PendingOrder &order = m_pendingShown[row];
+        QTableWidgetItem *cell = m_pendingTable->item(static_cast<qint32>(row),
+                                                     kPendingNowColumn);
+        if (cell == nullptr) {
+            continue;
+        }
+        const double now = m_client->lastRateFor(order.instrumentId);
+        if (now <= 0.0) {
+            cell->setText(QStringLiteral("—"));  // no quote for that instrument yet
+            cell->setToolTip(QString());
+            continue;
+        }
+        cell->setText(QLocale().toString(now, 'f', trading::priceDecimals(now)));
+        // How far the market still has to move for eToro to release this order.
+        const double away = order.isBuy ? (now - order.triggerRate) : (order.triggerRate - now);
+        const double pct = (now > 0.0) ? ((away / now) * 100.0) : 0.0;
+        cell->setToolTip(
+            (away > 0.0)
+                ? QStringLiteral("%1 still has to %2 by %3 (%4%) to reach the trigger.")
+                      .arg(order.symbol,
+                           order.isBuy ? QStringLiteral("fall") : QStringLiteral("rise"))
+                      .arg(std::abs(away), 0, 'f', trading::priceDecimals(now))
+                      .arg(std::abs(pct), 0, 'f', 2)
+                : QStringLiteral("%1 is already at or past the trigger — eToro fills at "
+                                 "\"trigger or better\", so this order can go at any moment.")
+                      .arg(order.symbol));
+    }
+}
+
+qint32 MainWindow::selectedPendingRow() const
+{
+    for (qsizetype row = 0; row < m_pendingShown.size(); ++row) {
+        if (m_pendingShown[row].orderId == m_selectedPendingId) {
+            return static_cast<qint32>(row);
+        }
+    }
+    return -1;
+}
+
+void MainWindow::onPendingOrders(const QList<PendingOrder> &orders)
+{
+    m_pendingShown = orders;
+    rebuildPendingOrdersTable();
+}
+
+void MainWindow::rebuildPendingOrdersTable()
+{
+    if (m_pendingTable == nullptr) {
+        return;
+    }
+    // The list is re-read every 4 s, so a rebuild must not silently drop the row the user
+    // marked for Cancel / Adjust. The mark is tracked as an ORDER ID (m_selectedPendingId)
+    // and restored below; the blocker keeps our own row edits from rewriting it.
+    const QSignalBlocker block(m_pendingTable);
+    m_pendingTable->setRowCount(static_cast<qint32>(m_pendingShown.size()));
+    for (qsizetype row = 0; row < m_pendingShown.size(); ++row) {
+        const PendingOrder &order = m_pendingShown[row];
+        const auto put = [this, row](qint32 column, const QString &text) {
+            auto *cell = new QTableWidgetItem(text);
+            cell->setTextAlignment((column == 0) || (column == 1) ? Qt::AlignLeft | Qt::AlignVCenter
+                                                                  : Qt::AlignRight
+                                                                        | Qt::AlignVCenter);
+            m_pendingTable->setItem(static_cast<qint32>(row), column, cell);
+        };
+        put(0, order.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"));
+        put(1, order.symbol);
+        put(2, QLocale().toString(order.triggerRate, 'f',
+                                 trading::priceDecimals(order.triggerRate)));
+        put(kPendingNowColumn, QString());  // filled by updatePendingOrderRates() below
+        // The order carries account-currency figures; the panel talks euro. An unset
+        // SL/TP leg reads "—" rather than 0, which would look like a zero-distance stop.
+        const auto amountText = [this](double usd) {
+            return (usd > 0.0) ? QLocale().toString(toDisplay(usd), 'f', 2)
+                               : QStringLiteral("—");
+        };
+        put(4, QLocale().toString(toDisplay(order.amount), 'f', 2));
+        put(5, amountText(order.stopLossAmount));
+        put(6, amountText(order.takeProfitAmount));
+        put(7, order.status);
+    }
+    updatePendingOrderRates();
+
+    const qint32 row = selectedPendingRow();
+    if (row >= 0) {
+        m_pendingTable->selectRow(row);
+    } else {
+        m_selectedPendingId.clear();  // that order has triggered, been cancelled or refused
+    }
+    const bool hasSelection = !m_selectedPendingId.isEmpty();
+    m_cancelPendingButton->setEnabled(hasSelection);
+    m_editPendingButton->setEnabled(hasSelection);
+}
+
+void MainWindow::openPendingOrderEditor(qint32 row)
+{
+    if ((row < 0) || (row >= m_pendingShown.size())) {
+        appendLog(QStringLiteral("Select a resting limit order first, then adjust it."));
+        return;
+    }
+    const PendingOrder order = m_pendingShown[row];
+    const QString side = order.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Adjust limit %1 %2 — order %3")
+                              .arg(side, order.symbol, order.orderId));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *fields = new QFormLayout;
+
+    const qint32 decimals = trading::priceDecimals(order.triggerRate);
+    auto *rate = new QDoubleSpinBox(&dialog);
+    rate->setRange(0.01, 10'000'000.0);
+    rate->setDecimals(decimals);
+    rate->setSingleStep(std::pow(10.0, -decimals + 1));
+    rate->setValue(order.triggerRate);
+    rate->setToolTip(QStringLiteral("The rate eToro shall open this trade at."));
+    fields->addRow(QStringLiteral("Trigger rate"), rate);
+
+    // SL/TP are entered as display-currency amounts, exactly like the trade panel; the
+    // client converts them to rates measured from the (possibly new) trigger rate.
+    const auto addAmount = [&dialog, fields, this](const QString &label, double usd) {
+        auto *field = new QDoubleSpinBox(&dialog);
+        field->setRange(0.0, 1'000'000.0);
+        field->setDecimals(2);
+        field->setSpecialValueText(QStringLiteral("none"));  // shown at 0
+        field->setValue(toDisplay(usd));
+        fields->addRow(QStringLiteral("%1 (%2)").arg(label, m_ccy), field);
+        return field;
+    };
+    QDoubleSpinBox *stopLoss = addAmount(QStringLiteral("Stop loss"), order.stopLossAmount);
+    QDoubleSpinBox *takeProfit = addAmount(QStringLiteral("Take profit"), order.takeProfitAmount);
+    layout->addLayout(fields);
+
+    auto *note = new QLabel(
+        QStringLiteral("%1, size %2%3 and leverage x%4 stay as they are. eToro cannot change a "
+                       "resting order, so this one is CANCELLED first and then placed again with "
+                       "the values above — it comes back under a new order id, and for a moment "
+                       "nothing rests at the broker.")
+            .arg(order.symbol, m_ccy)
+            .arg(toDisplay(order.amount), 0, 'f', 2)
+            .arg(order.leverage),
+        &dialog);
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral("color:#777"));
+    layout->addWidget(note);
+
+    auto *buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Replace order"));
+    static_cast<void>(connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept));
+    static_cast<void>(connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject));
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    appendLog(QStringLiteral("Adjusting limit %1 %2 (order %3): rate %4, SL %5%6 / TP %5%7 — "
+                             "cancelling and re-placing…")
+                  .arg(side, order.symbol, order.orderId)
+                  .arg(rate->value(), 0, 'f', decimals)
+                  .arg(m_ccy)
+                  .arg(stopLoss->value(), 0, 'f', 0)
+                  .arg(takeProfit->value(), 0, 'f', 0));
+    m_client->modifyPendingOrder(order.orderId, rate->value(), fromDisplay(stopLoss->value()),
+                                 fromDisplay(takeProfit->value()));
+}
+
+void MainWindow::cancelSelectedPendingOrder()
+{
+    const qint32 row = selectedPendingRow();
+    if (row < 0) {
+        appendLog(QStringLiteral("Select a resting limit order first, then cancel it."));
+        return;
+    }
+    const PendingOrder &order = m_pendingShown[row];
+    appendLog(QStringLiteral("Cancelling limit %1 %2 @ %3 (order %4)…")
+                  .arg(order.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"), order.symbol)
+                  .arg(order.triggerRate, 0, 'f', trading::priceDecimals(order.triggerRate))
+                  .arg(order.orderId));
+    m_client->cancelPendingOrder(order.orderId);
 }
 
 QWidget *MainWindow::buildMarketClosedRow(QWidget *parent)
@@ -976,51 +1349,9 @@ void MainWindow::buildUi()
 
     tradeBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 
-    // Conditional (auto) orders — a separately-armed BUY-below and SELL-above.
-    auto *autoBox = new QGroupBox(QStringLiteral("Auto orders (conditional)"), lower);
-    auto *autoForm = new QFormLayout(autoBox);
-
-    // Style/log wiring shared by both arm buttons.
-    auto wireArm = [this](QPushButton *btn, const QString &what) {
-        btn->setCheckable(true);
-        static_cast<void>(connect(btn, &QPushButton::toggled, this, [this, btn, what](bool on) {
-            btn->setText(on ? QStringLiteral("Armed ●") : QStringLiteral("Arm"));
-            btn->setStyleSheet(on ? QStringLiteral("QPushButton { background:#b26a00; color:white; "
-                                                   "font-weight:bold; border-radius:4px; }")
-                                  : QString());
-            if (on) {
-                appendLog(QStringLiteral("Auto-%1 armed — watching price.").arg(what));
-            }
-        }));
-    };
-
-    m_buyBelow = new QDoubleSpinBox(autoBox);
-    m_buyBelow->setRange(0.0, 10'000'000.0);
-    m_buyBelow->setDecimals(2);
-    m_buyBelow->setValue(0.0);
-    m_buyBelow->setSpecialValueText(QStringLiteral("off"));  // shown when 0
-    m_buyBelow->setToolTip(QStringLiteral("Auto-BUY when the price falls below this (0 = off)"));
-    m_armBuy = new QPushButton(QStringLiteral("Arm"), autoBox);
-    m_armBuy->setToolTip(QStringLiteral("Arm the auto-BUY (fires once when price < the value)"));
-    wireArm(m_armBuy, QStringLiteral("BUY"));
-    auto *buyRow = new QHBoxLayout;
-    buyRow->addWidget(m_buyBelow, 1);
-    buyRow->addWidget(m_armBuy, 0);
-    autoForm->addRow(QStringLiteral("Buy if price <"), buyRow);
-
-    m_sellAbove = new QDoubleSpinBox(autoBox);
-    m_sellAbove->setRange(0.0, 10'000'000.0);
-    m_sellAbove->setDecimals(2);
-    m_sellAbove->setValue(0.0);
-    m_sellAbove->setSpecialValueText(QStringLiteral("off"));
-    m_sellAbove->setToolTip(QStringLiteral("Auto-SELL when the price rises above this (0 = off)"));
-    m_armSell = new QPushButton(QStringLiteral("Arm"), autoBox);
-    m_armSell->setToolTip(QStringLiteral("Arm the auto-SELL (fires once when price > the value)"));
-    wireArm(m_armSell, QStringLiteral("SELL"));
-    auto *sellRow = new QHBoxLayout;
-    sellRow->addWidget(m_sellAbove, 1);
-    sellRow->addWidget(m_armSell, 0);
-    autoForm->addRow(QStringLiteral("Sell if price >"), sellRow);
+    // Limit orders, held by eToro itself (REQ-F-027). Built in its own function to
+    // keep buildUi() off the metrics ratchet.
+    QGroupBox *limitBox = buildLimitOrderBox(lower);
 
     // Trading-signals panel — buy/sell/close guidance from the instrument's
     // technicals. Shares ONE parentless top-level window with the AI panel
@@ -1216,11 +1547,11 @@ void MainWindow::buildUi()
                             "with a one-line rationale. Decision support only — always confirm "
                             "and manage your own risk."));
 
-    // Left column: trade panel and auto-orders (the signals panel lives in its
+    // Left column: trade panel and limit orders (the signals panel lives in its
     // own window now, toggled from the header).
     auto *leftCol = new QVBoxLayout;
     leftCol->addWidget(tradeBox);
-    leftCol->addWidget(autoBox);
+    leftCol->addWidget(limitBox);
     leftCol->addStretch();
     controlsRow->addLayout(leftCol, 0);
 
@@ -1582,15 +1913,30 @@ void MainWindow::onPrice(const QDateTime &time, double price)
     m_priceLabel->setText(QLocale().toString(price, 'f', trading::priceDecimals(price)));
     m_chart->addPoint(time, price);
 
-    // Seed the auto-order thresholds off the first known price: buy 0.5% below,
-    // sell 1% above. Done once so the user can still edit them afterwards.
-    if (!m_autoDefaultsSet && (price > 0.0)) {
-        m_autoDefaultsSet = true;
-        m_buyBelow->setValue(price * 0.995);
-        m_sellAbove->setValue(price * 1.01);
+    // Seed the limit-order rates off the first known price: buy 0.5% below, sell 1%
+    // above (the usual "enter on a better price" side). Done once, so the user can
+    // still edit them afterwards. The instrument's own precision decides the decimals:
+    // 2 is right for an index at 5900 and useless for EURUSD at 1.1373.
+    // A rate the user is typing is never touched — same rule as the SL/TP proposal
+    // (REQ-F-012), and focus can sit on the spin box or its internal line edit.
+    if (!m_limitRateDefaultsSet && (price > 0.0)) {
+        m_limitRateDefaultsSet = true;
+        const QWidget *fw = QApplication::focusWidget();
+        const qint32 decimals = trading::priceDecimals(price);
+        const auto seed = [fw, decimals](QDoubleSpinBox *field, double value) {
+            if ((fw != nullptr) && ((fw == field) || field->isAncestorOf(fw))) {
+                return;
+            }
+            field->setDecimals(decimals);
+            field->setSingleStep(std::pow(10.0, -decimals + 1));
+            field->setValue(value);
+        };
+        seed(m_limitBuyRate, price * 0.995);  // buy 0.5% below the market
+        seed(m_limitSellRate, price * 1.01);  // sell 1% above it
     }
 
     updateOpenTradePnl(price);  // live-refresh open-trade P/L with the new price
+    updatePendingOrderRates();  // …and the resting orders' "Now" column
     // Keep the trade-gauge needle live while it shows a trade on this instrument.
     if ((m_tradeGauge != nullptr) && m_tradeGauge->isVisible()
         && (m_tradeGauge->symbol().compare(m_client->instrument().symbol,
@@ -1598,7 +1944,8 @@ void MainWindow::onPrice(const QDateTime &time, double price)
         m_tradeGauge->updatePrice(price);
     }
     updateSignals();
-    checkAutoOrders(price);
+    // No app-side price watch fires orders any more: conditional entries are eToro's
+    // own limit orders (REQ-F-027), triggered by the broker off its own feed.
     checkCloseProposals(price);  // propose closing trades the prediction turned against
     refreshChartEventMarker();  // brings the event line in/out as its window opens/closes
 }
@@ -2459,31 +2806,6 @@ void MainWindow::updateSignals()
     // both bullish → ▲, both bearish → ▼, a lean either way → the leaning arrow,
     // and a conflict (BUY vs SELL) or both flat → no arrow.
     m_chart->setPredictionDirection(signalDir + adviceDir);
-}
-
-void MainWindow::checkAutoOrders(double price)
-{
-    if (price <= 0.0) {
-        return;
-    }
-
-    const double buyBelow = m_buyBelow->value();
-    const double sellAbove = m_sellAbove->value();
-
-    if (m_armBuy->isChecked() && (buyBelow > 0.0) && (price < buyBelow)) {
-        const QString priceText = QLocale().toString(price, 'f', 2);
-        const QString limitText = QLocale().toString(buyBelow, 'f', 2);
-        appendLog(QStringLiteral("Auto-order: price %1 < %2 → BUY").arg(priceText, limitText));
-        m_armBuy->setChecked(false);  // one-shot: disarm before firing
-        placeOrder(true);
-    }
-    if (m_armSell->isChecked() && (sellAbove > 0.0) && (price > sellAbove)) {
-        const QString priceText = QLocale().toString(price, 'f', 2);
-        const QString limitText = QLocale().toString(sellAbove, 'f', 2);
-        appendLog(QStringLiteral("Auto-order: price %1 > %2 → SELL").arg(priceText, limitText));
-        m_armSell->setChecked(false);
-        placeOrder(false);
-    }
 }
 
 void MainWindow::onCash(double available, const QString &currency)
@@ -4561,7 +4883,7 @@ void MainWindow::selectInstrument(const QString &sym)
         const QSignalBlocker block(m_instrumentBox);
         m_instrumentBox->setCurrentIndex(idx);
     }
-    m_autoDefaultsSet = false;  // reseed auto-order thresholds for the new instrument
+    m_limitRateDefaultsSet = false;  // reseed the limit-order rates for the new instrument
     m_pnlAnchorPrice = 0.0;     // drop the old instrument's P/L anchor until the next poll
     m_fees = InstrumentFees{};  // the old instrument's rollover fees no longer apply
     m_slTpAuto = true;          // volatility-proposed SL/TP resume for the new instrument
@@ -4608,19 +4930,26 @@ void MainWindow::onSellClicked()
     handleOrderButton(false);
 }
 
-void MainWindow::handleOrderButton(bool isBuy)
+void MainWindow::handleOrderButton(bool isBuy, bool limit)
 {
     // Require a deliberate double-press: a single click only arms the button and
     // prompts; the order fires only if the SAME button is pressed again in time.
+    // Market and limit buttons are distinct gates — pressing "BUY" then "Place limit
+    // BUY" must not add up to a confirmation of either (REQ-N-005).
     constexpr qint64 kDoublePressMs = 650;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if ((m_orderClickMs != 0) && (isBuy == m_orderClickBuy)
-        && ((now - m_orderClickMs) <= kDoublePressMs)) {
+    const bool sameButton = (isBuy == m_orderClickBuy) && (limit == m_orderClickLimit);
+    if ((m_orderClickMs != 0) && sameButton && ((now - m_orderClickMs) <= kDoublePressMs)) {
         m_orderClickMs = 0;  // consumed — the next order needs two fresh presses
-        placeOrder(isBuy);
+        if (limit) {
+            placeLimitOrder(isBuy);
+        } else {
+            placeOrder(isBuy);
+        }
     } else {
         m_orderClickMs = now;
         m_orderClickBuy = isBuy;
+        m_orderClickLimit = limit;
         const double amountEur = m_amount->value();
         // Show the euro order and the USD amount eToro will actually receive, so the
         // conversion is visible before the confirming second press.
@@ -4630,23 +4959,64 @@ void MainWindow::handleOrderButton(bool isBuy)
                                         .arg(amountEur, 0, 'f', 2)
                                         .arg(fromDisplay(amountEur), 0, 'f', 2)
                                   : QStringLiteral("%1%2").arg(m_ccy).arg(amountEur, 0, 'f', 2);
-        appendLog(QStringLiteral("Press %1 again within 650 ms to place %2.")
-                      .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"), sizes));
+        const QString side = isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+        appendLog(limit
+                      ? QStringLiteral("Press \"Place limit %1\" again within 650 ms to rest %2 "
+                                       "at eToro.").arg(side, sizes)
+                      : QStringLiteral("Press %1 again within 650 ms to place %2.")
+                            .arg(side, sizes));
     }
 }
 
-void MainWindow::placeOrder(bool isBuy)
+void MainWindow::placeLimitOrder(bool isBuy)
+{
+    // The rate comes from the side's own field; everything else (size, leverage, SL/TP,
+    // trailing) is the trade panel's, so a limit order is the same trade — just entered
+    // at a rate of your choosing instead of at the market.
+    const QDoubleSpinBox *rateField = isBuy ? m_limitBuyRate : m_limitSellRate;
+    const double rate = rateField->value();
+    const QString side = isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+    if (rate <= 0.0) {
+        appendLog(QStringLiteral("Limit %1 not sent — enter the rate to enter at first.")
+                      .arg(side),
+                  true);
+        return;
+    }
+    // eToro releases a market-if-touched order as soon as the trigger rate "or better"
+    // is published — better meaning LOWER for a buy and HIGHER for a short. A trigger
+    // on the wrong side of the current price is therefore already satisfied and can
+    // fill straight away instead of resting. Say so before it goes out; the order is
+    // still submitted, because only the user knows what they intended.
+    const bool alreadyReached =
+        (m_lastPrice > 0.0) && (isBuy ? (m_lastPrice <= rate) : (m_lastPrice >= rate));
+    if (alreadyReached) {
+        appendLog(QStringLiteral("Note: %1 is already at or past a limit %2 of %3 — eToro fills "
+                                 "\"trigger rate or better\", so this order may execute "
+                                 "immediately at the market instead of waiting.")
+                      .arg(QLocale().toString(m_lastPrice, 'f',
+                                              trading::priceDecimals(m_lastPrice)),
+                           side)
+                      .arg(rate, 0, 'f', trading::priceDecimals(rate)),
+                  true);
+    }
+    placeOrder(isBuy, rate);
+}
+
+void MainWindow::placeOrder(bool isBuy, double triggerRate)
 {
     const double leverage = m_leverage->currentText().toDouble();
     const bool trailingStop = m_trailingStop->isChecked();
+    const bool isLimit = (triggerRate > 0.0);
     const QString side = isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
 
     // Guard 0 — market closed: the buttons are already disabled then, but the keyboard
-    // double-tap and armed auto-orders reach placeOrder() directly, so block here too.
-    // "Trade anyway" (REQ-F-026) lets the user overrule the verdict; the order is then
-    // logged as overridden, because the console is the record of what was sent and why.
+    // double-tap reaches placeOrder() directly, so block here too. "Trade anyway"
+    // (REQ-F-026) lets the user overrule the verdict; the order is then logged as
+    // overridden, because the console is the record of what was sent and why.
+    // A LIMIT order is exempt: resting one while the market is shut is the normal way
+    // to be positioned for the next session, and eToro parks it until then.
     const QString sym = m_client->config().symbol;
-    if (m_tradeabilityKnown && !m_tradeableNow.contains(sym)) {
+    if (!isLimit && m_tradeabilityKnown && !m_tradeableNow.contains(sym)) {
         if (!marketClosedOverridden()) {
             appendLog(side + QStringLiteral(" blocked — %1's market is closed; eToro isn't "
                                             "accepting opening orders right now. Tick "
@@ -4686,14 +5056,17 @@ void MainWindow::placeOrder(bool isBuy)
 
     // Guard 3 — exposure cap (checked in USD, the account currency; shown in euro):
     // reject if this order would push the total tied up in open trades over the limit.
-    if ((m_openTradesTotal + amount) > (kMaxOpenExposure + 1e-6)) {
+    // Orders already resting at the broker count: each one WILL become exposure when it
+    // triggers, and nobody is at the keyboard then to be warned.
+    const double committed = m_openTradesTotal + pendingExposureTotal();
+    if ((committed + amount) > (kMaxOpenExposure + 1e-6)) {
         const QString msg =
-            QStringLiteral("%1 blocked — open trades would reach %2%3, over the %2%4 limit "
-                           "(%2%5 currently open).")
+            QStringLiteral("%1 blocked — open trades plus resting limit orders would reach "
+                           "%2%3, over the %2%4 limit (%2%5 already committed).")
                 .arg(side, m_ccy)
-                .arg(toDisplay(m_openTradesTotal + amount), 0, 'f', 2)
+                .arg(toDisplay(committed + amount), 0, 'f', 2)
                 .arg(toDisplay(kMaxOpenExposure), 0, 'f', 2)
-                .arg(toDisplay(m_openTradesTotal), 0, 'f', 2);
+                .arg(toDisplay(committed), 0, 'f', 2);
         appendLog(msg, true);
         [[maybe_unused]] const QMessageBox::StandardButton btn =
             QMessageBox::warning(this, QStringLiteral("Open-trades limit"), msg);
@@ -4703,13 +5076,23 @@ void MainWindow::placeOrder(bool isBuy)
     // No modal confirmation (the buttons' double-press is the gate) — but log the
     // euro order AND the exact USD amount eToro will receive, so the conversion is
     // visible before it goes out.
-    appendLog(QStringLiteral("Submitting %1 order: %2%3 (≈ $%4) (x%5), SL %2%6 / TP %2%7…")
-                  .arg(side, m_ccy)
-                  .arg(amountEur, 0, 'f', 2)
-                  .arg(amount, 0, 'f', 2)
-                  .arg(leverage)
-                  .arg(stopLossEur, 0, 'f', 0)
-                  .arg(takeProfitEur, 0, 'f', 0));
+    appendLog(isLimit
+                  ? QStringLiteral("Sending %1 LIMIT order to eToro at rate %8: %2%3 (≈ $%4) "
+                                   "(x%5), SL %2%6 / TP %2%7 measured from that rate…")
+                        .arg(side, m_ccy)
+                        .arg(amountEur, 0, 'f', 2)
+                        .arg(amount, 0, 'f', 2)
+                        .arg(leverage)
+                        .arg(stopLossEur, 0, 'f', 0)
+                        .arg(takeProfitEur, 0, 'f', 0)
+                        .arg(triggerRate, 0, 'f', trading::priceDecimals(triggerRate))
+                  : QStringLiteral("Submitting %1 order: %2%3 (≈ $%4) (x%5), SL %2%6 / TP %2%7…")
+                        .arg(side, m_ccy)
+                        .arg(amountEur, 0, 'f', 2)
+                        .arg(amount, 0, 'f', 2)
+                        .arg(leverage)
+                        .arg(stopLossEur, 0, 'f', 0)
+                        .arg(takeProfitEur, 0, 'f', 0));
 
     // Start the cooldown (disables the buttons) and optimistically count this order
     // toward the exposure cap *before* submitting, so rapid back-to-back orders
@@ -4717,13 +5100,36 @@ void MainWindow::placeOrder(bool isBuy)
     // before openPosition() because in simulation mode that call synchronously
     // emits portfolioUpdated, whose onPortfolio() recomputes the authoritative
     // total (and overwrites this optimistic value); the periodic refresh reconciles
-    // the real-mode case moments later.
-    m_openTradesTotal += amount;
+    // the real-mode case moments later. A limit order opens nothing yet, so it is not
+    // counted here — pendingExposureTotal() covers it from the pending list instead.
+    if (!isLimit) {
+        m_openTradesTotal += amount;
+    }
     m_buyButton->setEnabled(false);
     m_sellButton->setEnabled(false);
+    m_limitBuyButton->setEnabled(false);
+    m_limitSellButton->setEnabled(false);
     m_orderCooldownTimer->start();
 
-    m_client->openPosition(isBuy, amount, leverage, stopLoss, takeProfit, trailingStop);
+    OrderRequest req;
+    req.isBuy = isBuy;
+    req.amount = amount;
+    req.leverage = leverage;
+    req.stopLossAmount = stopLoss;
+    req.takeProfitAmount = takeProfit;
+    req.trailingStop = trailingStop;
+    req.triggerRate = triggerRate;  // 0 = market order
+    m_client->openPosition(req);
+}
+
+double MainWindow::pendingExposureTotal() const
+{
+    // Account currency, like m_openTradesTotal: what the resting limit orders will tie
+    // up once they trigger.
+    return std::accumulate(m_pendingShown.cbegin(), m_pendingShown.cend(), 0.0,
+                           [](double sum, const PendingOrder &order) {
+                               return sum + order.amount;
+                           });
 }
 
 void MainWindow::onCloseClicked()

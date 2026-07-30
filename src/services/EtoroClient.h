@@ -65,6 +65,11 @@ public:
     [[nodiscard]] double spreadPctFor(const QString &symbol) const;
     // Cached per-unit rollover fees for any listed symbol (invalid while unknown).
     [[nodiscard]] InstrumentFees feesFor(const QString &symbol) const;
+    // Last known rate for ANY instrument by id — the live per-tick price for the one on
+    // screen, otherwise the mid of the last bulk rates snapshot. 0 while unknown. Lets the
+    // resting-order list show what each order's own market is doing, including instruments
+    // that are not the one being traded.
+    [[nodiscard]] double lastRateFor(qint64 instrumentId) const;
 
     // The instrumentId the startup search resolved for an app symbol, 0 while it
     // is still unresolved. The resolutions land independently and asynchronously,
@@ -78,12 +83,35 @@ public:
     void requestFees(const QString &symbol);
 
 
-    // amount is the cash to invest (order currency); isBuy=false opens a short.
-    // stopLossAmount / takeProfitAmount are the loss/profit in account currency at
-    // which the position should auto-close (0 = none). trailingStop makes the
-    // stop-loss trail the price in the trade's favour (never against it).
-    void openPosition(bool isBuy, double amount, double leverage, double stopLossAmount,
-                      double takeProfitAmount, bool trailingStop = false);
+    // Open a position on the current instrument (see OrderRequest): req.amount is the
+    // cash to invest in the order currency, the SL/TP are account-currency amounts at
+    // which the position auto-closes (0 = none).
+    //
+    // req.triggerRate == 0 places a MARKET order (eToro orderType "mkt"): it executes
+    // at the current price. req.triggerRate > 0 places what eToro's UI calls a LIMIT
+    // order (API orderType "mit", market-if-touched): eToro itself holds the order until
+    // the instrument's rate reaches the trigger and only then executes at market — so it
+    // fires with this app closed and off the broker's own feed rather than the app's
+    // (minutes-delayed) polled quotes. The SL/TP amounts of a limit order are converted
+    // to rates off the TRIGGER rate, since that — not today's price — is where the
+    // position will open.
+    void openPosition(const OrderRequest &req);
+    // Cancel a resting limit order before it executes. Reports the outcome through
+    // orderResult and re-emits pendingOrdersUpdated.
+    void cancelPendingOrder(const QString &orderId);
+    // Change a resting limit order's trigger rate and SL/TP amounts. eToro's public API
+    // has NO update-order endpoint (PATCH exists for OPEN positions only), so this
+    // CANCELS the order and re-places it with the new values: the order comes back with
+    // a NEW orderId, and for a moment nothing rests at the broker. Both facts are
+    // reported through orderResult. Re-placing reuses the current instrument's data, so
+    // an order on a different instrument is refused rather than mis-placed — select that
+    // instrument first.
+    void modifyPendingOrder(const QString &orderId, double triggerRate,
+                            double stopLossAmount, double takeProfitAmount);
+    // The limit orders this app placed and that are still resting at the broker, in
+    // placement order. The API has no "list my open orders" endpoint, so this is the
+    // app's own registry, refreshed from the authoritative per-order lookup.
+    [[nodiscard]] QList<PendingOrder> pendingOrders() const;
     void closePosition(const QString &positionId);
     // Change the stop-loss / take-profit *rates* on an open position (0 clears that
     // leg). trailingStop only matters when a stop-loss rate is set.
@@ -125,6 +153,9 @@ signals:
     // can be displayed in euro. Emitted whenever a fresh rate is fetched.
     void fxRateUpdated(double eurPerUsd);
     void orderResult(bool ok, const QString &message);
+    // The limit orders still resting at the broker, after every change (placed,
+    // cancelled, triggered, or a status refresh). Empty means "none outstanding".
+    void pendingOrdersUpdated(const QList<PendingOrder> &orders);
     void positionClosed(bool ok, const QString &message);
     void monthlyPnlReady(const MonthlyPnl &summary);
     void monthlyPnlFailed(const QString &error);
@@ -155,6 +186,7 @@ private:
     QNetworkReply *apiGet(const QString &path, const QUrlQuery &query);
     QNetworkReply *apiPost(const QString &path, const QJsonObject &body);
     QNetworkReply *apiPatch(const QString &path, const QJsonObject &body);
+    QNetworkReply *apiDelete(const QString &path);
     // retriesLeft > 0 auto-retries an idempotent GET on a transient failure — HTTP 429
     // or a 5xx server hiccup (500/502/503/504) — waiting out the server's Retry-After /
     // RateLimit-Reset (or a short default backoff) before re-issuing with a fresh
@@ -187,6 +219,17 @@ private:
     // share one shape). Positions on instruments outside the app's list are
     // dropped. Shared so the live set and the P/L snapshot cannot drift apart.
     [[nodiscard]] QList<Position> parsePositionsPayload(const QJsonDocument &doc) const;
+    // Fold the account's PENDING orders (clientPortfolio.orders[]) from the same
+    // /portfolio payload into the registry. This — not the app's own memory of what it
+    // submitted — is what makes limit orders placed in an earlier session or in eToro's
+    // own UI visible: the API has no "list my orders" endpoint, but the portfolio
+    // breakdown carries them. The broker's list decides what exists, except that an
+    // order submitted seconds ago survives being absent from the (polled, lagging)
+    // snapshot, and a status this app already looked up is kept.
+    void mergeBrokerPendingOrders(const QJsonDocument &doc);
+    // One clientPortfolio.orders[] entry as a PendingOrder: the SL/TP arrive as RATES
+    // there and are converted back to the account-currency amounts the panel works in.
+    [[nodiscard]] PendingOrder pendingOrderFrom(const QJsonObject &o) const;
     // Overlay eToro's own per-position P/L (from the /pnl snapshot) onto the LIVE
     // position set, then finalize. `live` decides which positions exist; /pnl only
     // contributes profit / profitFromApi / apiCloseRate for the ones still open.
@@ -214,8 +257,30 @@ private:
     // to the following one — sequential so the market-data rate budget isn't burst.
     void fetchScanCandle(const QSharedPointer<ScanState> &st);
 
-    void openPositionReal(bool isBuy, double amount, double leverage, double stopLossAmount,
-                          double takeProfitAmount, bool trailingStop);
+    void openPositionReal(const OrderRequest &req);
+    // Take a just-accepted limit order into the pending registry and report it. Split
+    // out of openPositionReal's reply handler so that function stays within its
+    // complexity budget (and so the reply lambda captures one value, not a dozen).
+    void registerRestingOrder(const PendingOrder &rest, qint64 orderId);
+    void cancelPendingOrderReal(const QString &orderId);
+    // Second half of modifyPendingOrder: re-place `rest` (already cancelled at the
+    // broker) with its new trigger/SL/TP. Separate so the cancel's reply handler stays
+    // a two-liner and the "the old order is gone" reporting lives in one place.
+    void replacePendingOrderReal(const PendingOrder &rest);
+    // Refresh every registered resting order from the authoritative order lookup:
+    // report and drop the ones that filled, were rejected, cancelled or expired, and
+    // keep the still-waiting ones with the broker's own status wording. Driven from
+    // the poll timer (sparingly — the lookup shares a 60/60s rate pool).
+    void refreshPendingOrdersReal();
+    void lookupPendingOrderReal(const QString &orderId);  // one order's status, folded in below
+    // Publish the resting-order list AND match the 4 s refresh timer to it (running only
+    // while something is actually resting). Every real-mode change goes through here so
+    // the timer can never be left running on an empty registry — or stopped on a full one.
+    void emitPendingOrders();
+    // Fold ONE order-lookup reply into the pending registry: report and drop a filled
+    // order (refreshing portfolio + balance), drop a rejected/cancelled/expired one,
+    // and otherwise keep the broker's own status wording on the still-resting entry.
+    void applyPendingOrderStatus(const QString &orderId, const QJsonDocument &doc);
     // Confirm a just-submitted order via the authoritative order-lookup endpoint. A
     // 200 from the order POST only means "submitted"; this polls orders:lookup by
     // orderId until the status is terminal — reporting the actual opened position, or
@@ -227,6 +292,8 @@ private:
     void modifyPositionReal(const QString &positionId, double stopLossRate,
                             double takeProfitRate, bool trailingStop);
     [[nodiscard]] QString accountSegment() const;  // "" for real, "/demo" for demo
+    // Display name for any instrument id: its resolved symbol where known, else "#<id>".
+    [[nodiscard]] QString instrumentLabel(qint64 instrumentId) const;
 
     // ---- simulation orchestration ------------------------------------------
     // The synthetic feed + virtual account live in SimulationEngine; this emits
@@ -265,6 +332,21 @@ private:
                                                     // so any trade can be closed regardless
                                                     // of the instrument currently shown
 
+    // Limit orders this session placed and that have not resolved yet, keyed by the
+    // broker's orderId. eToro publishes no "my open orders" endpoint, so the app keeps
+    // the registry and re-reads each entry through the per-order lookup. Orders placed
+    // in an earlier session (or in eToro's own UI) are therefore not listed here —
+    // they still execute at the broker, which is the whole point of resting them there.
+    QHash<QString, PendingOrder> m_pendingOrders;
+    // Resting orders are re-read on their OWN 4 s timer (not the price-poll cadence), so
+    // the list and its statuses are current while the user watches it. It runs only while
+    // at least one order rests. orders:lookup lives in a 60-requests/60-s pool shared with
+    // the closed-trade endpoints, and 4 s means 15 ticks/min — so a tick refreshes at most
+    // two orders and continues at m_pendingCursor next time, keeping the worst case at
+    // ~30 requests/min instead of 15 × (number of orders).
+    QTimer *m_pendingTimer = nullptr;
+    qint32 m_pendingCursor = 0;  // round-robin position in the sorted id list
+
     bool m_scanActive = false;           // a leverage screener run is in progress
     bool m_pnlFetching = false;          // a closed-trade P/L paging walk is in progress
     qint32 m_pnlPendingWeeks = 0;        // lookback queued behind the running walk (0 = none)
@@ -273,6 +355,8 @@ private:
     // bid/ask (frozen weekend quotes), and the cached value keeps the cost
     // estimates stable instead of flickering to "unknown".
     QHash<qint64, double> m_spreadPctById;
+    // Last mid rate per instrument from the same bulk snapshot (see lastRateFor).
+    QHash<qint64, double> m_lastRateById;
 
     // Symbols whose last bulk-rates quote was live (market open), from the same
     // poll that feeds tradeabilityUpdated. Lets the closed-trades cost estimator

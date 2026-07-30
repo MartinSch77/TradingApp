@@ -117,9 +117,12 @@ Instrument SimulationEngine::prepare(const QString &symbol, const QString &order
     if (resetAccount) {
         m_simCash = 100000.0;    // start with a $100k virtual balance, like an eToro demo
         m_simPositions.clear();
+        m_simPending.clear();
         m_simSeq = 0;
+        m_simOrderSeq = 0;
     }
-    // else: keep cash + open positions so trades on other instruments persist.
+    // else: keep cash, open positions and resting orders so both survive an
+    // instrument switch (a broker-side order does not care what is on screen).
 
     m_instrument = Instrument{};
     m_instrument.instrumentId = -1;  // sentinel: simulated
@@ -156,6 +159,7 @@ void SimulationEngine::emitSnapshot()
     emit priceUpdated(QDateTime::currentDateTime(), m_simPrice);
     emit cashUpdated(m_simCash, m_orderCurrency);
     emit portfolioUpdated(m_simPositions);  // clears the table on an instrument switch
+    emit pendingOrdersUpdated(pendingOrders());  // resting orders survive the switch
     emit leverageOptions(simLeverageValues(m_symbol));
 }
 
@@ -166,6 +170,9 @@ void SimulationEngine::tick()
         m_simPrice = 1.0;
     }
     emit priceUpdated(QDateTime::currentDateTime(), m_simPrice);
+    // Resting entry orders first: an order the new price triggered becomes a
+    // position that this same tick can already price (and stop out).
+    releaseTriggeredOrders();
     recomputePortfolio();
 
     // Ratchet trailing stops: follow the price in the trade's favour by the trailing
@@ -231,10 +238,15 @@ void SimulationEngine::refreshPortfolio()
     emit portfolioUpdated(m_simPositions);
 }
 
-void SimulationEngine::openPosition(bool isBuy, double amount, double leverage,
-                                    double stopLossAmount, double takeProfitAmount,
-                                    bool trailingStop)
+void SimulationEngine::openPosition(const OrderRequest &req)
 {
+    const bool isBuy = req.isBuy;
+    const double amount = req.amount;
+    const double leverage = req.leverage;
+    const double stopLossAmount = req.stopLossAmount;
+    const double takeProfitAmount = req.takeProfitAmount;
+    const bool trailingStop = req.trailingStop;
+
     if (amount > m_simCash) {
         emit orderResult(false, QStringLiteral("[SIM] Insufficient funds: $%1 requested, "
                                                "only $%2 available.")
@@ -283,6 +295,141 @@ void SimulationEngine::openPosition(bool isBuy, double amount, double leverage,
                                     pos.trailingStop ? QStringLiteral(" trailing") : QString()));
     emit portfolioUpdated(m_simPositions);
     emit cashUpdated(m_simCash, m_orderCurrency);
+}
+
+void SimulationEngine::placePendingOrder(const OrderRequest &req)
+{
+    if (!req.isLimit()) {
+        emit orderResult(false, QStringLiteral("[SIM] A limit order needs a trigger rate "
+                                               "above zero."));
+        return;
+    }
+
+    // Funds are NOT reserved now: like eToro, the balance is checked when the order
+    // triggers.
+    PendingOrder order;
+    order.orderId = QStringLiteral("L%1").arg(++m_simOrderSeq);
+    order.instrumentId = m_instrument.instrumentId;
+    order.symbol = m_symbol;
+    order.isBuy = req.isBuy;
+    order.triggerRate = req.triggerRate;
+    order.amount = req.amount;
+    order.leverage = req.leverage;
+    order.stopLossAmount = req.stopLossAmount;
+    order.takeProfitAmount = req.takeProfitAmount;
+    order.trailingStop = req.trailingStop;
+    order.status = QStringLiteral("Waiting for rate");
+    order.submitted = QDateTime::currentDateTime();
+    m_simPending << order;
+
+    emit orderResult(true, QStringLiteral("[SIM] Limit %1 $%2 %3 accepted — opens when the rate "
+                                          "%4 %5 (x%6), order #%7")
+                               .arg(req.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
+                               .arg(req.amount, 0, 'f', 2)
+                               .arg(m_symbol,
+                                    req.isBuy ? QStringLiteral("falls to")
+                                              : QStringLiteral("rises to"))
+                               .arg(req.triggerRate, 0, 'f', 2)
+                               .arg(req.leverage)
+                               .arg(order.orderId));
+    emit pendingOrdersUpdated(pendingOrders());
+}
+
+void SimulationEngine::cancelPendingOrder(const QString &orderId)
+{
+    for (qsizetype i = 0; i < m_simPending.size(); ++i) {
+        if (m_simPending[i].orderId != orderId) {
+            continue;
+        }
+        const PendingOrder order = m_simPending.takeAt(i);
+        emit orderResult(true, QStringLiteral("[SIM] Limit order #%1 cancelled (%2 %3 @ %4).")
+                                   .arg(order.orderId,
+                                        order.isBuy ? QStringLiteral("BUY")
+                                                    : QStringLiteral("SELL"),
+                                        order.symbol)
+                                   .arg(order.triggerRate, 0, 'f', 2));
+        emit pendingOrdersUpdated(pendingOrders());
+        return;
+    }
+    emit orderResult(false, QStringLiteral("[SIM] No pending order #%1 to cancel.").arg(orderId));
+}
+
+void SimulationEngine::modifyPendingOrder(const QString &orderId, double triggerRate,
+                                          double stopLossAmount, double takeProfitAmount)
+{
+    if (triggerRate <= 0.0) {
+        emit orderResult(false, QStringLiteral("[SIM] A limit order needs a trigger rate "
+                                               "above zero."));
+        return;
+    }
+    for (qsizetype i = 0; i < m_simPending.size(); ++i) {
+        if (m_simPending[i].orderId != orderId) {
+            continue;
+        }
+        PendingOrder order = m_simPending.takeAt(i);
+        const QString oldId = order.orderId;
+        order.orderId = QStringLiteral("L%1").arg(++m_simOrderSeq);  // as the broker would
+        order.triggerRate = triggerRate;
+        order.stopLossAmount = stopLossAmount;
+        order.takeProfitAmount = takeProfitAmount;
+        order.submitted = QDateTime::currentDateTime();
+        m_simPending << order;
+        emit orderResult(true, QStringLiteral("[SIM] Limit order #%1 replaced by #%2 — rate %3, "
+                                             "SL $%4 / TP $%5.")
+                                   .arg(oldId, order.orderId)
+                                   .arg(triggerRate, 0, 'f', 2)
+                                   .arg(stopLossAmount, 0, 'f', 0)
+                                   .arg(takeProfitAmount, 0, 'f', 0));
+        emit pendingOrdersUpdated(pendingOrders());
+        return;
+    }
+    emit orderResult(false, QStringLiteral("[SIM] No pending order #%1 to adjust.").arg(orderId));
+}
+
+QList<PendingOrder> SimulationEngine::pendingOrders() const
+{
+    return m_simPending;
+}
+
+void SimulationEngine::releaseTriggeredOrders()
+{
+    bool changed = false;
+    for (qsizetype i = m_simPending.size() - 1; i >= 0; --i) {
+        const PendingOrder &rest = m_simPending[i];
+        // Only the current instrument has a live price this tick; orders on the
+        // others rest untouched until that instrument is shown again.
+        if (rest.symbol.compare(m_symbol, Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        // eToro's market-if-touched rule: the order fires as soon as the trigger rate
+        // "or better" is published — better meaning LOWER for a buy and HIGHER for a
+        // short. A trigger already on that side therefore fires at once; the trade
+        // panel warns before submitting such an order.
+        const bool touched = rest.isBuy ? (m_simPrice <= rest.triggerRate)
+                                        : (m_simPrice >= rest.triggerRate);
+        if (!touched) {
+            continue;
+        }
+        const PendingOrder order = m_simPending.takeAt(i);
+        changed = true;
+        emit log(QStringLiteral("[SIM] Limit order #%1 triggered at %2 — opening the %3 now.")
+                     .arg(order.orderId)
+                     .arg(m_simPrice, 0, 'f', 2)
+                     .arg(order.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL")),
+                 false);
+        // Opens at the current price, like the market order the broker releases.
+        OrderRequest release;
+        release.isBuy = order.isBuy;
+        release.amount = order.amount;
+        release.leverage = order.leverage;
+        release.stopLossAmount = order.stopLossAmount;
+        release.takeProfitAmount = order.takeProfitAmount;
+        release.trailingStop = order.trailingStop;
+        openPosition(release);
+    }
+    if (changed) {
+        emit pendingOrdersUpdated(pendingOrders());
+    }
 }
 
 void SimulationEngine::closePosition(const QString &positionId)

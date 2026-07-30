@@ -110,13 +110,15 @@ event loop / local mock HTTP server).
 | TS-CFG-003 | I | Environment variables override both files. |
 | TS-CFG-004 | I | `isLive` requires credentials AND mode "real"; mode labels match. |
 
-## Simulation engine (tests/tst_simulationengine.cpp, DES-SVC-SIM, REQ-F-017) — integration
+## Simulation engine (tests/tst_simulationengine.cpp, DES-SVC-SIM, REQ-F-017/-027) — integration
 
 | ID | L | Case |
 |----|---|------|
 | TS-SIM-001 | I | `prepare`+`emitSnapshot` publish history, price, cash and leverage options; `tick` moves the price. |
 | TS-SIM-002 | I | `openPosition` reduces cash and publishes the position with SL/TP rates set from the amounts. |
 | TS-SIM-003 | I | An adverse price path triggers the stop-loss auto-close, frees the margin and records a closed trade in the monthly summary. |
+| TS-SIM-004 | I | A limit order rests without booking a position or margin, a second one can be cancelled individually, and the remaining one turns into a position (opened at or beyond its trigger, carrying its stop-loss) once the walk touches the trigger rate. |
+| TS-SIM-005 | I | Adjusting a resting order changes only trigger/SL/TP (size, leverage and side carry over) and renumbers it, mirroring the real cancel-and-re-place; an unknown order id changes nothing and reports a failure. |
 
 ## JSON/HTTP plumbing (tests/tst_jsonhttp.cpp, DES-SVC-HTTP, REQ-N-003) — integration, local mock server
 
@@ -126,7 +128,7 @@ event loop / local mock HTTP server).
 | TS-HTTP-002 | I | A 429 with Retry-After on an idempotent GET is retried and succeeds on the second attempt (one callback, ok=true). |
 | TS-HTTP-003 | I | A POST failing with 500 is NOT retried; the callback reports ok=false with the status. |
 
-## eToro client (tests/tst_etoroclient.cpp, DES-SVC-CLIENT, REQ-F-014/-015/-017/-025, REQ-N-003) — integration, local mock server
+## eToro client (tests/tst_etoroclient.cpp, DES-SVC-CLIENT, REQ-F-014/-015/-017/-025/-027, REQ-N-003) — integration, local mock server
 
 | ID | L | Case |
 |----|---|------|
@@ -137,6 +139,13 @@ event loop / local mock HTTP server).
 | TS-CLI-005 | I | Closed trades are named from the id→symbol map when the walk COMPLETES, not while pages parse: with the mock holding the id resolution until after the history pages were parsed and the walk's last request until after the resolution landed — an order stated through MockHttpServer::holdUntil rather than timed — the trades still come out listed under their symbols and the per-instrument summary contains every listed instrument, not just the force-mapped current one, with the open+close spread estimates rolled up per symbol (`estSpreadCosts`) (regression). |
 | TS-CLI-006 | I | A `fetchClosedTrades` issued while a walk is paging is queued (latest lookback wins) and runs right after it, instead of being silently dropped — the details dialog's 13-week fetch must survive the startup 7-week walk (regression). |
 | TS-CLI-007 | I | Market-open follows the quote timestamp ADVANCING between polls, not its absolute age: with every quote stamped ~6 min behind real time (eToro's public feed lags, which the old 300 s age gate read as "frozen" and used to lock BUY/SELL on every instrument mid-session), an instrument whose stamp moves counts as open, one whose stamp is frozen counts as closed from the second poll on, and one stamped two days back is closed already on the first — where no baseline exists yet, the delay-absorbing age fallback decides (regression). |
+| TS-CLI-008 | I | A limit order leaves the app as eToro's OWN resting order — the POST body carries `orderType: "mit"` with the `triggerRate`, and its SL/TP rates are measured from that trigger rate (1000 at x5 entered at 4000 = 1.25 units → SL 3920 / TP 4160), not from the current 5000/5001 quote a market order would price off; the order is then listed as resting under the broker's id, picks up the broker's status wording while it waits, and is dropped with a "triggered" report once the lookup reports it Filled. |
+| TS-CLI-009 | I | A SHORT limit order goes out as `transaction: sellShort` with the stop ABOVE and the target BELOW the trigger rate (500 at x2 at 5200 → SL 5720 / TP 4160 — an inverted pair is what a broker rejects), and cancelling it issues a DELETE to `/v2/trading/execution{segment}/orders/{orderId}` that removes it from the pending list. |
+| TS-CLI-010 | I | An order eToro accepted (200 + orderId) but then REJECTED is dropped from the pending list by the prompt post-placement status check and reported as an error quoting eToro's own `status.errorMessage` and `errorCode` — not as a bland "no longer resting" note discovered a poll cycle later (field regression). |
+| TS-CLI-011 | I | Adjusting a resting order's trigger/SL/TP sends the DELETE **before** the replacement POST, ends with exactly one order (new id, new trigger, SL/TP re-measured from it: 1000 at x5 at 4100 → SL 3936 / TP 4428) and carries size, leverage and side over. |
+| TS-CLI-012 | I | The resting-order list refreshes on its own 4 s cycle, not on the price poll: with the price poll set to 50 s and the order left WaitingForMarket, at least three status lookups land (the prompt post-placement check plus two cycle ticks) and the third cannot arrive inside 4 s — proving a spaced cadence rather than a spin. |
+| TS-CLI-014 | I | Adjusting an order works whatever is on screen: with the app trading instrument 27 and the order resting on 38, the replacement POST carries `instrumentId` 38 (not 27) and the order's own side, size and leverage, with SL/TP re-measured from the new trigger (500 at x2 at 210 → SL 220.5 / TP 189) — field regression: the edit used to be refused with "Select SPX500 first". |
+| TS-CLI-013 | I | Resting orders come from the broker's portfolio breakdown (`clientPortfolio.orders[]`), not only from what the session submitted: a payload with two orders the app never placed yields both — the listed one with its SL/TP rates converted back to amounts (4900/5200 around a 5000 trigger on 10 units → 1000 / 2000), the one on an unlisted instrument still visible as "#999" with its sentinel zero SL/TP left at zero (field regression: the panel was empty while two orders were open). The per-row current rate also resolves for an instrument that is NOT on screen (bulk-snapshot mid 202 for id 38) and stays 0 for an unknown one. |
 
 ## Coverage & gaps
 
@@ -146,6 +155,12 @@ QA aid and are reported as *gaps* in the traceability matrix until automated
 GUI tests exist — the matrix makes this visible rather than hiding it.
 REQ-F-015's inference is covered at the service level by TS-CLI-007; only its
 BUY/SELL lock in the trade panel remains a manual check.
+REQ-F-027 is covered end-to-end at the service level (TS-CLI-008…-014 against the
+real API shape, TS-SIM-004/-005 for the simulated broker); its panel legs — the two
+rate fields, the independent double-press gate on the limit buttons, and the
+resting-order table with its live "Now" column, its click routing (Instr. cell
+switches instrument, value cells open the editor), its adjust/cancel buttons and
+its editor dialog — remain manual like the list above.
 REQ-F-003 and REQ-F-016 show as covered because their SL/TP and currency
 conversion *math* is unit-tested (TS-POS-002/-003); their UI legs (the guarded
 order flow, the EUR display itself) remain manual like the list above.

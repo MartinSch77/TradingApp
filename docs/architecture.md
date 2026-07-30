@@ -108,11 +108,37 @@ participant "eToro API" as API
 Trader -> MW : BUY pressed (1st)
 MW -> MW : arm (650 ms window), log € and $ size
 Trader -> MW : BUY pressed (2nd, in time)
-MW -> MW : guards: market open? EUR/USD known?\ncooldown? exposure cap?
-MW -> EC : openPosition(amount$, lev, SL$, TP$)
-EC -> API : POST orders (cfd, SL/TP as rates)
+MW -> MW : guards: market open? EUR/USD known?\ncooldown? exposure cap (incl. resting orders)?
+MW -> EC : openPosition(OrderRequest, triggerRate = 0)
+EC -> API : POST orders (cfd, orderType mkt, SL/TP as rates)
 API --> EC : orderId (submitted ≠ filled)
 EC -> API : GET orders:lookup (poll until terminal)
 API --> EC : Filled + positionExecutions
 EC --> MW : orderResult(ok) → portfolio refresh
+@enduml
+
+A conditional entry takes the same path with a trigger rate, but eToro — not
+this app — waits for the price (REQ-F-027). The order rests at the broker and
+survives the app exiting; the app only tracks and cancels it.
+
+@startuml limit_order_flow
+autonumber
+actor Trader
+participant "MainWindow" as MW
+participant "EtoroClient" as EC
+participant "eToro API" as API
+
+Trader -> MW : "Place limit BUY" pressed twice (own gate)
+MW -> EC : openPosition(OrderRequest, triggerRate = X)
+EC -> API : POST orders (orderType mit, triggerRate X,\nSL/TP as rates measured from X)
+API --> EC : orderId → pendingOrdersUpdated (resting)
+loop every ~10 poll ticks
+  EC -> API : GET orders:lookup (order status)
+  API --> EC : WaitingForMarket / PendingTriggeredRate
+end
+API --> EC : Filled (the broker's own feed touched X)
+EC --> MW : orderResult(triggered) → portfolio + balance refresh
+Trader -> MW : (alternatively) Cancel selected limit order
+MW -> EC : cancelPendingOrder(orderId)
+EC -> API : DELETE orders/{orderId}
 @enduml

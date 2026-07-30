@@ -52,7 +52,13 @@ private slots:
         QSignalSpy portfolio(&sim, &SimulationEngine::portfolioUpdated);
         QSignalSpy cash(&sim, &SimulationEngine::cashUpdated);
         QSignalSpy result(&sim, &SimulationEngine::orderResult);
-        sim.openPosition(true, 1000.0, 5.0, 100.0, 200.0, false);
+        OrderRequest req;
+        req.isBuy = true;
+        req.amount = 1000.0;
+        req.leverage = 5.0;
+        req.stopLossAmount = 100.0;
+        req.takeProfitAmount = 200.0;
+        sim.openPosition(req);
 
         QVERIFY(result.count() >= 1);
         QVERIFY(result.last().at(0).toBool());   // accepted
@@ -79,7 +85,12 @@ private slots:
         sim.seedRng(1234U);  // deterministic walk: the flaky "SL never hit" run is gone
         sim.emitSnapshot();
         // Tight stop, no take-profit: the random walk must strike the stop.
-        sim.openPosition(true, 1000.0, 10.0, 1.0, 0.0, false);
+        OrderRequest req;
+        req.isBuy = true;
+        req.amount = 1000.0;
+        req.leverage = 10.0;
+        req.stopLossAmount = 1.0;
+        sim.openPosition(req);
 
         QSignalSpy closed(&sim, &SimulationEngine::positionClosed);
         QSignalSpy portfolio(&sim, &SimulationEngine::portfolioUpdated);
@@ -104,6 +115,107 @@ private slots:
         QCOMPARE(summary.count(), 1);
         const auto pnl = summary.takeFirst().at(0).value<MonthlyPnl>();
         QCOMPARE(pnl.trades, 1);                 // the auto-closed trade is logged
+    }
+
+    //! @tstid TS-SIM-004 @design DES-SVC-SIM
+    // @relation(REQ-F-027, scope=function)
+    void TS_SIM_004_limitOrderRestsUntilTriggeredAndCanBeCancelled()
+    {
+        SimulationEngine sim;
+        const Instrument inst =
+            sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true);
+        sim.seedRng(4321U);  // deterministic walk, so the trigger is reached in bounded time
+        sim.emitSnapshot();
+        const double start = sim.lastPrice();
+        QVERIFY(start > 0.0);
+
+        const QSignalSpy pending(&sim, &SimulationEngine::pendingOrdersUpdated);
+        QSignalSpy portfolio(&sim, &SimulationEngine::portfolioUpdated);
+
+        // Two resting orders: one just below the price (the walk reaches it), one far
+        // out of reach that only exists to be cancelled. ("near"/"far" would be legacy
+        // windef.h macros, hence the spelled-out names.)
+        OrderRequest reachable;
+        reachable.isBuy = true;
+        reachable.amount = 1000.0;
+        reachable.leverage = 5.0;
+        reachable.stopLossAmount = 100.0;
+        reachable.triggerRate = start * 0.999;
+        sim.placePendingOrder(reachable);
+
+        OrderRequest distant = reachable;
+        distant.triggerRate = start * 0.5;  // unreachable within the test's ticks
+        sim.placePendingOrder(distant);
+
+        QCOMPARE(sim.pendingOrders().size(), 2);
+        QVERIFY(pending.count() >= 2);
+        // A resting order is NOT a position: nothing was booked into the portfolio.
+        QVERIFY(sim.pendingOrders().at(0).orderId != sim.pendingOrders().at(1).orderId);
+        QCOMPARE(portfolio.count(), 0);
+
+        // Cancelling takes exactly that order out; the other keeps waiting. The list is
+        // in placement order, so index 1 is the distant order.
+        QCOMPARE(sim.pendingOrders().at(1).triggerRate, distant.triggerRate);
+        sim.cancelPendingOrder(sim.pendingOrders().at(1).orderId);
+        QCOMPARE(sim.pendingOrders().size(), 1);
+        QCOMPARE(sim.pendingOrders().at(0).triggerRate, reachable.triggerRate);
+
+        // Tick until the price touches the reachable trigger: the order becomes a real
+        // position (with its SL applied) and leaves the pending list.
+        for (qint32 i = 0; (i < 5000) && !sim.pendingOrders().isEmpty(); ++i) {
+            sim.tick();
+        }
+        QVERIFY2(sim.pendingOrders().isEmpty(), "limit order never triggered in 5000 ticks");
+        const auto positions = portfolio.last().at(0).value<QList<Position>>();
+        QCOMPARE(positions.size(), 1);
+        QCOMPARE(positions.at(0).symbol, inst.symbol);
+        QVERIFY(positions.at(0).isBuy);
+        QCOMPARE(positions.at(0).amount, 1000.0);
+        QVERIFY(positions.at(0).openRate <= reachable.triggerRate);  // at/below the trigger
+        QVERIFY(positions.at(0).stopLossRate > 0.0);            // the order's SL came with it
+    }
+
+    //! @tstid TS-SIM-005 @design DES-SVC-SIM
+    // @relation(REQ-F-027, scope=function)
+    void TS_SIM_005_adjustingARestingOrderKeepsSizeAndRenumbersIt()
+    {
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.emitSnapshot();
+        const double start = sim.lastPrice();
+
+        OrderRequest req;
+        req.isBuy = true;
+        req.amount = 1000.0;
+        req.leverage = 5.0;
+        req.stopLossAmount = 100.0;
+        req.triggerRate = start * 0.5;  // far out of reach: it stays resting
+        sim.placePendingOrder(req);
+        QCOMPARE(sim.pendingOrders().size(), 1);
+        const QString firstId = sim.pendingOrders().constFirst().orderId;
+
+        // Adjusting changes exactly the trigger and the SL/TP; size, leverage and side
+        // carry over, and the order is renumbered because the real path can only cancel
+        // and re-place it.
+        const QSignalSpy pending(&sim, &SimulationEngine::pendingOrdersUpdated);
+        sim.modifyPendingOrder(firstId, start * 0.6, 250.0, 500.0);
+        QCOMPARE(pending.count(), 1);
+        QCOMPARE(sim.pendingOrders().size(), 1);
+        const PendingOrder adjusted = sim.pendingOrders().constFirst();
+        QVERIFY(adjusted.orderId != firstId);
+        QCOMPARE(adjusted.triggerRate, start * 0.6);
+        QCOMPARE(adjusted.stopLossAmount, 250.0);
+        QCOMPARE(adjusted.takeProfitAmount, 500.0);
+        QCOMPARE(adjusted.amount, 1000.0);
+        QCOMPARE(adjusted.leverage, 5.0);
+        QVERIFY(adjusted.isBuy);
+
+        // An unknown id changes nothing and is reported as a failure.
+        QSignalSpy result(&sim, &SimulationEngine::orderResult);
+        sim.modifyPendingOrder(QStringLiteral("nope"), start, 1.0, 2.0);
+        QCOMPARE(result.count(), 1);
+        QVERIFY(!result.last().at(0).toBool());
+        QCOMPARE(sim.pendingOrders().size(), 1);
     }
 };
 

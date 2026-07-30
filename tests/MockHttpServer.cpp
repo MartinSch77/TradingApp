@@ -2,6 +2,8 @@
 
 #include <QTimer>
 
+#include <algorithm>
+
 // Out-of-line definitions: header-inline (comdat) methods get compiled into
 // both the test TU and the automoc TU, and the coverage instrumentation can
 // emit divergent records for them (llvm-cov: "functions have mismatched
@@ -10,6 +12,20 @@
 QString MockHttpServer::baseUrl() const
 {
     return QStringLiteral("http://127.0.0.1:%1").arg(serverPort());
+}
+
+QList<MockHttpServer::Recorded> MockHttpServer::requests() const
+{
+    return m_requests;
+}
+
+QByteArray MockHttpServer::lastBodyFor(const QString &pathFragment) const
+{
+    const auto hit = std::find_if(m_requests.crbegin(), m_requests.crend(),
+                                  [&pathFragment](const Recorded &r) {
+                                      return r.path.contains(pathFragment);
+                                  });
+    return (hit == m_requests.crend()) ? QByteArray{} : hit->body;
 }
 
 void MockHttpServer::serve(QTcpSocket *sock)
@@ -34,6 +50,7 @@ void MockHttpServer::serve(QTcpSocket *sock)
     const QList<QByteArray> requestLine = buf.left(buf.indexOf("\r\n")).split(' ');
     const QByteArray method = requestLine.value(0);
     const QString path = QString::fromUtf8(requestLine.value(1));
+    m_requests.append({method, path, buf.mid(headerEnd + 4, contentLength)});
     m_buffer.remove(sock);
 
     const Response r = m_handler(method, path);
@@ -48,13 +65,11 @@ void MockHttpServer::serve(QTcpSocket *sock)
     // sock as timer context throughout: if the client gave up and the socket
     // died, a pending send is dropped with it instead of writing to a dangling
     // pointer.
-    std::function<bool()> gate;
-    for (const Hold &h : m_holds) {
-        if (path.contains(h.pathFragment)) {
-            gate = h.until;
-            break;
-        }
-    }
+    const auto hold = std::find_if(m_holds.cbegin(), m_holds.cend(), [&path](const Hold &h) {
+        return path.contains(h.pathFragment);
+    });
+    const std::function<bool()> gate =
+        (hold == m_holds.cend()) ? std::function<bool()>{} : hold->until;
     if (gate) {
         // Poll, never block: this server runs inside the test's own event loop,
         // so blocking here would stop the very requests the predicate waits for.

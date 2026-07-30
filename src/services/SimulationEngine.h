@@ -39,8 +39,21 @@ public:
 
     [[nodiscard]] double lastPrice() const;  // out-of-line: keeps coverage records unambiguous
 
-    void openPosition(bool isBuy, double amount, double leverage, double stopLossAmount,
-                      double takeProfitAmount, bool trailingStop);
+    // Opens at the current synthetic price (req.triggerRate is ignored here — the
+    // caller routes a limit order to placePendingOrder instead).
+    void openPosition(const OrderRequest &req);
+    // Place a resting entry order (the simulated counterpart of eToro's limit
+    // order): it sits until the synthetic price touches req.triggerRate from the side
+    // the market is on now, then opens the position with these SL/TP amounts.
+    void placePendingOrder(const OrderRequest &req);
+    void cancelPendingOrder(const QString &orderId);
+    // Adjust a resting order's trigger rate and SL/TP amounts. Mirrors the real path,
+    // which can only cancel and re-place (eToro has no update-order endpoint), so the
+    // order comes back under a NEW id here too — the UI then behaves the same in both
+    // modes.
+    void modifyPendingOrder(const QString &orderId, double triggerRate,
+                            double stopLossAmount, double takeProfitAmount);
+    [[nodiscard]] QList<PendingOrder> pendingOrders() const;
     void closePosition(const QString &positionId);
     void modifyPosition(const QString &positionId, double stopLossRate,
                         double takeProfitRate, bool trailingStop);
@@ -59,6 +72,8 @@ signals:
     void portfolioUpdated(const QList<Position> &positions);
     void cashUpdated(double available, const QString &currency);
     void orderResult(bool ok, const QString &message);
+    // The resting entry orders after every change (placed / cancelled / triggered).
+    void pendingOrdersUpdated(const QList<PendingOrder> &orders);
     void positionClosed(bool ok, const QString &message);
     void leverageOptions(const QList<int> &values);
     void monthlyPnlReady(const MonthlyPnl &summary);
@@ -74,6 +89,8 @@ public:
 
 private:
     void recomputePortfolio();      // refresh current-instrument positions' P/L
+    // Open every resting order whose trigger the current price has touched.
+    void releaseTriggeredOrders();
     double gaussian();              // standard-normal sample for the price walk
 
     QRandomGenerator m_rng = QRandomGenerator::securelySeeded();
@@ -87,6 +104,10 @@ private:
     double m_simCash = 100000.0;    // free funds available to open positions
     qint32 m_simSeq = 0;
     QList<Position> m_simPositions;
+    // Resting entry orders, released by the same market-if-touched rule the broker
+    // documents: the trigger rate "or better" — lower for a buy, higher for a short.
+    QList<PendingOrder> m_simPending;
+    qint32 m_simOrderSeq = 0;       // ids for the resting orders (separate from positions)
     // Log of trades closed this session, so the monthly-P/L summary also works in
     // simulation (the real path reads closed trades from the eToro history API).
     struct SimClosedTrade {

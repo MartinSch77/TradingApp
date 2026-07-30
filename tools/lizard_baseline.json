@@ -22,9 +22,6 @@
   "src/services/EtoroClient.cpp::EtoroClient::finalizePortfolioPl": {
     "ccn": 29
   },
-  "src/services/EtoroClient.cpp::EtoroClient::openPosition": {
-    "params": 6
-  },
   "src/services/EtoroClient.cpp::EtoroClient::openPositionReal": {
     "ccn": 33,
     "nloc": 134,
@@ -32,9 +29,6 @@
   },
   "src/services/JsonHttp.cpp::JsonHttp::handleReply": {
     "ccn": 20
-  },
-  "src/services/SimulationEngine.cpp::SimulationEngine::openPosition": {
-    "params": 6
   },
   "src/services/SimulationEngine.cpp::SimulationEngine::tick": {
     "ccn": 18

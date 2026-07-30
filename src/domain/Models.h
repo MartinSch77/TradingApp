@@ -71,6 +71,53 @@ struct Position {
     QDateTime openTime;
 };
 
+// Everything one OPENING order needs. Bundled into a value type because the four
+// money figures are easy to transpose positionally, and because a limit order
+// differs from a market order in exactly one field (triggerRate).
+struct OrderRequest {
+    bool isBuy = true;              // true = open long, false = open short
+    // Instrument to trade; 0 = the one currently being traded. Only a LIMIT order may
+    // name a different instrument: it is priced off its own trigger rate, so it needs no
+    // live quote of that instrument, whereas a market order would have to be priced from
+    // a bid/ask the app only polls for the instrument on screen.
+    qint64 instrumentId = 0;
+    double amount = 0.0;            // cash to invest, in the order currency
+    double leverage = 1.0;
+    double stopLossAmount = 0.0;    // loss at which the position closes (0 = none)
+    double takeProfitAmount = 0.0;  // profit at which it closes (0 = none)
+    bool trailingStop = false;      // stop-loss follows the price in the trade's favour
+    // 0 = MARKET order: executes at the current price. > 0 = LIMIT order: the broker
+    // holds it until the instrument's rate reaches this value, then executes at market.
+    double triggerRate = 0.0;
+
+    [[nodiscard]] bool isLimit() const { return triggerRate > 0.0; }
+};
+
+// A resting entry order the BROKER holds until the market reaches a rate — what
+// eToro's own UI calls a "limit order" and its API a "market if touched" order
+// (orderType "mit" + triggerRate): once the instrument's rate touches
+// triggerRate, eToro releases it as a market order. Unlike an app-side price
+// watch it survives the app being closed, and it triggers on eToro's own feed
+// instead of the app's polled (minutes-delayed) quotes.
+struct PendingOrder {
+    QString orderId;             // broker order id (string: simulation ids are synthetic)
+    qint64 instrumentId = 0;
+    QString symbol;
+    bool isBuy = true;           // true = long entry (buy), false = short entry (sell)
+    double triggerRate = 0.0;    // rate at which the broker releases the order
+    double amount = 0.0;         // cash to invest, in the order currency
+    double leverage = 1.0;
+    double stopLossAmount = 0.0;    // loss at which the opened position closes (0 = none)
+    double takeProfitAmount = 0.0;  // profit at which it closes (0 = none)
+    bool trailingStop = false;
+    QString status;              // broker status wording ("Waiting for market", …)
+    QDateTime submitted;
+
+    // Field-wise equality, so a poll that brings back an unchanged order can skip the
+    // refresh (and with it the table rebuild) instead of redrawing every few seconds.
+    [[nodiscard]] bool operator==(const PendingOrder &other) const = default;
+};
+
 // One closed trade from the account history — the API's own figures (netProfit
 // is net of spread and fees; `fees` is the rollover total) plus the app's
 // spread-cost estimates. The API doesn't report the historical spread, so the
@@ -194,6 +241,8 @@ Q_DECLARE_METATYPE(ClosedTrade)
 Q_DECLARE_METATYPE(Candle)
 Q_DECLARE_METATYPE(ScreenerRow)
 Q_DECLARE_METATYPE(Position)
+Q_DECLARE_METATYPE(OrderRequest)
+Q_DECLARE_METATYPE(PendingOrder)
 Q_DECLARE_METATYPE(InstrumentPnl)
 Q_DECLARE_METATYPE(MonthlyPnl)
 Q_DECLARE_METATYPE(NewsHeadline)

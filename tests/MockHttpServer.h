@@ -54,6 +54,19 @@ public:
         m_holds.append({pathFragment, std::move(until)});
     }
 
+    // Every request served so far, in order. Kept separate from the handler (whose
+    // signature stays method+path, so no existing handler has to grow a parameter):
+    // asserting on a POST BODY — "this order really went out as orderType mit with
+    // that triggerRate" — is the exception, not the rule.
+    struct Recorded {
+        QByteArray method;
+        QString path;
+        QByteArray body;   // empty for GET/DELETE
+    };
+    [[nodiscard]] QList<Recorded> requests() const;
+    // The body of the last request whose path contains `pathFragment` ({} if none).
+    [[nodiscard]] QByteArray lastBodyFor(const QString &pathFragment) const;
+
     // Base URL of the server, e.g. "http://127.0.0.1:54321".
     // Defined out-of-line (MockHttpServer.cpp) so exactly one TU per test
     // binary instruments it for coverage — duplicate comdat coverage records
@@ -67,6 +80,7 @@ private:
         std::function<bool()> until;
     };
     QList<Hold> m_holds;
+    QList<Recorded> m_requests;
 
     Handler m_handler;
     QHash<QTcpSocket *, QByteArray> m_buffer;

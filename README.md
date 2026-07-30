@@ -292,7 +292,10 @@ All requests send the documented `x-api-key`, `x-user-key`, and per-request
 | Resolve instrument | `GET /v1/market-data/search?internalSymbolFull=SPX500&fields=…` | ✅ (SPX500 = id `27`) |
 | Chart history      | `GET /v1/market-data/instruments/{id}/history/candles/{dir}/{interval}/{count}` | ✅ |
 | Live price         | `GET /v1/market-data/instruments/rates?instrumentIds={id}` | ✅ |
-| Open position      | `POST /v2/trading/execution/{demo\|}/orders` | ⚠️ needs trading token |
+| Open position      | `POST /v2/trading/execution/{demo\|}/orders` (`orderType: mkt`) | ⚠️ needs trading token |
+| Limit order        | `POST /v2/trading/execution/{demo\|}/orders` (`orderType: mit` + `triggerRate`) | ⚠️ needs trading token |
+| Order status       | `GET /v2/trading/info/{demo\|}/orders:lookup?orderId={id}` | ⚠️ needs trading token |
+| Cancel limit order | `DELETE /v2/trading/execution/{demo\|}/orders/{orderId}` | ⚠️ needs trading token |
 | Close position     | `POST /v1/trading/execution/{demo\|}/market-close-orders/positions/{positionId}` | ⚠️ needs trading token |
 | Portfolio          | `GET /v1/trading/info/{demo\|}/portfolio` | ⚠️ needs trading token |
 

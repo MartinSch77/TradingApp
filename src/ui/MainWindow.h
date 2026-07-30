@@ -30,6 +30,7 @@ QT_FORWARD_DECLARE_CLASS(QComboBox)
 QT_FORWARD_DECLARE_CLASS(QDialog)
 QT_FORWARD_DECLARE_CLASS(QEvent)
 QT_FORWARD_DECLARE_CLASS(QDoubleSpinBox)
+QT_FORWARD_DECLARE_CLASS(QFormLayout)
 QT_FORWARD_DECLARE_CLASS(QGroupBox)
 QT_FORWARD_DECLARE_CLASS(QLabel)
 QT_FORWARD_DECLARE_CLASS(QListWidget)
@@ -64,6 +65,9 @@ private slots:
     void onFxRate(double eurPerUsd);  // EUR-per-USD update → switch displays to euro
     void onEvents(const QList<EconomicEvent> &events);
     void onOrderResult(bool ok, const QString &message);
+    // The limit orders currently resting at eToro (REQ-F-027) — the panel's table and
+    // the exposure check are pure views of this.
+    void onPendingOrders(const QList<PendingOrder> &orders);
     void onPositionClosed(bool ok, const QString &message);
     void onVix(double level, double changePct);  // CBOE VIX ("fear index") update
     void onExternalSignal(bool available, double score, const QString &rating);  // web rating
@@ -121,10 +125,36 @@ private:
     // Switch the traded instrument: sync the selector, reset per-instrument UI state
     // and ask the client to load it. Used by the selector and the startup auto-load.
     void selectInstrument(const QString &sym);
-    void placeOrder(bool isBuy);
+    // triggerRate = 0 sends a market order (executes now); triggerRate > 0 sends a
+    // limit order that eToro holds until the rate is reached (REQ-F-027).
+    void placeOrder(bool isBuy, double triggerRate = 0.0);
     // Buy/Sell button gate: an order is placed only on a second press of the SAME
     // button within 650 ms; a single press just arms and prompts for confirmation.
-    void handleOrderButton(bool isBuy);
+    // `limit` distinguishes the market buttons from the limit-order ones, so a press
+    // on one never confirms the other.
+    void handleOrderButton(bool isBuy, bool limit = false);
+    // Submit the limit order the panel describes (rate from the buy/sell rate field).
+    void placeLimitOrder(bool isBuy);
+    void cancelSelectedPendingOrder();  // cancel the limit order marked in the table
+    // Modal editor for the resting order in `row`: trigger rate + SL/TP amounts. On OK
+    // the client cancels and re-places the order (eToro has no update-order endpoint),
+    // which the dialog says out loud. row < 0 = nothing selected.
+    void openPendingOrderEditor(qint32 row);
+    void rebuildPendingOrdersTable();   // (re)fill the resting-orders view from m_pendingShown
+    // Make the resting order in `row` the traded instrument (clicking its Instr. cell, as
+    // in the open-trades table). This is the route to adjusting an order on another
+    // instrument, since the re-placement is priced from the selected one.
+    void switchToPendingOrderInstrument(qint32 row);
+    // Refresh only the "Now" column of the resting-order table (each order's own
+    // instrument rate, plus a mouse-over with the distance still to travel). Runs on every
+    // price tick, so it edits the cells in place instead of rebuilding the table.
+    void updatePendingOrderRates();
+    // Row of the marked resting order, or -1: the mark is held as an ORDER ID, because the
+    // 4 s refresh rebuilds the rows and an order that resolved shifts the ones below it.
+    [[nodiscard]] qint32 selectedPendingRow() const;
+    // Account-currency total the resting limit orders will tie up once they trigger;
+    // counted against the open-exposure cap alongside the already-open trades.
+    [[nodiscard]] double pendingExposureTotal() const;
     void appendLog(const QString &message, bool isError = false);
     [[nodiscard]] QStringList markedPositionIds() const;  // position ids of ticked open-trade rows
     // A trade missing from the newest portfolio snapshot has been closed (by this
@@ -146,6 +176,11 @@ private:
     // built here rather than inline in buildUi() to keep that function off the metrics
     // ratchet. updateTradeButtonsEnabled() shows and hides the row as a unit.
     [[nodiscard]] QWidget *buildMarketClosedRow(QWidget *parent);
+    // The limit-order panel (rate per side, submit buttons, resting-order table with
+    // its cancel button) — also built out of line to keep buildUi() off that ratchet.
+    [[nodiscard]] QGroupBox *buildLimitOrderBox(QWidget *parent);
+    // The resting-order table plus its Adjust/Cancel buttons, appended to `form`.
+    void buildPendingOrdersView(QWidget *parent, QFormLayout *form);
     void onMarketClosedOverrideToggled(bool on);  // log the change, re-gate the buttons
     // Live-refresh the open-trades P/L cells from a new price, without waiting for the
     // next portfolio poll. Only the shown instrument's rows move (the only live price
@@ -201,7 +236,6 @@ private:
     // refresh (startup, post-close) must not shrink the dialog's window to 7 weeks.
     [[nodiscard]] qint32 closedLookbackWeeks() const;
     void updateTradeHours(const QString &symbol);  // approx. trading-hours label
-    void checkAutoOrders(double price);  // fire armed buy-below / sell-above triggers
     // Show the chart's event line while an event is within 10 min before / 5 min after.
     void refreshChartEventMarker();
     // Recompute the soonest upcoming event and (re)build the events list, dropping any
@@ -255,11 +289,19 @@ private:
     QSet<QString> m_tradeableNow;
     bool m_tradeabilityKnown = false;
 
-    // Conditional (auto) orders — independently armable buy and sell triggers.
-    QDoubleSpinBox *m_buyBelow = nullptr;
-    QDoubleSpinBox *m_sellAbove = nullptr;
-    QPushButton *m_armBuy = nullptr;
-    QPushButton *m_armSell = nullptr;
+    // Limit orders (REQ-F-027): the rate to enter at per side, the submit buttons, and
+    // the table of orders currently resting AT ETORO with its cancel button. eToro (not
+    // this app) watches the price, so a limit order fires with the app closed and off
+    // the broker's own feed rather than the app's minutes-delayed poll.
+    QDoubleSpinBox *m_limitBuyRate = nullptr;
+    QDoubleSpinBox *m_limitSellRate = nullptr;
+    QPushButton *m_limitBuyButton = nullptr;
+    QPushButton *m_limitSellButton = nullptr;
+    QTableWidget *m_pendingTable = nullptr;
+    QPushButton *m_editPendingButton = nullptr;    // opens the editor for the marked order
+    QPushButton *m_cancelPendingButton = nullptr;
+    QList<PendingOrder> m_pendingShown;  // row-indexed snapshot behind m_pendingTable
+    QString m_selectedPendingId;         // order id the user marked (survives a refresh)
     QTableView *m_positions = nullptr;         // view over m_positionsModel
     PositionsModel *m_positionsModel = nullptr;
     TradeGaugeDialog *m_tradeGauge = nullptr;  // per-trade gauge (click on a row)
@@ -410,6 +452,7 @@ private:
     // Buy/Sell button double-press state (see handleOrderButton).
     qint64 m_orderClickMs = 0;   // time of the first (arming) press, 0 = none pending
     bool m_orderClickBuy = false;  // which button the pending press was on
+    bool m_orderClickLimit = false;  // …and whether it was a limit or a market button
 
     // CBOE VIX ("fear index"), folded into the buy/sell signal ensemble.
     double m_vix = 0.0;          // latest VIX level
@@ -453,7 +496,7 @@ private:
     // price at the most recent portfolio poll). updateOpenTradePnl adds the price move
     // since this to each shown trade's P/L; 0 = no anchor yet (skip the live refresh).
     double m_pnlAnchorPrice = 0.0;
-    bool m_autoDefaultsSet = false;  // seed buy/sell thresholds off the first price
+    bool m_limitRateDefaultsSet = false;  // seed the limit-order rates off the first price
     // True from instrument selection until EtoroClient::ready confirms the switch;
     // BUY/SELL stay locked so an order can never target the previous instrument.
     bool m_instrumentResolving = false;

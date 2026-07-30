@@ -126,7 +126,7 @@ STATEMENT: The app shall list closed trades over a selectable 7–13-week lookba
 UID: REQ-F-015
 VERIFICATION: T
 TITLE: Market-open inference blocks orders
-STATEMENT: The app shall infer per-instrument market-open state from whether the instrument's quote timestamp ADVANCES between successive polls — the public rates feed lags real time by minutes, so an absolute quote age must not decide it — and block opening orders on closed markets. Where no previous timestamp is known yet (first poll after start), a quote age generous enough to absorb that feed delay shall stand in until the next poll supplies a baseline.
+STATEMENT: The app shall infer per-instrument market-open state from whether the instrument's quote timestamp ADVANCES between successive polls — the public rates feed lags real time by minutes, so an absolute quote age must not decide it — and block MARKET orders on closed markets. Where no previous timestamp is known yet (first poll after start), a quote age generous enough to absorb that feed delay shall stand in until the next poll supplies a baseline. Limit orders (REQ-F-027) are exempt from the block: the broker parks them until its market opens, which is the normal way to be positioned for the next session.
 
 [REQUIREMENT]
 UID: REQ-F-016
@@ -193,6 +193,18 @@ UID: REQ-F-026
 VERIFICATION: I
 TITLE: Manual market-closed override
 STATEMENT: 'While the market-open inference reports the selected instrument closed, the app shall offer an explicit "Trade anyway" override that re-enables BUY/SELL, so a wrong closed verdict can never lock the user out of a market that is in fact open. Arming and clearing the override shall be logged, every order placed through it shall be logged as overridden, the double-press confirmation gate shall stay in force, and the override shall clear itself on an instrument switch so it can never carry over to another market.'
+
+[REQUIREMENT]
+UID: REQ-F-027
+VERIFICATION: T/I
+TITLE: Conditional entries are eToro limit orders, not an in-app price watch
+STATEMENT: >>>
+A conditional entry — "open this trade when the rate reaches X" — shall be placed AT THE BROKER as an eToro limit order (public-API orderType "mit" with a triggerRate), never executed by an in-app price watch: eToro triggers it off its own feed and with the app closed, whereas the app's polled quotes lag the market by minutes and stop entirely when it exits. The order shall carry the trade panel's size, leverage and SL/TP, with the SL/TP amounts converted to rates off the TRIGGER rate (where the position will open), not off the current quote. The app shall list the ACCOUNT's resting limit orders — taken from the broker's own portfolio breakdown, not merely from what this session submitted, so orders placed earlier or in eToro's own UI are visible too — with their live broker status and each order's CURRENT instrument rate (so how far the market still has to travel is visible without switching instruments), allow cancelling one before it executes, report a fill when the broker reports one, and count resting orders against the open-exposure cap. An order on an instrument outside the app's selector shall still be listed (identified by its instrument id), because an order the app hides is an order nobody can cancel. The double-press confirmation gate applies to limit orders as well, and the market-order and limit-order gates shall be independent of one another. Because eToro fills at the trigger rate OR BETTER (lower for a buy, higher for a short), a rate already on the executable side of the market can fill at once instead of resting; the app shall say so in the log before such an order goes out rather than silently letting the user assume it will wait.
+
+A resting order shall be adjustable from that list — trigger rate, stop-loss and take-profit amounts, entered through an editor opened from the order's row — with size, leverage and side carried over unchanged. The public API offers no update-order endpoint, so the app shall implement the change as CANCEL-then-re-place (never the reverse, which could leave two live orders for one intended trade), state in the editor that the order returns under a new id, and place the replacement on the ORDER's own instrument, whichever instrument the app happens to be showing — a limit order is priced off its trigger rate, so it needs no live quote of that instrument (a MARKET order, which must be priced from a live bid/ask, stays restricted to the instrument being traded). Clicking an order's instrument cell shall additionally switch the app to that instrument, the same gesture the open-trades table uses.
+
+A newly placed order shall appear in the list at once, and the list and its per-order statuses shall be refreshed on a fixed 4-second cycle of their own — not on the configurable price-poll cadence — running only while at least one order rests and staying inside the lookup endpoint's shared rate budget. A refresh shall not discard the row the user has marked for cancelling or adjusting. Because an accepted order (HTTP 200 with an order id) can still be REJECTED by the broker seconds later, the app shall additionally re-read a just-placed order's status ahead of that cycle, and shall report a rejection as an error carrying eToro's own reason and error code — an order the app lists as resting must never be one the broker has already refused.
+<<<
 
 [[/SECTION]]
 

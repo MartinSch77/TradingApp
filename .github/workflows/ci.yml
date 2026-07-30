@@ -38,6 +38,37 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install runtime tools (Ubuntu)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+
+          # System packages
+          sudo apt-get install -y -qq graphviz default-jre wget unzip curl
+
+          # Python tooling
+          python3 -m pip install --upgrade pip pipx
+          python3 -m pipx ensurepath || true
+
+          # Python-based tools used by CI & analysis
+          python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+
+          # codespell via pipx (isolated)
+          python3 -m pipx install --force codespell || true
+
+          # plantuml jar (used by docs)
+          mkdir -p tools
+          if [ ! -f tools/plantuml.jar ]; then
+            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
+          fi
+
+          # supply-chain helpers (syft, grype, trivy) - pinned examples
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
+
+          echo "Installed runtime tools: graphviz, java, pipx, strictdoc, doorstop, codespell, sphinx, gcovr, aqtinstall, lizard, plantuml.jar, syft, grype, trivy"
+
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
@@ -90,6 +121,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install runtime tools (Ubuntu)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq graphviz default-jre wget unzip curl
+          python3 -m pip install --upgrade pip pipx
+          python3 -m pipx ensurepath || true
+          python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+          python3 -m pipx install --force codespell || true
+          mkdir -p tools
+          if [ ! -f tools/plantuml.jar ]; then
+            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
+          fi
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
+
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
@@ -116,6 +164,23 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install runtime tools (Ubuntu)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq graphviz default-jre wget unzip curl
+          python3 -m pip install --upgrade pip pipx
+          python3 -m pipx ensurepath || true
+          python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+          python3 -m pipx install --force codespell || true
+          mkdir -p tools
+          if [ ! -f tools/plantuml.jar ]; then
+            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
+          fi
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
 
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
@@ -169,6 +234,41 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install runtime tools (Windows)
+        shell: powershell
+        run: |
+          set-StrictMode -Version Latest
+          # Install Chocolatey (if not present)
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+          }
+
+          # System packages
+          choco install -y graphviz openjdk --no-progress
+
+          # Python + pipx
+          python -m pip install --upgrade pip pipx
+          python -m pipx ensurepath || Write-Host "pipx ensurepath ok"
+
+          # Python-based tools
+          python -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+
+          # pipx-installed tools
+          python -m pipx install codespell || Write-Host "codespell install skipped"
+
+          # Download OpenCppCoverage (prebuilt binary) to tools\OpenCppCoverage
+          $ocvDir = "tools\OpenCppCoverage"
+          if (!(Test-Path $ocvDir)) {
+            New-Item -ItemType Directory -Path $ocvDir | Out-Null
+            $zip = "$ocvDir\OpenCppCoverage.zip"
+            Invoke-WebRequest -Uri "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/latest/download/OpenCppCoverage_x64.zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $ocvDir -Force
+            Remove-Item $zip
+          }
+          Write-Host "Installed/bootstrapped windows runtime tools"
+
       - name: Install Qt (with Charts)
         uses: jurplel/install-qt-action@v4
         with:
@@ -245,6 +345,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install runtime tools (Ubuntu)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq graphviz default-jre wget unzip curl
+          python3 -m pip install --upgrade pip pipx
+          python3 -m pipx ensurepath || true
+          python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+          python3 -m pipx install --force codespell || true
+          mkdir -p tools
+          if [ ! -f tools/plantuml.jar ]; then
+            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
+          fi
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
+
       - name: SBOM (syft — SPDX + CycloneDX)
         uses: anchore/sbom-action@v0
         with:

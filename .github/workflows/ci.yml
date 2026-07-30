@@ -58,6 +58,17 @@ jobs:
       - name: Build
         run: cmake --build build -j"$(nproc)"
 
+      - name: Provide API key for CI (copy example if missing)
+        run: |
+          # If a real apiKeyEtoro.json is not provided in CI, fall back to the
+          # example file so tests that run in SIMULATION don't fail.
+          if [ -f apiKeyEtoro.example.json ] && [ ! -f apiKeyEtoro.json ]; then
+            cp apiKeyEtoro.example.json apiKeyEtoro.json
+            echo "Copied apiKeyEtoro.example.json -> apiKeyEtoro.json for CI"
+          else
+            echo "apiKeyEtoro.json present or apiKeyEtoro.example.json missing; skipping copy"
+          fi
+
       - name: Run test suite (JUnit per test function)
         run: QT_QPA_PLATFORM=offscreen ./tools/run_tests.sh build
 

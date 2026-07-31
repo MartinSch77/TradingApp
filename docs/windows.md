@@ -297,6 +297,19 @@ reason, and `.gitignore` covers stray `*.csexe`/`*.csmes`.
 
 ## Two build-configuration traps
 
+* **`/utf-8` is mandatory for MSVC** (`CMakeLists.txt`, in the `if(MSVC)` branch).
+  The sources are UTF-8 *without* a BOM — `.gitattributes` keeps the BOM for
+  `.ps1` only — and they carry ~250 non-ASCII string literals: the `—` of the
+  empty-value cells, the `⇅` of a trailing stop, the `×` of the cost bill.
+  Without `/utf-8` MSVC decodes the source with the machine's ANSI code page,
+  so each of those literals reaches `QStringLiteral` as mojibake (`—` →
+  `â€"`). Nothing fails: on a Western code page every UTF-8 byte maps to *some*
+  CP1252 character, so not even C4819 ("character that cannot be represented in
+  the current code page") fires. The only symptom is the running Windows UI
+  showing the wrong glyphs — which is why this went unnoticed until the UI
+  strings were compared side by side with Linux. GCC/Clang assume UTF-8, so the
+  Linux build never saw it.
+
 * **`/fsanitize=address` must also be on the LINK line**, not only when
   compiling. It is what makes the linker pull in
   `clang_rt.asan_dynamic_runtime_thunk`, so that the exe's `operator new`/

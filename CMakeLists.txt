@@ -58,7 +58,14 @@ qt_standard_project_setup()
 # pipeline (build_all.sh / build_all.ps1) turns it on.
 option(TRADINGAPP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 if(MSVC)
-    add_compile_options(/W4 /permissive-)
+    # /utf-8 is NOT optional here: these sources are UTF-8 without a BOM (.gitattributes
+    # keeps the BOM for .ps1 only) and carry ~250 non-ASCII string literals — the em
+    # dashes and "—"/"⇅"/"×" the UI shows. Without it MSVC decodes the source with the
+    # machine's ANSI code page, so every one of those literals reaches QStringLiteral
+    # as mojibake ("—" → "â€""). It compiles and links silently: on a Western code page
+    # each UTF-8 byte maps to SOME CP1252 character, so not even C4819 fires — the only
+    # symptom is the running Windows UI showing the wrong glyphs.
+    add_compile_options(/utf-8 /W4 /permissive-)
     if(TRADINGAPP_WARNINGS_AS_ERRORS)
         add_compile_options(/WX)
     endif()

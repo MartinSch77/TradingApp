@@ -21,7 +21,9 @@ tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metri
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
                                # whole run in one colour PDF (build_all `report`
-                               # stage; skips with exit 3 without reportlab)
+                               # stage; skips with exit 3 without reportlab). Reads
+                               # the Axivion dashboard via AXIVION_DASHBOARD_URL,
+                               # so run it AFTER the axivion stage to include it
 tools/profile.sh               # perf/gperftools over build-release/
 tools/mcp_env.sh --persist     # env the .mcp.json Axivion MCP servers need
 tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage

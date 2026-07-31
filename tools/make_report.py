@@ -24,6 +24,7 @@ green, as with every other optional tool) · 1 real failure.
 """
 
 import argparse
+import base64
 import csv
 import glob
 import json
@@ -32,6 +33,8 @@ import platform
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -274,6 +277,43 @@ def collect_coverage():
     return result
 
 
+def collect_axivion():
+    """Latest dashboard version's issue counts per kind, or None when unreachable.
+
+    Reads the dashboard the same way axivion/start_analysis.{sh,ps1} publishes to it:
+    AXIVION_DASHBOARD_URL (default http://localhost:9090/axivion) with
+    AXIVION_USERNAME/AXIVION_PASSWORD — whose local-dev defaults live in that script's
+    guarded credentials block, not here. No dashboard (CI, a machine without the
+    license-bound Suite) simply means "not run": the timeout is short on purpose.
+    """
+    base = os.environ.get("AXIVION_DASHBOARD_URL", "http://localhost:9090/axivion").rstrip("/")
+    user = os.environ.get("AXIVION_USERNAME", "admin")
+    password = os.environ.get("AXIVION_PASSWORD", "password")
+    project = "TradingApp"
+    config = ROOT / "axivion" / "ci_config.json"
+    if config.is_file():
+        try:
+            opts = json.loads(config.read_text(**UTF8))["Project"]["Project-GlobalOptions"]
+            project = opts.get("name") or project
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    req = urllib.request.Request(f"{base}/api/projects/{project}/issues?kind=SV",
+                                headers={"Authorization": f"Basic {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError):
+        return None
+    version = payload.get("endVersion") or {}
+    counts = version.get("issueCounts") or {}
+    if not counts:
+        return None
+    return {"project": project, "version": version.get("index"),
+            "name": version.get("name", ""), "counts": counts}
+
+
 def collect_sanitizers():
     out = []
     for path in sorted(glob.glob(str(ROOT / "analysis-results" / "sanitize-*.txt"))):
@@ -491,6 +531,7 @@ def build_report(out_path, build_dir):
     metrics = collect_metrics()
     coverage = collect_coverage()
     sanitizers = collect_sanitizers()
+    axivion = collect_axivion()
     git = git_info()
 
     total = sum(s["total"] for s in tests)
@@ -536,6 +577,28 @@ def build_report(out_path, build_dir):
     add("Static analysis", analysis_findings == 0,
         "CLEAN" if analysis_findings == 0 else f"{analysis_findings} FINDINGS",
         " · ".join(f"{name}: {'—' if n is None else n}" for name, n, _ in analysis))
+    if axivion is None:
+        add("Axivion", False, "not run",
+            "MISRA C++ 2023 / CERT / CWE + architecture, clones, cycles, dead code and "
+            "metrics on one dashboard — license-bound, and no dashboard answered at "
+            "AXIVION_DASHBOARD_URL (axivion/start_analysis.sh publishes it)", warn=True)
+    else:
+        ax = axivion["counts"]
+
+        # NOT named `total`: that is the test count in this scope, and shadowing it made
+        # the banner read "118155 tests".
+        def ax_total(kind):
+            return (ax.get(kind) or {}).get("Total", 0)
+        # AV (architecture) and CL (clones) are the HARD gates here: this configuration is
+        # MISRA-only for style, and clones are gated by PMD CPD, so a non-zero AV/CL is
+        # what makes the Axivion result actionable.
+        gates_clean = (ax_total("AV") == 0) and (ax_total("CL") == 0)
+        add("Axivion", gates_clean,
+            "GATES OK" if gates_clean else "GATE HIT",
+            f"version {axivion['version']} ({axivion['name']}) — architecture "
+            f"{ax_total('AV')} · clones {ax_total('CL')} · cycles {ax_total('CY')} · dead "
+            f"code {ax_total('DE')} · metrics {ax_total('MV')} · style {ax_total('SV')}")
+
     add("Code metrics", True, f"{metrics['baselined']} known",
         "lizard ratchet: every over-threshold function is recorded with its numbers; "
         "a new or worsened one fails the stage")
@@ -624,6 +687,38 @@ def build_report(out_path, build_dir):
         rows.append([name, status_cell("—" if count is None else str(count), colour),
                      Paragraph(detail, rep.s["cell"])])
     rep.table(rows, [40 * mm, 20 * mm, 116 * mm])
+
+    rep.h2("Axivion (MISRA C++ 2023 / CERT / CWE + architecture)")
+    if axivion is None:
+        rep.text("<b>not run.</b> The Axivion Suite is license-bound and its dashboard "
+                 "answered nothing at <b>AXIVION_DASHBOARD_URL</b> (default "
+                 "http://localhost:9090/axivion). Run <b>axivion/start_analysis.sh</b> — or "
+                 "the <b>axivion</b> stage of build_all — and regenerate this report to fill "
+                 "this section in.")
+    else:
+        kinds = [("AV", "Architecture violations", "layering rules — a hard gate"),
+                 ("CL", "Clones", "gated by PMD CPD here; Axivion's own clone check is off"),
+                 ("CY", "Cycles", "cyclic dependencies between components"),
+                 ("DE", "Dead code", "unreachable / unused (operator-new false positives known)"),
+                 ("MV", "Metric violations", "complexity thresholds; lizard is the ratchet"),
+                 ("SV", "Style violations", "MISRA C++ 2023 + CERT + CWE + imported tool logs")]
+        rows = [["Kind", "What it is", "Total", "Added", "Removed"]]
+        for key, label, note in kinds:
+            entry = axivion["counts"].get(key) or {}
+            kind_total = entry.get("Total", 0)
+            hard = key in ("AV", "CL")
+            colour = ((GREEN if kind_total == 0 else RED) if hard
+                      else (GREY if kind_total == 0 else AMBER))
+            rows.append([f"{key} — {label}", Paragraph(note, rep.s["cell"]),
+                         status_cell(str(kind_total), colour),
+                         f"+{entry.get('Added', 0)}", f"-{entry.get('Removed', 0)}"])
+        rep.table(rows, [46 * mm, 74 * mm, 20 * mm, 18 * mm, 18 * mm])
+        rep.text(f"Dashboard version {axivion['version']} — {axivion['name']}. Added/removed "
+                 f"are versus the previous version. The style-violation total is large by "
+                 f"construction: MISRA C++ 2023 judges a Qt application, where every "
+                 f"QStringLiteral is an allocation and money is a double — so the actionable "
+                 f"signal here is the architecture and clone gates plus the DELTA, not the "
+                 f"absolute count.", "small")
 
     rep.h2("Most complex functions (lizard)")
     rows = [["Function", "CCN", "NLOC"]]

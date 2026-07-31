@@ -2156,11 +2156,14 @@ void MainWindow::updateOpenTradesSummary()
     // "*" carries the same meaning as in the P/L column: at least one row has no current
     // quote, so the total is eToro's last snapshot for that part rather than a live mark.
     const QString marker = live ? QString() : QStringLiteral(" *");
+    // Both numbers in their own local: several calls inside one .arg() list are evaluated
+    // in an unspecified order (MISRA C++ 2023 4.6.1).
+    const QString investedText = QLocale().toString(invested, 'f', 2);
+    const QString pnlText = QLocale().toString(std::abs(pnl), 'f', 2);
     m_openTradesSummary->setText(
         QStringLiteral("<b>Invested: %1%2 &nbsp;·&nbsp; P/L: <span style='color:%3'>%4%1%5%6"
                        "</span></b> &nbsp;·&nbsp; %7 open trade%8")
-            .arg(m_ccy, QLocale().toString(invested, 'f', 2), color, sign,
-                 QLocale().toString(std::abs(pnl), 'f', 2), marker)
+            .arg(m_ccy, investedText, color, sign, pnlText, marker)
             .arg(trades)
             .arg((trades == 1) ? QString() : QStringLiteral("s")));
 }

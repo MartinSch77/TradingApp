@@ -164,8 +164,10 @@ QString PositionsModel::slTpTooltip(const Position &p, qint32 column, qint32 row
         const QString markText = QLocale().toString(mark, 'f', decimals);
         text += QStringLiteral(", %1 the current %2").arg(fromNow, markText);
     }
-    // The cell's own figure, with the currency symbol placed after any sign
-    // ("-302.39" → "-€302.39"), so the tooltip and the cell state the same amount.
+    // The cell's own figure, with the currency symbol placed after any sign — a loss
+    // reads as -€302.39, so the tooltip states exactly what the cell states. Written
+    // without a parenthesised quoted pair on purpose: MISRA C++ 2023 5.7.2 reads that
+    // shape as commented-out code.
     QString money = isSl ? trading::slSignedAmountText(p, m_eurPerUsd)
                          : trading::slTpAmountText(p, rate, m_eurPerUsd);
     if (money.startsWith(QLatin1Char('+')) || money.startsWith(QLatin1Char('-'))) {

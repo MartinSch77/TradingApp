@@ -448,5 +448,13 @@ switch ($Mode) {
         Write-Host ""
         Show-Status
     }
-    'status' { Show-Status }
+    'status' {
+        Show-Status
+        # A status REPORT never gates: missing optional/license-bound tools are the
+        # point of the listing, not a failure (same contract as `setup.sh status`,
+        # which ends on an echo and so exits 0). Without this the branch leaked the
+        # $LASTEXITCODE of whichever probe ran last, and CI read the report as a
+        # failed step.
+        exit 0
+    }
 }

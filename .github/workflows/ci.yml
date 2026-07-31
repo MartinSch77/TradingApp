@@ -295,6 +295,11 @@ jobs:
       # overrides the kit auto-detection with the one this action installed.
       - name: Toolchain status
         shell: powershell
+        # Same QT_PREFIX as the build step: without it the report looks for Qt in
+        # C:\Qt\<ver>\msvc2022_64 and says MISSING about the kit install-qt-action just
+        # put somewhere else.
+        env:
+          QT_PREFIX: ${{ env.QT_ROOT_DIR }}
         run: .\setup.ps1 status
 
       - name: Build + tests + traceability (build_all.ps1)

@@ -250,13 +250,18 @@ jobs:
 
           # Python + pipx
           python -m pip install --upgrade pip pipx
-          python -m pipx ensurepath || Write-Host "pipx ensurepath ok"
+          python -m pipx ensurepath
+          # `a || b` is a PowerShell 7 operator: Windows PowerShell 5.1 — the shell this
+          # job deliberately uses — fails to PARSE it ("The token '||' is not a valid
+          # statement separator in this version"), which killed the whole step.
+          if ($LASTEXITCODE -ne 0) { Write-Host "pipx ensurepath exited $LASTEXITCODE - continuing" }
 
           # Python-based tools
-          python -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
+          python -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall reportlab
 
           # pipx-installed tools
-          python -m pipx install codespell || Write-Host "codespell install skipped"
+          python -m pipx install codespell
+          if ($LASTEXITCODE -ne 0) { Write-Host "codespell install skipped ($LASTEXITCODE)" }
 
           # Download OpenCppCoverage (prebuilt binary) to tools\OpenCppCoverage
           $ocvDir = "tools\OpenCppCoverage"

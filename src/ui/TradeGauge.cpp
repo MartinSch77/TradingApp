@@ -195,12 +195,13 @@ void TradeGaugeDialog::showTrade(const Position &position, double currentPrice,
     raise();
 }
 
-void TradeGaugeDialog::updatePrice(double price)
+void TradeGaugeDialog::updatePrice(double price, const Quote &quote)
 {
     if (price <= 0.0) {
         return;
     }
     m_price = price;
+    m_quote = quote;
     m_gauge->setCurrentPrice(price);
     renderLabels();
 }
@@ -219,12 +220,11 @@ void TradeGaugeDialog::renderLabels()
     m_current->setText(QStringLiteral("Current value: %1")
                            .arg(QLocale().toString(m_price, 'f',
                                                    trading::priceDecimals(m_price))));
-    // Live P/L: the last API P/L re-priced with the price move, exactly like
-    // the main table (accountValuePerPoint keeps foreign-quote instruments right).
-    const double perPoint = trading::accountValuePerPoint(m_pos);
-    const double delta =
-        (m_pos.isBuy ? 1.0 : -1.0) * perPoint * (m_price - m_pos.openRate);
-    const double plUsd = (perPoint > 0.0) ? delta : m_pos.profit;
+    // Live P/L, exactly the figure the main table states: eToro's own identity at the
+    // side the trade closes on. Without a quote yet (no tick since the window opened)
+    // the last snapshot P/L stands rather than a mid-price approximation.
+    const double plUsd = m_quote.isValid() ? trading::positionPnl(m_pos, m_quote)
+                                           : m_pos.profit;
     const double plDisp = plUsd * m_eurPerUsd;
     m_pl->setText(QStringLiteral("P/L: %1").arg(formatMoney(m_ccy, plDisp)));
     QPalette pal = m_pl->palette();

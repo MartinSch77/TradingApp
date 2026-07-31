@@ -71,6 +71,15 @@ private:
     void followLatestInManualView(qreal newX, qreal prevLastX);
     // Keeps the current-price line and its right-hand price tag in sync.
     void updatePriceMarker();
+    // Decimals the price axis (and the price tag on it) shows for `price`: the app's own
+    // priceDecimals() rule, so the labels follow whichever instrument is on screen —
+    // an index in the thousands does not need what a forex pair does — with a floor of
+    // three, so a tick never reads as a price the instrument never had (a fixed 2 turned
+    // every EURUSD label into "1.15").
+    [[nodiscard]] static qint32 priceAxisDecimals(double price);
+    // Apply that precision to the Y axis' printf label format. `reference` is a price
+    // from the range being shown (0 = none yet, use the floor).
+    void applyPriceAxisFormat(double reference);
     // Recompute the per-tick change series' strong-move filter (±2σ threshold,
     // highlighted outliers) and rescale its Y axis. Called when data changes.
     void recomputeChange();

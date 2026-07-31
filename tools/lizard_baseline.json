@@ -19,9 +19,6 @@
   "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
     "ccn": 17
   },
-  "src/services/EtoroClient.cpp::EtoroClient::finalizePortfolioPl": {
-    "ccn": 29
-  },
   "src/services/EtoroClient.cpp::EtoroClient::openPositionReal": {
     "ccn": 33,
     "nloc": 134,

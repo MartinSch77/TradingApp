@@ -47,6 +47,35 @@ struct Candle {
     double close = 0.0;
 };
 
+// A two-sided quote for one instrument, in the form eToro marks a position at:
+// a long closes at the bid, a short at the ask, and conversionBid/Ask scale a
+// quote-currency price move into the account currency (1.0 for the USD-quoted
+// majority, ~0.127 for an HKD-quoted instrument such as HKG50).
+//
+// `asOf` is eToro's OWN stamp for this price, not the time it was fetched: the
+// public rates feed publishes some instruments minutes behind real time and
+// declares that age in the row's `date` field. A quote is therefore only worth
+// marking a position at while `asOf` is recent — see EtoroClient::repairStaleQuotes,
+// which re-bases such a row on the live candle feed.
+struct Quote {
+    double bid = 0.0;
+    double ask = 0.0;
+    double conversionBid = 1.0;
+    double conversionAsk = 1.0;
+    QDateTime asOf;
+    bool fromCandle = false;   // bid re-based on the live candle feed (rates row too old)
+
+    // Defined out-of-line (Models.cpp) so exactly one TU instruments them for
+    // coverage — see the note there.
+    [[nodiscard]] bool isValid() const;
+    // The rate this position closes at, and the conversion rate that side carries.
+    [[nodiscard]] double closeRate(bool isBuy) const;
+    [[nodiscard]] double conversion(bool isBuy) const;
+    [[nodiscard]] double spread() const;
+    // Age of the PRICE (not of the fetch) in milliseconds; -1 while unstamped.
+    [[nodiscard]] qint64 ageMs(const QDateTime &now) const;
+};
+
 // An open position in the portfolio.
 struct Position {
     QString positionId;

@@ -43,8 +43,11 @@ public:
     // account-currency figures in the display currency, like the main table.
     void showTrade(const Position &position, double currentPrice,
                    const QString &ccySymbol, double eurPerUsd);
-    // Live price tick for the shown trade's instrument.
-    void updatePrice(double price);
+    // Live price tick for the shown trade's instrument. `quote` is that instrument's
+    // current two-sided quote: the needle follows the price, while the P/L is marked at
+    // the side the trade closes on (bid for a long, ask for a short) so this window and
+    // the open-trades table always state the same figure as eToro itself.
+    void updatePrice(double price, const Quote &quote);
     [[nodiscard]] QString symbol() const { return m_pos.symbol; }
 
 private:
@@ -58,6 +61,7 @@ private:
     QLabel *m_targets = nullptr;
     Position m_pos;
     double m_price = 0.0;
+    Quote m_quote;   // marking side for the P/L line; invalid until the first tick
     QString m_ccy;
     double m_eurPerUsd = 1.0;
 };

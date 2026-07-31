@@ -317,6 +317,21 @@ EtoroClient::EtoroClient(Config config, QObject *parent)
     static_cast<void>(connect(m_sim, &SimulationEngine::priceUpdated, this,
                               [this](const QDateTime &time, double price) {
                                   m_lastPrice = price;
+                                  // The synthetic feed has no spread and only prices the
+                                  // instrument on screen — publish it as that instrument's
+                                  // quote so the open-trades table marks simulated trades
+                                  // through the same path as real ones. Positions on other
+                                  // instruments have no sim price, and the table shows them
+                                  // as not-live, which is exactly what they are.
+                                  if (m_instrument.isValid() && (price > 0.0)) {
+                                      Quote q;
+                                      q.bid = price;
+                                      q.ask = price;
+                                      q.asOf = QDateTime::currentDateTimeUtc();
+                                      static_cast<void>(
+                                          m_quoteById.insert(m_instrument.instrumentId, q));
+                                      emit quotesUpdated();
+                                  }
                                   emit priceUpdated(time, price);
                               }));
     static_cast<void>(connect(m_sim, &SimulationEngine::portfolioUpdated,
@@ -1126,59 +1141,211 @@ void EtoroClient::fetchHistoryReal()
     });
 }
 
+qint64 EtoroClient::applyRateRow(const QJsonObject &rate)
+{
+    const qint64 id = static_cast<qint64>(
+        numFrom(pick(rate, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
+    const double bid = numFrom(pick(rate, {QStringLiteral("bid"), QStringLiteral("cvtBid")}));
+    if ((id <= 0) || (bid <= 0.0)) {
+        return 0;
+    }
+    const double ask = numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
+    Quote q;
+    q.bid = bid;
+    q.ask = (ask > bid) ? ask : bid;
+    // conversionRateBid/Ask turn a quote-currency move into the account currency; they
+    // are 1.0 for the USD-quoted instruments and e.g. ~0.127 for HKD-quoted HKG50.
+    // This is eToro's own closeConversionRate — using it (rather than the rate as of the
+    // position's open) is what makes the P/L of a foreign-quoted instrument exact.
+    const double convBid = numFrom(pick(rate, {QStringLiteral("conversionRateBid")}));
+    const double convAsk = numFrom(pick(rate, {QStringLiteral("conversionRateAsk")}));
+    q.conversionBid = (convBid > 0.0) ? convBid : 1.0;
+    q.conversionAsk = (convAsk > 0.0) ? convAsk : 1.0;
+    // The row's `date` is the age of the PRICE, which is the whole point of keeping it.
+    q.asOf = QDateTime::fromString(pick(rate, {QStringLiteral("date")}).toString(), Qt::ISODate);
+    const Quote previous = m_quoteById.value(id);
+    // A candle repair that is NEWER than this row must survive it, or a delayed
+    // instrument would flip between the live and the delayed price every tick.
+    if (previous.fromCandle && previous.asOf.isValid()
+        && (!q.asOf.isValid() || (previous.asOf > q.asOf))) {
+        Quote kept = previous;
+        kept.ask = kept.bid + q.spread();   // the spread stays the live row's
+        kept.conversionBid = q.conversionBid;
+        kept.conversionAsk = q.conversionAsk;
+        static_cast<void>(m_quoteById.insert(id, kept));
+        return id;
+    }
+    static_cast<void>(m_quoteById.insert(id, q));
+    return id;
+}
+
 void EtoroClient::pollPriceReal()
 {
+    // The instrument on screen plus every held one, in ONE call. Marking the
+    // open-trades rows used to depend on a second bulk call issued per portfolio poll,
+    // which left every row but the one on screen as stale as that snapshot.
+    QSet<qint64> want = m_heldInstrumentIds;
+    if (m_instrument.isValid()) {
+        static_cast<void>(want.insert(m_instrument.instrumentId));
+    }
+    if (want.isEmpty()) {
+        return;
+    }
+    QStringList ids;
+    ids.reserve(want.size());
+    for (const qint64 id : want) {
+        ids << QString::number(id);
+    }
     QUrlQuery q;
-    q.addQueryItem(QStringLiteral("instrumentIds"), QString::number(m_instrument.instrumentId));
+    q.addQueryItem(QStringLiteral("instrumentIds"), ids.join(QLatin1Char(',')));
     QNetworkReply *reply = apiGet(QStringLiteral("/v1/market-data/instruments/rates"), q);
     const qint64 wantId = m_instrument.instrumentId;  // guard against an instrument switch
     handleReply(reply, [this, wantId](bool ok, qint32 /*status*/, const QJsonDocument &doc,
                                       const QByteArray & /*raw*/, const QString & /*netError*/) {
         if (!ok) {
-            return;  // transient; keep the previous price
+            return;  // transient; keep the previous quotes
         }
-        if (m_instrument.instrumentId != wantId) {
-            return;  // stale reply from before a switch — not this instrument's quote
+        const QJsonObject shown = applyRatesSnapshot(doc, wantId);
+        if ((m_instrument.instrumentId != wantId) || shown.isEmpty()) {
+            return;  // stale reply from before a switch, or no row for the shown one
         }
-        // Response may be an array of rate objects or {rates:[...]} / {data:[...]}.
-        QJsonObject rate;
-        const QJsonArray arr =
-            asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
-        if (!arr.isEmpty()) {
-            rate = arr.first().toObject();
-        } else if (doc.isObject()) {
-            rate = doc.object();
-        } else {
-            // no usable payload shape — the id check below rejects the empty object
+        publishShownPrice(shown, wantId);
+    }, /*retriesLeft=*/1);  // ride out a transient 429 on the shared market-data pool
+}
+
+QJsonObject EtoroClient::applyRatesSnapshot(const QJsonDocument &doc, qint64 wantId)
+{
+    // Response may be an array of rate objects or {rates:[...]} / {data:[...]}.
+    QJsonArray arr = asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
+    if (arr.isEmpty() && doc.isObject()) {
+        arr.append(doc.object());
+    }
+    QJsonObject shown;
+    for (const auto &v : std::as_const(arr)) {
+        const QJsonObject rate = v.toObject();
+        if (applyRateRow(rate) == wantId) {
+            shown = rate;
         }
-        // The payload echoes the instrument id — reject a mismatched row outright.
-        const qint64 gotId = static_cast<qint64>(
-            numFrom(pick(rate, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
-        if ((gotId > 0) && (gotId != wantId)) {
+    }
+    repairStaleQuotes();
+    emit quotesUpdated();
+    return shown;
+}
+
+void EtoroClient::publishShownPrice(const QJsonObject &shownRow, qint64 wantId)
+{
+    // Keep the bid/ask so orders can price SL/TP off the side the position will
+    // actually open at (buy→ask, sell→bid); the mid alone skews the SL by the
+    // half-spread, which on a wide-spread CFD is a visible mismatch vs the set amount.
+    // Take them from the quote book, so a repaired (candle-derived) price reaches the
+    // trade panel and the chart too rather than only the P/L column.
+    const Quote quote = m_quoteById.value(wantId);
+    if (quote.bid > 0.0) {
+        m_lastBid = quote.bid;
+    }
+    if (quote.ask > 0.0) {
+        m_lastAsk = quote.ask;
+    }
+
+    // A repaired quote's row carries the DELAYED lastExecution, so its own mid is the
+    // only price consistent with the bid/ask just published.
+    double price = quote.fromCandle
+                       ? ((quote.bid + quote.ask) / 2.0)
+                       : numFrom(pick(shownRow, {QStringLiteral("lastExecution"),
+                                                 QStringLiteral("currentRate"),
+                                                 QStringLiteral("close"), QStringLiteral("mid"),
+                                                 QStringLiteral("last")}));
+    if ((price <= 0.0) && (quote.bid > 0.0) && (quote.ask > 0.0)) {
+        price = (quote.bid + quote.ask) / 2.0;
+    }
+    if (price > 0.0) {
+        m_lastPrice = price;
+        emit priceUpdated(QDateTime::currentDateTime(), price);
+    }
+}
+
+void EtoroClient::repairStaleQuotes()
+{
+    if (m_simulated) {
+        return;
+    }
+    // At most one candle request per instrument per interval: the repair runs off the
+    // 1 s price tick, so without this it would fire a request per tick per position.
+    static constexpr qint64 kRepairIntervalMs = 2000;
+    // An instrument already being marked from candles is re-read well before its mark
+    // could go stale — the alternative (waiting for kQuoteStaleMs) both lets the mark
+    // drift for minutes on a fast index and makes the column flicker to "not live"
+    // every time the bound is crossed. Only the delayed instruments pay for this.
+    static constexpr qint64 kCandleRefreshMs = 5000;
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    QSet<qint64> want = m_heldInstrumentIds;
+    if (m_instrument.isValid()) {
+        static_cast<void>(want.insert(m_instrument.instrumentId));
+    }
+    for (const qint64 id : want) {
+        const Quote quote = m_quoteById.value(id);
+        const qint64 age = quote.ageMs(nowUtc);
+        const bool current = (age >= 0)
+                             && (age <= (quote.fromCandle ? kCandleRefreshMs
+                                                          : trading::kQuoteStaleMs));
+        if (current) {
+            continue;  // the held price is current — nothing to repair
+        }
+        if (m_candleRepairInFlight.contains(id)) {
+            continue;
+        }
+        const QDateTime lastTry = m_candleRepairAt.value(id);
+        if (lastTry.isValid() && (lastTry.msecsTo(nowUtc) < kRepairIntervalMs)) {
+            continue;
+        }
+        static_cast<void>(m_candleRepairAt.insert(id, nowUtc));
+        static_cast<void>(m_candleRepairInFlight.insert(id));
+        fetchLatestCandleBid(id);
+    }
+}
+
+void EtoroClient::fetchLatestCandleBid(qint64 instrumentId)
+{
+    const QString path =
+        QStringLiteral("/v1/market-data/instruments/%1/history/candles/%2/OneMinute/1")
+            .arg(instrumentId)
+            .arg(m_candleDirection);
+    QNetworkReply *reply = apiGet(path, QUrlQuery());
+    handleReply(reply, [this, instrumentId](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                           const QByteArray & /*raw*/,
+                                           const QString & /*netError*/) {
+        static_cast<void>(m_candleRepairInFlight.remove(instrumentId));
+        if (!ok) {
+            return;  // transient; the next tick tries again
+        }
+        const QList<Candle> candles = candlesFrom(doc);
+        if (candles.isEmpty()) {
             return;
         }
-        // Keep the bid/ask so orders can price SL/TP off the side the position will
-        // actually open at (buy→ask, sell→bid); the mid alone skews the SL by the
-        // half-spread, which on a wide-spread CFD is a visible mismatch vs the set amount.
-        const double bid = numFrom(pick(rate, {QStringLiteral("bid"), QStringLiteral("cvtBid")}));
-        const double ask = numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
-        if (bid > 0.0) {
-            m_lastBid = bid;
+        const Candle &newest = candles.last();  // candlesFrom sorts oldest-first
+        if ((newest.close <= 0.0) || !newest.timestamp.isValid()) {
+            return;
         }
-        if (ask > 0.0) {
-            m_lastAsk = ask;
+        // The CURRENT minute's candle is a live partial: its close is the bid as of this
+        // request, so it is stamped with the fetch time. A newest candle older than that
+        // means the feed itself has stopped (closed market) — keep its own stamp, so the
+        // quote reads as old and the table shows the position as not live.
+        static constexpr qint64 kOneMinuteMs = 60000;  // named: no precedence question
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const qint64 candleAge = newest.timestamp.msecsTo(nowUtc);
+        const bool livePartial = (candleAge >= 0) && (candleAge < kOneMinuteMs);
+        const QDateTime stamp = livePartial ? nowUtc : newest.timestamp;
+        Quote q = m_quoteById.value(instrumentId);
+        if (q.asOf.isValid() && (stamp <= q.asOf)) {
+            return;  // nothing newer than the price already held
         }
-
-        double price = numFrom(pick(rate, {QStringLiteral("lastExecution"),
-                                            QStringLiteral("currentRate"), QStringLiteral("close"),
-                                            QStringLiteral("mid"), QStringLiteral("last")}));
-        if ((price <= 0.0) && (bid > 0.0) && (ask > 0.0)) {
-            price = (bid + ask) / 2.0;
-        }
-        if (price > 0.0) {
-            m_lastPrice = price;
-            emit priceUpdated(QDateTime::currentDateTime(), price);
-        }
+        const double spread = q.spread();
+        q.bid = newest.close;   // measured identity: the 1-minute close IS the bid
+        q.ask = newest.close + spread;
+        q.asOf = stamp;
+        q.fromCandle = true;
+        static_cast<void>(m_quoteById.insert(instrumentId, q));
+        emit quotesUpdated();
     });
 }
 
@@ -1501,9 +1668,15 @@ void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
     // the right InstrumentId even for a trade on an instrument other than the one
     // currently shown in the header.
     m_instrumentByPosition.clear();
+    m_heldInstrumentIds.clear();
     for (const Position &p : positions) {
         if (!p.positionId.isEmpty() && (p.instrumentId > 0)) {
             static_cast<void>(m_instrumentByPosition.insert(p.positionId, p.instrumentId));
+        }
+        if (p.instrumentId > 0) {
+            // Feeds the per-tick bulk quote poll, so every held instrument — not just
+            // the one on screen — has a quote of the current tick to mark against.
+            static_cast<void>(m_heldInstrumentIds.insert(p.instrumentId));
         }
     }
 
@@ -1511,93 +1684,44 @@ void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
     // the order-lookup endpoint, not by watching this snapshot's position count —
     // that lagged and produced false "opened no position" reports.)
 
-    // Collect the distinct held instrument ids and fetch their live rates so P/L
-    // is computed for every open trade, not just the one currently on screen.
-    QSet<qint64> seen;
-    QStringList ids;
-    for (const Position &p : positions) {
-        if ((p.instrumentId > 0) && !seen.contains(p.instrumentId)) {
-            static_cast<void>(seen.insert(p.instrumentId));
-            ids << QString::number(p.instrumentId);
+    // Mark every position from the quote book, which the 1 s bulk poll keeps current
+    // for exactly these instruments. This used to issue its own rates call and mark
+    // only at portfolio-poll time; both the extra call and the coarser cadence are gone.
+    QList<Position> priced = positions;
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    for (Position &p : priced) {
+        const Quote quote = m_quoteById.value(p.instrumentId);
+        if ((p.openRate <= 0.0) || !quote.isValid()) {
+            continue;
+        }
+        // Value per point in the account currency — the same domain identity the
+        // positions table and the gauge use (notional/openRate; raw units are in the
+        // *quote* currency and mis-scale non-account-currency instruments like HKG50).
+        const double perPoint = trading::accountValuePerPoint(p);
+
+        // Expected spread cost to close now. eToro attributes HALF the spread to
+        // opening and half to closing (a long sells at the bid = mid − spread/2), so
+        // its close dialog shows spread/2 × value-per-point; charging the full spread
+        // here was ≈2× eToro's figure (same bug fixed for the opening cost).
+        if (quote.spread() > 0.0) {
+            p.closingCost = (quote.spread() / 2.0) * perPoint;
+        }
+
+        // Only mark against a quote that is actually current. A delayed one would move
+        // the figure AWAY from eToro's live number, so in that case eToro's own
+        // snapshot value is the better answer and is left standing (the table shows it
+        // as not-live); the candle repair usually has a fresh mark by the next tick.
+        // An unstamped row (age -1) passes: fail open, as the market-open inference does.
+        if (quote.ageMs(nowUtc) <= trading::kQuoteStaleMs) {
+            p.profit = trading::positionPnl(p, quote);
+            // Re-anchor so the per-tick re-price in the table continues from here.
+            p.apiCloseRate = quote.closeRate(p.isBuy);
         }
     }
-    if (ids.isEmpty()) {
-        emit portfolioUpdated(positions);
-        return;
-    }
-
-    QUrlQuery q;
-    q.addQueryItem(QStringLiteral("instrumentIds"), ids.join(QLatin1Char(',')));
-    QNetworkReply *reply = apiGet(QStringLiteral("/v1/market-data/instruments/rates"), q);
-    // Init-capture: deduces a mutable QList<Position> copy (a plain by-copy capture
-    // of the const-ref parameter would keep the referenced const type).
-    handleReply(reply, [this, positions = positions](bool ok, qint32 /*status*/, const QJsonDocument &doc,
-                                          const QByteArray & /*raw*/, const QString & /*netError*/) mutable {
-        if (ok) {
-            QHash<qint64, double> bidById;
-            QHash<qint64, double> askById;
-            QJsonArray arr = asArray(doc, {QStringLiteral("rates"), QStringLiteral("data")});
-            if (arr.isEmpty() && doc.isObject()) {
-                arr.append(doc.object());
-            }
-            for (const auto &v : std::as_const(arr)) {
-                const QJsonObject rate = v.toObject();
-                const qint64 id =
-                    static_cast<qint64>(numFrom(pick(rate, {QStringLiteral("instrumentId")})));
-                const double bid = numFrom(pick(rate, {QStringLiteral("bid"), QStringLiteral("cvtBid")}));
-                const double ask = numFrom(pick(rate, {QStringLiteral("ask"), QStringLiteral("cvtAsk")}));
-                if ((id > 0) && (bid > 0.0)) {
-                    static_cast<void>(bidById.insert(id, bid));
-                }
-                if ((id > 0) && (ask > 0.0)) {
-                    static_cast<void>(askById.insert(id, ask));
-                }
-            }
-            for (Position &p : positions) {
-                const double bid = bidById.value(p.instrumentId, 0.0);
-                const double ask = askById.value(p.instrumentId, 0.0);
-                if (p.openRate <= 0.0) {
-                    continue;
-                }
-                // Value per point in the account currency — the same domain identity
-                // the positions table and the gauge use (notional/openRate; raw units
-                // are in the *quote* currency and mis-scale non-account-currency
-                // instruments such as HKG50 in HKD).
-                const double perPoint = trading::accountValuePerPoint(p);
-
-                // Expected spread cost to close now. eToro attributes HALF the spread
-                // to opening and half to closing (a long sells at the bid = mid − spread/2),
-                // so its close dialog shows spread/2 × value-per-point; charging the full
-                // spread here was ≈2× eToro's figure (same bug fixed for the opening cost).
-                if ((bid > 0.0) && (ask > 0.0) && (ask > bid)) {
-                    p.closingCost = ((ask - bid) / 2.0) * perPoint;
-                }
-
-                // Only estimate P/L when eToro didn't supply its own. Mark against the
-                // side the trade closes on (a long sells at the bid, a short buys at the
-                // ask), matching how eToro values it, rather than the mid.
-                if (!p.profitFromApi) {
-                    const double close = p.isBuy ? bid : ask;
-                    if (close > 0.0) {
-                        const double dir = p.isBuy ? 1.0 : -1.0;
-                        p.profit = dir * perPoint * (close - p.openRate);
-                    }
-                } else if (p.apiCloseRate > 0.0) {
-                    // The /pnl endpoint serves a CACHED snapshot (observed ~1.5h old
-                    // mid-session), so eToro's figure must be brought current: add the
-                    // marking-side move since the rate the snapshot was computed at,
-                    // then re-anchor so the per-tick re-price continues from here.
-                    const double close = p.isBuy ? bid : ask;
-                    if (close > 0.0) {
-                        const double dir = p.isBuy ? 1.0 : -1.0;
-                        p.profit += dir * perPoint * (close - p.apiCloseRate);
-                        p.apiCloseRate = close;
-                    }
-                }
-            }
-        }
-        emit portfolioUpdated(positions);  // best-effort: emit even if rates failed
-    });
+    emit portfolioUpdated(priced);
+    // A position just opened on an instrument the poll didn't cover yet has no quote;
+    // m_heldInstrumentIds now includes it, so kick the repair rather than wait a tick.
+    repairStaleQuotes();
 }
 
 void EtoroClient::refreshBalanceReal()

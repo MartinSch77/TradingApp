@@ -48,7 +48,7 @@ STATEMENT: The app shall resolve a user-selected instrument symbol to its eToro 
 UID: REQ-F-002
 VERIFICATION: T
 TITLE: Live price polling and chart
-STATEMENT: The app shall poll live prices for the selected instrument and display them in a chart and price read-out.
+STATEMENT: The app shall poll live prices for the selected instrument and display them in a chart and price read-out. The chart's price-axis labels and its current-price tag shall carry at least three decimals and shall follow the magnitude of the instrument on screen (more for a low-priced one such as a forex pair), so a label is never rounded to a price the instrument never had.
 
 [REQUIREMENT]
 UID: REQ-F-003
@@ -120,7 +120,7 @@ STATEMENT: The app shall propose (never execute) closing an open position when t
 UID: REQ-F-014
 VERIFICATION: T
 TITLE: Closed-trades lookback with costs
-STATEMENT: The app shall list closed trades over a selectable 7–13-week lookback with the API's net P/L and rollover fees plus estimated open/close spread costs (half current spread × notional per side) and the spread percentage each estimate priced with, flagging spreads captured while the market was closed (frozen quotes overstate costs); it shall summarise per instrument with a Costs column = spread costs + fees and show the total costs across listed instruments next to the net P/L headline.
+STATEMENT: The app shall list closed trades over a selectable 7–13-week lookback — reachable both from the closed-trades panel and from a button in the main header, and restricted by default to the instruments the app itself trades (with an explicit opt-out that lists the whole account, foreign rows greyed) — with the API's net P/L and rollover fees plus estimated open/close spread costs (half current spread × notional per side) and the spread percentage each estimate priced with, flagging spreads captured while the market was closed (frozen quotes overstate costs); it shall summarise per instrument with a Costs column = spread costs + fees and show the total costs across listed instruments next to the net P/L headline.
 
 [REQUIREMENT]
 UID: REQ-F-015
@@ -186,7 +186,7 @@ STATEMENT: 'Clicking the Side cell of an open-trade row shall open a non-modal g
 UID: REQ-F-025
 VERIFICATION: T
 TITLE: Open trades mirror the live portfolio
-STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh; eToro's authoritative per-position P/L shall be overlaid onto the positions that are still open and re-anchored to the live close rate. When a position disappears from the portfolio, the app shall refresh the closed-trades list immediately — at most one history walk per 5 s, and the delayed refresh stays armed because the broker's trade history lags the portfolio.
+STATEMENT: The open-trades view shall take its position set from the account's live portfolio view, never from cached P/L snapshots, so that a position closed outside the app (in eToro's own UI, or automatically by SL/TP) disappears on the next refresh. Every open trade's P/L shall be marked the way eToro marks it — units × (close rate − open rate) × the instrument's conversion rate, at the bid for a long and the ask for a short — from a quote of the current poll tick for the trade's OWN instrument, not only for the instrument on screen. A quote shall mark a position only while eToro's own timestamp for that price is younger than ~2 minutes: where eToro publishes an instrument's rate behind real time (measured at 6–12 minutes on the .24-7 index variants, and inherited by its /pnl figures), the mark shall come from that instrument's live 1-minute candle close instead, and where no current price exists at all the view shall show eToro's last snapshot figure flagged as not live rather than a figure derived from a stale price. The view shall summarise the open book below the table: the total invested amount — summing the Amount column exactly as it is shown, so the column adds up to the total — and the total P/L, restated on every re-price rather than only per poll, and flagged as not live when any row lacks a current quote. The P/L cell's tooltip shall name the rate its figure is marked at, and the stop-loss and take-profit cells — which show what each leg is worth — shall carry a tooltip naming the instrument RATE that triggers it, its distance from the open rate and from the rate the trade would close at now, the amount the cell states, and whether the stop trails; a leg that is off shall say so rather than read as a trigger at zero. When a position disappears from the portfolio, the app shall refresh the closed-trades list immediately — at most one history walk per 5 s, and the delayed refresh stays armed because the broker's trade history lags the portfolio.
 
 [REQUIREMENT]
 UID: REQ-F-026

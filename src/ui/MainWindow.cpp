@@ -230,6 +230,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     , m_orderCooldownTimer(new QTimer(this))
 {
     buildUi();
+    updateOpenTradesSummary();   // "No open trades." until the first portfolio snapshot
 
     // The QMetaObject::Connection results are intentionally discarded: these are
     // designed-in, program-lifetime connections that are never disconnected by hand.
@@ -249,6 +250,11 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
         }));
     static_cast<void>(connect(m_client, &EtoroClient::historyReady, this, &MainWindow::onHistory));
     static_cast<void>(connect(m_client, &EtoroClient::priceUpdated, this, &MainWindow::onPrice));
+    // Quotes for the HELD instruments arrive with the same bulk poll as the shown one's
+    // price, and a candle repair can land between ticks: re-mark the table on the quote
+    // book itself, so a row whose instrument is not the one on screen stays current too.
+    static_cast<void>(connect(m_client, &EtoroClient::quotesUpdated, this,
+                              &MainWindow::updateOpenTradePnl));
     static_cast<void>(
         connect(m_client, &EtoroClient::portfolioUpdated, this, &MainWindow::onPortfolio));
     static_cast<void>(connect(m_client, &EtoroClient::cashUpdated, this, &MainWindow::onCash));
@@ -295,23 +301,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
                               [this](const QString &symbol, const QList<double> &closes) {
                                   static_cast<void>(m_intradayBySymbol.insert(symbol, closes));
                               }));
-    static_cast<void>(
-        connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
-    // Results of the off-GUI-thread Monte-Carlo / trade-plan computations.
-    static_cast<void>(connect(&m_mcWatcher, &QFutureWatcher<trading::McOutlook>::finished,
-                              this, [this] {
-                                  m_mcBusy = false;
-                                  renderMonteCarlo(m_mcWatcher.result());
-                              }));
-    static_cast<void>(connect(&m_rowPlanWatcher,
-                              &QFutureWatcher<QHash<QString, trading::TradePlan>>::finished,
-                              this, [this]() { applyRowPlanVerdicts(); }));
-    static_cast<void>(connect(&m_planWatcher, &QFutureWatcher<trading::TradePlan>::finished,
-                              this, [this] {
-                                  renderTradePlanResult(m_planWatcher.result(),
-                                                        m_planPendingSymbol,
-                                                        m_planPendingIsCurrent);
-                              }));
+    connectWorkerResults();
 
     static_cast<void>(connect(m_buyButton, &QPushButton::clicked, this, &MainWindow::onBuyClicked));
     static_cast<void>(connect(m_sellButton, &QPushButton::clicked, this, &MainWindow::onSellClicked));
@@ -1145,6 +1135,19 @@ void MainWindow::buildUi()
     static_cast<void>(
         connect(m_screenerButton, &QPushButton::clicked, this, &MainWindow::openScreener));
 
+    // Closed trades: the same window the closed-trades panel's "All trades…" button
+    // opens, reachable from the header too — the history of the app's own instruments
+    // is a top-level question, not a detail of the summary panel.
+    m_closedButton = new QPushButton(QStringLiteral("Closed trades…"), central);
+    m_closedButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_closedButton->setToolTip(QStringLiteral(
+        "Every closed trade over a selectable 7–13-week lookback, restricted to the "
+        "instruments this app trades (untick the filter in the window to see the whole "
+        "account): side, leverage, invest, open/close rate, eToro's own net P/L and "
+        "rollover fees, plus estimated open/close spread costs."));
+    static_cast<void>(
+        connect(m_closedButton, &QPushButton::clicked, this, &MainWindow::openClosedTrades));
+
     // Decision window: alternative sources + AI + algorithm → one final call.
     m_decisionButton = new QPushButton(QStringLiteral("Decision…"), central);
     m_decisionButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
@@ -1188,6 +1191,7 @@ void MainWindow::buildUi()
     header->addWidget(m_signalsToggle);
     header->addWidget(m_screenerButton);
     header->addWidget(m_decisionButton);
+    header->addWidget(m_closedButton);
     header->addStretch();
     header->addLayout(priceCol);
     root->addLayout(header);
@@ -1632,8 +1636,25 @@ void MainWindow::buildUi()
                 p.symbol.compare(m_client->instrument().symbol, Qt::CaseInsensitive) == 0;
             m_tradeGauge->showTrade(p, (isCurrent && (m_lastPrice > 0.0)) ? m_lastPrice : 0.0,
                                     m_ccy, m_eurPerUsd);
+            // Mark the P/L line from the trade's own quote right away, so the window
+            // does not open on the snapshot figure and only correct itself a tick later.
+            const Quote quote = m_client->quotes().value(p.instrumentId);
+            if (quote.isValid()) {
+                m_tradeGauge->updatePrice(isCurrent ? m_lastPrice : quote.bid, quote);
+            }
         }));
     posLayout->addWidget(m_positions);
+
+    // Account-wide totals of the rows above: what is currently tied up and what the book
+    // is worth right now. Updated with every re-price, not only per portfolio poll, so it
+    // moves with the P/L column it sums.
+    m_openTradesSummary = new QLabel(posBox);
+    m_openTradesSummary->setTextFormat(Qt::RichText);
+    m_openTradesSummary->setToolTip(QStringLiteral(
+        "Totals over the open trades above: the invested amounts as the Amount column "
+        "rounds them (so the column adds up to this), and the sum of the P/L column — "
+        "each row marked at its own instrument's current rate, the way eToro marks it."));
+    posLayout->addWidget(m_openTradesSummary);
 
     // Close-proposal banner: filled by the watchdog when the live price breaks the
     // forecast corridor against an open trade (or the signal flips hard against it).
@@ -1935,13 +1956,14 @@ void MainWindow::onPrice(const QDateTime &time, double price)
         seed(m_limitSellRate, price * 1.01);  // sell 1% above it
     }
 
-    updateOpenTradePnl(price);  // live-refresh open-trade P/L with the new price
+    updateOpenTradePnl();       // live-refresh open-trade P/L from the quote book
     updatePendingOrderRates();  // …and the resting orders' "Now" column
     // Keep the trade-gauge needle live while it shows a trade on this instrument.
     if ((m_tradeGauge != nullptr) && m_tradeGauge->isVisible()
         && (m_tradeGauge->symbol().compare(m_client->instrument().symbol,
                                            Qt::CaseInsensitive) == 0)) {
-        m_tradeGauge->updatePrice(price);
+        m_tradeGauge->updatePrice(
+            price, m_client->quotes().value(m_client->instrument().instrumentId));
     }
     updateSignals();
     // No app-side price watch fires orders any more: conditional entries are eToro's
@@ -2078,19 +2100,69 @@ void MainWindow::applyUiScale()
     }
 }
 
-// Re-price the open-trades P/L column from fresh live rates, in place, so it tracks
-// the chart between the ~3s portfolio polls. Each shown-instrument row shows eToro's
-// own API P/L plus the value of the marking-side move (long → bid, short → ask)
-// since the rate that P/L was computed at (Position::apiCloseRate) — so the figure
-// matches what eToro itself shows, not a mid-price approximation from a different
-// moment. Positions on other instruments are left as the poll supplied them.
-void MainWindow::updateOpenTradePnl(double price)
+// Everything computed OFF the GUI thread reports back here: the AI advisor and the three
+// QtConcurrent futures (Monte-Carlo outlook, the per-row plan verdicts, one instrument's
+// plan). Out of the constructor so its wiring list stays within the metrics budget.
+void MainWindow::connectWorkerResults()
+{
+    static_cast<void>(
+        connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
+    static_cast<void>(connect(&m_mcWatcher, &QFutureWatcher<trading::McOutlook>::finished,
+                              this, [this] {
+                                  m_mcBusy = false;
+                                  renderMonteCarlo(m_mcWatcher.result());
+                              }));
+    static_cast<void>(connect(&m_rowPlanWatcher,
+                              &QFutureWatcher<QHash<QString, trading::TradePlan>>::finished,
+                              this, [this]() { applyRowPlanVerdicts(); }));
+    static_cast<void>(connect(&m_planWatcher, &QFutureWatcher<trading::TradePlan>::finished,
+                              this, [this] {
+                                  renderTradePlanResult(m_planWatcher.result(),
+                                                        m_planPendingSymbol,
+                                                        m_planPendingIsCurrent);
+                              }));
+}
+
+// Re-price the open-trades P/L column from the live quote book, in place, so it tracks
+// the market between the ~3 s portfolio polls. Every row is marked at ITS instrument's
+// current bid (long) or ask (short) with eToro's own identity, so the column reads the
+// same as eToro's own screen; a row without a current quote keeps eToro's snapshot
+// figure and says so rather than being marked off a price published minutes ago.
+void MainWindow::updateOpenTradePnl()
 {
     if (m_positionsModel == nullptr) {
         return;
     }
-    m_positionsModel->repriceOpenPnl(m_client->instrument().symbol, m_client->lastBid(),
-                                     m_client->lastAsk(), price, m_pnlAnchorPrice);
+    m_positionsModel->repriceOpenPnl(m_client->quotes(), QDateTime::currentDateTimeUtc());
+    updateOpenTradesSummary();
+}
+
+void MainWindow::updateOpenTradesSummary()
+{
+    if ((m_openTradesSummary == nullptr) || (m_positionsModel == nullptr)) {
+        return;
+    }
+    const qint32 trades = m_positionsModel->rowCount();
+    if (trades == 0) {
+        m_openTradesSummary->setText(QStringLiteral("<b>No open trades.</b>"));
+        return;
+    }
+    const double invested = m_positionsModel->totalInvestedDisplay();
+    const double pnl = m_positionsModel->totalPnlDisplay();
+    const bool live = m_positionsModel->allPnlLive();
+    const QString sign = (pnl < 0.0) ? QStringLiteral("-") : QStringLiteral("+");
+    const QColor pnlColor = (pnl >= 0.0) ? trading::ui::kGreen : trading::ui::kRed;
+    const QString color = (live ? pnlColor : trading::ui::kGrey).name();
+    // "*" carries the same meaning as in the P/L column: at least one row has no current
+    // quote, so the total is eToro's last snapshot for that part rather than a live mark.
+    const QString marker = live ? QString() : QStringLiteral(" *");
+    m_openTradesSummary->setText(
+        QStringLiteral("<b>Invested: %1%2 &nbsp;·&nbsp; P/L: <span style='color:%3'>%4%1%5%6"
+                       "</span></b> &nbsp;·&nbsp; %7 open trade%8")
+            .arg(m_ccy, QLocale().toString(invested, 'f', 2), color, sign,
+                 QLocale().toString(std::abs(pnl), 'f', 2), marker)
+            .arg(trades)
+            .arg((trades == 1) ? QString() : QStringLiteral("s")));
 }
 
 void MainWindow::onPortfolio(const QList<Position> &positions)
@@ -2138,11 +2210,6 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
     // below, or a click lands on a different trade than the one shown.
     m_shownPositions = sorted;
 
-    // Fallback anchor for re-pricing: positions normally carry the exact rate their
-    // API P/L was marked at (apiCloseRate); this poll-time price covers the ones
-    // that don't (e.g. simulation mode).
-    m_pnlAnchorPrice = m_lastPrice;
-
     // Override a position's SL/TP with the value the user just submitted, until the
     // server snapshot converges to it (or the pin times out) — see m_pendingSlTp.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -2178,6 +2245,9 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
     }
     m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);  // keep the FX rate fresh
     m_positionsModel->setPositions(pinned);
+    // Mark the rows from the quote book right away: a row the poll has just added would
+    // otherwise render as "no current quote" until the next tick.
+    updateOpenTradePnl();
 
     // Drop pins for positions no longer open (e.g. closed), so the map can't grow.
     if (!m_pendingSlTp.isEmpty()) {
@@ -2829,6 +2899,9 @@ void MainWindow::onFxRate(double eurPerUsd)
     if (m_availableCash > 0.0) {
         onCash(m_availableCash, QString());
     }
+    // The open-trades totals are euro figures too — restate them at the new rate rather
+    // than leaving them a poll behind the cells they sum.
+    updateOpenTradesSummary();
     if (firstRate) {
         appendLog(QStringLiteral("EUR/USD %1 — account figures shown in euro.")
                       .arg(QLocale().toString(1.0 / eurPerUsd, 'f', 4)));
@@ -3341,6 +3414,18 @@ void MainWindow::openClosedTrades()
         top->addWidget(m_closedWeeks);
         m_closedRefresh = new QPushButton(QStringLiteral("Refresh"), m_closedDialog);
         top->addWidget(m_closedRefresh);
+        // Default ON: the account's history can span hundreds of instruments, while the
+        // question this window answers is "how did MY instruments do". Unticking keeps
+        // the old behaviour — the whole account, foreign rows greyed as context.
+        m_closedListedOnly = new QCheckBox(QStringLiteral("Only this app's instruments"),
+                                           m_closedDialog);
+        m_closedListedOnly->setChecked(true);
+        m_closedListedOnly->setToolTip(QStringLiteral(
+            "Show only trades on the instruments in this app's selector. Unticked, every "
+            "closed trade of the account is listed, with the foreign ones greyed."));
+        static_cast<void>(connect(m_closedListedOnly, &QCheckBox::toggled, this,
+                                  [this](bool) { rebuildClosedTradesTable(); }));
+        top->addWidget(m_closedListedOnly);
         top->addStretch();
         lay->addLayout(top);
 
@@ -3411,24 +3496,39 @@ void MainWindow::onClosedTrades(const QList<ClosedTrade> &trades)
     rebuildClosedTradesTable();
 }
 
+// The rows the closed-trades window shows: only the app's own instruments while its
+// filter is ticked (the default — the account's history can span hundreds of others),
+// otherwise every fetched trade, with the foreign ones greyed as context.
+QList<ClosedTrade> MainWindow::shownClosedTrades() const
+{
+    if ((m_closedListedOnly == nullptr) || !m_closedListedOnly->isChecked()) {
+        return m_closedTrades;
+    }
+    QList<ClosedTrade> shown;
+    shown.reserve(m_closedTrades.size());
+    for (const ClosedTrade &t : std::as_const(m_closedTrades)) {
+        if (t.listed) {
+            shown << t;
+        }
+    }
+    return shown;
+}
+
 void MainWindow::rebuildClosedTradesTable()
 {
     if (m_closedTable == nullptr) {
         return;
     }
-    const QColor &green = trading::ui::kGreen;
-    const QColor &red = trading::ui::kRed;
-    const QColor &grey = trading::ui::kGrey;
-
     double sumNet = 0.0;
     double sumFees = 0.0;
     double sumCosts = 0.0;
     qint32 costRows = 0;
 
-    const auto rows = static_cast<qint32>(m_closedTrades.size());
+    const QList<ClosedTrade> shown = shownClosedTrades();
+    const auto rows = static_cast<qint32>(shown.size());
     m_closedTable->setRowCount(rows);
     for (qint32 i = 0; i < rows; ++i) {
-        const ClosedTrade &t = m_closedTrades[i];
+        const ClosedTrade &t = shown[i];
         auto make = [&t](const QString &text) {
             auto *it = new QTableWidgetItem(text);
             if (!t.listed) {
@@ -3446,7 +3546,7 @@ void MainWindow::rebuildClosedTradesTable()
             make(t.closeTime.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
         m_closedTable->setItem(i, 1, make(t.symbol));
         auto *side = make(t.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"));
-        side->setForeground(t.isBuy ? green : red);
+        side->setForeground(t.isBuy ? trading::ui::kGreen : trading::ui::kRed);
         side->setTextAlignment(Qt::AlignCenter);
         m_closedTable->setItem(i, 2, side);
         auto *lev = make(QStringLiteral("x%1").arg(t.leverage, 0, 'f', 0));
@@ -3463,7 +3563,8 @@ void MainWindow::rebuildClosedTradesTable()
         auto *net = make(QStringLiteral("%1%2")
                              .arg((netEur >= 0.0) ? QStringLiteral("+") : QString(),
                                   QLocale().toString(netEur, 'f', 2)));
-        net->setForeground((t.netProfit > 0.0) ? green : ((t.netProfit < 0.0) ? red : grey));
+        net->setForeground((t.netProfit > 0.0) ? trading::ui::kGreen
+                           : ((t.netProfit < 0.0) ? trading::ui::kRed : trading::ui::kGrey));
         net->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 7, net);
         auto *fees = make(money(t.fees));
@@ -4884,7 +4985,6 @@ void MainWindow::selectInstrument(const QString &sym)
         m_instrumentBox->setCurrentIndex(idx);
     }
     m_limitRateDefaultsSet = false;  // reseed the limit-order rates for the new instrument
-    m_pnlAnchorPrice = 0.0;     // drop the old instrument's P/L anchor until the next poll
     m_fees = InstrumentFees{};  // the old instrument's rollover fees no longer apply
     m_slTpAuto = true;          // volatility-proposed SL/TP resume for the new instrument
     m_forecastTarget = 0.0;     // old corridor no longer applies (watchdog stands down)

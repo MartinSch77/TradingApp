@@ -31,6 +31,19 @@ double accountValuePerPoint(const Position &p)
     return (notional > 0.0) ? (notional / p.openRate) : p.units;
 }
 
+double positionPnl(const Position &p, const Quote &q)
+{
+    const double close = q.closeRate(p.isBuy);
+    if ((close <= 0.0) || (p.openRate <= 0.0)) {
+        return 0.0;
+    }
+    const double move = (p.isBuy ? 1.0 : -1.0) * (close - p.openRate);
+    // Units are counted in the instrument's own currency, so the move has to be
+    // converted; the value-per-point fallback is already an account-currency figure.
+    return (p.units > 0.0) ? (p.units * move * q.conversion(p.isBuy))
+                           : (accountValuePerPoint(p) * move);
+}
+
 QString slTpAmountText(const Position &p, double rate, double eurPerUsd)
 {
     const double perPoint = accountValuePerPoint(p);

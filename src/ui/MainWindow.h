@@ -182,11 +182,18 @@ private:
     // The resting-order table plus its Adjust/Cancel buttons, appended to `form`.
     void buildPendingOrdersView(QWidget *parent, QFormLayout *form);
     void onMarketClosedOverrideToggled(bool on);  // log the change, re-gate the buttons
-    // Live-refresh the open-trades P/L cells from a new price, without waiting for the
-    // next portfolio poll. Only the shown instrument's rows move (the only live price
-    // we have); each is anchored to the last API P/L so the value stays net of
-    // spread/fees and doesn't jump when the poll re-supplies it. See m_pnlAnchorPrice.
-    void updateOpenTradePnl(double price);
+    // Wire the results of everything computed off the GUI thread (AI advisor + the three
+    // QtConcurrent watchers). Called from the constructor; separate so its connection
+    // list stays within the metrics budget.
+    void connectWorkerResults();
+    // Live-refresh the open-trades P/L cells from the client's quote book, without
+    // waiting for the next portfolio poll. EVERY row moves, each marked from its own
+    // instrument's current quote — the way eToro marks it — so a trade on an instrument
+    // other than the one on screen is not left behind.
+    void updateOpenTradePnl();
+    // The invested / P-L totals under the open-trades table. Called from the same places
+    // as the re-price, so the summary can never state a different figure than the rows.
+    void updateOpenTradesSummary();
     // Ctrl + mouse-wheel UI zoom: scale both windows' size and every font from a
     // captured baseline. setUiScale clamps and stores the factor; applyUiScale does
     // the work. Over the chart, Ctrl+wheel keeps zooming its time axis instead.
@@ -230,6 +237,9 @@ private:
     // corridor against an open position (or the signal flips against it with high
     // confidence), propose closing that position — banner + log, never auto-close.
     void checkCloseProposals(double price);
+    // Rows for the closed-trades window: filtered to the app's own instruments while
+    // its "Only this app's instruments" box is ticked (the default).
+    [[nodiscard]] QList<ClosedTrade> shownClosedTrades() const;
     void rebuildClosedTradesTable();  // (re)fill the closed-trades detail window
     // Lookback for closed-trade refreshes: every fetch feeds the summary panel AND
     // the details dialog, so while the dialog is open its selector wins — an auto
@@ -328,6 +338,7 @@ private:
     QTableWidget *m_pnlTable = nullptr;
     QPushButton *m_pnlRefresh = nullptr;
     QPushButton *m_pnlDetails = nullptr;     // opens the closed-trades detail window
+    QPushButton *m_closedButton = nullptr;   // …and so does this one, from the header
     bool m_pnlAutoFetched = false;  // auto-fetch the summary once, on first ready
     QTimer *m_pnlAfterCloseTimer = nullptr;  // refreshes the summary ~10s after a close,
                                              // coalescing a burst of closes into one fetch
@@ -343,6 +354,8 @@ private:
     QLabel *m_closedSummary = nullptr;
     QTableWidget *m_closedTable = nullptr;
     QPushButton *m_closedRefresh = nullptr;
+    QCheckBox *m_closedListedOnly = nullptr;  // restrict the list to the app's own
+                                             // instruments (on by default)
     QList<ClosedTrade> m_closedTrades;       // latest fetched detail list
 
     // Trading-signals panel
@@ -482,6 +495,7 @@ private:
     qint32 m_lastSignalDir = 0;      // ensemble call: +1 BUY / -1 SELL / 0
     double m_lastSignalConf = 0.0;   // its confidence after the haircuts
     QLabel *m_closeAdvice = nullptr; // banner above "Close marked trades"
+    QLabel *m_openTradesSummary = nullptr;  // invested + P/L totals under the table
     QHash<QString, qint64> m_closeAdviceMs;  // positionId -> last proposal (ms epoch)
 
 
@@ -492,10 +506,6 @@ private:
     // the same multi-week swing as the leverage screener (which fetches hourly too).
     QList<double> m_hourlyCloses;
     double m_lastPrice = 0.0;
-    // Shown-instrument price the open-trades' stored API P/L is anchored to (the last
-    // price at the most recent portfolio poll). updateOpenTradePnl adds the price move
-    // since this to each shown trade's P/L; 0 = no anchor yet (skip the live refresh).
-    double m_pnlAnchorPrice = 0.0;
     bool m_limitRateDefaultsSet = false;  // seed the limit-order rates off the first price
     // True from instrument selection until EtoroClient::ready confirms the switch;
     // BUY/SELL stay locked so an order can never target the previous instrument.

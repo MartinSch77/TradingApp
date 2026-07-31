@@ -5,6 +5,8 @@
 #include <QLocale>
 #include <QtTest/QtTest>
 
+#include <cmath>
+
 using namespace trading;
 
 namespace {
@@ -112,6 +114,121 @@ private slots:
 
         // An empty id is not a trade and must never be reported as closed.
         QVERIFY(closedSincePreviousIds({pos(QString())}, {}).isEmpty());
+    }
+
+    //! @tstid TS-POS-005 @design DES-DOM-POS
+    // @relation(REQ-F-025, scope=function)
+    void TS_POS_005_pnlIsEtorosOwnIdentity()
+    {
+        // Every figure below was read off a REAL eToro account (2026-07-30) and
+        // cross-checked against unrealizedPnL.pnL for the same position: eToro's P/L
+        // is units × (close rate − open rate) × conversion rate, to the cent, with no
+        // fee or spread term — and the close rate is the BID for a long.
+        Position nsdq;                 // NSDQ100.24-7, x10 long
+        nsdq.units = 1.545335;
+        nsdq.openRate = 27979.10;
+        Quote q;
+        q.bid = 28075.99;              // = unrealizedPnL.closeRate of that snapshot
+        q.ask = 28080.91;
+        QVERIFY(std::abs(positionPnl(nsdq, q) - 149.73) < 0.005);   // eToro: 149.73
+
+        Position gold;                 // GOLD.24-7, x20 long
+        gold.units = 19.896345;
+        gold.openRate = 4098.24;
+        Quote gq;
+        gq.bid = 4102.29;
+        gq.ask = 4103.53;
+        QVERIFY(std::abs(positionPnl(gold, gq) - 80.58) < 0.005);   // eToro: 80.58
+
+        // A short marks at the ASK, and a quote-currency instrument (HKG50 in HKD)
+        // converts the move into the account currency — 100 units × 6.5 HKD × 0.1275.
+        Position hkShort;
+        hkShort.isBuy = false;
+        hkShort.units = 100.0;
+        hkShort.openRate = 25900.0;
+        Quote hq;
+        hq.bid = 25886.5;
+        hq.ask = 25893.5;
+        hq.conversionBid = 0.1274994676897224;
+        hq.conversionAsk = 0.1274994676897224;
+        QVERIFY(std::abs(positionPnl(hkShort, hq) - 82.87) < 0.005);
+        // Ignoring the conversion would report 650 — the whole point of carrying it.
+        QVERIFY(positionPnl(hkShort, hq) < 100.0);
+
+        // Without units (a simulated position) the account-currency value per point
+        // stands in, and an unusable quote yields nothing rather than a wrong number.
+        Position sim = makePosition();
+        sim.units = 0.0;
+        QCOMPARE(positionPnl(sim, Quote{}), 0.0);
+        Quote sq;
+        sq.bid = 5100.0;
+        sq.ask = 5101.0;
+        QCOMPARE(positionPnl(sim, sq), (1000.0 * 20.0 / 5000.0) * 100.0);
+    }
+
+    //! @tstid TS-POS-006 @design DES-DOM-MODEL
+    // @relation(REQ-F-025, scope=function)
+    void TS_POS_006_quoteSidesSpreadAndAge()
+    {
+        // Quote is what decides WHERE a position is marked, so each of its rules is
+        // pinned here (and every condition in them gets MC/DC coverage).
+        Quote q;
+        QVERIFY(!q.isValid());                  // no bid = nothing to mark against
+        q.bid = 4102.71;
+        q.ask = 4103.95;
+        QVERIFY(q.isValid());
+        QCOMPARE(q.closeRate(true), 4102.71);   // a long closes at the bid…
+        QCOMPARE(q.closeRate(false), 4103.95);  // …a short at the ask
+        QCOMPARE(q.spread(), 4103.95 - 4102.71);
+        QCOMPARE(q.conversion(true), 1.0);      // USD-quoted default
+        QCOMPARE(q.conversion(false), 1.0);
+
+        // One-sided row: the known side stands in for the missing one, both ways.
+        Quote bidOnly;
+        bidOnly.bid = 100.0;
+        bidOnly.ask = 0.0;
+        QCOMPARE(bidOnly.closeRate(false), 100.0);
+        QCOMPARE(bidOnly.spread(), 0.0);        // unknown spread is 0, never negative
+        Quote askOnly;
+        askOnly.ask = 100.0;
+        QCOMPARE(askOnly.closeRate(true), 100.0);
+
+        // A crossed/degenerate row has no usable spread either.
+        Quote crossed;
+        crossed.bid = 101.0;
+        crossed.ask = 100.0;
+        QCOMPARE(crossed.spread(), 0.0);
+
+        // Conversion rates fall back to 1.0 rather than scaling a P/L to zero.
+        Quote hkd;
+        hkd.bid = 25886.5;
+        hkd.conversionBid = 0.1275;
+        hkd.conversionAsk = 0.0;
+        QCOMPARE(hkd.conversion(true), 0.1275);
+        QCOMPARE(hkd.conversion(false), 1.0);
+
+        // Age is the PRICE's age, and −1 while eToro sent no stamp at all.
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        QCOMPARE(q.ageMs(now), qint64{-1});
+        q.asOf = now.addSecs(-90);
+        QVERIFY(q.ageMs(now) >= 90 * 1000LL);
+        QVERIFY(q.ageMs(now) < kQuoteStaleMs);  // 90 s still marks a position
+        q.asOf = now.addSecs(-11 * 60LL);       // the .24-7 feed's measured lag
+        QVERIFY(q.ageMs(now) > kQuoteStaleMs);  // 11 min does not
+
+        // InstrumentFees::isValid: any non-zero leg counts (a negative one is a
+        // credit), all-zero does not. The braces are named to keep the QVERIFY macro
+        // from seeing four comma-separated arguments.
+        const InstrumentFees none;
+        const InstrumentFees buyNight{0.1, 0.0, 0.0, 0.0};
+        const InstrumentFees sellCredit{0.0, -0.2, 0.0, 0.0};
+        const InstrumentFees buyWeekend{0.0, 0.0, 0.3, 0.0};
+        const InstrumentFees sellWeekend{0.0, 0.0, 0.0, 0.4};
+        QVERIFY(!none.isValid());
+        QVERIFY(buyNight.isValid());
+        QVERIFY(sellCredit.isValid());
+        QVERIFY(buyWeekend.isValid());
+        QVERIFY(sellWeekend.isValid());
     }
 };
 

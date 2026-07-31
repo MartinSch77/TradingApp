@@ -6,12 +6,23 @@
 #include <QColor>
 #include <QLocale>
 
+#include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace {
 using trading::ui::kGreen;
 using trading::ui::kGrey;
 using trading::ui::kRed;
+
+// "225.43 below" / "1,554.97 above" — a signed price distance said in words, so an
+// SL/TP tooltip reads the same whichever side of the reference rate the leg sits on
+// (a stop may legitimately sit on the winning side).
+QString relativeText(double delta, qint32 decimals)
+{
+    return QLocale().toString(std::abs(delta), 'f', decimals)
+           + ((delta < 0.0) ? QStringLiteral(" below") : QStringLiteral(" above"));
+}
 }  // namespace
 
 PositionsModel::PositionsModel(QObject *parent)
@@ -39,7 +50,10 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     }
     if (sameRows) {
         m_positions = positions;
-        static_cast<void>(m_plDelta.fill(0.0));
+        // Deliberately NOT clearing m_plIsLive/m_plLive: the snapshot was marked from the
+        // same quote book this model re-prices from, so a row that was live still is.
+        // Clearing them made every row flash grey with the not-live marker on each ~3 s
+        // portfolio poll until the next tick's re-price restored it.
         if (!m_positions.isEmpty()) {
             // Values changed, identities didn't: open editors/marks survive (an
             // SL/TP cell being edited is skipped — the values still updated).
@@ -52,7 +66,9 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     m_editCol = -1;
     beginResetModel();
     m_positions = positions;
-    m_plDelta = QList<double>(positions.size(), 0.0);
+    m_plLive = QList<double>(positions.size(), 0.0);
+    m_plIsLive = QList<bool>(positions.size(), false);
+    m_markRate = QList<double>(positions.size(), 0.0);
     QSet<QString> stillOpen;
     for (const Position &p : positions) {
         static_cast<void>(stillOpen.insert(p.positionId));
@@ -61,33 +77,136 @@ void PositionsModel::setPositions(const QList<Position> &positions)
     endResetModel();
 }
 
-void PositionsModel::repriceOpenPnl(const QString &symbol, double bid, double ask,
-                                    double midPrice, double anchorPrice)
+void PositionsModel::repriceOpenPnl(const QHash<qint64, Quote> &quotes,
+                                    const QDateTime &nowUtc)
 {
     for (qsizetype row = 0; row < m_positions.size(); ++row) {
         const Position &p = m_positions[row];
-        if ((p.openRate <= 0.0) || (p.symbol.compare(symbol, Qt::CaseInsensitive) != 0)) {
+        const Quote quote = quotes.value(p.instrumentId);
+        // Mark only against a quote that is current. eToro publishes some instruments
+        // minutes behind (worst measured: the .24-7 index variants), and marking off
+        // such a row moves the figure away from the live one eToro itself shows. An
+        // unstamped quote (age -1) passes — fail open, as the market-open gate does.
+        const bool live = (p.openRate > 0.0) && quote.isValid()
+                          && (quote.ageMs(nowUtc) <= trading::kQuoteStaleMs);
+        const double value = live ? trading::positionPnl(p, quote) : 0.0;
+        // The rate this trade would close at right now, for the SL/TP tooltips (0 when
+        // there is none — those then simply omit the "…from the current rate" clause).
+        // Assigned before the skip below: a tooltip is pulled on hover, not repainted.
+        m_markRate[row] = live ? quote.closeRate(p.isBuy) : 0.0;
+        // Skip the emission when nothing moved: this runs on every price tick and the
+        // view repaints per dataChanged (REQ-N-006). qFuzzyCompare is unusable here —
+        // it is false for 0.0 vs 0.0, and a flat position is exactly 0.
+        if ((m_plIsLive[row] == live) && (std::abs(m_plLive[row] - value) < 1e-9)) {
             continue;
         }
-        const double perPoint = trading::accountValuePerPoint(p);
-        if (perPoint <= 0.0) {
-            continue;
-        }
-        // Match eToro's own marking: a long is valued at the BID, a short at the
-        // ASK; the anchor is the exact rate the API P/L was computed at
-        // (unrealizedPnL.closeRate — same side), so the shown figure stays eToro's
-        // number plus precisely the price move since. Fall back to the mid price
-        // and the poll-time anchor when either side is unavailable.
-        const double sideNow = p.isBuy ? ((bid > 0.0) ? bid : midPrice)
-                                       : ((ask > 0.0) ? ask : midPrice);
-        const double anchor = (p.apiCloseRate > 0.0) ? p.apiCloseRate : anchorPrice;
-        if ((sideNow <= 0.0) || (anchor <= 0.0)) {
-            continue;
-        }
-        m_plDelta[row] = (p.isBuy ? 1.0 : -1.0) * perPoint * (sideNow - anchor);
+        m_plIsLive[row] = live;
+        m_plLive[row] = value;
         const QModelIndex idx = index(static_cast<qint32>(row), ColPl);
         emit dataChanged(idx, idx);
     }
+}
+
+double PositionsModel::shownPnl(qint32 row) const
+{
+    return m_plIsLive.value(row, false) ? m_plLive.value(row, 0.0)
+                                        : m_positions.value(row).profit;
+}
+
+QString PositionsModel::pnlText(qint32 row) const
+{
+    const double profitUsd = shownPnl(row);
+    const QString amount = QLocale().toString(qAbs(toDisplay(profitUsd)), 'f', 2);
+    // A trailing "*" (plus grey, plus the tooltip) = no current quote for this
+    // instrument, so the figure is eToro's last snapshot rather than a mark of this
+    // tick. Silently showing such a figure as live is what made the column drift from
+    // eToro's own screen. ASCII on purpose: a marker only renders as a marker if the
+    // user's font has the glyph, and the ⇅ of the SL column is the one exception earned.
+    const QString marker = m_plIsLive.value(row, false) ? QString() : QStringLiteral(" *");
+    return ((profitUsd < 0.0) ? QStringLiteral("-") : QString()) + m_ccy + amount + marker;
+}
+
+QColor PositionsModel::pnlColor(qint32 row) const
+{
+    // Grey says "this is not a live figure": no current quote, so the cell shows eToro's
+    // last snapshot rather than a mark of this tick (and pnlText appends the "*").
+    if (!m_plIsLive.value(row, false)) {
+        return kGrey;
+    }
+    return (shownPnl(row) >= 0.0) ? kGreen : kRed;
+}
+
+QString PositionsModel::slTpTooltip(const Position &p, qint32 column, qint32 row) const
+{
+    // The cells state what the leg is WORTH; the tooltip states the instrument rate that
+    // triggers it, and how far that is from the open rate and from the current one.
+    const bool isSl = (column == ColSl);
+    const double rate = isSl ? p.stopLossRate : p.takeProfitRate;
+    const QString leg = isSl ? QStringLiteral("Stop-loss") : QStringLiteral("Take-profit");
+    if (rate <= 0.0) {
+        return QStringLiteral("No %1 on this trade — nothing closes it automatically %2.")
+            .arg(leg.toLower(), isSl ? QStringLiteral("if the price moves against you")
+                                     : QStringLiteral("once it is in profit"));
+    }
+    // Each part in its own local: several function calls inside one .arg() list are
+    // evaluated in an unspecified order (MISRA C++ 2023 4.6.1), and naming them makes
+    // the sentence being built readable.
+    const qint32 decimals = trading::priceDecimals(rate);
+    const QString rateText = QLocale().toString(rate, 'f', decimals);
+    const QString fromOpen = relativeText(rate - p.openRate, decimals);
+    const QString openText =
+        QLocale().toString(p.openRate, 'f', trading::priceDecimals(p.openRate));
+    QString text = QStringLiteral("%1 triggers when %2 trades at %3 — %4 the open rate %5")
+                       .arg(leg, p.symbol, rateText, fromOpen, openText);
+    const double mark = m_markRate.value(row, 0.0);
+    if (mark > 0.0) {
+        const QString fromNow = relativeText(rate - mark, decimals);
+        const QString markText = QLocale().toString(mark, 'f', decimals);
+        text += QStringLiteral(", %1 the current %2").arg(fromNow, markText);
+    }
+    // The cell's own figure, with the currency symbol placed after any sign
+    // ("-302.39" → "-€302.39"), so the tooltip and the cell state the same amount.
+    QString money = isSl ? trading::slSignedAmountText(p, m_eurPerUsd)
+                         : trading::slTpAmountText(p, rate, m_eurPerUsd);
+    if (money.startsWith(QLatin1Char('+')) || money.startsWith(QLatin1Char('-'))) {
+        static_cast<void>(money.insert(1, m_ccy));   // returns *this; discard deliberately
+    } else {
+        static_cast<void>(money.prepend(m_ccy));
+    }
+    text += QStringLiteral(". Closing there is %1 (the cell's figure).").arg(money);
+    if (isSl && p.trailingStop) {
+        text += QStringLiteral(" Trailing: the rate follows the price in your favour, so the "
+                               "trigger moves up (long) / down (short) with it.");
+    }
+    return text;
+}
+
+QString PositionsModel::pnlTooltip(const Position &p, qint32 row) const
+{
+    // eToro's own identity, verified against its /pnl payload position by position:
+    // units × (close rate − open rate) × conversion rate, marked at the bid for a long
+    // and the ask for a short. No fee or spread term — the spread a long pays for is
+    // already inside its open rate.
+    // m_markRate — not Position::apiCloseRate — is the rate the SHOWN figure is marked
+    // at: the latter is only the rate of the last portfolio poll, and printed as 0 for a
+    // row the poll had not marked yet.
+    const double mark = m_markRate.value(row, 0.0);
+    const QString markText = QLocale().toString(mark, 'f', trading::priceDecimals(mark));
+    const QString side = p.isBuy ? QStringLiteral("the bid, where a long closes")
+                                 : QStringLiteral("the ask, where a short closes");
+    const QString how =
+        m_plIsLive.value(row, false)
+            ? QStringLiteral("marked at the live rate %1 (%2), the same way eToro marks it")
+                  .arg(markText, side)
+            : QStringLiteral("marked \"*\" and grey because there is no CURRENT quote for %1 "
+                             "right now (its market is closed, or eToro has not published a "
+                             "price for it in the last two minutes) — this is eToro's last "
+                             "snapshot figure, left un-marked rather than marked wrong")
+                  .arg(p.symbol);
+    const QString figure = QLocale().toString(shownPnl(row), 'f', 2);
+    return QStringLiteral("$%1 in the USD account currency: %2. The column converts it at "
+                          "the live EUR/USD rate.")
+        .arg(figure, how);
 }
 
 void PositionsModel::setSlTpRates(qint32 row, double slRate, double tpRate)
@@ -162,6 +281,30 @@ void SlTpEditGuardDelegate::destroyEditor(QWidget *editor, const QModelIndex &in
     QStyledItemDelegate::destroyEditor(editor, index);
 }
 
+double PositionsModel::totalInvestedDisplay() const
+{
+    // std::ceil per row, exactly as ColAmount renders it: the summary has to be the sum
+    // the user gets from adding the visible column up.
+    return std::accumulate(m_positions.cbegin(), m_positions.cend(), 0.0,
+                           [this](double acc, const Position &p) {
+                               return acc + std::ceil(toDisplay(p.amount));
+                           });
+}
+
+double PositionsModel::totalPnlDisplay() const
+{
+    double total = 0.0;
+    for (qsizetype row = 0; row < m_positions.size(); ++row) {
+        total += shownPnl(static_cast<qint32>(row));
+    }
+    return toDisplay(total);
+}
+
+bool PositionsModel::allPnlLive() const
+{
+    return std::ranges::all_of(m_plIsLive, [](bool live) { return live; });
+}
+
 QStringList PositionsModel::markedIds() const
 {
     QStringList ids;
@@ -202,11 +345,8 @@ QString PositionsModel::displayText(const Position &p, qint32 column, qint32 row
         return QLocale().toString(p.openRate, 'f', trading::priceDecimals(p.openRate));
     case ColUnits:
         return QLocale().toString(p.units, 'f', 4);
-    case ColPl: {
-        const double profitUsd = p.profit + m_plDelta.value(row, 0.0);
-        const QString amount = QLocale().toString(qAbs(toDisplay(profitUsd)), 'f', 2);
-        return ((profitUsd < 0.0) ? QStringLiteral("-") : QString()) + m_ccy + amount;
-    }
+    case ColPl:
+        return pnlText(row);
     case ColCloseCost:
         return p.closingCost > 0.0
                    ? m_ccy + QLocale().toString(toDisplay(p.closingCost), 'f', 2)
@@ -253,8 +393,7 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
             return p.isBuy ? kGreen : kRed;
         }
         if (col == ColPl) {
-            const double profitUsd = p.profit + m_plDelta.value(index.row(), 0.0);
-            return (profitUsd >= 0.0) ? kGreen : kRed;
+            return pnlColor(index.row());
         }
         if (col == ColCloseCost) {
             return kGrey;
@@ -262,13 +401,7 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
         return {};
     case Qt::ToolTipRole:
         if (col == ColPl) {
-            const double profitUsd = p.profit + m_plDelta.value(index.row(), 0.0);
-            return QStringLiteral(
-                       "$%1 in the USD account currency — the figure the eToro app shows "
-                       "(its own live P/L, net of spread and fees, re-priced from the live "
-                       "bid/ask between polls). The column converts it at the live EUR/USD "
-                       "rate.")
-                .arg(QLocale().toString(profitUsd, 'f', 2));
+            return pnlTooltip(p, index.row());
         }
         if (col == ColAmount) {
             return QStringLiteral(
@@ -283,8 +416,8 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
                 "its close dialog. eToro's P/L already reflects this (a long is valued at the "
                 "bid, a short at the ask).");
         }
-        if ((col == ColSl) && p.trailingStop && (p.stopLossRate > 0.0)) {
-            return QStringLiteral("Trailing stop-loss (follows the price in your favour)");
+        if ((col == ColSl) || (col == ColTp)) {
+            return slTpTooltip(p, col, index.row());
         }
         return {};
     default:

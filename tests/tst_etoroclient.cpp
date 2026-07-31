@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QSharedPointer>
 #include <QSignalSpy>
+#include <QTimeZone>
 #include <QtTest/QtTest>
 
 #include <algorithm>
@@ -992,6 +993,86 @@ private slots:
         QCOMPARE(client.lastRateFor(38), 202.0);       // (200 + 204) / 2, not on screen
         QVERIFY(client.lastRateFor(27) > 0.0);         // the traded one has its live price
         QCOMPARE(client.lastRateFor(999), 0.0);        // unknown instrument: honestly nothing
+    }
+
+    //! @tstid TS-CLI-015 @design DES-SVC-CLIENT
+    // @relation(REQ-F-025, scope=function)
+    void TS_CLI_015_delayedRatesRowIsRepairedFromTheLiveCandle()
+    {
+        // Field regression, measured on 2026-07-30: eToro's public rates row for
+        // NSDQ100.24-7 was published 6-12 minutes behind real time (and said so in its
+        // `date`), while eToro's own screen showed the live price. The app marked the
+        // position off that row, so its P/L read €90 below eToro's on a fast-moving
+        // index. /pnl is no better — its unrealizedPnL is computed from the same
+        // delayed rate. The candle feed for the same instrument IS live and its
+        // 1-minute close is exactly the bid, so the mark comes from there.
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const QString stale = nowUtc.addSecs(-11 * 60LL).toString(Qt::ISODate);
+        const QString thisMinute =
+            QDateTime(nowUtc.date(), QTime(nowUtc.time().hour(), nowUtc.time().minute()),
+                      QTimeZone::UTC).toString(Qt::ISODate);
+        MockHttpServer server([stale, thisMinute](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
+                    "internalSymbolFull":"SPX500","currentRate":5000.0}]})", {}};
+            }
+            if (path.contains(QStringLiteral("/history/candles"))) {
+                // Live: this minute's candle, whose close is the current bid.
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"candles":[{"instrumentId":27,"candles":[
+                        {"fromDate":"%1","open":5090.0,"high":5105.0,"low":5088.0,
+                         "close":5100.0}]}]})").arg(thisMinute).toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                // Delayed: the price of 11 minutes ago, honestly stamped.
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5020.0,"ask":5022.0,
+                                                 "date":"%1"}]})").arg(stale).toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/pnl"))) {
+                // eToro's own snapshot, marked at ITS delayed rate (5015 → 150 on 10 units).
+                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+                     "leverage":20,"units":10.0,"openRate":5000.0,
+                     "unrealizedPnL":{"pnL":150.0,"closeRate":5015.0}}]}})", {}};
+            }
+            if (path.contains(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+                     "leverage":20,"units":10.0,"openRate":5000.0,
+                     "openDateTime":"2026-07-30T14:12:00Z"}],"orders":[]}})", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 25;
+        EtoroClient client(cfg);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        const QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        client.start();
+
+        // The candle bid marks the trade: 10 units × (5100 − 5000) = 1000.
+        const auto profitSeen = [&portfolio](double want) {
+            return std::ranges::any_of(portfolio, [want](const QList<QVariant> &emission) {
+                const auto list = emission.at(0).value<QList<Position>>();
+                return !list.isEmpty() && (std::abs(list.constFirst().profit - want) < 1e-6);
+            });
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(profitSeen(1000.0), kWaitMs);
+
+        // The delayed row must NEVER have decided the figure (that would be 200), and
+        // the quote book says where the mark came from.
+        QVERIFY(!profitSeen(200.0));
+        const Quote quote = client.quotes().value(27);
+        QVERIFY(quote.fromCandle);
+        QCOMPARE(quote.bid, 5100.0);
+        QCOMPARE(quote.ask, 5102.0);   // the delayed row's 2.0 spread still applies
     }
 };
 

@@ -4,6 +4,9 @@
 #include "domain/Models.h"
 
 #include <QAbstractTableModel>
+#include <QColor>
+#include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -34,15 +37,16 @@ public:
     // model reset (marks survive by id; ids no longer open are dropped).
     void setPositions(const QList<Position> &positions);
 
-    // Live re-price of the shown instrument's P/L column between polls: each
-    // row shows its last API P/L plus the value of the price move since
-    // anchorPrice — pure dataChanged, no allocation.
-    // Re-price the shown P/L of `symbol`'s rows from live rates: eToro's API P/L
-    // plus the move of the marking side (long → bid, short → ask) since the rate
-    // the API figure was computed at (Position::apiCloseRate; anchorPrice and
-    // midPrice are the fallbacks when a side or the anchor is unavailable).
-    void repriceOpenPnl(const QString &symbol, double bid, double ask, double midPrice,
-                        double anchorPrice);
+    // Re-price EVERY row's P/L from the live quote book (EtoroClient::quotes(), keyed
+    // by instrumentId), using eToro's own identity at the side the trade closes on —
+    // so a trade on an instrument other than the one on screen is just as current as
+    // the one on screen. Pure dataChanged, no allocation.
+    //
+    // A row whose quote is missing, or whose price eToro published more than
+    // trading::kQuoteStaleMs ago, keeps eToro's last snapshot figure and is marked as
+    // not-live: the alternative — marking off a quote that is minutes behind — is
+    // exactly what made the column disagree with eToro's own screen.
+    void repriceOpenPnl(const QHash<qint64, Quote> &quotes, const QDateTime &nowUtc);
 
     // Echo a just-submitted SL/TP edit immediately (the server snapshot
     // catches up on a later poll; see MainWindow::m_pendingSlTp).
@@ -57,6 +61,16 @@ public:
     void endCellEdit();
 
     [[nodiscard]] QStringList markedIds() const;
+
+    // Totals for the panel's summary line, already in the DISPLAY currency (the model
+    // owns that conversion for its cells, so the summary cannot drift from them).
+    // The invested total sums the per-row figures exactly as the Amount column rounds
+    // them, so adding the column up by hand gives this number.
+    [[nodiscard]] double totalInvestedDisplay() const;
+    [[nodiscard]] double totalPnlDisplay() const;
+    // False when at least one row has no current quote: its P/L is eToro's last
+    // snapshot, so the total is not a live figure either and says so.
+    [[nodiscard]] bool allPnlLive() const;
 
     [[nodiscard]] qint32 rowCount(const QModelIndex &parent = QModelIndex()) const override;
     [[nodiscard]] qint32 columnCount(const QModelIndex &parent = QModelIndex()) const override;
@@ -76,13 +90,32 @@ signals:
 private:
     [[nodiscard]] double toDisplay(double usd) const { return usd * m_eurPerUsd; }
     [[nodiscard]] QString displayText(const Position &p, qint32 column, qint32 row) const;
+    // The P/L to show for a row: the live mark when there is one, else eToro's last
+    // snapshot figure. Defined out of line (one TU) — see Models.cpp on comdat coverage.
+    [[nodiscard]] double shownPnl(qint32 row) const;
+    // The P/L cell's text and its tooltip (which states WHICH rate the figure is marked
+    // at, or why it is not marked). Both out of line, and out of data()/displayText(),
+    // so those two stay off the complexity ratchet.
+    [[nodiscard]] QString pnlText(qint32 row) const;
+    [[nodiscard]] QColor pnlColor(qint32 row) const;
+    [[nodiscard]] QString pnlTooltip(const Position &p, qint32 row) const;
+    // The SL/TP cells show what the leg is worth; their tooltip states the instrument
+    // RATE that triggers it, its distance from the open rate and from the current rate
+    // (m_markRate), plus the trailing-stop note where that applies.
+    [[nodiscard]] QString slTpTooltip(const Position &p, qint32 column, qint32 row) const;
     // dataChanged over a rectangle, minus the cell currently being edited (up to
     // four sub-rectangles) — the single place the edit guard is enforced.
     void emitChangedSkippingEditor(qint32 firstRow, qint32 lastRow, qint32 firstCol,
                                    qint32 lastCol);
 
     QList<Position> m_positions;
-    QList<double> m_plDelta;  // live re-price delta per row (0 when not repriced)
+    // Live-marked P/L per row and whether that mark is current. Sized with the row
+    // set, so a re-price only writes into existing slots (REQ-N-006).
+    QList<double> m_plLive;
+    QList<bool> m_plIsLive;
+    // Rate each trade would close at right now (0 = no current quote), for the SL/TP
+    // tooltips' "…from the current rate" clause.
+    QList<double> m_markRate;
     QSet<QString> m_marked;   // checked position ids (survive snapshot resets)
     QString m_ccy;
     double m_eurPerUsd = 1.0;

@@ -1,6 +1,7 @@
 #include "ui/PriceChart.h"
 
 #include "ChartView.h"
+#include "domain/PositionMath.h"
 
 #include <QButtonGroup>
 #include <QChart>
@@ -179,7 +180,7 @@ PriceChart::PriceChart(QWidget *parent)
     static_cast<void>(m_series->attachAxis(m_axisX));
 
     
-    m_axisY->setLabelFormat(QStringLiteral("%.2f"));
+    applyPriceAxisFormat(0.0);   // three decimals until the first price arrives
     m_axisY->setTitleText(QStringLiteral("Price"));
     m_chart->addAxis(m_axisY, Qt::AlignRight);
     static_cast<void>(m_series->attachAxis(m_axisY));
@@ -621,6 +622,10 @@ void PriceChart::rescaleAxes()
             pad = std::max(1.0, maxY * 0.001);
         }
         m_axisY->setRange(minY - pad, maxY + pad);
+        // Re-derive the label precision for the instrument now on screen: the range
+        // midpoint says which price magnitude this is, and an instrument switch lands
+        // here with the new prices already in `pts`.
+        applyPriceAxisFormat((minY + maxY) / 2.0);
         const QDateTime rangeMin = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(xmin));
         const QDateTime rangeMax = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(xmax));
         m_axisX->setRange(rangeMin, rangeMax);
@@ -629,6 +634,22 @@ void PriceChart::rescaleAxes()
     updatePriceMarker();
     syncChangeX();
     refreshTradeMarkers();
+}
+
+qint32 PriceChart::priceAxisDecimals(double price)
+{
+    constexpr qint32 kMinDecimals = 3;
+    return std::max(kMinDecimals, trading::priceDecimals(price));
+}
+
+void PriceChart::applyPriceAxisFormat(double reference)
+{
+    if (m_axisY == nullptr) {
+        return;
+    }
+    // "%.3f" … "%.5f": QValueAxis takes a printf format, and %1 is substituted before
+    // the axis ever sees it.
+    m_axisY->setLabelFormat(QStringLiteral("%.%1f").arg(priceAxisDecimals(reference)));
 }
 
 void PriceChart::updatePriceMarker()
@@ -660,7 +681,9 @@ void PriceChart::updatePriceMarker()
     const QPointF levelPoint(static_cast<qreal>(xmin), m_lastPrice);
     const qreal y = m_chart->mapToPosition(levelPoint, m_series).y();
 
-    m_markerText->setText(QLocale().toString(m_lastPrice, 'f', 2));
+    // Same precision as the axis it hugs, or the tag and the ticks disagree about the
+    // very same price (2 decimals turned every EURUSD tick into "1.15").
+    m_markerText->setText(QLocale().toString(m_lastPrice, 'f', priceAxisDecimals(m_lastPrice)));
     const QRectF tb = m_markerText->boundingRect();
     constexpr qreal padX = 4.0;
     constexpr qreal padY = 2.0;

@@ -59,6 +59,12 @@ public:
     [[nodiscard]] double lastAsk() const { return m_lastAsk; }
     [[nodiscard]] const Config &config() const & { return m_config; }
 
+    // Live two-sided quotes keyed by instrumentId, for the instrument on screen AND
+    // every instrument the account holds a position in — one bulk call per poll tick
+    // keeps them all current. Each carries eToro's own stamp for the price, so a
+    // consumer can tell a live mark from a delayed publication (Quote::ageMs).
+    [[nodiscard]] const QHash<qint64, Quote> &quotes() const & { return m_quoteById; }
+
     // Live spread (percent of mid) for any listed symbol, from the most recent
     // bulk rates snapshot (the periodic tradeability refresh keeps it warm for
     // every resolved instrument). 0 while unknown.
@@ -147,6 +153,10 @@ signals:
     void instrumentFeesUpdated(const QString &symbol, const InstrumentFees &fees);
     void historyReady(const QList<Candle> &candles);
     void priceUpdated(const QDateTime &time, double price);
+    // The quote book changed (bulk poll, or a stale row re-based on the candle feed).
+    // Carries no payload: consumers read quotes() and re-price in place, which keeps
+    // the per-tick open-trades refresh allocation-free (REQ-N-006).
+    void quotesUpdated();
     void portfolioUpdated(const QList<Position> &positions);
     void cashUpdated(double available, const QString &currency);
     // EUR per 1 USD (from the EURUSD instrument), so the USD-based account figures
@@ -211,7 +221,30 @@ private:
     // failure). fetchHistoryReal merges a coarse month with a fine recent window.
     void fetchCandles(const QString &interval, qint32 count,
                       std::function<void(QList<Candle>)> cb);
+    // ONE bulk rates call per tick over the instrument on screen plus every instrument
+    // the account holds a position in: it feeds the quote book (so every open-trades row
+    // is marked from a quote of THIS tick, not from the last portfolio snapshot) and the
+    // shown instrument's own price/bid/ask for the chart and the trade panel.
     void pollPriceReal();
+    // Fold a bulk-rates reply into the quote book (repairing the over-age rows and
+    // announcing the change), and return the row of instrument `wantId` — empty when the
+    // reply carried none. Split out of the reply handler to keep both off the metrics gate.
+    QJsonObject applyRatesSnapshot(const QJsonDocument &doc, qint64 wantId);
+    // Publish the shown instrument's own price/bid/ask from the quote book (+ the row's
+    // lastExecution, which is only usable while that row is the live one).
+    void publishShownPrice(const QJsonObject &shownRow, qint64 wantId);
+    // Fold one rates row into the quote book. Returns the instrument id, 0 when the row
+    // is unusable. Deliberately does not touch m_lastQuoteTime: the market-open
+    // inference owns that baseline and compares consecutive TRADEABILITY polls.
+    qint64 applyRateRow(const QJsonObject &rate);
+    // eToro publishes the rates row of some instruments minutes behind real time (the
+    // .24-7 index variants are the worst: ~6-12 min, growing through the session) while
+    // its own UI is live — so a position marked off that row shows a P/L that differs
+    // from eToro's by whatever the price did in between. The candle feed for the SAME
+    // instrument IS live and its 1-minute close is exactly the bid, so re-base any
+    // over-age row on the newest candle, keeping the row's spread for the other side.
+    void repairStaleQuotes();
+    void fetchLatestCandleBid(qint64 instrumentId);  // one candle -> quote book
     // Fetch the EURUSD rate (instrument 1) and emit fxRateUpdated. Real mode only.
     void fetchEurUsd();
     void refreshPortfolioReal();
@@ -328,6 +361,15 @@ private:
     QHash<QString, qint64> m_idBySymbol; // the reverse map, for per-symbol lookups
     QHash<qint64, InstrumentFees> m_feesById;  // rollover fees per instrument (cached)
     QSet<qint64> m_feesInFlight;               // fee fetches already running
+
+    // Live quote per instrument (see quotes()), plus the bookkeeping of the candle
+    // repair: which instruments are held (so the bulk poll knows what to ask for),
+    // which candle fetches are in flight, and when each id was last repaired — the
+    // repair must not turn into a per-tick candle request per position.
+    QHash<qint64, Quote> m_quoteById;
+    QSet<qint64> m_heldInstrumentIds;
+    QSet<qint64> m_candleRepairInFlight;
+    QHash<qint64, QDateTime> m_candleRepairAt;
     QHash<QString, qint64> m_instrumentByPosition;  // open positionId -> its instrumentId,
                                                     // so any trade can be closed regardless
                                                     // of the instrument currently shown

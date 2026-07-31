@@ -24,6 +24,24 @@ qint32 priceDecimals(double price);
 // account-currency-quoted instruments still read out).
 double accountValuePerPoint(const Position &p);
 
+// A quote older than this no longer marks a position the way eToro's own UI does:
+// the public rates feed republishes an open market's price every few seconds, so
+// anything beyond this is either a delayed publication or a closed session. Chosen
+// above 60 s because a candle-derived mark is stamped with its minute's start.
+constexpr qint64 kQuoteStaleMs = 120LL * 1000;
+
+// eToro's own unrealised-P/L identity, verified field by field against its /pnl
+// payload for every position of a real account: P/L = units x (close rate - open
+// rate) x conversion rate, signed by the side. There is no fee or spread term —
+// what a long "pays" for the spread is already inside its open rate, and the mark
+// is the bid (see Quote::closeRate).
+//
+// So matching eToro to the cent is entirely a question of marking at the rate
+// eToro marks at. `units` come from the payload; when they are unknown (simulated
+// positions) the account-currency value per point stands in, which already carries
+// the conversion rate as of the open.
+double positionPnl(const Position &p, const Quote &q);
+
 // The account-currency amount a stop-loss / take-profit rate represents for a
 // position (value-per-point x price distance from the open rate). Empty when off.
 // eurPerUsd converts the account (USD) figure to the display currency; pass 0

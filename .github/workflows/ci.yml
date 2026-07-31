@@ -407,6 +407,54 @@ jobs:
   # defects this repo has hit (MSVC C4267, C3493) are exactly what a per-platform
   # badge has to show. Rather than duplicating the builds into separate workflows,
   # this job reads the results of the jobs that already ran and publishes one
+  # One colour PDF per push — the same tools/make_report.py the local `report` stage
+  # runs, fed with the artifacts the jobs above uploaded. Nothing here re-measures
+  # anything: a missing input is reported as "not run" by the script, so the PDF states
+  # what THIS run actually did (CI has no coverage stage, so coverage reads "not run").
+  #
+  # if: always() — a red run is exactly when the report is worth reading, and the
+  # downloads are individually tolerant so one absent artifact cannot suppress it.
+  report:
+    runs-on: ubuntu-24.04
+    needs: [build-and-test, static-analysis, sanitize]
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+
+      # reportlab is the report's only dependency; without it make_report.py exits 3
+      # (skipped) and this job would upload nothing.
+      - name: Install reportlab
+        run: python3 -m pip install --upgrade reportlab
+
+      # test-results/ + docs/traceability.html (the artifact keeps that structure).
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: test-results
+          path: .
+
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: analysis-results
+          path: analysis-results
+
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: sanitizer-logs
+          path: analysis-results
+
+      - name: Quality report (PDF)
+        run: python3 tools/make_report.py
+
+      - name: Upload the quality report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-report
+          path: downloads/*.pdf
+
   # shields.io endpoint badge per platform onto the `badges` branch.
   #
   # if: always() — a FAILING platform must publish "failing"; a badge that only

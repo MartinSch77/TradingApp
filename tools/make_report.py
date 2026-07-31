@@ -403,6 +403,19 @@ class Report:
                               fontName="Helvetica-Bold", fontSize=8.4, fillColor=HEAD))
         values = [coverage["lines"] or 0.0, coverage["functions"] or 0.0,
                   _pct_value(coverage["mcdc"])]
+        if not any(values):
+            # Say so instead of drawing three 0.0% bars: an unmeasured run and a run that
+            # measured zero must not look the same (CI has no coverage stage).
+            bar_drawing.add(String(0, 33 * mm, "not measured in this run —", fontSize=8,
+                                   fillColor=AMBER))
+            bar_drawing.add(String(0, 27 * mm, "no coverage/ artefacts were produced",
+                                   fontSize=8, fillColor=GREY))
+            row = Table([[pie_drawing, bar_drawing]], colWidths=[88 * mm, 88 * mm])
+            row.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+            self.story.append(row)
+            return
         chart = HorizontalBarChart()
         chart.x = 24 * mm
         chart.y = 6 * mm

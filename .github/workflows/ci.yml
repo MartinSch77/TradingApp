@@ -263,15 +263,21 @@ jobs:
           python -m pipx install codespell
           if ($LASTEXITCODE -ne 0) { Write-Host "codespell install skipped ($LASTEXITCODE)" }
 
-          # Download OpenCppCoverage (prebuilt binary) to tools\OpenCppCoverage
-          $ocvDir = "tools\OpenCppCoverage"
-          if (!(Test-Path $ocvDir)) {
-            New-Item -ItemType Directory -Path $ocvDir | Out-Null
-            $zip = "$ocvDir\OpenCppCoverage.zip"
-            Invoke-WebRequest -Uri "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/latest/download/OpenCppCoverage_x64.zip" -OutFile $zip
-            Expand-Archive -Path $zip -DestinationPath $ocvDir -Force
-            Remove-Item $zip
+          # OpenCppCoverage — the gcov/lcov substitute on Windows (setup.ps1 installs it
+          # with winget locally; the runner has choco, which this step already uses).
+          # Two bugs here before: the URL
+          # releases/latest/download/OpenCppCoverage_x64.zip 404s (the release assets are
+          # versioned, OpenCppCoverage-x64-<ver>.zip) and it unpacked into
+          # tools\OpenCppCoverage, which tools\coverage.ps1 never probes — it resolves the
+          # tool on PATH. Optional by design: coverage.ps1 reports `skipped` without it and
+          # this job does not run the coverage stage at all, so a failed install must not
+          # fail the job.
+          choco install -y opencppcoverage --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "OpenCppCoverage install skipped ($LASTEXITCODE) - the coverage stage reports skipped"
           }
+          $ocv = Join-Path $env:ProgramFiles 'OpenCppCoverage'
+          if (Test-Path $ocv) { Add-Content -Path $env:GITHUB_PATH -Value $ocv }
           Write-Host "Installed/bootstrapped windows runtime tools"
 
       - name: Install Qt (with Charts)

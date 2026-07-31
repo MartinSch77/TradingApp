@@ -20,7 +20,12 @@
 #                                        the Axivion dashboard import
 #   axivion    dashboard                 MISRA C++ 2023 + architecture analysis via
 #                                        axivion_ci; imports the analysis/sanitize logs
-#                                        (runs last so it picks up the fresh logs)
+#                                        (runs late so it picks up the fresh logs)
+#   report     downloads/*.pdf           one colour PDF summarising the whole run:
+#                                        test results per suite AND per function,
+#                                        traceability highlights, analyzer findings,
+#                                        metrics, coverage, sanitizers
+#                                        (tools/make_report.py; needs reportlab)
 #
 # A failing stage does not stop the later ones; the summary at the end lists
 # every stage's result and the exit code is non-zero if anything failed.
@@ -37,7 +42,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 export QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
 JOBS="$(nproc)"
 
-ALL_STAGES=(build test trace docs coverage analysis sanitize axivion)
+ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
 EXTRA_STAGES=(app release) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
@@ -101,6 +106,12 @@ stage_analysis() { "$ROOT/tools/static_analysis.sh" build; }
 stage_sanitize() { "$ROOT/tools/sanitize.sh" all; }
 
 stage_axivion() { "$ROOT/axivion/start_analysis.sh"; }
+
+# LAST stage on purpose: it summarises the artefacts every stage above wrote
+# (test-results/, analysis-results/, coverage/, docs/) into one PDF. Exits 3
+# (skipped) when reportlab is missing, so it can never fail a pipeline whose
+# actual checks passed.
+stage_report() { python3 "$ROOT/tools/make_report.py" --build-dir build; }
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

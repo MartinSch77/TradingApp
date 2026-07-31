@@ -61,7 +61,8 @@ The repository has three top-level entry points:
 
 ```bash
 ./build_all.sh            # everything: app, tests, traceability, docs,
-                          # coverage, static analysis, sanitizers, Axivion
+                          # coverage, static analysis, sanitizers, Axivion,
+                          # and the PDF quality report
 ./build_all.sh app        # ONLY the TradingApp executable (build/TradingApp)
 ./build_all.sh build test # any subset of stages, in order
 ./build_all.sh --skip axivion  # everything except the (slow) Axivion analysis
@@ -76,8 +77,12 @@ The repository has three top-level entry points:
 .\clean_all.ps1 [-Deep]         # remove everything generated
 ```
 
-Stages: `build test trace docs coverage analysis sanitize axivion` (default:
-all, continuing past failing stages with a summary at the end); `app` and
+Stages: `build test trace docs coverage analysis sanitize axivion report`
+(default: all, continuing past failing stages with a summary at the end); the
+last one writes **`downloads/TradingApp-quality-report.pdf`** — one colour PDF
+with the run's verdict, every test function and its result, the traceability
+highlights per requirement, the analyzer findings, code metrics, coverage and
+the sanitizer results (`tools/make_report.py`, shared by both platforms); `app` and
 `release` are extra stages that are only run when named, and `build_all.ps1`
 additionally offers `vs` and `deploy`. For a different single CMake target:
 `cmake --build build --target <name>`.

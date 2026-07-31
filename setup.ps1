@@ -16,6 +16,7 @@
               Doxygen, Graphviz, OpenCppCoverage, syft, grype, trivy,
               a JRE (for PlantUML), Python 3
       pip     strictdoc, doorstop, codespell, sphinx + myst-parser, gcovr,
+              reportlab (PDF quality report),
               aqtinstall  (user scope — no admin needed)
       aqt     Qt $QtVersion (win64_msvc2022_64 + qtcharts) into C:\Qt — the
               layout the build scripts expect (override with QT_PREFIX)
@@ -96,6 +97,7 @@ $PipPkgs = [ordered]@{
     'gcovr'       = 'gcovr'
     'aqtinstall'  = 'aqt'
     'lizard'      = 'lizard'
+    'reportlab'   = ''          # library only, imported by tools\make_report.py
 }
 
 # The supply-chain scanners used to be fetched from GitHub releases into
@@ -194,6 +196,19 @@ function Show-Status {
             continue
         }
         if (Test-Tool $t) { Report $t 'ok' (Get-ToolVersion $t) } else { Report $t 'MISSING' '' }
+    }
+
+    # reportlab is a LIBRARY (no console script), so ask pip about it. Deliberately
+    # NOT `python -c "import reportlab"`: PowerShell 5.1 strips embedded double
+    # quotes from a native command line, so such a probe silently reports nothing
+    # (docs\windows.md). Every argument here is a single token, and the version is
+    # parsed in PowerShell.
+    $py = Get-Python
+    if ($py) {
+        $show = & $py.Exe @($py.Args + @('-m', 'pip', 'show', 'reportlab')) 2>$null
+        $line = $show | Where-Object { $_ -like 'Version:*' } | Select-Object -First 1
+        if ($line) { Report 'reportlab' 'ok' ($line -replace '^Version:\s*', '') }
+        else { Report 'reportlab' 'MISSING' 'PDF report stage skips (pip install reportlab)' }
     }
 
     $qt = Resolve-QtPrefix -Quiet

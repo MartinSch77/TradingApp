@@ -25,7 +25,12 @@
       sanitize   analysis-results\         ASan run over the test suite; normalized
                                            findings log feeds the Axivion dashboard
       axivion    dashboard                 MISRA C++ 2023 + architecture analysis via
-                                           axivion_ci (runs last: picks up fresh logs)
+                                           axivion_ci (runs late: picks up fresh logs)
+      report     downloads\*.pdf           one colour PDF summarising the whole run:
+                                           test results per suite AND per function,
+                                           traceability highlights, analyzer findings,
+                                           metrics, coverage, sanitizers
+                                           (tools\make_report.py; needs reportlab)
 
     A failing stage does not stop the later ones; the summary at the end lists
     every stage's result and the exit code is non-zero if anything failed.
@@ -68,7 +73,7 @@ $ErrorActionPreference = 'Continue'
 $Root = Get-RepoRoot
 $Jobs = Get-JobCount
 
-$AllStages = @('build', 'test', 'trace', 'docs', 'coverage', 'analysis', 'sanitize', 'axivion')
+$AllStages = @('build', 'test', 'trace', 'docs', 'coverage', 'analysis', 'sanitize', 'axivion', 'report')
 $ExtraStages = @('app', 'release', 'vs', 'deploy')   # selectable by name, not part of the default run
 
 # ---------------------------------------------------------------------------
@@ -176,6 +181,17 @@ function Invoke-CoverageStage { & "$Root\tools\coverage.ps1" -Mode auto | ForEac
 function Invoke-AnalysisStage { & "$Root\tools\static_analysis.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-SanitizeStage { & "$Root\tools\sanitize.ps1" -Mode all | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-AxivionStage { & "$Root\axivion\start_analysis.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
+# LAST stage on purpose: it summarises the artefacts every stage above wrote into one
+# colour PDF (tools/make_report.py — shared verbatim with build_all.sh). The script
+# itself exits 3 when reportlab is missing, so a machine without it reports `skipped`
+# instead of failing a pipeline whose actual checks passed.
+function Invoke-ReportStage {
+    $py = Get-Python
+    if (-not $py) { Write-Warning 'no Python interpreter found — no PDF report'; return 'skipped' }
+    & $py.Exe @($py.Args + @("$Root\tools\make_report.py", '--build-dir', 'build')) |
+        ForEach-Object { Write-Host $_ }
+    return (ConvertTo-StageResult $LASTEXITCODE)
+}
 function Invoke-VsStage { & "$Root\tools\make_vs_solution.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-DeployStage { & "$Root\tools\deploy_app.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 

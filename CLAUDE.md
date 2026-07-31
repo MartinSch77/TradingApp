@@ -19,6 +19,9 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
                                # g++ -fanalyzer+lizard+PMD CPD+codespell
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
+tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
+                               # whole run in one colour PDF (build_all `report`
+                               # stage; skips with exit 3 without reportlab)
 tools/profile.sh               # perf/gperftools over build-release/
 tools/mcp_env.sh --persist     # env the .mcp.json Axivion MCP servers need
 tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage

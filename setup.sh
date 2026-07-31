@@ -48,6 +48,9 @@ APT_PKGS=(
     cppcheck clazy valgrind lcov
     doxygen graphviz default-jre-headless
     python3 python3-venv python3-pip pipx
+    python3-reportlab  # PDF quality report (tools/make_report.py); apt, not pipx:
+                       # the report is IMPORTED by the system python3, and a pipx
+                       # venv is not on that interpreter's path
     libgl1-mesa-dev libglx-dev libopengl0 libegl1
     libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libfreetype6 libdbus-1-3
     libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0
@@ -99,6 +102,13 @@ status() {
             report "$t" "MISSING" ""
         fi
     done
+    # reportlab is a LIBRARY (no console script), so probe the import the PDF
+    # report actually performs rather than looking for a binary on PATH.
+    if python3 -c "import reportlab" >/dev/null 2>&1; then
+        report "reportlab" "ok" "$(python3 -c 'import reportlab; print(reportlab.Version)' 2>/dev/null)"
+    else
+        report "reportlab" "MISSING" "PDF report stage skips (apt python3-reportlab)"
+    fi
     # Any gcc_64 kit will do; the build scripts take the newest.
     local qt
     qt="$(ls -d "$QT_DIR"/*/gcc_64 2>/dev/null | sort -V | tail -1)"

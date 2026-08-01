@@ -212,11 +212,26 @@ endif()
 # qt-cmake wrapper). qt_add_executable() then builds the app as a shared library
 # and androiddeployqt packages it into an APK automatically.
 if(ANDROID)
-    # Optional: pin the Android SDK levels. Without these, androiddeployqt uses
-    # the kit defaults; adjust to match the SDK you have installed.
+    # Pin the SDK levels and name the package explicitly. android-35 is what
+    # tools/build_android.sh installs; min 28 keeps Qt 6's own floor.
+    #
+    # QT_ANDROID_PACKAGE_SOURCE_DIR is NOT optional here: Qt 6.11 offers no CMake
+    # property for manifest permissions, and this app is an HTTPS REST client — without
+    # android.permission.INTERNET (declared in packaging/android/AndroidManifest.xml)
+    # every request fails and only the simulation feed works. The file is Qt's own
+    # template plus that permission; see the comment in it before bumping Qt.
     set_target_properties(TradingApp PROPERTIES
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
+        # COMPILE sdk, deliberately ahead of the target: Qt 6.11's Android bindings
+        # depend on androidx.core:core:1.17.0, which refuses to be consumed by a
+        # project compiling against less than API 36 ("checkDebugAarMetadata FAILED").
+        # compileSdk only decides which APIs the Java side may reference; targetSdk —
+        # the runtime-behaviour opt-in — stays at 35 on purpose.
+        QT_ANDROID_COMPILE_SDK_VERSION 36
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/packaging/android"
+        QT_ANDROID_APP_NAME "TradingApp"
+        QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
     )
 
     # eToro is HTTPS-only, so QNetworkAccessManager needs OpenSSL at runtime.
@@ -229,6 +244,11 @@ if(ANDROID)
         URL https://github.com/KDAB/android_openssl/archive/refs/heads/master.zip
     )
     FetchContent_MakeAvailable(android_openssl)
+    # MakeAvailable only add_subdirectory()s the package. The helper that appends the
+    # prebuilt libcrypto/libssl to QT_ANDROID_EXTRA_LIBS lives in this file, so it has
+    # to be included explicitly — without it the configure step dies with
+    # "Unknown CMake command add_android_openssl_libraries".
+    include("${android_openssl_SOURCE_DIR}/android_openssl.cmake")
     add_android_openssl_libraries(TradingApp)
 endif()
 

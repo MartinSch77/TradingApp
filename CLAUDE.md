@@ -27,6 +27,10 @@ tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
 tools/profile.sh               # perf/gperftools over build-release/
 tools/mcp_env.sh --persist     # env the .mcp.json Axivion MCP servers need
 tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage
+tools/build_android.sh [--abi android_arm64_v8a] [--run]   # APK -> downloads/;
+                               # --run boots an emulator and screenshots the app
+tools/run_android.sh           # emulator only (needs /dev/kvm + the kvm group)
+./setup.sh android             # SDK+NDK+system image+Qt kits (~6 GB, separate mode)
 tools/package_portable.ps1     # downloads/TradingApp-<ver>-windows-x64.zip
 ```
 

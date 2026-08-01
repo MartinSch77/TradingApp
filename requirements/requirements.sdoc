@@ -215,7 +215,7 @@ TITLE: Non-functional requirements
 UID: REQ-N-001
 VERIFICATION: A/I
 TITLE: Cross-platform build (desktop + mobile)
-STATEMENT: The app shall build and run on Linux and Windows desktops with Qt ≥ 6.5, and shall be buildable for Android (APK via androiddeployqt) and iOS from the same CMake project.
+STATEMENT: The app shall build and run on Linux and Windows desktops with Qt ≥ 6.5, and shall be buildable for Android (APK via androiddeployqt, provisioned by setup.sh/setup.ps1 android and built by tools/build_android.{sh,ps1} for both arm64-v8a and x86_64, with the INTERNET permission the REST client needs) and iOS from the same CMake project. The Android APK shall be verified by building it; the emulator run is a manual step, since it needs a hypervisor the build machine may not expose.
 
 [REQUIREMENT]
 UID: REQ-N-002

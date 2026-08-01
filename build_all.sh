@@ -21,6 +21,9 @@
 #   axivion    dashboard                 MISRA C++ 2023 + architecture analysis via
 #                                        axivion_ci; imports the analysis/sanitize logs
 #                                        (runs late so it picks up the fresh logs)
+#   android    downloads/*.apk           APK via androiddeployqt (extra stage, named
+#                                        only; tools/build_android.sh --run also boots
+#                                        an emulator and screenshots the app)
 #   report     downloads/*.pdf           one colour PDF summarising the whole run:
 #                                        test results per suite AND per function,
 #                                        traceability highlights, analyzer findings,
@@ -43,7 +46,7 @@ export QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
 JOBS="$(nproc)"
 
 ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
-EXTRA_STAGES=(app release) # selectable by name, not part of the default run
+EXTRA_STAGES=(app release android) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
 # with and refuses to be reused if either changed. This repository invites that
@@ -112,6 +115,12 @@ stage_axivion() { "$ROOT/axivion/start_analysis.sh"; }
 # (skipped) when reportlab is missing, so it can never fail a pipeline whose
 # actual checks passed.
 stage_report() { python3 "$ROOT/tools/make_report.py" --build-dir build; }
+
+# Extra stage (named only): the Android APK. Exits 3 = skipped without a Qt Android
+# kit / SDK, so `build_all.sh android` on a desktop-only machine reports skipped
+# rather than failing. --run additionally boots an emulator; not done here, because a
+# pipeline stage must not depend on a hypervisor being available.
+stage_android() { "$ROOT/tools/build_android.sh" --abi android_arm64_v8a; }
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

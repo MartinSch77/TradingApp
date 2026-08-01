@@ -89,6 +89,85 @@ report() { # name, present?, detail
     printf '  %-12s %-8s %s\n' "$1" "$2" "$3"
 }
 
+# ---------------------------------------------------------------------------
+# Android (separate mode: ~6 GB of SDK/NDK/system image + a Qt kit per ABI, which
+# nobody building the desktop app should have to download)
+# ---------------------------------------------------------------------------
+# Everything lands under $HOME — no sudo, no apt. The ONE thing this cannot do for
+# you is /dev/kvm access for the emulator: the device is root:kvm 0660, so it needs
+# `sudo usermod -aG kvm $USER` and a new login shell. It is reported, not silently
+# worked around, because without it the emulator "boots" for tens of minutes.
+ANDROID_SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+ANDROID_CMDLINE_ZIP="https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip"
+ANDROID_PLATFORM="android-35"          # matches QT_ANDROID_TARGET_SDK_VERSION in CMakeLists
+ANDROID_COMPILE_PLATFORM="android-36"  # matches QT_ANDROID_COMPILE_SDK_VERSION: Qt 6.11's
+                                       # androidx.core dependency refuses anything older
+ANDROID_BUILD_TOOLS="35.0.1"
+ANDROID_SYSTEM_IMAGE="system-images;$ANDROID_PLATFORM;google_apis;x86_64"
+
+android_install() {
+    echo "== Android SDK ($ANDROID_SDK_DIR) =="
+    local mgr="$ANDROID_SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+    if [ ! -x "$mgr" ]; then
+        echo "-- command-line tools"
+        mkdir -p "$ANDROID_SDK_DIR/cmdline-tools"
+        local zip="$ANDROID_SDK_DIR/cmdline-tools/cmdline-tools.zip"
+        curl -sSL -o "$zip" "$ANDROID_CMDLINE_ZIP"
+        unzip -q -o "$zip" -d "$ANDROID_SDK_DIR/cmdline-tools"
+        rm -f "$zip"
+        # The zip unpacks as cmdline-tools/; sdkmanager insists on being under
+        # cmdline-tools/latest/ or it cannot find the SDK root.
+        [ -d "$ANDROID_SDK_DIR/cmdline-tools/latest" ] ||
+            mv "$ANDROID_SDK_DIR/cmdline-tools/cmdline-tools" "$ANDROID_SDK_DIR/cmdline-tools/latest"
+    fi
+    yes | "$mgr" --licenses >/dev/null 2>&1 || true
+
+    # The NDK version is NOT a free choice: Qt is built against one, and a mismatch
+    # is a link-time or run-time surprise. Read it out of the installed Qt kit; fall
+    # back to a known-good one only when no kit is there yet.
+    local ndk
+    ndk="$(grep -rhoE '2[0-9]\.[0-9]\.[0-9]{8}' "$HOME"/Qt/*/android_*/lib/cmake 2>/dev/null |
+        sort | uniq -c | sort -rn | head -1 | awk '{print $2}')"
+    ndk="${ndk:-27.2.12479018}"
+    echo "-- platform-tools, $ANDROID_PLATFORM, build-tools $ANDROID_BUILD_TOOLS, NDK $ndk, emulator, system image"
+    "$mgr" --install "platform-tools" "platforms;$ANDROID_PLATFORM" "platforms;$ANDROID_COMPILE_PLATFORM" \
+        "build-tools;$ANDROID_BUILD_TOOLS" "ndk;$ndk" "emulator" "$ANDROID_SYSTEM_IMAGE" ||
+        echo "sdkmanager reported an error — rerun; partial downloads resume" >&2
+
+    echo "== Qt for Android =="
+    # aqt serves Android from the `all_os` host for Qt >= 6.8 (NOT `linux`), and one
+    # kit per ABI. x86_64 is what an emulator on an x86_64 host runs natively;
+    # arm64_v8a is what a phone needs. Charts is required by this app.
+    local want="$QT_VERSION" abi
+    for abi in android_x86_64 android_arm64_v8a; do
+        if [ -d "$HOME/Qt/$want/$abi" ]; then
+            echo "$abi already installed ($want)"
+            continue
+        fi
+        have aqt || { echo "aqt missing — run ./setup.sh install first" >&2; return 1; }
+        aqt install-qt all_os android "$want" "$abi" -m qtcharts -O "$HOME/Qt" ||
+            echo "aqt could not install $abi for $want" >&2
+    done
+
+    echo
+    echo "== emulator prerequisite: /dev/kvm =="
+    if [ ! -e /dev/kvm ]; then
+        echo "  /dev/kvm MISSING — on WSL2 enable nested virtualisation in %USERPROFILE%\\.wslconfig:"
+        echo "      [wsl2]"
+        echo "      nestedVirtualization=true"
+        echo "  then: wsl --shutdown"
+    elif [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        echo "  ok — hardware acceleration available"
+    else
+        echo "  present but NOT accessible to $(id -un). Run once:"
+        echo "      sudo usermod -aG kvm $(id -un)"
+        echo "  then start a NEW login shell (group membership is per-session)."
+    fi
+    echo
+    echo "Build:  tools/build_android.sh --abi android_x86_64        (APK in downloads/)"
+    echo "Run:    tools/build_android.sh --abi android_x86_64 --run  (emulator + screenshot)"
+}
+
 status() {
     echo "== toolchain status =="
     # Keep this list in step with Show-Status in setup.ps1 so both platforms
@@ -102,6 +181,30 @@ status() {
             report "$t" "MISSING" ""
         fi
     done
+    # Android target (REQ-N-001): a separate ~6 GB toolchain, so it is reported here
+    # but installed only by `./setup.sh android`.
+    local asdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+    if [ -x "$asdk/platform-tools/adb" ]; then
+        report "android-sdk" "ok" "$asdk"
+    else
+        report "android-sdk" "missing" "./setup.sh android (Android target only)"
+    fi
+    local andk
+    andk="$(ls -d "$asdk"/ndk/* 2>/dev/null | sort -V | tail -1)"
+    [ -n "$andk" ] && report "android-ndk" "ok" "$(basename "$andk")" ||
+        report "android-ndk" "missing" "./setup.sh android"
+    local aqtkits
+    aqtkits="$(ls -d "$HOME"/Qt/*/android_* 2>/dev/null | sed 's#.*/##' | tr '\n' ' ')"
+    [ -n "$aqtkits" ] && report "qt-android" "ok" "$aqtkits" ||
+        report "qt-android" "missing" "./setup.sh android"
+    if [ ! -e /dev/kvm ]; then
+        report "kvm" "missing" "emulator needs WSL2 nestedVirtualization=true"
+    elif [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        report "kvm" "ok" "emulator can use hardware acceleration"
+    else
+        report "kvm" "MISSING" "present but no access: sudo usermod -aG kvm $(id -un)"
+    fi
+
     # reportlab is a LIBRARY (no console script), so probe the import the PDF
     # report actually performs rather than looking for a binary on PATH.
     if python3 -c "import reportlab" >/dev/null 2>&1; then
@@ -272,14 +375,21 @@ update)
     echo "== linuxdeploy =="
     echo "pinned (tag + sha256) in tools/fetch_linuxdeploy.sh — bump both there,"
     echo "delete tools/third-party/linuxdeploy*.AppImage and rerun ./setup.sh install."
+    echo "== Android =="
+    echo "NOT part of this install: the SDK + NDK + system image + a Qt kit per ABI"
+    echo "are ~6 GB and only the Android target needs them. Run './setup.sh android'"
+    echo "when you want it; 'status' below reports what is present."
     echo
     status
     ;;
 status)
     status
     ;;
+android)
+    android_install
+    ;;
 *)
-    echo "usage: $0 [install|update|status]" >&2
+    echo "usage: $0 [install|update|status|android]" >&2
     exit 2
     ;;
 esac

@@ -82,8 +82,8 @@ Stages: `build test trace docs coverage analysis sanitize axivion report`
 last one writes **`downloads/TradingApp-quality-report.pdf`** — one colour PDF
 with the run's verdict, every test function and its result, the traceability
 highlights per requirement, the analyzer findings, code metrics, coverage and
-the sanitizer results (`tools/make_report.py`, shared by both platforms); `app` and
-`release` are extra stages that are only run when named, and `build_all.ps1`
+the sanitizer results (`tools/make_report.py`, shared by both platforms); `app`,
+`release` and `android` (APK via androiddeployqt) are extra stages that are only run when named, and `build_all.ps1`
 additionally offers `vs` and `deploy`. For a different single CMake target:
 `cmake --build build --target <name>`.
 

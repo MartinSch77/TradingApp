@@ -43,6 +43,8 @@ tools/third-party/
 downloads/
 # Packaging build trees
 build-appimage/
+# Android cross-build trees, one per ABI (tools/build_android.sh)
+build-android-*/
 build-portable/
 analysis-results/
 build-san/

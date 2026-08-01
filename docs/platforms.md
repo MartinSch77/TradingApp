@@ -50,16 +50,74 @@ Windows evidence for REQ-N-001.
 
 ## Android
 
-Use the Android kit's wrapper so the toolchain/ABI are set up correctly:
+Provisioned and built by script — no hand-assembled toolchain:
 
-    ~/Qt/6.10.2/android_arm64_v8a/bin/qt-cmake -S . -B build-android
-    cmake --build build-android             # androiddeployqt builds the APK
+    ./setup.sh android                       # SDK + NDK + system image + Qt kits (~6 GB)
+    tools/build_android.sh                   # APK -> downloads/ (x86_64, for an emulator)
+    tools/build_android.sh --abi android_arm64_v8a   # …and for real devices
+    tools/build_android.sh --run             # build, boot an emulator, screenshot
+    ./build_all.sh android                   # the same as an extra pipeline stage
 
-Specifics already handled in `CMakeLists.txt`: OpenSSL libraries are fetched
-and bundled (eToro is HTTPS-only), min/target SDK pinned (28/35), and the
-config-file search includes the app-data dir (bundle a `config.json` +
-`apiKeyEtoro.json` via `QT_ANDROID_PACKAGE_SOURCE_DIR` or use env-var
-injection). Tests are desktop-only (`tests/` is skipped for Android builds).
+`.\setup.ps1 android`, `tools\build_android.ps1` and `tools\run_android.ps1` are the
+Windows counterparts. Both build scripts exit **3 = skipped** when a prerequisite is
+missing, so naming the stage on a desktop-only machine reports `skipped` rather than
+failing.
+
+### Facts measured on 2026-08-01 (Qt 6.11.1, NDK 27.2.12479018, API 35)
+
+Three things were wrong in the previously never-built Android path, all now fixed:
+
+1. **`add_android_openssl_libraries` was undefined.** `FetchContent_MakeAvailable`
+   only `add_subdirectory()`s KDAB's android_openssl; the helper that appends the
+   prebuilt `libcrypto_3.so`/`libssl_3.so` to `QT_ANDROID_EXTRA_LIBS` lives in
+   `android_openssl.cmake`, which has to be `include()`d explicitly. Without it the
+   configure step dies with *Unknown CMake command*.
+2. **compileSdk had to move to 36.** Qt 6.11's Android bindings depend on
+   `androidx.core:core:1.17.0`, which refuses to be consumed by a project compiling
+   against less than API 36 (`checkDebugAarMetadata FAILED`). `QT_ANDROID_COMPILE_SDK_VERSION 36`
+   with `QT_ANDROID_TARGET_SDK_VERSION` left at 35: compileSdk only decides which
+   Java APIs may be referenced, targetSdk is the runtime-behaviour opt-in.
+3. **No INTERNET permission.** Qt's default `AndroidManifest.xml` template declares
+   none, and Qt 6.11 has no CMake property for permissions — so the app, which is
+   nothing but an HTTPS REST client, could only ever have run its simulated feed.
+   `packaging/android/AndroidManifest.xml` (Qt's own template plus INTERNET and
+   ACCESS_NETWORK_STATE) is now pointed at by `QT_ANDROID_PACKAGE_SOURCE_DIR`.
+   *Diff that file against the template of any Qt version you upgrade to* — Qt adds
+   attributes there between minor releases.
+
+The NDK version is **not** a free choice: Qt is built against exactly one, recorded in
+the kit's own `modules/*.json` as `ndk_version`. Both build scripts read it from there
+instead of hardcoding, and warn when the installed NDK differs — a mismatch links an
+APK that fails to load at runtime, which is far more expensive to diagnose than a
+warning.
+
+Resulting artefacts: `TradingApp-1.0.0-x86_64-debug.apk` (22 MB) and
+`TradingApp-1.0.0-arm64_v8a-debug.apk` (21 MB), each bundling Qt Widgets, Qt Charts
+and OpenSSL 3. Tests stay desktop-only (`tests/` is skipped for Android builds), so
+`android` is a packaging target, not a verification one.
+
+### Emulator inside WSL2
+
+The emulator needs `/dev/kvm`, and WSL2 only exposes it with nested virtualisation:
+
+    # %USERPROFILE%\.wslconfig
+    [wsl2]
+    nestedVirtualization=true      # then: wsl --shutdown
+
+That was already on here. The remaining catch is access, not existence: the device is
+`root:kvm 0660`, so the user must be in the `kvm` group —
+
+    sudo usermod -aG kvm $USER     # then start a NEW login shell
+
+`tools/run_android.sh` checks readability *and* writability and reports `skipped` with
+that exact command rather than starting an emulator that would fall back to software
+emulation and appear to hang: a cold Android 15 x86_64 boot under TCG takes tens of
+minutes versus well under a minute with KVM.
+
+The runner is headless on purpose (`-no-window -gpu swiftshader_indirect`) and pulls
+its evidence with `adb exec-out screencap`: no display needed, reproducible, and
+usable as a CI artefact. WSLg can show the emulator window instead if you drop
+`-no-window`.
 
 ## iOS / iPhone
 

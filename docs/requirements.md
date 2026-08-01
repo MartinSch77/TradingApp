@@ -53,7 +53,7 @@ I = inspection.
 
 | ID | Requirement | Verify |
 |----|-------------|--------|
-| REQ-N-001 | The app shall build and run on Linux and Windows desktops with Qt ≥ 6.5, and shall be buildable for Android (APK via androiddeployqt) and iOS from the same CMake project. | A/I |
+| REQ-N-001 | The app shall build and run on Linux and Windows desktops with Qt ≥ 6.5, and shall be buildable for Android (APK via androiddeployqt, provisioned by setup.sh/setup.ps1 android and built by tools/build_android.{sh,ps1} for both arm64-v8a and x86_64, with the INTERNET permission the REST client needs) and iOS from the same CMake project. The Android APK shall be verified by building it; the emulator run is a manual step, since it needs a hypervisor the build machine may not expose. | A/I |
 | REQ-N-002 | The domain layer shall be pure (Qt Core only, no I/O, no UI); layering (ui → services → domain) shall be enforced by the linker. | A/T |
 | REQ-N-003 | REST access shall survive transient failures: idempotent GETs are retried on 429/5xx honouring Retry-After / RateLimit-Reset; non-GETs are never auto-retried. | T |
 | REQ-N-004 | No secret (API key, user key) shall be stored in version control. | I/T |

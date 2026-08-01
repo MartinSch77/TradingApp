@@ -74,7 +74,7 @@ $Root = Get-RepoRoot
 $Jobs = Get-JobCount
 
 $AllStages = @('build', 'test', 'trace', 'docs', 'coverage', 'analysis', 'sanitize', 'axivion', 'report')
-$ExtraStages = @('app', 'release', 'vs', 'deploy')   # selectable by name, not part of the default run
+$ExtraStages = @('app', 'release', 'android', 'vs', 'deploy')   # selectable by name, not part of the default run
 
 # ---------------------------------------------------------------------------
 # toolchain
@@ -192,6 +192,10 @@ function Invoke-ReportStage {
         ForEach-Object { Write-Host $_ }
     return (ConvertTo-StageResult $LASTEXITCODE)
 }
+# Extra stage (named only): the Android APK, via the shared tools\build_android.ps1.
+# Exits 3 = skipped without a Qt Android kit or SDK, so naming it on a desktop-only
+# machine reports skipped rather than failing.
+function Invoke-AndroidStage { & "$Root\tools\build_android.ps1" -Abi android_arm64_v8a | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-VsStage { & "$Root\tools\make_vs_solution.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-DeployStage { & "$Root\tools\deploy_app.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 

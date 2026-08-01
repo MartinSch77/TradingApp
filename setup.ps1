@@ -40,7 +40,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'update', 'status')]
+    [ValidateSet('install', 'update', 'status', 'android')]
     [string]$Mode = 'install',
 
     # Qt version installed by aqt when no usable kit is found.
@@ -86,6 +86,15 @@ $WingetPkgs = [ordered]@{
     'EclipseAdoptium.Temurin.21.JRE'  = 'java'               # runs the PlantUML jar
     'Python.Python.3.13'              = 'python'
 }
+
+# Android target (REQ-N-001) — installed only by `.\setup.ps1 android`.
+$AndroidCmdlineZip = 'https://dl.google.com/android/repository/commandlinetools-win-13114758_latest.zip'
+$AndroidPlatform = 'android-35'          # matches QT_ANDROID_TARGET_SDK_VERSION
+$AndroidCompilePlatform = 'android-36'   # matches QT_ANDROID_COMPILE_SDK_VERSION: Qt 6.11's
+                                         # androidx.core dependency refuses anything older
+$AndroidBuildTools = '35.0.1'
+$AndroidSystemImage = "system-images;$AndroidPlatform;google_apis;x86_64"
+$AndroidNdkFallback = '27.2.12479018'    # only when no Qt kit is installed to ask
 
 # pip distribution -> the console script it installs
 $PipPkgs = [ordered]@{
@@ -179,6 +188,81 @@ function Find-Coco {
     }
     if ($env:COCO_DIR -and (Test-Path $env:COCO_DIR)) { return $env:COCO_DIR }
     return $null
+}
+
+# ---------------------------------------------------------------------------
+# Android (separate mode: ~6 GB of SDK/NDK/system image plus a Qt kit per ABI, which
+# nobody building the desktop app should have to download)
+# ---------------------------------------------------------------------------
+# Counterpart of `./setup.sh android`. Everything lands under the user profile - no
+# admin rights. The one thing it cannot arrange is hardware acceleration: on Windows
+# that is the "Windows Hypervisor Platform" optional feature plus virtualisation in
+# firmware, so it is reported and left to the user.
+function Install-Android {
+    $sdk = $env:ANDROID_HOME
+    if (-not $sdk) { $sdk = $env:ANDROID_SDK_ROOT }
+    if (-not $sdk) { $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
+
+    Write-Stage "Android SDK ($sdk)"
+    $mgr = Join-Path $sdk 'cmdline-tools\latest\bin\sdkmanager.bat'
+    if (-not (Test-Path $mgr)) {
+        Write-Host '-- command-line tools'
+        $tools = Join-Path $sdk 'cmdline-tools'
+        New-Item -ItemType Directory -Path $tools -Force | Out-Null
+        $zip = Join-Path $tools 'cmdline-tools.zip'
+        Invoke-WebRequest -Uri $AndroidCmdlineZip -OutFile $zip
+        Expand-Archive -Path $zip -DestinationPath $tools -Force
+        Remove-Item $zip -Force
+        # The zip unpacks as cmdline-tools\; sdkmanager insists on cmdline-tools\latest\
+        # or it cannot locate the SDK root.
+        if (-not (Test-Path (Join-Path $tools 'latest'))) {
+            Rename-Item -Path (Join-Path $tools 'cmdline-tools') -NewName 'latest'
+        }
+    }
+    'y' * 20 | & $mgr --licenses | Out-Null
+
+    # The NDK version is not a free choice: Qt is built against exactly one, and a
+    # mismatch is a link-time or run-time surprise. Read it out of an installed kit.
+    $ndk = $AndroidNdkFallback
+    $json = Get-ChildItem -Path (Join-Path $env:USERPROFILE 'Qt') -Filter 'Core.json' -Recurse `
+        -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like '*android_*' } |
+        Select-Object -First 1
+    if ($json) {
+        $m = Select-String -Path $json.FullName -Pattern '"ndk_version"\s*:\s*"([0-9.]+)"' |
+            Select-Object -First 1
+        if ($m) { $ndk = $m.Matches[0].Groups[1].Value }
+    }
+    Write-Host "-- platform-tools, $AndroidPlatform + $AndroidCompilePlatform, build-tools $AndroidBuildTools, NDK $ndk, emulator, system image"
+    & $mgr --install 'platform-tools' "platforms;$AndroidPlatform" "platforms;$AndroidCompilePlatform" `
+        "build-tools;$AndroidBuildTools" "ndk;$ndk" 'emulator' $AndroidSystemImage
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'sdkmanager reported an error - rerun; partial downloads resume' }
+
+    Write-Stage 'Qt for Android'
+    # aqt serves Android from the `all_os` host for Qt >= 6.8 (NOT `windows`), one kit
+    # per ABI. x86_64 is what an emulator runs natively; arm64_v8a is what a phone needs.
+    foreach ($abi in @('android_x86_64', 'android_arm64_v8a')) {
+        $kit = Join-Path $env:USERPROFILE "Qt\$QtVersion\$abi"
+        if (Test-Path $kit) { Write-Host "$abi already installed ($QtVersion)"; continue }
+        if (-not (Test-Tool 'aqt')) { Write-Warning 'aqt missing - run .\setup.ps1 install first'; return }
+        & aqt install-qt all_os android $QtVersion $abi -m qtcharts -O (Join-Path $env:USERPROFILE 'Qt')
+        if ($LASTEXITCODE -ne 0) { Write-Warning "aqt could not install $abi for $QtVersion" }
+    }
+
+    Write-Stage 'emulator prerequisite: hardware acceleration'
+    $emu = Join-Path $sdk 'emulator\emulator.exe'
+    if (Test-Path $emu) {
+        $check = & $emu -accel-check 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host '  ok - the emulator can accelerate' -ForegroundColor Green
+        } else {
+            Write-Host "  NOT available: $($check -join ' ')" -ForegroundColor Yellow
+            Write-Host '  enable the "Windows Hypervisor Platform" feature (optionalfeatures.exe)'
+            Write-Host '  and virtualisation in firmware, then reboot.'
+        }
+    }
+    Write-Host ''
+    Write-Host 'Build:  .\tools\build_android.ps1                  (APK in downloads\)'
+    Write-Host 'Run:    .\tools\build_android.ps1 -Run             (emulator + screenshot)'
 }
 
 function Show-Status {
@@ -448,6 +532,7 @@ switch ($Mode) {
         Write-Host ""
         Show-Status
     }
+    'android' { Install-Android }
     'status' {
         Show-Status
         # A status REPORT never gates: missing optional/license-bound tools are the

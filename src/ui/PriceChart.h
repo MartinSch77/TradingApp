@@ -6,8 +6,11 @@
 #include <QList>
 #include <QWidget>
 
+QT_FORWARD_DECLARE_CLASS(QAbstractAxis)
 QT_FORWARD_DECLARE_CLASS(QChart)
 QT_FORWARD_DECLARE_CLASS(QChartView)
+QT_FORWARD_DECLARE_CLASS(QColor)
+QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
 QT_FORWARD_DECLARE_CLASS(QLineSeries)
 QT_FORWARD_DECLARE_CLASS(QScatterSeries)
 QT_FORWARD_DECLARE_CLASS(QDateTimeAxis)
@@ -44,6 +47,20 @@ public:
     void setEventMarker(qint64 whenMs, const QString &label);
 
 private:
+    // The constructor is an orchestrator (the MainWindow::buildUi pattern): the
+    // builders below each assemble one cohesive piece, in construction order.
+    void buildPriceChart();          // price series + dark theme + both axes
+    void buildLevelAndEventLines();  // dashed current-price and event-time lines
+    void buildTradeMarkers();        // buy/sell entry bullets + hover tooltips
+    void buildChartView();           // the view + pan/zoom interaction wiring
+    void buildOverlayItems();        // price tag, prediction arrow, event label
+    void buildChangeStrip();         // the Δ%-per-tick strip below the price chart
+    [[nodiscard]] QHBoxLayout *buildTimeframeRow();  // 1m/1h/1D/1M window buttons
+    void buildLayout(QHBoxLayout *tfRow);            // stack row + both charts
+    // One factory for every scatter overlay: the trade-entry bullets on the price
+    // chart and the strong-move outliers on the change strip below.
+    QScatterSeries *makeScatter(QChart *chart, QAbstractAxis *xAxis, QAbstractAxis *yAxis,
+                                QColor fill, qreal markerSize, QColor border);
     void rescaleAxes();
     // The view has stopped auto-fitting (the user panned or zoomed): bring
     // everything that depends on the visible window in line with where they put it.

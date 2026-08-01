@@ -47,10 +47,6 @@
     "ccn": 36,
     "nloc": 118
   },
-  "src/ui/MainWindow.cpp::MainWindow::renderDecisionFocus": {
-    "ccn": 72,
-    "nloc": 191
-  },
   "src/ui/MainWindow.cpp::MainWindow::renderMonteCarlo": {
     "ccn": 18
   },
@@ -64,8 +60,8 @@
   "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
     "ccn": 18
   },
-  "src/ui/PriceChart.cpp::PriceChart::PriceChart": {
-    "nloc": 176
+  "src/ui/PriceChart.cpp::PriceChart::makeScatter": {
+    "params": 6
   },
   "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
     "ccn": 20,

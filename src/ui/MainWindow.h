@@ -263,6 +263,18 @@ private:
     // Render the decision window's sources table + conclusion for one "focus" instrument
     // (the row the user selected in the ranked list, or the top pick by default).
     void renderDecisionFocus(const QList<trading::DecisionRow> &rows, const QString &focusSymbol);
+    // The headline conclusion under the sources table: the call + confidence, suggested
+    // leverage/amount, recommendation basis, Claude's rationale and any event warning.
+    void renderDecisionConclusion(const QList<trading::DecisionRow> &rows,
+                                  const trading::DecisionRow *focus, const QString &focusSymbol,
+                                  bool manual);
+    // The conclusion's suggested leverage: the costed plan's figure, else Claude's (only
+    // for its own pick), else the legacy cap — always clamped to the instrument max.
+    [[nodiscard]] qint32 suggestedFocusLeverage(const trading::DecisionRow &focus,
+                                                const QString &focusSymbol,
+                                                bool aiActionable) const;
+    // "algorithmic top / Claude" context line under the headline ("" when neither exists).
+    [[nodiscard]] QString decisionBasisHtml(const QList<trading::DecisionRow> &rows) const;
     // Build + render the decision window's costed trade plan for the focus instrument
     // (verdict, P(win), risk factor, leverage, SL/TP, the full cost bill); the result
     // is kept in m_lastPlan for the "Apply to trade panel" button.

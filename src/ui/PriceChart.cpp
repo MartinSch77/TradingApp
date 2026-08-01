@@ -160,7 +160,19 @@ PriceChart::PriceChart(QWidget *parent)
     // the chart so it holds even if the window is re-parented or re-shown.
     setWindowFlag(Qt::WindowStaysOnTopHint, true);
 
-    
+    buildPriceChart();
+    buildLevelAndEventLines();
+    buildTradeMarkers();
+    buildChartView();
+    buildOverlayItems();
+    buildChangeStrip();
+    buildLayout(buildTimeframeRow());
+}
+
+// Price chart basics: the live price series on a dark-themed chart plus its
+// date/time X axis and its price Y axis.
+void PriceChart::buildPriceChart()
+{
     m_series->setName(QStringLiteral("Price"));
 
     
@@ -184,9 +196,13 @@ PriceChart::PriceChart(QWidget *parent)
     m_axisY->setTitleText(QStringLiteral("Price"));
     m_chart->addAxis(m_axisY, Qt::AlignRight);
     static_cast<void>(m_series->attachAxis(m_axisY));
+}
 
+// The two dashed reference lines on the price plot: the current-price level
+// and the imminent-event marker.
+void PriceChart::buildLevelAndEventLines()
+{
     // Horizontal "current price" level line spanning the whole plot.
-    
     QPen levelPen(QColor(0xe0, 0xb0, 0x00));  // amber, stands out on the dark theme
     levelPen.setWidthF(1.0);
     levelPen.setStyle(Qt::DashLine);
@@ -200,21 +216,25 @@ PriceChart::PriceChart(QWidget *parent)
     eventPen.setStyle(Qt::DashLine);
     m_eventSeries->setPen(eventPen);
     addToChart(m_chart, m_eventSeries, m_axisX, m_axisY);
+}
 
-    // One factory for every scatter overlay: the trade-entry bullets on the price
-    // chart and the strong-move outliers on the change strip below.
-    auto makeScatter = [this](QChart *chart, QAbstractAxis *xAxis, QAbstractAxis *yAxis,
-                              QColor fill, qreal markerSize, QColor border) {
-        auto *s = new QScatterSeries(this);
-        s->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-        s->setMarkerSize(markerSize);
-        s->setColor(fill);
-        s->setBorderColor(border);
-        addToChart(chart, s, xAxis, yAxis);
-        return s;
-    };
+// One factory for every scatter overlay: the trade-entry bullets on the price
+// chart and the strong-move outliers on the change strip below.
+QScatterSeries *PriceChart::makeScatter(QChart *chart, QAbstractAxis *xAxis, QAbstractAxis *yAxis,
+                                        QColor fill, qreal markerSize, QColor border)
+{
+    auto *s = new QScatterSeries(this);
+    s->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+    s->setMarkerSize(markerSize);
+    s->setColor(fill);
+    s->setBorderColor(border);
+    addToChart(chart, s, xAxis, yAxis);
+    return s;
+}
 
-    // Position entry markers: green for buy/long, red for sell/short.
+// Position entry markers: green for buy/long, red for sell/short.
+void PriceChart::buildTradeMarkers()
+{
     m_buyMarkers = makeScatter(m_chart, m_axisX, m_axisY,
                                QColor(0x25, 0xb5, 0x63), 16.0, Qt::white);  // green (matches BUY)
     m_sellMarkers = makeScatter(m_chart, m_axisX, m_axisY,
@@ -223,7 +243,11 @@ PriceChart::PriceChart(QWidget *parent)
                               [this](QPointF pt, bool on) { showTradeTooltip(pt, true, on); }));
     static_cast<void>(connect(m_sellMarkers, &QScatterSeries::hovered, this,
                               [this](QPointF pt, bool on) { showTradeTooltip(pt, false, on); }));
+}
 
+// The price chart's view widget and the user's pan/zoom interaction wiring.
+void PriceChart::buildChartView()
+{
     auto *view = new ChartView(m_chart, this);
     view->setRenderHint(QPainter::Antialiasing);
     m_view = view;
@@ -238,10 +262,14 @@ PriceChart::PriceChart(QWidget *parent)
         rescaleAxes();
         refreshVisibleSeries();
     }));
+}
 
+// The graphics items overlaid on the price plot — price tag, prediction arrow,
+// event label — plus the geometry sync that keeps them glued in place.
+void PriceChart::buildOverlayItems()
+{
     // Right-side price tag: a filled amber box with the price, pinned to the
     // right edge of the plot at the current-price level.
-    
     m_markerBg->setPen(Qt::NoPen);
     m_markerBg->setBrush(QColor(0xe0, 0xb0, 0x00));
     m_markerBg->setZValue(20.0);
@@ -269,11 +297,13 @@ PriceChart::PriceChart(QWidget *parent)
     // Keep the tag glued to the axis as the plot area moves (resize, dock/float).
     static_cast<void>(
         connect(m_chart, &QChart::plotAreaChanged, this, [this] { applyPlotGeometry(); }));
+}
 
-    // --- Change strip below the price chart ---------------------------------
-    // Shows the per-tick % change with an adaptive ±2σ "strong move" filter, so
-    // sharp moves stand out from ordinary noise.
-    
+// --- Change strip below the price chart ---------------------------------
+// Shows the per-tick % change with an adaptive ±2σ "strong move" filter, so
+// sharp moves stand out from ordinary noise.
+void PriceChart::buildChangeStrip()
+{
     QPen chgPen(QColor(0x4f, 0xa3, 0xff));  // steel blue
     chgPen.setWidthF(1.2);
     m_changeSeries->setPen(chgPen);
@@ -342,9 +372,12 @@ PriceChart::PriceChart(QWidget *parent)
         "is removed so only fast moves remain. The dashed band is ±2 standard "
         "deviations of recent changes; points outside it are flagged as strong "
         "up/down moves."));
+}
 
-    // Timeframe buttons: pick the visible window. Short windows reveal the live
-    // per-second price changes; 1M shows the whole loaded month.
+// Timeframe buttons: pick the visible window. Short windows reveal the live
+// per-second price changes; 1M shows the whole loaded month.
+QHBoxLayout *PriceChart::buildTimeframeRow()
+{
     auto *tfRow = new QHBoxLayout;
     tfRow->setContentsMargins(6, 4, 6, 2);
     tfRow->setSpacing(4);
@@ -371,8 +404,12 @@ PriceChart::PriceChart(QWidget *parent)
         tfRow->addWidget(b);
     }
     tfRow->addStretch();
+    return tfRow;
+}
 
-    // Timeframe row on top, price chart (larger), change strip below (smaller).
+// Timeframe row on top, price chart (larger), change strip below (smaller).
+void PriceChart::buildLayout(QHBoxLayout *tfRow)
+{
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);

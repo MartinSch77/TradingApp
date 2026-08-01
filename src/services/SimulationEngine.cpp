@@ -1,5 +1,7 @@
 #include "services/SimulationEngine.h"
 
+#include "domain/InstrumentCatalog.h"
+
 #include <QHash>
 #include <QRandomGenerator>
 
@@ -12,71 +14,24 @@ namespace {
 
 constexpr double kPi = std::numbers::pi;
 
-// eToro leverage steps per instrument, used only for SIMULATION — real mode
-// fetches the exact values from the eToro eligibility API. Values are the steps
-// eToro offers for each asset (they are not just a 1..max range: e.g. the 24/7
-// index CFDs skip x10). Unknown symbols fall back to the typical index set.
+// The per-instrument leverage steps the simulated account offers live in the
+// domain InstrumentCatalog. Unknown symbols fall back to the typical index set.
 QList<int> simLeverageValues(const QString &symbol)
 {
-    static const QHash<QString, QList<int>> table = {
-        // Forex
-        {QStringLiteral("EURUSD"), {1, 2, 5, 10, 20, 30}},
-        // Indices
-        {QStringLiteral("SPX500"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("SP.24-7"), {1, 2, 5, 20}},
-        {QStringLiteral("NSDQ100"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("NSDQ100.24-7"), {1, 2, 5, 20}},
-        {QStringLiteral("DJ30"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("GER40"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("EUSTX50"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("HKG50"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("CHINA50"), {1, 2, 5, 10}},
-        {QStringLiteral("RTY"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("USDOLLAR"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("Switzerland20"), {1, 2, 5, 10, 20}},
-        {QStringLiteral("Sweden30"), {1, 2, 5, 10}},
-        {QStringLiteral("Canada60"), {1, 2, 5, 10}},
-        {QStringLiteral("Colombia"), {1, 2, 5}},
-        // Thematic / proprietary indices (lower caps)
-        {QStringLiteral("Semiconductors"), {1, 2}},
-        {QStringLiteral("AI.Leaders"), {1, 2}},
-        {QStringLiteral("Cybersecurity"), {1, 2}},
-        {QStringLiteral("Quantum"), {1, 2}},
-        {QStringLiteral("GoldMiners"), {1, 2}},
-        {QStringLiteral("Crypto10"), {1, 2}},
-        {QStringLiteral("Nuclear"), {1, 2}},
-        // Commodities
-        {QStringLiteral("Gold.24-7"), {1, 2, 5, 20}},
-        {QStringLiteral("OIL.24-7"), {1, 2, 5, 10}},
-        {QStringLiteral("RUBBER"), {1, 2, 5, 10}},
-    };
-    const auto it = table.constFind(symbol);
-    return (it != table.constEnd()) ? it.value() : QList<int>{1, 2, 5, 10, 20};
+    const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+    return ((spec != nullptr) && !spec->simLeverage.isEmpty())
+               ? spec->simLeverage
+               : QList<int>{1, 2, 5, 10, 20};
 }
 
-// Rough, plausible starting price per instrument for the SIMULATION feed, so a
-// switched instrument doesn't start at an SPX500-like level. Real mode ignores
-// this — it uses the live rate. Unknown symbols fall back to a generic level.
+// Rough, plausible starting price per instrument for the SIMULATION feed (from
+// the domain InstrumentCatalog), so a switched instrument doesn't start at an
+// SPX500-like level. Real mode ignores this — it uses the live rate. Unknown
+// symbols fall back to a generic index level.
 double simBasePrice(const QString &symbol)
 {
-    static const QHash<QString, double> bases = {
-        {QStringLiteral("SPX500"), 5800.0},        {QStringLiteral("SP.24-7"), 5800.0},
-        {QStringLiteral("USDOLLAR"), 104.0},
-        {QStringLiteral("NSDQ100"), 20500.0},      {QStringLiteral("NSDQ100.24-7"), 20500.0},
-        {QStringLiteral("DJ30"), 42000.0},         {QStringLiteral("GER40"), 18500.0},
-        {QStringLiteral("HKG50"), 18000.0},        {QStringLiteral("CHINA50"), 12500.0},
-        {QStringLiteral("EUSTX50"), 4900.0},       {QStringLiteral("RTY"), 2200.0},
-        {QStringLiteral("Switzerland20"), 12000.0},{QStringLiteral("Canada60"), 1300.0},
-        {QStringLiteral("Sweden30"), 2500.0},      {QStringLiteral("Semiconductors"), 250.0},
-        {QStringLiteral("AI.Leaders"), 150.0},     {QStringLiteral("Cybersecurity"), 60.0},
-        {QStringLiteral("Quantum"), 40.0},         {QStringLiteral("GoldMiners"), 35.0},
-        {QStringLiteral("Crypto10"), 2500.0},      {QStringLiteral("Nuclear"), 45.0},
-        {QStringLiteral("Colombia"), 30.0},        {QStringLiteral("EURUSD"), 1.08},
-        {QStringLiteral("RUBBER"), 170.0},         {QStringLiteral("Gold.24-7"), 2400.0},
-        {QStringLiteral("OIL.24-7"), 78.0},
-    };
-    const auto it = bases.constFind(symbol);
-    return (it != bases.constEnd()) ? it.value() : 5800.0;
+    const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+    return ((spec != nullptr) && (spec->simBasePrice > 0.0)) ? spec->simBasePrice : 5800.0;
 }
 
 } // namespace

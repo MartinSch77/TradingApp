@@ -1,5 +1,7 @@
 #include "services/EconomicCalendar.h"
 
+#include "domain/InstrumentCatalog.h"
+
 #include <QDate>
 #include <QHash>
 #include <QJsonArray>
@@ -38,44 +40,15 @@ QString scalarToString(const QJsonValue &v)
     return {};
 }
 
-// Map each tradable instrument to the macro regions whose calendar events tend to move
-// it (TradingView country codes, comma-separated). Unknown instruments fall back to the
-// US — the dominant global macro driver — so the panel is never empty by default.
+// The macro regions per instrument live in the domain InstrumentCatalog.
+// Unknown instruments fall back to the US — the dominant global macro driver —
+// so the panel is never empty by default.
 QString countriesForSymbol(const QString &symbol)
 {
-    static const QHash<QString, QString> kMap = {
-        // US indices and US-listed thematic baskets
-        {QStringLiteral("SPX500"), QStringLiteral("US")},
-        {QStringLiteral("SP.24-7"), QStringLiteral("US")},
-        {QStringLiteral("NSDQ100"), QStringLiteral("US")},
-        {QStringLiteral("NSDQ100.24-7"), QStringLiteral("US")},
-        {QStringLiteral("DJ30"), QStringLiteral("US")},
-        {QStringLiteral("RTY"), QStringLiteral("US")},
-        {QStringLiteral("Semiconductors"), QStringLiteral("US")},
-        {QStringLiteral("AI.Leaders"), QStringLiteral("US")},
-        {QStringLiteral("Cybersecurity"), QStringLiteral("US")},
-        {QStringLiteral("Quantum"), QStringLiteral("US")},
-        {QStringLiteral("GoldMiners"), QStringLiteral("US")},
-        {QStringLiteral("Nuclear"), QStringLiteral("US")},
-        {QStringLiteral("Crypto10"), QStringLiteral("US")},
-        // USD basket and FX
-        {QStringLiteral("USDOLLAR"), QStringLiteral("US,EU")},
-        {QStringLiteral("EURUSD"), QStringLiteral("EU,US")},
-        // Regional indices
-        {QStringLiteral("GER40"), QStringLiteral("DE,EU")},
-        {QStringLiteral("EUSTX50"), QStringLiteral("EU,DE,FR")},
-        {QStringLiteral("Switzerland20"), QStringLiteral("CH,EU")},
-        {QStringLiteral("HKG50"), QStringLiteral("HK,CN")},
-        {QStringLiteral("CHINA50"), QStringLiteral("CN")},
-        {QStringLiteral("Canada60"), QStringLiteral("CA,US")},
-        {QStringLiteral("Sweden30"), QStringLiteral("SE,EU")},
-        {QStringLiteral("Colombia"), QStringLiteral("CO,US")},
-        // Commodities (USD-priced, Fed / US-macro driven)
-        {QStringLiteral("Gold.24-7"), QStringLiteral("US")},
-        {QStringLiteral("OIL.24-7"), QStringLiteral("US")},
-        {QStringLiteral("RUBBER"), QStringLiteral("CN,US")},
-    };
-    return kMap.value(symbol, QStringLiteral("US"));
+    const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+    return ((spec != nullptr) && !spec->calendarRegions.isEmpty())
+               ? spec->calendarRegions
+               : QStringLiteral("US");
 }
 
 } // namespace

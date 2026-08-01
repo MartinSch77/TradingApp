@@ -98,6 +98,8 @@ endif()
 qt_add_library(trading_domain STATIC
     src/domain/Models.cpp
     src/domain/Models.h
+    src/domain/InstrumentCatalog.cpp
+    src/domain/InstrumentCatalog.h
     src/domain/Indicators.cpp
     src/domain/Indicators.h
     src/domain/Forecasting.cpp

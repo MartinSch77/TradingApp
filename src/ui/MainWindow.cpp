@@ -4,6 +4,7 @@
 #include "domain/EventInsight.h"
 #include "domain/Forecasting.h"
 #include "domain/Indicators.h"
+#include "domain/InstrumentCatalog.h"
 #include "domain/PositionMath.h"
 #include "domain/SignalEnsemble.h"
 #include "services/AiAdvisor.h"
@@ -177,12 +178,12 @@ QTableWidgetItem *makeWebRatingItem(const WebRating &r)
 QColor impactColor(qint32 dir)
 {
     if (dir > 0) {
-        return {0x25, 0xb5, 0x63};
+        return trading::ui::kGreen;
     }
     if (dir < 0) {
-        return {0xe3, 0x55, 0x55};
+        return trading::ui::kRed;
     }
-    return {0xe0, 0xb0, 0x00};
+    return trading::ui::kAmber;
 }
 
 // Rich, explanatory mouse-over for one calendar row: what the event is, when it
@@ -1025,39 +1026,27 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     m_titleLabel->setFont(titleFont);
 
     // Instrument selector, grouped by asset class. The item text is the eToro
-    // internalSymbolFull used for lookup; picking one switches the whole app to it.
+    // internalSymbolFull used for lookup; picking one switches the whole app to
+    // it. The universe itself lives in the domain InstrumentCatalog (single
+    // source of truth) — the UI only renders it, one bold header per group.
     m_instrumentBox = new QComboBox(central);
     m_instrumentBox->setToolTip(QStringLiteral("Switch the traded instrument"));
     auto *instModel = new QStandardItemModel(m_instrumentBox);
-    QStringList tradableSymbols;
-    auto addInstGroup = [instModel, &tradableSymbols](const QString &groupLabel,
-                                                      const QStringList &symbols) {
-        auto *h = new QStandardItem(groupLabel);
-        h->setFlags(Qt::NoItemFlags);  // non-selectable category header
-        QFont hf = h->font();
-        hf.setBold(true);
-        h->setFont(hf);
-        instModel->appendRow(h);
-        for (const QString &s : symbols) {
-            instModel->appendRow(new QStandardItem(s));
-            tradableSymbols << s;
+    QString currentGroup;
+    for (const trading::InstrumentSpec &spec : trading::instrumentCatalog()) {
+        if (spec.group != currentGroup) {
+            currentGroup = spec.group;
+            auto *h = new QStandardItem(currentGroup);
+            h->setFlags(Qt::NoItemFlags);  // non-selectable category header
+            QFont hf = h->font();
+            hf.setBold(true);
+            h->setFont(hf);
+            instModel->appendRow(h);
         }
-    };
-    addInstGroup(QStringLiteral("Indices"),
-                 {QStringLiteral("SPX500"), QStringLiteral("SP.24-7"),
-                  QStringLiteral("USDOLLAR"), QStringLiteral("NSDQ100"),
-                  QStringLiteral("DJ30"), QStringLiteral("GER40"), QStringLiteral("HKG50"),
-                  QStringLiteral("CHINA50"), QStringLiteral("EUSTX50"), QStringLiteral("RTY"),
-                  QStringLiteral("Switzerland20"), QStringLiteral("Semiconductors"),
-                  QStringLiteral("AI.Leaders"), QStringLiteral("Cybersecurity"),
-                  QStringLiteral("Quantum"), QStringLiteral("GoldMiners"),
-                  QStringLiteral("Crypto10"), QStringLiteral("Canada60"),
-                  QStringLiteral("Sweden30"), QStringLiteral("NSDQ100.24-7"),
-                  QStringLiteral("Nuclear"), QStringLiteral("Colombia")});
-    addInstGroup(QStringLiteral("Forex"), {QStringLiteral("EURUSD")});
-    addInstGroup(QStringLiteral("Commodities"),
-                 {QStringLiteral("RUBBER"), QStringLiteral("Gold.24-7"), QStringLiteral("OIL.24-7")});
+        instModel->appendRow(new QStandardItem(spec.symbol));
+    }
     m_instrumentBox->setModel(instModel);
+    const QStringList tradableSymbols = trading::tradableSymbols();
     m_client->setTradableSymbols(tradableSymbols);  // for id resolution + portfolio filtering
     m_feeds->setTradableSymbols(tradableSymbols);   // for the bulk web-rating/news fetches
     const qint32 curIdx = m_instrumentBox->findText(m_client->config().symbol);
@@ -2466,9 +2455,9 @@ void MainWindow::renderMonteCarlo(const trading::McOutlook &mc)
     if ((m_aiMonteCarlo == nullptr) || (m_aiEdge == nullptr)) {
         return;
     }
-    const QString green = QStringLiteral("#25b563");
-    const QString red = QStringLiteral("#e35555");
-    const QString amber = QStringLiteral("#e0b000");
+    const QString green = trading::ui::greenHex();
+    const QString red = trading::ui::redHex();
+    const QString amber = trading::ui::amberHex();
 
     if (mc.valid) {
         const QString mcColor = (mc.pUp >= 0.55) ? green : ((mc.pUp <= 0.45) ? red : amber);
@@ -2552,10 +2541,10 @@ void MainWindow::renderRegimeAndNewsRows()
     // VIX / calendar regime and news sentiment — the same two sources the Decision
     // window uses, surfaced here as signal rows. Independent of the price series, so
     // set them before any early return.
-    const QString green = QStringLiteral("#25b563");
-    const QString red = QStringLiteral("#e35555");
-    const QString amber = QStringLiteral("#e0b000");
-    const QString grey = QStringLiteral("#9a9a9a");
+    const QString green = trading::ui::greenHex();
+    const QString red = trading::ui::redHex();
+    const QString amber = trading::ui::amberHex();
+    const QString grey = trading::ui::greyHex();
 
     const trading::RegimeRead regimeRead = trading::marketRegime(marketSnapshot());
     const double regime = regimeRead.tilt;
@@ -3026,9 +3015,9 @@ void MainWindow::updateSignals()
     ctx.changePct =
         (first > 0.0) ? (((ctx.series.last() - first) / first) * 100.0) : 0.0;
 
-    ctx.green = QStringLiteral("#25b563");
-    ctx.red = QStringLiteral("#e35555");
-    ctx.amber = QStringLiteral("#e0b000");
+    ctx.green = trading::ui::greenHex();
+    ctx.red = trading::ui::redHex();
+    ctx.amber = trading::ui::amberHex();
 
     // --- Individual indicators ---------------------------------------------
     renderIndicatorRows(ctx);
@@ -3407,7 +3396,7 @@ void MainWindow::onWebQuote(const QString &symbol, double price, const QDateTime
         || (symbol.compare(m_client->config().symbol, Qt::CaseInsensitive) != 0)) {
         return;
     }
-    const QString grey = QStringLiteral("#9a9a9a");
+    const QString grey = trading::ui::greyHex();
     QString deltaText;
     if (m_lastPrice > 0.0) {
         const double deltaPct = ((price - m_lastPrice) / m_lastPrice) * 100.0;
@@ -4115,6 +4104,124 @@ const ScreenerRow *screenerRowFor(const QList<ScreenerRow> &rows, const QString 
     return (it == rows.cend()) ? nullptr : &*it;
 }
 
+// One row of the decision window's per-source table — exactly the four cells
+// renderDecisionFocus writes, plus the read cell's colour.
+struct SourceRowSpec {
+    QString name;    // column 0: source label
+    QString read;    // column 1: the source's directional read
+    QColor colour;   // foreground of the read cell (invalid = theme default)
+    QString conf;    // column 2: confidence / score figure
+    QString note;    // column 3: fine print (basis, counts, warnings)
+};
+
+// The per-source spec builders below keep everything unique to one source
+// (its dir thresholds, wording, availability gating) in one place each; the
+// render loop in renderDecisionFocus is the same for all of them.
+
+SourceRowSpec techSourceRow(const trading::DecisionRow &focus)
+{
+    const QString conf =
+        focus.haveTech ? QStringLiteral("%1%").arg(qRound(focus.techConf)) : QString();
+    return {QStringLiteral("Technical ensemble"),
+            focus.haveTech ? focus.techLabel : QStringLiteral("n/a"),
+            callColour(focus.techDir), conf, QStringLiteral("indicator blend")};
+}
+
+SourceRowSpec ratingSourceRow(const trading::DecisionRow &focus)
+{
+    const qint32 dir = (focus.rating > 0) ? 1 : ((focus.rating < 0) ? -1 : 0);
+    return {QStringLiteral("TradingView rating"),
+            focus.haveRating ? trading::webRatingWord(focus.rating) : QStringLiteral("n/a"),
+            focus.haveRating ? callColour(dir) : trading::ui::kGrey,
+            focus.haveRating ? QStringLiteral("%1").arg(focus.rating, 0, 'f', 2) : QString(),
+            QStringLiteral("15m / 1h / 1D consensus")};
+}
+
+SourceRowSpec newsSourceRow(const trading::DecisionRow &focus)
+{
+    const qint32 dir = (focus.newsScore > 0.1) ? 1 : ((focus.newsScore < -0.1) ? -1 : 0);
+    const QString read =
+        focus.haveNews ? ((dir > 0) ? QStringLiteral("positive")
+                                    : ((dir < 0) ? QStringLiteral("negative")
+                                                 : QStringLiteral("neutral")))
+                       : QStringLiteral("n/a");
+    return {QStringLiteral("News sentiment"), read,
+            focus.haveNews ? callColour(dir) : trading::ui::kGrey,
+            focus.haveNews ? QStringLiteral("%1").arg(focus.newsScore, 0, 'f', 2) : QString(),
+            QStringLiteral("%1 headlines").arg(focus.newsCount)};
+}
+
+SourceRowSpec regimeSourceRow(const trading::DecisionRow &focus, bool vixValid, double vix)
+{
+    const qint32 dir = (focus.regime > 0.05) ? 1 : ((focus.regime < -0.05) ? -1 : 0);
+    const QString read =
+        vixValid ? ((vix >= 25.0) ? QStringLiteral("risk-off")
+                                  : ((vix < 16.0) ? QStringLiteral("risk-on")
+                                                  : QStringLiteral("neutral")))
+                 : QStringLiteral("n/a");
+    return {QStringLiteral("VIX / calendar regime"), read, callColour(dir),
+            vixValid ? QStringLiteral("VIX %1").arg(vix, 0, 'f', 1) : QString(),
+            focus.eventRisk ? QStringLiteral("⚠ high-impact event <6h") : QStringLiteral("—")};
+}
+
+// Crowd sentiment: what the trading crowd is doing right now (CNN F&G).
+SourceRowSpec crowdSourceRow(const trading::DecisionRow &focus, double fg, const QString &fgRating)
+{
+    const qint32 dir = (focus.crowd > 0.1) ? 1 : ((focus.crowd < -0.1) ? -1 : 0);
+    return {QStringLiteral("Crowd (Fear & Greed)"),
+            focus.haveCrowd ? QStringLiteral("%1/100 %2").arg(qRound(fg)).arg(fgRating)
+                            : QStringLiteral("n/a"),
+            focus.haveCrowd ? callColour(dir) : trading::ui::kGrey,
+            focus.haveCrowd ? QStringLiteral("%1").arg(focus.crowd, 0, 'f', 2) : QString(),
+            QStringLiteral("extremes read contrarian")};
+}
+
+// Independent Yahoo Finance intraday momentum (1-minute session bars).
+SourceRowSpec yahooSourceRow(const trading::DecisionRow &focus)
+{
+    const qint32 dir = (focus.yahoo > 0.1) ? 1 : ((focus.yahoo < -0.1) ? -1 : 0);
+    const QString read =
+        focus.haveYahoo ? ((dir > 0) ? QStringLiteral("above session mean")
+                                     : ((dir < 0) ? QStringLiteral("below session mean")
+                                                  : QStringLiteral("at session mean")))
+                        : QStringLiteral("n/a");
+    return {QStringLiteral("Yahoo intraday"), read,
+            focus.haveYahoo ? callColour(dir) : trading::ui::kGrey,
+            focus.haveYahoo ? QStringLiteral("%1").arg(focus.yahoo, 0, 'f', 2) : QString(),
+            QStringLiteral("1-min closes, yahoo finance")};
+}
+
+// Claude (AI) row — always its own pick, for reference.
+SourceRowSpec aiSourceRow(const AiDecision &ai, bool configured)
+{
+    const bool actionable =
+        ai.ok && (ai.action.compare(QStringLiteral("HOLD"), Qt::CaseInsensitive) != 0);
+    const bool buy = ai.action.compare(QStringLiteral("BUY"), Qt::CaseInsensitive) == 0;
+    return {QStringLiteral("Claude (AI)"),
+            ai.ok ? QStringLiteral("%1 %2").arg(ai.action, ai.symbol) : QStringLiteral("n/a"),
+            actionable ? callColour(buy ? 1 : -1) : trading::ui::kGrey,
+            ai.ok ? QStringLiteral("%1%").arg(qRound(ai.confidence)) : QString(),
+            configured ? (ai.ok ? QStringLiteral("synthesised") : QStringLiteral("pending / n/a"))
+                       : QStringLiteral("set anthropicApiKey to enable")};
+}
+
+// While no focus row exists yet, the six source rows render as neutral
+// placeholders ("scanning…" while the screener has produced nothing at all).
+QList<SourceRowSpec> placeholderSourceRows(bool scanning)
+{
+    static const QStringList names = {
+        QStringLiteral("Technical ensemble"), QStringLiteral("TradingView rating"),
+        QStringLiteral("News sentiment"),     QStringLiteral("VIX / calendar regime"),
+        QStringLiteral("Crowd (Fear & Greed)"), QStringLiteral("Yahoo intraday")};
+    QList<SourceRowSpec> specs;
+    specs.reserve(names.size());
+    for (const QString &name : names) {
+        specs.append({name, QStringLiteral("—"), trading::ui::kGrey, QString(),
+                      scanning ? QStringLiteral("scanning…") : QString()});
+    }
+    return specs;
+}
+
 }  // namespace
 
 // Capture the latest market data as the plain snapshot the decision engine
@@ -4434,145 +4541,103 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                 : QStringLiteral("Sources:"));
     }
 
-    auto setSrc = [this](qint32 row, const QString &name, const QString &read, QColor c,
-                         const QString &conf, const QString &note) {
-        auto make = [](const QString &t) {
-            auto *it = new QTableWidgetItem(t);
-            it->setFlags(it->flags() & ~Qt::ItemIsEditable);
-            return it;
-        };
-        auto *r = make(read);
-        if (c.isValid()) {
-            r->setForeground(c);
-        }
-        m_decisionSources->setItem(row, 0, make(name));
-        m_decisionSources->setItem(row, 1, r);
-        m_decisionSources->setItem(row, 2, make(conf));
-        m_decisionSources->setItem(row, 3, make(note));
-    };
+    // One spec per table row, in display order; the last row is always Claude's.
+    QList<SourceRowSpec> specs =
+        (focus != nullptr)
+            ? QList<SourceRowSpec>{techSourceRow(*focus), ratingSourceRow(*focus),
+                                   newsSourceRow(*focus),
+                                   regimeSourceRow(*focus, m_vixValid, m_vix),
+                                   crowdSourceRow(*focus, m_fg, m_fgRating),
+                                   yahooSourceRow(*focus)}
+            : placeholderSourceRows(m_screenerRows.isEmpty());
+    specs.append(aiSourceRow(m_aiDecision, m_aiAdvisor->isConfigured()));
 
-    m_decisionSources->setRowCount(7);
-    if (focus != nullptr) {
-        const QColor techColor = callColour(focus->techDir);
-        const QString techConf =
-            focus->haveTech ? QStringLiteral("%1%").arg(qRound(focus->techConf)) : QString();
-        setSrc(0, QStringLiteral("Technical ensemble"),
-               focus->haveTech ? focus->techLabel : QStringLiteral("n/a"), techColor, techConf,
-               QStringLiteral("indicator blend"));
-        const qint32 ratingDir =
-            (focus->rating > 0) ? 1 : ((focus->rating < 0) ? -1 : 0);
-        const QString ratingRead =
-            focus->haveRating ? trading::webRatingWord(focus->rating) : QStringLiteral("n/a");
-        const QColor ratingColor = focus->haveRating ? callColour(ratingDir) : trading::ui::kGrey;
-        const QString ratingConf =
-            focus->haveRating ? QStringLiteral("%1").arg(focus->rating, 0, 'f', 2) : QString();
-        setSrc(1, QStringLiteral("TradingView rating"), ratingRead, ratingColor, ratingConf,
-               QStringLiteral("15m / 1h / 1D consensus"));
-        const qint32 newsDir =
-            (focus->newsScore > 0.1) ? 1 : ((focus->newsScore < -0.1) ? -1 : 0);
-        const QColor newsColor = focus->haveNews ? callColour(newsDir) : trading::ui::kGrey;
-        const QString newsConf =
-            focus->haveNews ? QStringLiteral("%1").arg(focus->newsScore, 0, 'f', 2) : QString();
-        const QString newsNote = QStringLiteral("%1 headlines").arg(focus->newsCount);
-        setSrc(2, QStringLiteral("News sentiment"),
-               focus->haveNews ? ((newsDir > 0)
-                                      ? QStringLiteral("positive")
-                                      : ((newsDir < 0) ? QStringLiteral("negative")
-                                                       : QStringLiteral("neutral")))
-                               : QStringLiteral("n/a"),
-               newsColor, newsConf, newsNote);
-        const qint32 regimeDir =
-            (focus->regime > 0.05) ? 1 : ((focus->regime < -0.05) ? -1 : 0);
-        const QColor regimeColor = callColour(regimeDir);
-        const QString regimeConf =
-            m_vixValid ? QStringLiteral("VIX %1").arg(m_vix, 0, 'f', 1) : QString();
-        setSrc(3, QStringLiteral("VIX / calendar regime"),
-               m_vixValid ? ((m_vix >= 25.0)
-                                 ? QStringLiteral("risk-off")
-                                 : ((m_vix < 16.0) ? QStringLiteral("risk-on")
-                                                   : QStringLiteral("neutral")))
-                          : QStringLiteral("n/a"),
-               regimeColor, regimeConf,
-               focus->eventRisk ? QStringLiteral("⚠ high-impact event <6h") : QStringLiteral("—"));
-        // Crowd sentiment: what the trading crowd is doing right now (CNN F&G).
-        const qint32 crowdDir =
-            (focus->crowd > 0.1) ? 1 : ((focus->crowd < -0.1) ? -1 : 0);
-        const QString crowdRead =
-            focus->haveCrowd ? QStringLiteral("%1/100 %2").arg(qRound(m_fg)).arg(m_fgRating)
-                             : QStringLiteral("n/a");
-        const QColor crowdColor = focus->haveCrowd ? callColour(crowdDir) : trading::ui::kGrey;
-        const QString crowdConf =
-            focus->haveCrowd ? QStringLiteral("%1").arg(focus->crowd, 0, 'f', 2) : QString();
-        setSrc(4, QStringLiteral("Crowd (Fear & Greed)"), crowdRead, crowdColor, crowdConf,
-               QStringLiteral("extremes read contrarian"));
-        // Independent Yahoo Finance intraday momentum (1-minute session bars).
-        const qint32 yahooDir =
-            (focus->yahoo > 0.1) ? 1 : ((focus->yahoo < -0.1) ? -1 : 0);
-        const QString yahooRead =
-            focus->haveYahoo
-                ? ((yahooDir > 0) ? QStringLiteral("above session mean")
-                                  : ((yahooDir < 0) ? QStringLiteral("below session mean")
-                                                    : QStringLiteral("at session mean")))
-                : QStringLiteral("n/a");
-        const QColor yahooColor = focus->haveYahoo ? callColour(yahooDir) : trading::ui::kGrey;
-        const QString yahooConf =
-            focus->haveYahoo ? QStringLiteral("%1").arg(focus->yahoo, 0, 'f', 2) : QString();
-        setSrc(5, QStringLiteral("Yahoo intraday"), yahooRead, yahooColor, yahooConf,
-               QStringLiteral("1-min closes, yahoo finance"));
-    } else {
-        static const QStringList names = {
-            QStringLiteral("Technical ensemble"), QStringLiteral("TradingView rating"),
-            QStringLiteral("News sentiment"),     QStringLiteral("VIX / calendar regime"),
-            QStringLiteral("Crowd (Fear & Greed)"), QStringLiteral("Yahoo intraday")};
-        for (qint32 r = 0; r < static_cast<qint32>(names.size()); ++r) {
-            setSrc(r, names[r], QStringLiteral("—"), trading::ui::kGrey, QString(),
-                   m_screenerRows.isEmpty() ? QStringLiteral("scanning…") : QString());
+    auto make = [](const QString &t) {
+        auto *it = new QTableWidgetItem(t);
+        it->setFlags(it->flags() & ~Qt::ItemIsEditable);
+        return it;
+    };
+    m_decisionSources->setRowCount(static_cast<qint32>(specs.size()));
+    for (qint32 row = 0; row < static_cast<qint32>(specs.size()); ++row) {
+        const SourceRowSpec &s = specs.at(row);
+        auto *read = make(s.read);
+        if (s.colour.isValid()) {
+            read->setForeground(s.colour);
         }
+        m_decisionSources->setItem(row, 0, make(s.name));
+        m_decisionSources->setItem(row, 1, read);
+        m_decisionSources->setItem(row, 2, make(s.conf));
+        m_decisionSources->setItem(row, 3, make(s.note));
     }
-    // Claude (AI) row — always its own pick, for reference.
-    const bool aiActionable = m_aiDecision.ok
-                              && (m_aiDecision.action.compare(QStringLiteral("HOLD"),
-                                                              Qt::CaseInsensitive) != 0);
-    const bool aiBuy =
-        m_aiDecision.action.compare(QStringLiteral("BUY"), Qt::CaseInsensitive) == 0;
-    const QString aiRead =
-        m_aiDecision.ok ? QStringLiteral("%1 %2").arg(m_aiDecision.action, m_aiDecision.symbol)
-                        : QStringLiteral("n/a");
-    const QColor aiColor = aiActionable ? callColour(aiBuy ? 1 : -1) : trading::ui::kGrey;
-    const QString aiConf =
-        m_aiDecision.ok ? QStringLiteral("%1%").arg(qRound(m_aiDecision.confidence)) : QString();
-    const QString aiNote =
-        m_aiAdvisor->isConfigured() ? (m_aiDecision.ok ? QStringLiteral("synthesised")
-                                                       : QStringLiteral("pending / n/a"))
-                                    : QStringLiteral("set anthropicApiKey to enable");
-    setSrc(6, QStringLiteral("Claude (AI)"), aiRead, aiColor, aiConf, aiNote);
 
     // Build the costed plan first: the headline's suggested leverage below quotes
     // the plan's volatility-targeted recommendation, so the two never disagree.
     renderTradePlan(focus, focusSymbol);
 
-    // --- headline conclusion (follows the focus instrument) ---
+    renderDecisionConclusion(rows, focus, focusSymbol, manual);
+}
+
+// The conclusion's suggested leverage, clamped to the instrument max.
+qint32 MainWindow::suggestedFocusLeverage(const trading::DecisionRow &focus,
+                                          const QString &focusSymbol, bool aiActionable) const
+{
+    const qint32 maxLev = focus.maxLev;
+    // The plan's volatility-targeted recommendation is the suggested leverage;
+    // Claude's figure applies only when the focus IS Claude's own pick, and the
+    // legacy instrument-max cap is the last resort while the plan has no data.
+    qint32 lev = std::min((maxLev > 0) ? maxLev : 20, 20);
+    if (m_lastPlan.valid && (m_lastPlanSymbol == focusSymbol)) {
+        lev = m_lastPlan.leverage;
+    } else if (aiActionable && (m_aiDecision.symbol == focusSymbol)
+               && (m_aiDecision.leverage > 0)) {
+        lev = m_aiDecision.leverage;
+    }
+    if (maxLev > 0) {
+        lev = std::min(lev, maxLev);
+    }
+    return lev;
+}
+
+// The "algorithmic top / Claude" context line under the headline; empty when
+// neither exists (then appending it to the conclusion html is a no-op).
+QString MainWindow::decisionBasisHtml(const QList<trading::DecisionRow> &rows) const
+{
+    // Overall recommendation basis, for context.
+    const trading::DecisionRow *topRow = firstDirectionalRow(rows);
+    QStringList basis;
+    if (topRow != nullptr) {
+        basis << QStringLiteral("algorithmic top: %1 %2 (%3%)")
+                     .arg(callWord(topRow->dir), topRow->symbol)
+                     .arg(qRound(topRow->confidence));
+    }
+    if (m_aiDecision.ok) {
+        basis << QStringLiteral("Claude: %1 %2 (%3%)")
+                     .arg(m_aiDecision.action, m_aiDecision.symbol)
+                     .arg(qRound(m_aiDecision.confidence));
+    }
+    if (basis.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("<div style='color:#777'>%1</div>")
+        .arg(basis.join(QStringLiteral(" · ")));
+}
+
+// --- headline conclusion (follows the focus instrument) ---
+void MainWindow::renderDecisionConclusion(const QList<trading::DecisionRow> &rows,
+                                          const trading::DecisionRow *focus,
+                                          const QString &focusSymbol, bool manual)
+{
     QString html;
     if (focus == nullptr) {
         html = m_screenerRows.isEmpty()
                    ? QStringLiteral("<b>Scanning instruments…</b>")
                    : QStringLiteral("<b>No actionable trade right now — HOLD.</b>");
     } else {
+        const bool aiActionable = m_aiDecision.ok
+                                  && (m_aiDecision.action.compare(QStringLiteral("HOLD"),
+                                                                  Qt::CaseInsensitive) != 0);
         const qint32 dir = focus->dir;
-        const qint32 maxLev = focus->maxLev;
-        // The plan's volatility-targeted recommendation is the suggested leverage;
-        // Claude's figure applies only when the focus IS Claude's own pick, and the
-        // legacy instrument-max cap is the last resort while the plan has no data.
-        qint32 lev = std::min((maxLev > 0) ? maxLev : 20, 20);
-        if (m_lastPlan.valid && (m_lastPlanSymbol == focusSymbol)) {
-            lev = m_lastPlan.leverage;
-        } else if (aiActionable && (m_aiDecision.symbol == focusSymbol)
-                   && (m_aiDecision.leverage > 0)) {
-            lev = m_aiDecision.leverage;
-        }
-        if (maxLev > 0) {
-            lev = std::min(lev, maxLev);
-        }
+        const qint32 lev = suggestedFocusLeverage(*focus, focusSymbol, aiActionable);
         const double budget = std::max(0.0, kMaxOpenExposure - m_openTradesTotal);
         double amount =
             std::min(budget, (m_availableCash > 0.0) ? (m_availableCash * 0.10) : 2500.0);
@@ -4593,23 +4658,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                    .arg(lev)
                    .arg(m_ccy)
                    .arg(qRound(toDisplay(amount)));
-        // Overall recommendation basis, for context.
-        const trading::DecisionRow *topRow = firstDirectionalRow(rows);
-        QStringList basis;
-        if (topRow != nullptr) {
-            basis << QStringLiteral("algorithmic top: %1 %2 (%3%)")
-                         .arg(callWord(topRow->dir), topRow->symbol)
-                         .arg(qRound(topRow->confidence));
-        }
-        if (m_aiDecision.ok) {
-            basis << QStringLiteral("Claude: %1 %2 (%3%)")
-                         .arg(m_aiDecision.action, m_aiDecision.symbol)
-                         .arg(qRound(m_aiDecision.confidence));
-        }
-        if (!basis.isEmpty()) {
-            html += QStringLiteral("<div style='color:#777'>%1</div>")
-                        .arg(basis.join(QStringLiteral(" · ")));
-        }
+        html += decisionBasisHtml(rows);
         // Claude's rationale only when the focus IS Claude's own pick.
         if (aiActionable && (m_aiDecision.symbol == focusSymbol)
             && !m_aiDecision.rationale.isEmpty()) {
@@ -4825,10 +4874,10 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
         }
     }
 
-    const QString green = QStringLiteral("#25b563");
-    const QString red = QStringLiteral("#e35555");
-    const QString amber = QStringLiteral("#e0b000");
-    const QString grey = QStringLiteral("#9a9a9a");
+    const QString green = trading::ui::greenHex();
+    const QString red = trading::ui::redHex();
+    const QString amber = trading::ui::amberHex();
+    const QString grey = trading::ui::greyHex();
     const QString vColor = (plan.verdict == QStringLiteral("BUY"))
                                ? green
                                : ((plan.verdict == QStringLiteral("SELL")) ? red : amber);

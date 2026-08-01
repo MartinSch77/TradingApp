@@ -2,6 +2,7 @@
 
 #include "domain/PositionMath.h"
 #include "domain/SignalEnsemble.h"
+#include "ui/Palette.h"
 
 #include <QAbstractItemView>
 #include <QColor>
@@ -99,9 +100,9 @@ void ScreenerDialog::scanFinished(qsizetype instrumentCount)
 void ScreenerDialog::updateRows(const QList<ScreenerRow> &rows, bool vixValid, double vixLevel,
                                 double vixChangePct)
 {
-    const QString green = QStringLiteral("#25b563");
-    const QString red = QStringLiteral("#e35555");
-    const QString amber = QStringLiteral("#e0b000");
+    const QString green = trading::ui::greenHex();
+    const QString red = trading::ui::redHex();
+    const QString amber = trading::ui::amberHex();
 
     // Compute one view-row per scan result (the buy/sell ensemble + display fields).
     struct View {

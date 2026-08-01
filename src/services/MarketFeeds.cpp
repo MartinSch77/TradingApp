@@ -1,6 +1,7 @@
 #include "services/MarketFeeds.h"
 
 #include "domain/DecisionEngine.h"
+#include "domain/InstrumentCatalog.h"
 #include "services/JsonHttp.h"
 
 #include <QDateTime>
@@ -21,66 +22,18 @@
 
 namespace {
 
-// Map an app instrument symbol to its TradingView ticker for the real-time technical
-// rating. Every entry confirmed working via the TradingView scanner (returns non-null
-// Recommend.All values). Indices/FX/commodities map to their own symbol; eToro's
-// thematic baskets map to the closest liquid ETF/index proxy (marked "proxy") — an
-// advisory stand-in, not the basket itself. RUBBER has no rated symbol (SGX TSR20
-// futures return null ratings) -> empty = "n/a".
+// The web tickers per app symbol live in the domain InstrumentCatalog (one
+// entry per instrument, provenance documented there). Empty = "n/a".
 QString tradingViewTicker(const QString &symbol)
 {
-    static const QHash<QString, QString> map = {
-        {QStringLiteral("SPX500"), QStringLiteral("SP:SPX")},
-        {QStringLiteral("SP.24-7"), QStringLiteral("SP:SPX")},
-        {QStringLiteral("NSDQ100"), QStringLiteral("NASDAQ:NDX")},
-        {QStringLiteral("NSDQ100.24-7"), QStringLiteral("NASDAQ:NDX")},
-        {QStringLiteral("DJ30"), QStringLiteral("OANDA:US30USD")},
-        {QStringLiteral("GER40"), QStringLiteral("XETR:DAX")},
-        {QStringLiteral("EUSTX50"), QStringLiteral("TVC:SX5E")},
-        {QStringLiteral("RTY"), QStringLiteral("TVC:RUT")},
-        {QStringLiteral("HKG50"), QStringLiteral("TVC:HSI")},
-        {QStringLiteral("CHINA50"), QStringLiteral("HKEX:2823")},        // iShares FTSE A50 ETF
-        {QStringLiteral("Switzerland20"), QStringLiteral("SIX:SMI")},
-        {QStringLiteral("Canada60"), QStringLiteral("TSX:TX60")},        // S&P/TSX 60 index
-        {QStringLiteral("Sweden30"), QStringLiteral("OMXSTO:OMXS30")},   // OMX Stockholm 30
-        {QStringLiteral("USDOLLAR"), QStringLiteral("TVC:DXY")},
-        {QStringLiteral("EURUSD"), QStringLiteral("FX:EURUSD")},
-        {QStringLiteral("Gold.24-7"), QStringLiteral("TVC:GOLD")},
-        {QStringLiteral("OIL.24-7"), QStringLiteral("FX:USOIL")},        // WTI CFD stream
-        {QStringLiteral("Semiconductors"), QStringLiteral("NASDAQ:SOX")},  // proxy: PHLX semi index
-        {QStringLiteral("AI.Leaders"), QStringLiteral("NASDAQ:AIQ")},      // proxy: Global X AI ETF
-        {QStringLiteral("Cybersecurity"), QStringLiteral("NASDAQ:CIBR")},  // proxy: First Trust cyber ETF
-        {QStringLiteral("Quantum"), QStringLiteral("NASDAQ:QTUM")},        // proxy: Defiance quantum ETF
-        {QStringLiteral("GoldMiners"), QStringLiteral("AMEX:GDX")},        // proxy: VanEck gold miners ETF
-        {QStringLiteral("Nuclear"), QStringLiteral("AMEX:NLR")},           // proxy: VanEck uranium+nuclear ETF
-        {QStringLiteral("Crypto10"), QStringLiteral("CRYPTOCAP:TOTAL")},   // proxy: total crypto market cap
-        {QStringLiteral("Colombia"), QStringLiteral("BVC:ICOLCAP")},       // proxy: iShares COLCAP ETF
-    };
-    return map.value(symbol);
+    const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+    return (spec != nullptr) ? spec->tradingViewTicker : QString();
 }
 
-// Map an app instrument symbol to its Yahoo Finance ticker for the reference
-// quote. Cash indices for the standard listings; the 24/7 variants map to the
-// futures contract, whose round-the-clock pricing is what the CFD tracks.
 QString yahooTicker(const QString &symbol)
 {
-    static const QHash<QString, QString> map = {
-        {QStringLiteral("SPX500"), QStringLiteral("^GSPC")},
-        {QStringLiteral("SP.24-7"), QStringLiteral("ES=F")},
-        {QStringLiteral("NSDQ100"), QStringLiteral("^NDX")},
-        {QStringLiteral("NSDQ100.24-7"), QStringLiteral("NQ=F")},
-        {QStringLiteral("DJ30"), QStringLiteral("^DJI")},
-        {QStringLiteral("GER40"), QStringLiteral("^GDAXI")},
-        {QStringLiteral("EUSTX50"), QStringLiteral("^STOXX50E")},
-        {QStringLiteral("RTY"), QStringLiteral("^RUT")},
-        {QStringLiteral("HKG50"), QStringLiteral("^HSI")},
-        {QStringLiteral("Switzerland20"), QStringLiteral("^SSMI")},
-        {QStringLiteral("USDOLLAR"), QStringLiteral("DX-Y.NYB")},
-        {QStringLiteral("EURUSD"), QStringLiteral("EURUSD=X")},
-        {QStringLiteral("Gold.24-7"), QStringLiteral("GC=F")},
-        {QStringLiteral("OIL.24-7"), QStringLiteral("CL=F")},
-    };
-    return map.value(symbol);
+    const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+    return (spec != nullptr) ? spec->yahooTicker : QString();
 }
 
 // Collect the web tickers for the tradable instruments; several app symbols can share

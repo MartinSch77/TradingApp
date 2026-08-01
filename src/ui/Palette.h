@@ -2,6 +2,7 @@
 #define TRADINGAPP_UI_PALETTE_H
 
 #include <QColor>
+#include <QString>
 
 // The app-wide signal colors, shared by every ui widget so BUY/SELL/neutral
 // always render identically (the same values the HTML labels hardcode as
@@ -12,6 +13,14 @@ inline const QColor kGreen(0x25, 0xb5, 0x63);  // BUY / long / profit
 inline const QColor kRed(0xe3, 0x55, 0x55);    // SELL / short / loss
 inline const QColor kGrey(0x9a, 0x9a, 0x9a);   // neutral / no signal
 inline const QColor kAmber(0xe0, 0xb0, 0x00);  // warning / stale / caution (#e0b000)
+
+// The same colors as lowercase CSS hex strings ("#25b563", …) for the HTML
+// spans several widgets build — derived from the one QColor definition above
+// (QColor::name() yields lowercase "#rrggbb"), so the two can never drift.
+[[nodiscard]] inline QString greenHex() { return kGreen.name(); }
+[[nodiscard]] inline QString redHex() { return kRed.name(); }
+[[nodiscard]] inline QString greyHex() { return kGrey.name(); }
+[[nodiscard]] inline QString amberHex() { return kAmber.name(); }
 
 }  // namespace trading::ui
 

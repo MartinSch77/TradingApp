@@ -163,6 +163,11 @@ jobs:
           # licenses pre-accepted, so no prompt needs answering.
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null < /dev/null
 
+      # The runner's cmake (3.31) predates the 4.x this project requires; pip
+      # serves current cmake + ninja, same as the other two jobs.
+      - name: Install CMake + Ninja
+        run: python3 -m pip install --upgrade cmake ninja
+
       - name: Build + sign the APK
         run: ./tools/build_android.sh --abi android_arm64_v8a --release
 

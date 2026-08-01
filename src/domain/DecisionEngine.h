@@ -60,32 +60,41 @@ struct DecisionRow {
 // follow the crowd mildly (risk-on lifts indices), extremes fade it (extreme
 // fear reads as capitulation, extreme greed as froth — the classic contrarian
 // use of the gauge). Returns a value in [-1, 1].
-double crowdTilt(double fearGreed);
+[[nodiscard]] double crowdTilt(double fearGreed) noexcept;
 
-// Crude keyword sentiment over recent headlines -> [-1, 1]; countOut = headline count.
-double newsSentimentScore(const QList<NewsHeadline> &news, qint32 &countOut);
+// Crude keyword sentiment over recent headlines.
+struct NewsRead {
+    double score = 0.0;  // [-1, 1]
+    qint32 count = 0;    // headlines scored
+};
+[[nodiscard]] NewsRead newsSentimentScore(const QList<NewsHeadline> &news);
 
 // Session-momentum tilt in [-1, 1] from an independent intraday close series
 // (Yahoo Finance, 1-minute bars): where the last price sits relative to the
 // session mean, in units of the session's own dispersion. Needs ≥ 30 points;
 // returns 0 otherwise (and for flat series).
-double intradayTilt(const QList<double> &closes);
+[[nodiscard]] double intradayTilt(const QList<double> &closes);
 
-// Market regime tilt in [-1, 1] from the VIX (risk-on/off); sets eventRiskOut when a
-// high-impact calendar event is imminent (within six hours).
-double marketRegime(const MarketSnapshot &m, bool &eventRiskOut);
+// Market regime from the VIX plus the calendar: the risk-on/off tilt and
+// whether a high-impact event is imminent (within six hours).
+struct RegimeRead {
+    double tilt = 0.0;      // [-1, 1], risk-off negative
+    bool eventRisk = false; // an imminent high-impact calendar event
+};
+[[nodiscard]] RegimeRead marketRegime(const MarketSnapshot &m);
 
 // One DecisionRow per instrument with data, sorted by confidence descending.
-QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m);
+[[nodiscard]] QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m);
 
 // The plain-text evidence prompt handed to the AI advisor: the candidates, their
 // per-source reads and the market context, plus the answer contract.
-QString buildDecisionEvidence(const QList<DecisionRow> &rows, const MarketSnapshot &m);
+[[nodiscard]] QString buildDecisionEvidence(const QList<DecisionRow> &rows,
+                                            const MarketSnapshot &m);
 
 // TradingView's rating buckets for a recommendation score in [-1, 1]. One
 // shared bucket table: the ranked table, the signals panel and the feed label
 // must word the same score identically.
-QString webRatingWord(double score);
+[[nodiscard]] QString webRatingWord(double score);
 
 } // namespace trading
 

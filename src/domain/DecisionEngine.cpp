@@ -13,7 +13,7 @@
 
 namespace trading {
 
-double newsSentimentScore(const QList<NewsHeadline> &news, qint32 &countOut)
+NewsRead newsSentimentScore(const QList<NewsHeadline> &news)
 {
     static const QStringList pos = {
         QStringLiteral("beat"), QStringLiteral("surge"), QStringLiteral("rally"),
@@ -55,10 +55,12 @@ double newsSentimentScore(const QList<NewsHeadline> &news, qint32 &countOut)
             break;
         }
     }
-    countOut = static_cast<qint32>(news.size());
-    return (n > 0)
-               ? std::clamp(static_cast<double>(s) / static_cast<double>(n), -1.0, 1.0)
-               : 0.0;
+    NewsRead read;
+    read.count = static_cast<qint32>(news.size());
+    read.score = (n > 0)
+                     ? std::clamp(static_cast<double>(s) / static_cast<double>(n), -1.0, 1.0)
+                     : 0.0;
+    return read;
 }
 
 double intradayTilt(const QList<double> &closes)
@@ -83,7 +85,7 @@ double intradayTilt(const QList<double> &closes)
     return std::clamp(z / 2.0, -1.0, 1.0);
 }
 
-double crowdTilt(double fearGreed)
+double crowdTilt(double fearGreed) noexcept
 {
     const double fg = std::clamp(fearGreed, 0.0, 100.0);
     if (fg <= 20.0) {
@@ -98,7 +100,7 @@ double crowdTilt(double fearGreed)
     return (fg - 50.0) / 75.0;
 }
 
-double marketRegime(const MarketSnapshot &m, bool &eventRiskOut)
+RegimeRead marketRegime(const MarketSnapshot &m)
 {
     // Regime from VIX: calm = mildly risk-on, fearful = risk-off.
     double regime = 0.0;
@@ -112,23 +114,25 @@ double marketRegime(const MarketSnapshot &m, bool &eventRiskOut)
         }
     }
     // An imminent high-impact calendar event flags added volatility.
-    eventRiskOut = false;
+    RegimeRead read;
+    read.tilt = regime;
     const QDateTime now = QDateTime::currentDateTime();
     for (const EconomicEvent &e : m.events) {
         const qint64 secsToEvent = now.secsTo(e.when);
         if (e.when.isValid() && (secsToEvent > 0) && (secsToEvent <= (6LL * 3600))
             && (e.impact.compare(QLatin1String("High"), Qt::CaseInsensitive) == 0)) {
-            eventRiskOut = true;
+            read.eventRisk = true;
             break;
         }
     }
-    return regime;
+    return read;
 }
 
 QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
 {
-    bool eventRisk = false;
-    const double regime = marketRegime(m, eventRisk);
+    const RegimeRead regimeRead = marketRegime(m);
+    const double regime = regimeRead.tilt;
+    const bool eventRisk = regimeRead.eventRisk;
 
     QList<DecisionRow> rows;
     for (const ScreenerRow &r : m.screenerRows) {
@@ -160,7 +164,9 @@ QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
         const QList<NewsHeadline> news = m.newsBySymbol.value(r.symbol);
         if (!news.isEmpty()) {
             d.haveNews = true;
-            d.newsScore = newsSentimentScore(news, d.newsCount);
+            const NewsRead read = newsSentimentScore(news);
+            d.newsScore = read.score;
+            d.newsCount = read.count;
         }
 
         if (m.fgValid) {

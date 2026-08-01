@@ -5,6 +5,7 @@
 #include "services/SimulationEngine.h"
 
 #include <QHash>
+#include <QHostAddress>
 #include <QSet>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -368,6 +369,19 @@ void EtoroClient::start()
     if (!m_config.hasCredentials()) {
         startSimulation();
         return;
+    }
+    // Credential hygiene: the API keys travel as headers on every request, so a
+    // cleartext base URL would expose them to anyone on the path. A loopback
+    // http URL is fine (the test suite's local mock server); anything else
+    // deserves the loudest warning the log has — the config is almost certainly
+    // wrong, and these keys can move real money.
+    const QUrl base(m_config.baseUrl);
+    const bool cleartext = base.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0;
+    if (cleartext && !QHostAddress(base.host()).isLoopback()) {
+        emit log(QStringLiteral("SECURITY: base URL %1 is not HTTPS — the API keys "
+                                "would be sent in cleartext. Check the configuration.")
+                     .arg(m_config.baseUrl),
+                 true);
     }
     m_simulated = false;
     emit log(QStringLiteral("Connecting to eToro API in %1 mode…").arg(m_config.modeLabel()), false);
@@ -2083,198 +2097,238 @@ void EtoroClient::fetchScanCandle(const QSharedPointer<ScanState> &st)
     }, /*retriesLeft=*/2);  // ride out a transient 429 on the shared market-data pool
 }
 
+namespace {
+
+// Convert the requested stop-loss / take-profit *amounts* (account currency)
+// into absolute rates: a position of `units` gains/loses 1 currency unit per
+// (1 / units) of price move, so an X loss/profit is X / units away from the
+// open rate — below for longs, above for shorts (mirrored for the target).
+// (A stop-loss rate is also REQUIRED by the API once leverage > 1.)
+// 5-dp round, same as modifyPositionReal: a 2-dp round is fine on indices
+// but destroys the stop on forex rates — EURUSD at 1.1373 with a ~0.0014
+// stop distance rounded to 1.14 lands the SL nowhere near the set amount.
+void addSlTpRates(QJsonObject &body, const OrderRequest &req, double ref, double units)
+{
+    if (units <= 0.0) {
+        return;
+    }
+    if (req.stopLossAmount > 0.0) {
+        const double dist = req.stopLossAmount / units;
+        const double sl = req.isBuy ? (ref - dist) : (ref + dist);
+        body[QStringLiteral("stopLossRate")] = std::round(sl * 1e5) / 1e5;
+        // eToro trails the stop server-side when the type is "trailing".
+        body[QStringLiteral("stopLossType")] =
+            req.trailingStop ? QStringLiteral("trailing") : QStringLiteral("fixed");
+    }
+    if (req.takeProfitAmount > 0.0) {
+        const double dist = req.takeProfitAmount / units;
+        const double tp = req.isBuy ? (ref + dist) : (ref - dist);
+        body[QStringLiteral("takeProfitRate")] = std::round(tp * 1e5) / 1e5;
+    }
+}
+
+} // namespace
+
+// Price the SL/TP (and units) off the side the position actually opens at — a buy
+// fills near the ask, a sell near the bid — not the mid. Using the mid leaves a
+// half-spread error, so the SL shown on the open trade drifts from the set amount.
+//
+// A limit order opens at its TRIGGER rate, not at today's price, so that is the
+// reference its SL/TP (and its unit count) must be priced off — otherwise a stop
+// set 100 away from the current price lands 100 away from a rate the position
+// never opened at.
+double EtoroClient::orderReferenceRate(const OrderRequest &req) const
+{
+    if (req.isLimit()) {
+        return req.triggerRate;
+    }
+    const double sideRate = req.isBuy ? m_lastAsk : m_lastBid;
+    if (sideRate > 0.0) {
+        return sideRate;
+    }
+    return (m_lastPrice > 0.0) ? m_lastPrice : m_instrument.currentRate;
+}
+
+// UnifiedOrderRequest (POST /v2/trading/execution/orders):
+//  * identify the instrument by EXACTLY ONE of symbol/instrumentId — sending
+//    both is rejected, so we send instrumentId only;
+//  * settlementType is REQUIRED for open orders (SPX500 is a leveraged CFD);
+//  * leverage / instrumentId are int32 in the schema.
+QJsonObject EtoroClient::baseOrderBody(const OrderRequest &req, qint64 instrumentId,
+                                       const QString &orderCurrency)
+{
+    QJsonObject body;
+    body[QStringLiteral("action")] = QStringLiteral("open");
+    // Opening transactions only: "buy" opens a long, "sellShort" opens a short.
+    // ("sell" / "buyToCover" are the *closing* transactions and are rejected here —
+    // positions are closed via the market-close endpoint instead.)
+    body[QStringLiteral("transaction")] =
+        req.isBuy ? QStringLiteral("buy") : QStringLiteral("sellShort");
+    body[QStringLiteral("instrumentId")] = static_cast<qint32>(instrumentId);
+    body[QStringLiteral("settlementType")] = QStringLiteral("cfd");
+    // "mkt" executes now; "mit" (market-if-touched, eToro's "limit order") rests at
+    // the broker until the feed publishes triggerRate or better and executes at market
+    // then. triggerRate is REQUIRED for mit and must be absent for mkt.
+    body[QStringLiteral("orderType")] =
+        req.isLimit() ? QStringLiteral("mit") : QStringLiteral("mkt");
+    if (req.isLimit()) {
+        // 5-dp round like the SL/TP rates (see addSlTpRates): a rate computed from a
+        // percentage ("1% above the market") carries binary float noise, and a broker
+        // validating against a tick size has no reason to accept 5858.000000000001.
+        body[QStringLiteral("triggerRate")] = std::round(req.triggerRate * 1e5) / 1e5;
+    }
+    body[QStringLiteral("orderCurrency")] = orderCurrency;
+    body[QStringLiteral("leverage")] = static_cast<qint32>(req.leverage);
+    return body;
+}
+
+// eToro caps the units per single order (eligibility's maxUnitsPerOrder, e.g. 20
+// for GOLD). An oversized order is accepted here (an orderId is created) but then
+// rejected at execution with a terse "PositionUnits ... MaxAllowed" dialog — the
+// requested trade never opens. So shrink an over-cap order to the largest amount
+// that fits (shaved 0.5% so a price move before execution can't tip it back over)
+// and log the reduction; the "order submitted" message then reports the amount
+// actually sent. Skipped while the cap (or a live rate) is still unknown; eToro's
+// own validation remains the backstop then — which also covers an order on an
+// instrument other than the one on screen, whose cap the app has not queried.
+EtoroClient::SizedOrder EtoroClient::applyUnitCap(const OrderRequest &req, qint64 instrumentId,
+                                                  double ref, const QString &symbolLabel,
+                                                  const QString &orderCurrency)
+{
+    SizedOrder sized;
+    sized.amount = req.amount;
+    sized.units = (ref > 0.0) ? ((req.amount * req.leverage) / ref) : 0.0;
+    const double maxUnits = (instrumentId == m_instrument.instrumentId)
+                                ? m_instrument.maxUnitsPerOrder
+                                : 0.0;
+    if ((maxUnits <= 0.0) || (sized.units <= maxUnits)) {
+        sized.ok = true;
+        return sized;
+    }
+    const double maxAmount = std::floor(((maxUnits * ref) / req.leverage) * 0.995);
+    if (maxAmount < 1.0) {
+        emit orderResult(false,
+            QStringLiteral("%1 %2 not sent — even the smallest order would exceed "
+                           "eToro's cap of %3 units per order on this instrument.")
+                .arg(req.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
+                     symbolLabel)
+                .arg(maxUnits));
+        return sized;  // ok stays false
+    }
+    emit log(QStringLiteral("%1 %2: %3 %4 at x%5 would be ≈ %6 units — over eToro's "
+                            "cap of %7 units per order; order size reduced to %8 %4.")
+                 .arg(req.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
+                      symbolLabel)
+                 .arg(req.amount, 0, 'f', 2)
+                 .arg(orderCurrency.toUpper())
+                 .arg(req.leverage)
+                 .arg(sized.units, 0, 'f', 2)
+                 .arg(maxUnits)
+                 .arg(maxAmount, 0, 'f', 2),
+             false);
+    sized.amount = maxAmount;
+    sized.units = (maxAmount * req.leverage) / ref;  // SL/TP distances follow the new size
+    sized.ok = true;
+    return sized;
+}
+
+void EtoroClient::onOrderSubmitReply(const PendingOrder &rest, const QString &orderCurrency,
+                                     bool ok, qint32 status, const QJsonDocument &doc,
+                                     const QByteArray &raw, const QString &netError)
+{
+    const bool isLimit = rest.triggerRate > 0.0;
+    if (!ok) {
+        emit orderResult(false, QStringLiteral("%1 rejected (HTTP %2): %3")
+                                    .arg(isLimit ? QStringLiteral("Limit order")
+                                                 : QStringLiteral("Order"))
+                                    .arg(status)
+                                    .arg(rejectionReason(doc, raw, netError)));
+        return;
+    }
+    // A 200 only means the order was SUBMITTED (an orderId was created) — a
+    // market order can still be rejected at execution and open no position.
+    // Report it as submitted, then confirm the real outcome via the
+    // order-lookup endpoint (confirmOrderReal), not the lagging portfolio.
+    const QJsonObject submitted = doc.object();
+    const qint64 orderId =
+        static_cast<qint64>(numFrom(pick(submitted, {QStringLiteral("orderId")})));
+
+    if (isLimit) {
+        registerRestingOrder(rest, orderId);
+        return;
+    }
+
+    emit orderResult(true,
+                     QStringLiteral("%1 order submitted (id %5): %2 %3 %4 — confirming…")
+                         .arg(rest.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
+                         .arg(rest.amount)
+                         .arg(orderCurrency.toUpper(), rest.symbol)
+                         .arg(orderId));
+    if (orderId > 0) {
+        // Give execution a moment to register before the first lookup.
+        const bool isBuy = rest.isBuy;
+        const QString symbolLabel = rest.symbol;
+        QTimer::singleShot(1500, this, [this, orderId, isBuy, symbolLabel] {
+            confirmOrderReal(orderId, isBuy, symbolLabel, 0);
+        });
+    }
+    refreshPortfolioReal();
+    refreshBalanceReal();
+}
+
 void EtoroClient::openPositionReal(const OrderRequest &req)
 {
-    const bool isBuy = req.isBuy;
-    const double leverage = req.leverage;
-    const double stopLossAmount = req.stopLossAmount;
-    const double takeProfitAmount = req.takeProfitAmount;
-    const double triggerRate = req.triggerRate;
-    const bool trailingStop = req.trailingStop;
-    const bool isLimit = req.isLimit();
-    double amount = req.amount;  // shrunk below if it exceeds eToro's per-order unit cap
-
     // Which instrument this order is for. Normally the one being traded; a LIMIT order may
     // name another one (re-placing a resting order after an edit), which is safe because a
     // limit order is priced off its own trigger rate and needs no live quote. A MARKET
     // order must not: it would be priced from the shown instrument's bid/ask.
     const qint64 instrumentId =
         (req.instrumentId != 0) ? req.instrumentId : m_instrument.instrumentId;
-    if (!isLimit && (instrumentId != m_instrument.instrumentId)) {
+    if (!req.isLimit() && (instrumentId != m_instrument.instrumentId)) {
         emit orderResult(false, QStringLiteral("A market order can only be placed on the "
                                               "instrument currently being traded."));
         return;
     }
 
-    // UnifiedOrderRequest (POST /v2/trading/execution/orders):
-    //  * identify the instrument by EXACTLY ONE of symbol/instrumentId — sending
-    //    both is rejected, so we send instrumentId only;
-    //  * settlementType is REQUIRED for open orders (SPX500 is a leveraged CFD);
-    //  * leverage / instrumentId are int32 in the schema.
-    QJsonObject body;
-    body[QStringLiteral("action")] = QStringLiteral("open");
-    // Opening transactions only: "buy" opens a long, "sellShort" opens a short.
-    // ("sell" / "buyToCover" are the *closing* transactions and are rejected here —
-    // positions are closed via the market-close endpoint instead.)
-    body[QStringLiteral("transaction")] = isBuy ? QStringLiteral("buy") : QStringLiteral("sellShort");
-    body[QStringLiteral("instrumentId")] = static_cast<qint32>(instrumentId);
-    body[QStringLiteral("settlementType")] = QStringLiteral("cfd");
-    // "mkt" executes now; "mit" (market-if-touched, eToro's "limit order") rests at
-    // the broker until the feed publishes triggerRate or better and executes at market
-    // then. triggerRate is REQUIRED for mit and must be absent for mkt.
-    body[QStringLiteral("orderType")] = isLimit ? QStringLiteral("mit") : QStringLiteral("mkt");
-    if (isLimit) {
-        // 5-dp round like the SL/TP rates below: a rate computed from a percentage
-        // ("1% above the market") carries binary float noise, and a broker validating
-        // against a tick size has no reason to accept 5858.000000000001.
-        body[QStringLiteral("triggerRate")] = std::round(triggerRate * 1e5) / 1e5;
-    }
-    body[QStringLiteral("amount")] = amount;
     // The order amount must be in the account currency; prefer the real currency
     // learned from the API over a (possibly stale/mismatched) config value.
     const QString orderCurrency =
         (m_accountCurrency.isEmpty() ? m_config.orderCurrency : m_accountCurrency).toLower();
-    body[QStringLiteral("orderCurrency")] = orderCurrency;
-    body[QStringLiteral("leverage")] = static_cast<qint32>(leverage);
-
-    // Convert the requested stop-loss / take-profit *amounts* (account currency)
-    // into absolute rates: a position of `units` gains/loses 1 currency unit per
-    // (1 / units) of price move, so an X loss/profit is X / units away from the
-    // open rate — below for longs, above for shorts (mirrored for the target).
-    // (A stop-loss rate is also REQUIRED by the API once leverage > 1.)
-    //
-    // Price the SL/TP (and units) off the side the position actually opens at — a buy
-    // fills near the ask, a sell near the bid — not the mid. Using the mid leaves a
-    // half-spread error, so the SL shown on the open trade drifts from the set amount.
-    //
-    // A limit order opens at its TRIGGER rate, not at today's price, so that is the
-    // reference its SL/TP (and its unit count) must be priced off — otherwise a stop
-    // set 100 away from the current price lands 100 away from a rate the position
-    // never opened at.
-    double ref = isBuy ? m_lastAsk : m_lastBid;
-    if (ref <= 0.0) {
-        ref = (m_lastPrice > 0.0) ? m_lastPrice : m_instrument.currentRate;
-    }
-    if (isLimit) {
-        ref = triggerRate;
-    }
-    double units = (ref > 0.0) ? ((amount * leverage) / ref) : 0.0;
-
     const QString symbolLabel = instrumentLabel(instrumentId);
+    const double ref = orderReferenceRate(req);
 
-    // eToro caps the units per single order (eligibility's maxUnitsPerOrder, e.g. 20
-    // for GOLD). An oversized order is accepted here (an orderId is created) but then
-    // rejected at execution with a terse "PositionUnits ... MaxAllowed" dialog — the
-    // requested trade never opens. So shrink an over-cap order to the largest amount
-    // that fits (shaved 0.5% so a price move before execution can't tip it back over)
-    // and log the reduction; the "order submitted" message then reports the amount
-    // actually sent. Skipped while the cap (or a live rate) is still unknown; eToro's
-    // own validation remains the backstop then — which also covers an order on an
-    // instrument other than the one on screen, whose cap the app has not queried.
-    const double maxUnits = (instrumentId == m_instrument.instrumentId)
-                                ? m_instrument.maxUnitsPerOrder
-                                : 0.0;
-    if ((maxUnits > 0.0) && (units > maxUnits)) {
-        const double maxAmount = std::floor(((maxUnits * ref) / leverage) * 0.995);
-        if (maxAmount < 1.0) {
-            emit orderResult(false,
-                QStringLiteral("%1 %2 not sent — even the smallest order would exceed "
-                               "eToro's cap of %3 units per order on this instrument.")
-                    .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
-                         symbolLabel)
-                    .arg(maxUnits));
-            return;
-        }
-        emit log(QStringLiteral("%1 %2: %3 %4 at x%5 would be ≈ %6 units — over eToro's "
-                                "cap of %7 units per order; order size reduced to %8 %4.")
-                     .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
-                          symbolLabel)
-                     .arg(amount, 0, 'f', 2)
-                     .arg(orderCurrency.toUpper())
-                     .arg(leverage)
-                     .arg(units, 0, 'f', 2)
-                     .arg(maxUnits)
-                     .arg(maxAmount, 0, 'f', 2),
-                 false);
-        amount = maxAmount;
-        body[QStringLiteral("amount")] = amount;
-        units = (amount * leverage) / ref;  // SL/TP distances below follow the new size
+    const SizedOrder sized = applyUnitCap(req, instrumentId, ref, symbolLabel, orderCurrency);
+    if (!sized.ok) {
+        return;  // over the per-order unit cap even at the minimum size (reported)
     }
 
-    if (units > 0.0) {
-        // 5-dp round, same as modifyPositionReal: a 2-dp round is fine on indices
-        // but destroys the stop on forex rates — EURUSD at 1.1373 with a ~0.0014
-        // stop distance rounded to 1.14 lands the SL nowhere near the set amount.
-        if (stopLossAmount > 0.0) {
-            const double dist = stopLossAmount / units;
-            const double sl = isBuy ? (ref - dist) : (ref + dist);
-            body[QStringLiteral("stopLossRate")] = std::round(sl * 1e5) / 1e5;
-            // eToro trails the stop server-side when the type is "trailing".
-            body[QStringLiteral("stopLossType")] =
-                trailingStop ? QStringLiteral("trailing") : QStringLiteral("fixed");
-        }
-        if (takeProfitAmount > 0.0) {
-            const double dist = takeProfitAmount / units;
-            const double tp = isBuy ? (ref + dist) : (ref - dist);
-            body[QStringLiteral("takeProfitRate")] = std::round(tp * 1e5) / 1e5;
-        }
-    }
+    QJsonObject body = baseOrderBody(req, instrumentId, orderCurrency);
+    body[QStringLiteral("amount")] = sized.amount;
+    addSlTpRates(body, req, ref, sized.units);
 
     // Everything the pending registry needs is known before the POST goes out; only
-    // the broker's orderId is missing, so the reply handler captures ONE value instead
-    // of a dozen. Built after the unit-cap shrink above, so `amount` is what was sent.
+    // the broker's orderId is missing, so the reply handler captures the registry
+    // entry and the display currency instead of a dozen loose values. Built after
+    // the unit-cap shrink above, so `amount` is what was actually sent.
     PendingOrder rest;
     rest.instrumentId = instrumentId;
     rest.symbol = symbolLabel;
-    rest.isBuy = isBuy;
-    rest.triggerRate = triggerRate;
-    rest.amount = amount;
-    rest.leverage = leverage;
-    rest.stopLossAmount = stopLossAmount;
-    rest.takeProfitAmount = takeProfitAmount;
-    rest.trailingStop = trailingStop;
+    rest.isBuy = req.isBuy;
+    rest.triggerRate = req.triggerRate;
+    rest.amount = sized.amount;
+    rest.leverage = req.leverage;
+    rest.stopLossAmount = req.stopLossAmount;
+    rest.takeProfitAmount = req.takeProfitAmount;
+    rest.trailingStop = req.trailingStop;
 
     const QString path =
         QStringLiteral("/v2/trading/execution%1/orders").arg(accountSegment());
     QNetworkReply *reply = apiPost(path, body);
-    handleReply(reply, [this, isBuy, amount, symbolLabel, orderCurrency, isLimit, rest](
-                           bool ok, qint32 status, const QJsonDocument &doc,
-                           const QByteArray &raw, const QString &netError) {
-        if (ok) {
-            // A 200 only means the order was SUBMITTED (an orderId was created) — a
-            // market order can still be rejected at execution and open no position.
-            // Report it as submitted, then confirm the real outcome via the
-            // order-lookup endpoint (confirmOrderReal), not the lagging portfolio.
-            const QJsonObject submitted = doc.object();
-            const qint64 orderId =
-                static_cast<qint64>(numFrom(pick(submitted, {QStringLiteral("orderId")})));
-
-            if (isLimit) {
-                registerRestingOrder(rest, orderId);
-                return;
-            }
-
-            emit orderResult(true,
-                             QStringLiteral("%1 order submitted (id %5): %2 %3 %4 — confirming…")
-                                 .arg(isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
-                                 .arg(amount)
-                                 .arg(orderCurrency.toUpper(), symbolLabel)
-                                 .arg(orderId));
-            if (orderId > 0) {
-                // Give execution a moment to register before the first lookup.
-                QTimer::singleShot(1500, this, [this, orderId, isBuy, symbolLabel] {
-                    confirmOrderReal(orderId, isBuy, symbolLabel, 0);
-                });
-            }
-            refreshPortfolioReal();
-            refreshBalanceReal();
-        } else {
-            emit orderResult(false, QStringLiteral("%1 rejected (HTTP %2): %3")
-                                        .arg(isLimit ? QStringLiteral("Limit order")
-                                                     : QStringLiteral("Order"))
-                                        .arg(status)
-                                        .arg(rejectionReason(doc, raw, netError)));
-        }
+    handleReply(reply, [this, rest, orderCurrency](bool ok, qint32 status,
+                                                   const QJsonDocument &doc,
+                                                   const QByteArray &raw,
+                                                   const QString &netError) {
+        onOrderSubmitReply(rest, orderCurrency, ok, status, doc, raw, netError);
     });
 }
 

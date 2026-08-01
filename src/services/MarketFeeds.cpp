@@ -3,6 +3,7 @@
 #include "domain/DecisionEngine.h"
 #include "services/JsonHttp.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -82,8 +83,6 @@ QString yahooTicker(const QString &symbol)
     return map.value(symbol);
 }
 
-// TradingView's rating buckets for the aggregated recommendation score in [-1, 1].
-
 // Collect the web tickers for the tradable instruments; several app symbols can share
 // one ticker (e.g. SPX500 / SP.24-7 -> SP:SPX), so map each ticker to all its symbols.
 // orderedTickers receives each distinct ticker once, in first-seen order.
@@ -104,6 +103,46 @@ QHash<QString, QStringList> symbolsByWebTicker(const QStringList &tradable,
     return byTicker;
 }
 
+
+// First result object of a Yahoo Finance v8 chart payload ({} when absent) —
+// the VIX, reference-quote and intraday endpoints all share this envelope.
+// QJsonArray::first() on an empty array yields Undefined, so every step below
+// degrades to an empty object/array instead of faulting.
+QJsonObject yahooChartResult(const QJsonDocument &doc)
+{
+    return doc.object()
+        .value(QStringLiteral("chart"))
+        .toObject()
+        .value(QStringLiteral("result"))
+        .toArray()
+        .first()
+        .toObject();
+}
+
+// The close series of a Yahoo chart result (indicators.quote[0].close). Gaps
+// come through as null — holidays on the daily feed, empty minutes on the
+// intraday one — and are skipped. positiveOnly additionally drops zero/negative
+// values (the VIX baseline must not average in placeholder zeros).
+QList<double> yahooCloses(const QJsonObject &chartResult, bool positiveOnly)
+{
+    const QJsonArray closeArr = chartResult.value(QStringLiteral("indicators"))
+                                    .toObject()
+                                    .value(QStringLiteral("quote"))
+                                    .toArray()
+                                    .first()
+                                    .toObject()
+                                    .value(QStringLiteral("close"))
+                                    .toArray();
+    QList<double> closes;
+    closes.reserve(closeArr.size());
+    for (const auto &v : closeArr) {  // QJsonValueConstRef, no conversion
+        if (v.isDouble() && (!positiveOnly || (v.toDouble() > 0.0))) {
+            closes.append(v.toDouble());
+        }
+    }
+    return closes;
+}
+
 } // namespace
 
 MarketFeeds::MarketFeeds(QObject *parent)
@@ -121,6 +160,23 @@ MarketFeeds::MarketFeeds(QObject *parent)
         fetchFearGreed();
         fetchWebQuote();
     }));
+}
+
+// One line per feed per 10 minutes: enough to notice a dead source without a
+// poll-cadence feed turning the log into noise while the panels keep their
+// last reading.
+void MarketFeeds::reportFeedError(const QString &feed, const QString &detail)
+{
+    constexpr qint64 kThrottleMs = 10LL * 60 * 1000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 last = m_lastFeedErrorMs.value(feed, 0);
+    if ((now - last) < kThrottleMs) {
+        return;
+    }
+    m_lastFeedErrorMs.insert(feed, now);
+    emit log(QStringLiteral("%1 feed unavailable%2 - keeping the last reading.")
+                 .arg(feed, detail.isEmpty() ? QString() : (QStringLiteral(": ") + detail)),
+             true);
 }
 
 void MarketFeeds::setTradableSymbols(const QStringList &symbols)
@@ -164,36 +220,16 @@ void MarketFeeds::fetchVix()
     JsonHttp::setBrowserHeaders(req);
     QNetworkReply *reply = m_nam->get(req);
     m_http->handleReply(reply, [this](bool ok, qint32 /*status*/, const QJsonDocument &doc,
-                                      const QByteArray & /*raw*/, const QString & /*netError*/) {
+                                      const QByteArray & /*raw*/, const QString &netError) {
         if (!ok || !doc.isObject()) {
-            return;  // transient / offline — keep the last VIX reading
-        }
-        const QJsonArray result = doc.object()
-                                      .value(QStringLiteral("chart"))
-                                      .toObject()
-                                      .value(QStringLiteral("result"))
-                                      .toArray();
-        if (result.isEmpty()) {
+            reportFeedError(QStringLiteral("VIX"), netError);  // keep the last reading
             return;
         }
-        const QJsonObject r0 = result.first().toObject();
+        const QJsonObject r0 = yahooChartResult(doc);
         const QJsonObject meta = r0.value(QStringLiteral("meta")).toObject();
 
         // Daily close series (nulls appear on holidays / missing days).
-        QList<double> closes;
-        const QJsonArray quotes = r0.value(QStringLiteral("indicators"))
-                                      .toObject()
-                                      .value(QStringLiteral("quote"))
-                                      .toArray();
-        if (!quotes.isEmpty()) {
-            const QJsonArray closeArr = quotes.first().toObject()
-                                            .value(QStringLiteral("close")).toArray();
-            for (const auto &v : closeArr) {
-                if (v.isDouble() && (v.toDouble() > 0.0)) {
-                    closes.append(v.toDouble());
-                }
-            }
-        }
+        const QList<double> closes = yahooCloses(r0, /*positiveOnly=*/true);
 
         double price = meta.value(QStringLiteral("regularMarketPrice")).toDouble();
         if ((price <= 0.0) && !closes.isEmpty()) {
@@ -248,9 +284,13 @@ void MarketFeeds::fetchExternalSignal()
     m_http->handleReply(reply, [this, wantSymbol](bool ok, qint32 /*status*/,
                                                   const QJsonDocument &doc,
                                                   const QByteArray & /*raw*/,
-                                                  const QString & /*netError*/) {
-        if (!ok || (m_currentSymbol != wantSymbol)) {
-            return;  // transient, or the instrument changed under us — ignore
+                                                  const QString &netError) {
+        if (!ok) {
+            reportFeedError(QStringLiteral("Web rating"), netError);
+            return;
+        }
+        if (m_currentSymbol != wantSymbol) {
+            return;  // the instrument changed under us — ignore
         }
         const QJsonArray data = doc.object().value(QStringLiteral("data")).toArray();
         if (data.isEmpty()) {
@@ -297,8 +337,9 @@ void MarketFeeds::fetchInstrumentRatings()
     m_http->handleReply(reply, [this, symbolsByTicker](bool ok, qint32 /*status*/,
                                                        const QJsonDocument &doc,
                                                        const QByteArray & /*raw*/,
-                                                       const QString & /*err*/) {
+                                                       const QString &netError) {
         if (!ok) {
+            reportFeedError(QStringLiteral("Instrument ratings"), netError);
             return;
         }
         // The "d" array maps 1:1 to the requested columns (15m, 1h, 1D); a null entry
@@ -357,8 +398,9 @@ void MarketFeeds::fetchInstrumentNews()
         m_http->handleReply(reply, [this, syms](bool ok, qint32 /*status*/,
                                                 const QJsonDocument &doc,
                                                 const QByteArray & /*raw*/,
-                                                const QString & /*err*/) {
+                                                const QString &netError) {
             if (!ok) {
+                reportFeedError(QStringLiteral("News"), netError);
                 return;
             }
             QList<NewsHeadline> headlines;
@@ -403,9 +445,10 @@ void MarketFeeds::fetchFearGreed()
     req.setRawHeader(refererKey, refererValue);
     QNetworkReply *reply = m_nam->get(req);
     m_http->handleReply(reply, [this](bool ok, qint32 /*status*/, const QJsonDocument &doc,
-                                      const QByteArray & /*raw*/, const QString & /*netError*/) {
+                                      const QByteArray & /*raw*/, const QString &netError) {
         if (!ok || !doc.isObject()) {
-            return;  // transient / blocked — keep the last reading
+            reportFeedError(QStringLiteral("Fear & Greed"), netError);  // keep the last reading
+            return;
         }
         const QJsonObject fg = doc.object().value(QStringLiteral("fear_and_greed")).toObject();
         const double score = fg.value(QStringLiteral("score")).toDouble(-1.0);
@@ -436,35 +479,13 @@ void MarketFeeds::fetchIntradaySeries()
         m_http->handleReply(reply, [this, symbol](bool ok, qint32 /*status*/,
                                                   const QJsonDocument &doc,
                                                   const QByteArray & /*raw*/,
-                                                  const QString & /*netError*/) {
+                                                  const QString &netError) {
             if (!ok || !doc.isObject()) {
-                return;  // transient / blocked — this source just stays absent
-            }
-            const QJsonArray result = doc.object()
-                                          .value(QStringLiteral("chart"))
-                                          .toObject()
-                                          .value(QStringLiteral("result"))
-                                          .toArray();
-            if (result.isEmpty()) {
+                reportFeedError(QStringLiteral("Intraday series"), netError);  // stays absent
                 return;
             }
-            const QJsonArray closesJson = result.first()
-                                              .toObject()
-                                              .value(QStringLiteral("indicators"))
-                                              .toObject()
-                                              .value(QStringLiteral("quote"))
-                                              .toArray()
-                                              .first()
-                                              .toObject()
-                                              .value(QStringLiteral("close"))
-                                              .toArray();
-            QList<double> closes;
-            closes.reserve(closesJson.size());
-            for (const auto &v : closesJson) {  // QJsonValueConstRef, no conversion
-                if (v.isDouble()) {  // gaps come through as null — skip them
-                    closes.append(v.toDouble());
-                }
-            }
+            const QList<double> closes =
+                yahooCloses(yahooChartResult(doc), /*positiveOnly=*/false);
             if (!closes.isEmpty()) {
                 emit intradayCloses(symbol, closes);
             }
@@ -487,20 +508,16 @@ void MarketFeeds::fetchWebQuote()
     m_http->handleReply(reply, [this, wantSymbol](bool ok, qint32 /*status*/,
                                                   const QJsonDocument &doc,
                                                   const QByteArray & /*raw*/,
-                                                  const QString & /*netError*/) {
-        if (!ok || (m_currentSymbol != wantSymbol) || !doc.isObject()) {
+                                                  const QString &netError) {
+        if (!ok || !doc.isObject()) {
+            reportFeedError(QStringLiteral("Web quote"), netError);
             return;
         }
-        const QJsonArray result = doc.object()
-                                      .value(QStringLiteral("chart"))
-                                      .toObject()
-                                      .value(QStringLiteral("result"))
-                                      .toArray();
-        if (result.isEmpty()) {
-            return;
+        if (m_currentSymbol != wantSymbol) {
+            return;  // the instrument changed under us — ignore
         }
-        const QJsonObject meta = result.first().toObject()
-                                     .value(QStringLiteral("meta")).toObject();
+        const QJsonObject meta =
+            yahooChartResult(doc).value(QStringLiteral("meta")).toObject();
         const double price = meta.value(QStringLiteral("regularMarketPrice")).toDouble();
         if (price <= 0.0) {
             return;

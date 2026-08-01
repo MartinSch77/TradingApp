@@ -70,8 +70,15 @@ signals:
     // Yahoo intraday close series (1-minute bars) for one tradable instrument —
     // the independent session-momentum source of the decision composite.
     void intradayCloses(const QString &symbol, const QList<double> &closes);
+    // Fetch failures, throttled to one line per feed per 10 minutes: these are
+    // public web feeds that hiccup routinely (the panels keep their last
+    // reading), but a feed that is DOWN must not fail silently — the user
+    // should know the VIX/news/sentiment inputs have gone stale.
+    void log(const QString &message, bool isError);
 
 private:
+    // Emit a throttled log line for a failed feed fetch (see the log signal).
+    void reportFeedError(const QString &feed, const QString &detail);
     // Fetch the spot CBOE VIX from a free public feed (eToro only lists monthly
     // VIX futures) and emit vixUpdated.
     void fetchVix();
@@ -88,6 +95,7 @@ private:
     QTimer *m_timer = nullptr;      // periodic VIX + current-instrument rating refresh
     QStringList m_tradableSymbols;  // instruments the bulk fetches cover
     QString m_currentSymbol;        // instrument the single-rating fetch tracks
+    QHash<QString, qint64> m_lastFeedErrorMs;  // feed name -> last reported (throttle)
 };
 
 #endif // TRADINGAPP_SERVICES_MARKETFEEDS_H

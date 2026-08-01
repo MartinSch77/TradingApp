@@ -12,7 +12,7 @@ namespace trading {
 
 // Sensible number of decimals for a price, by magnitude: indices in the
 // thousands need 2, while low-priced instruments (e.g. forex ~1.08) need more.
-qint32 priceDecimals(double price);
+[[nodiscard]] qint32 priceDecimals(double price) noexcept;
 
 // Account-currency value of a one-point price move for a position. eToro quotes
 // some instruments in a currency other than the account (e.g. HKG50 in HKD), so
@@ -22,7 +22,7 @@ qint32 priceDecimals(double price);
 // relative to the open rate, so amount x leverage / openRate is the value per point
 // with no FX rate needed. Falls back to units when the notional is unknown (so
 // account-currency-quoted instruments still read out).
-double accountValuePerPoint(const Position &p);
+[[nodiscard]] double accountValuePerPoint(const Position &p);
 
 // A quote older than this no longer marks a position the way eToro's own UI does:
 // the public rates feed republishes an open market's price every few seconds, so
@@ -40,27 +40,27 @@ constexpr qint64 kQuoteStaleMs = 120LL * 1000;
 // eToro marks at. `units` come from the payload; when they are unknown (simulated
 // positions) the account-currency value per point stands in, which already carries
 // the conversion rate as of the open.
-double positionPnl(const Position &p, const Quote &q);
+[[nodiscard]] double positionPnl(const Position &p, const Quote &q);
 
 // The account-currency amount a stop-loss / take-profit rate represents for a
 // position (value-per-point x price distance from the open rate). Empty when off.
 // eurPerUsd converts the account (USD) figure to the display currency; pass 0
 // (or a negative value) to show the raw account amount.
-QString slTpAmountText(const Position &p, double rate, double eurPerUsd);
+[[nodiscard]] QString slTpAmountText(const Position &p, double rate, double eurPerUsd);
 
 // The SIGNED account-currency P/L a stop-loss rate represents: negative when the
 // stop closes the trade at a loss (below open for a long, above for a short),
 // positive when it closes locked in a profit (stop on the winning side). The sign
 // lets the user place the stop on either side. Empty when the leg is off.
-QString slSignedAmountText(const Position &p, double eurPerUsd);
+[[nodiscard]] QString slSignedAmountText(const Position &p, double eurPerUsd);
 
 // The position ids present in `previous` but gone from `current`: the trades that
 // closed between two portfolio snapshots, whoever closed them (this app, eToro's
 // own UI, an SL/TP hit, or a liquidation). Order follows `previous`, so the log
 // reads in the order the rows were shown. Empty on the first snapshot — with no
 // previous set there is nothing to have disappeared.
-QStringList closedSincePreviousIds(const QList<Position> &previous,
-                                   const QList<Position> &current);
+[[nodiscard]] QStringList closedSincePreviousIds(const QList<Position> &previous,
+                                                 const QList<Position> &current);
 
 } // namespace trading
 

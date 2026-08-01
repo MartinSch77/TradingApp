@@ -41,7 +41,8 @@ private slots:
         const QList<double> s = walk(240);
         McOutlook mc;
         QBENCHMARK {
-            mc = monteCarlo(s, s.last(), 3, 0.01, 0.01, 1200);
+            mc = monteCarlo(s, {.price = s.last(), .horizon = 3, .tpFrac = 0.01,
+                                .slFrac = 0.01, .paths = 1200});
         }
         QVERIFY(mc.valid);
     }

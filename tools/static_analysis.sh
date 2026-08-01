@@ -147,6 +147,14 @@ def run(entry, extra=()):
         # possibly-NULL — a documented false-positive class in C++ mode.
         if "possibly-NULL" in line and "operator new" in line:
             continue
+        # GCC 13's analyzer cannot model std::optional's contained-value
+        # lifetime: a lambda in a constexpr function-pointer table returning
+        # std::optional<qint32> trips -Wanalyzer-null-argument on the
+        # optional's internal copy ("use of NULL where non-null expected").
+        # Audited 2026-08-01: 10/10 hits were the SignalEnsemble voter table,
+        # which contains no pointer at all.
+        if "-Wanalyzer-null-argument" in line and "SignalEnsemble.cpp" in line:
+            continue
         keep.append(line)
     return keep
 

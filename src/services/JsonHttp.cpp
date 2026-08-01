@@ -17,6 +17,42 @@ constexpr auto kBrowserUA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36";
 
+// A failure worth re-issuing an idempotent GET for. Covers 429 rate limits and
+// 5xx server hiccups (e.g. the intermittent 500 from the aggregate-portfolio
+// endpoint), which typically clear within a second or two.
+// Transport-level stalls never carry an HTTP status (it stays 0): the 30s
+// transferTimeout abort (OperationCanceledError — nothing else aborts replies
+// here), a socket timeout, or the server dropping the connection mid-flight.
+// They are as transient as a 5xx, so retry those too instead of letting one
+// hung trade/history page kill a whole paged walk.
+bool isRetryable(const QNetworkReply *reply, qint32 status)
+{
+    const QNetworkReply::NetworkError err = reply->error();
+    const bool transportRetryable =
+        (status == 0)
+        && ((err == QNetworkReply::OperationCanceledError)
+            || (err == QNetworkReply::TimeoutError)
+            || (err == QNetworkReply::RemoteHostClosedError)
+            || (err == QNetworkReply::TemporaryNetworkFailureError));
+    return transportRetryable || (status == 429) || (status == 500) || (status == 502)
+           || (status == 503) || (status == 504);
+}
+
+// Seconds to wait before the retry: honour a server-supplied delay (429s, and
+// some 503s, carry one); else a short default backoff — a bit longer for a
+// rate limit than a server hiccup. Capped, since the rate windows are <= 60 s.
+qint32 retryDelaySecs(QNetworkReply *reply, qint32 status)
+{
+    qint32 waitSecs = reply->rawHeader("Retry-After").toInt();
+    if (waitSecs <= 0) {
+        waitSecs = reply->rawHeader("RateLimit-Reset").toInt();
+    }
+    if (waitSecs <= 0) {
+        waitSecs = (status == 429) ? 2 : 1;
+    }
+    return std::min(waitSecs, 65);
+}
+
 } // namespace
 
 JsonHttp::JsonHttp(QNetworkAccessManager *nam, QObject *parent)
@@ -40,35 +76,11 @@ void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         // Transient failure on an idempotent GET (retries left): wait briefly and
-        // re-issue rather than surfacing it. Covers 429 rate limits and 5xx server
-        // hiccups (e.g. the intermittent 500 from the aggregate-portfolio endpoint),
-        // which typically clear within a second or two.
-        // Transport-level stalls never carry an HTTP status (it stays 0): the 30s
-        // transferTimeout abort (OperationCanceledError — nothing else aborts
-        // replies here), a socket timeout, or the server dropping the connection
-        // mid-flight. They are as transient as a 5xx, so retry those too instead
-        // of letting one hung trade/history page kill a whole paged walk.
-        const QNetworkReply::NetworkError err = reply->error();
-        const bool transportRetryable =
-            (status == 0)
-            && ((err == QNetworkReply::OperationCanceledError)
-                || (err == QNetworkReply::TimeoutError)
-                || (err == QNetworkReply::RemoteHostClosedError)
-                || (err == QNetworkReply::TemporaryNetworkFailureError));
-        const bool retryable = transportRetryable || (status == 429) || (status == 500)
-                               || (status == 502) || (status == 503) || (status == 504);
+        // re-issue rather than surfacing it (see isRetryable above). Non-GET
+        // requests are never auto-retried.
         const bool isGet = reply->operation() == QNetworkAccessManager::GetOperation;
-        if (retryable && (retriesLeft > 0) && isGet) {
-            // Honour a server-supplied delay (429s, and some 503s, carry one); else a
-            // short default backoff — a bit longer for a rate limit than a server hiccup.
-            qint32 waitSecs = reply->rawHeader("Retry-After").toInt();
-            if (waitSecs <= 0) {
-                waitSecs = reply->rawHeader("RateLimit-Reset").toInt();
-            }
-            if (waitSecs <= 0) {
-                waitSecs = (status == 429) ? 2 : 1;
-            }
-            waitSecs = std::min(waitSecs, 65);  // cap a single wait (windows are <=60s)
+        if (isRetryable(reply, status) && (retriesLeft > 0) && isGet) {
+            const qint32 waitSecs = retryDelaySecs(reply, status);
             // Re-issue the same GET with a fresh x-request-id after the delay.
             QNetworkRequest req = reply->request();
             const QByteArray requestId =

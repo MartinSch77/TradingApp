@@ -14,15 +14,10 @@ private slots:
     // @relation(REQ-F-020, scope=function)
     void TS_EVT_001_parseNumFormats()
     {
-        bool ok = false;
-        QCOMPARE(parseNum(QStringLiteral("0.3%"), &ok), 0.3);
-        QVERIFY(ok);
-        QCOMPARE(parseNum(QStringLiteral("-0.2%"), &ok), -0.2);
-        QVERIFY(ok);
-        QCOMPARE(parseNum(QStringLiteral("215K"), &ok), 215.0);
-        QVERIFY(ok);
-        static_cast<void>(parseNum(QStringLiteral("n/a"), &ok));
-        QVERIFY(!ok);
+        QCOMPARE(parseNum(QStringLiteral("0.3%")), std::optional<double>(0.3));
+        QCOMPARE(parseNum(QStringLiteral("-0.2%")), std::optional<double>(-0.2));
+        QCOMPARE(parseNum(QStringLiteral("215K")), std::optional<double>(215.0));
+        QVERIFY(!parseNum(QStringLiteral("n/a")).has_value());
     }
 
     //! @tstid TS-EVT-002 @design DES-DOM-EVT

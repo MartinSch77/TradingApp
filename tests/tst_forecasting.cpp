@@ -89,8 +89,14 @@ private slots:
     // @relation(REQ-F-006, scope=function)
     void TS_FC_005_monteCarloValidity()
     {
-        QVERIFY(!monteCarlo({100.0, 101.0}, 100.0, 3, 0.01, 0.01, 200).valid);
-        QVERIFY(monteCarlo(upDrift(80), 100.0, 5, 0.01, 0.01, 200).valid);
+        QVERIFY(!monteCarlo({100.0, 101.0},
+                            {.price = 100.0, .horizon = 3, .tpFrac = 0.01, .slFrac = 0.01,
+                             .paths = 200})
+                     .valid);
+        QVERIFY(monteCarlo(upDrift(80),
+                           {.price = 100.0, .horizon = 5, .tpFrac = 0.01, .slFrac = 0.01,
+                            .paths = 200})
+                    .valid);
     }
 
     //! @tstid TS-FC-006 @design DES-DOM-FC
@@ -98,7 +104,8 @@ private slots:
     void TS_FC_006_monteCarloDriftDirection()
     {
         const QList<double> s = upDrift(120);
-        const McOutlook o = monteCarlo(s, s.last(), 24, 0.01, 0.01, 2000);
+        const McOutlook o = monteCarlo(s, {.price = s.last(), .horizon = 24, .tpFrac = 0.01,
+                                           .slFrac = 0.01, .paths = 2000});
         QVERIFY(o.valid);
         QVERIFY(o.pWinLong > o.pWinShort);       // drift favours the long side
         QVERIFY(o.pWinLong + o.pLoseLong <= 1.0 + 1e-9);
@@ -124,13 +131,14 @@ private slots:
         // expires between them, and the measured mean final move must carry the
         // drift's sign — the residue the trade-plan EV now prices in.
         const QList<double> s = upDrift(120);
-        const McOutlook o = monteCarlo(s, s.last(), 5, 0.20, 0.20, 2000);
+        const McOutlook o = monteCarlo(s, {.price = s.last(), .horizon = 5, .tpFrac = 0.20,
+                                           .slFrac = 0.20, .paths = 2000});
         QVERIFY(o.valid);
         QCOMPARE(o.pWinLong + o.pLoseLong, 0.0);  // nothing decided
         QVERIFY(o.expiryRetLong > 0.0);           // residue follows the up-drift
         QVERIFY(o.expiryRetShort > 0.0);          // same paths, short's barriers
         // Without barriers there are no expiry statistics.
-        const McOutlook nb = monteCarlo(s, s.last(), 5, 0.0, 0.0, 500);
+        const McOutlook nb = monteCarlo(s, {.price = s.last(), .horizon = 5, .paths = 500});
         QCOMPARE(nb.expiryRetLong, 0.0);
         QCOMPARE(nb.expiryRetShort, 0.0);
     }

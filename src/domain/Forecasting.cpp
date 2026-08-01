@@ -144,22 +144,22 @@ double hurstExponent(const QList<double> &series)
     return logRs / logN;
 }
 
-McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
-                     double tpFrac, double slFrac, qint32 paths, quint32 seed)
+McOutlook monteCarlo(const QList<double> &series, const McParams &params)
 {
     McOutlook o;
     const QList<double> ret = returnsOf(series);
-    if ((ret.size() < 10) || (price <= 0.0) || (horizon <= 0) || (paths <= 0)) {
+    if ((ret.size() < 10) || (params.price <= 0.0) || (params.horizon <= 0)
+        || (params.paths <= 0)) {
         return o;
     }
     const auto m = static_cast<qint32>(ret.size());
-    const bool haveBarriers = (tpFrac > 0.0) && (slFrac > 0.0);
-    QRandomGenerator rngOwned =
-        (seed != 0U) ? QRandomGenerator(seed) : QRandomGenerator::securelySeeded();
+    const bool haveBarriers = (params.tpFrac > 0.0) && (params.slFrac > 0.0);
+    QRandomGenerator rngOwned = (params.seed != 0U) ? QRandomGenerator(params.seed)
+                                                    : QRandomGenerator::securelySeeded();
     QRandomGenerator *rng = &rngOwned;
 
     QList<double> finals;
-    finals.reserve(paths);
+    finals.reserve(params.paths);
     qint32 upCount = 0;
     qint32 winLong = 0;
     qint32 winShort = 0;
@@ -169,19 +169,19 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     qint32 expiryShortCount = 0;
     double expiryLongSum = 0.0;
     double expiryShortSum = 0.0;
-    for (qint32 p = 0; p < paths; ++p) {
+    for (qint32 p = 0; p < params.paths; ++p) {
         double cum = 0.0;  // cumulative fractional move from the current price
         bool longDone = false;
         bool shortDone = false;
-        for (qint32 t = 0; t < horizon; ++t) {
+        for (qint32 t = 0; t < params.horizon; ++t) {
             const auto pickIdx = static_cast<qsizetype>(rng->bounded(m));
             cum = ((1.0 + cum) * (1.0 + ret[pickIdx])) - 1.0;
             if (haveBarriers) {
                 if (!longDone) {
-                    if (cum >= tpFrac) {
+                    if (cum >= params.tpFrac) {
                         ++winLong;
                         longDone = true;
-                    } else if (cum <= -slFrac) {
+                    } else if (cum <= -params.slFrac) {
                         ++loseLong;
                         longDone = true;
                     } else {
@@ -189,10 +189,10 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
                     }
                 }
                 if (!shortDone) {
-                    if (cum <= -tpFrac) {
+                    if (cum <= -params.tpFrac) {
                         ++winShort;
                         shortDone = true;
-                    } else if (cum >= slFrac) {
+                    } else if (cum >= params.slFrac) {
                         ++loseShort;
                         shortDone = true;
                     } else {
@@ -214,16 +214,17 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
         if (cum > 0.0) {
             ++upCount;
         }
-        finals.append(price * (1.0 + cum));
+        finals.append(params.price * (1.0 + cum));
     }
     const auto sortBegin = finals.begin();
     const auto sortEnd = finals.end();
     std::sort(sortBegin, sortEnd);
-    const auto pathsD = static_cast<double>(paths);
+    const auto pathsD = static_cast<double>(params.paths);
     o.valid = true;
     o.pUp = static_cast<double>(upCount) / pathsD;
     o.p5 = finals[static_cast<qsizetype>(0.05 * pathsD)];
-    o.p95 = finals[std::min<qsizetype>(paths - 1, static_cast<qsizetype>(0.95 * pathsD))];
+    o.p95 = finals[std::min<qsizetype>(params.paths - 1,
+                                       static_cast<qsizetype>(0.95 * pathsD))];
     o.pWinLong = static_cast<double>(winLong) / pathsD;
     o.pWinShort = static_cast<double>(winShort) / pathsD;
     o.pLoseLong = static_cast<double>(loseLong) / pathsD;
@@ -237,7 +238,7 @@ McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
     return o;
 }
 
-double sigmoid(double x)
+double sigmoid(double x) noexcept
 {
     return 1.0 / (1.0 + std::exp(-x));
 }

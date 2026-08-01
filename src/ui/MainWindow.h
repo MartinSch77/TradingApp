@@ -5,8 +5,6 @@
 #include "domain/Forecasting.h"
 #include "domain/Models.h"
 #include "domain/TradePlan.h"
-#include "services/EconomicCalendar.h"
-
 #include <QDateTime>
 #include <QFont>
 #include <QFutureWatcher>
@@ -18,6 +16,7 @@
 #include <QStringList>
 
 class AiAdvisor;
+class EconomicCalendar;
 class EtoroClient;
 class MarketFeeds;
 class PositionsModel;
@@ -32,6 +31,7 @@ QT_FORWARD_DECLARE_CLASS(QEvent)
 QT_FORWARD_DECLARE_CLASS(QDoubleSpinBox)
 QT_FORWARD_DECLARE_CLASS(QFormLayout)
 QT_FORWARD_DECLARE_CLASS(QGroupBox)
+QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
 QT_FORWARD_DECLARE_CLASS(QLabel)
 QT_FORWARD_DECLARE_CLASS(QListWidget)
 QT_FORWARD_DECLARE_CLASS(QPlainTextEdit)
@@ -40,16 +40,18 @@ QT_FORWARD_DECLARE_CLASS(QTableWidget)
 QT_FORWARD_DECLARE_CLASS(QTableView)
 QT_FORWARD_DECLARE_CLASS(QTableWidgetItem)
 QT_FORWARD_DECLARE_CLASS(QTimer)
+QT_FORWARD_DECLARE_CLASS(QVBoxLayout)
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
     // The window depends on narrow service interfaces, injected by the
-    // composition root (main.cpp): the broker client, the public web feeds and
-    // the AI advisor are separate objects with separate lifecycles.
+    // composition root (main.cpp): the broker client, the public web feeds, the
+    // AI advisor and the economic calendar are separate objects with separate
+    // lifecycles — the UI consumes their signals and owns none of them.
     explicit MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
-                        QWidget *parent = nullptr);
+                        EconomicCalendar *calendar, QWidget *parent = nullptr);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -162,8 +164,29 @@ private:
     // the closed-trades list at once. Compares against m_shownPositions, so call
     // it BEFORE that is replaced.
     void refreshClosedTradesForVanished(const QList<Position> &current);
+    // eventFilter()'s Ctrl+wheel UI-zoom leg; true = the wheel event was consumed.
+    [[nodiscard]] bool handleZoomWheel(QObject *watched, QEvent *event);
+    // eventFilter()'s double-tap s/b leg; true = the key press was consumed.
+    [[nodiscard]] bool handleQuickKeyEvent(QEvent *event);
     void handleQuickKey(qint32 key);        // double-tap detection for the s/b shortcut
     void updateSignals();               // recompute the SPX500 technical signals panel
+    // Shared values of one updateSignals() pass, threaded by reference through the
+    // render helpers below — TradePlan.cpp's PlanContext pattern. The struct is
+    // file-local: defined only in MainWindow.cpp, right above updateSignals().
+    struct SignalsContext;
+    void renderRegimeAndNewsRows();     // VIX/calendar regime + news-sentiment rows
+    void renderGatheringDataRows();     // reset every signal row while history fills
+    void renderIndicatorRows(SignalsContext &ctx);      // trend/RSI/MACD/Bollinger/volatility rows
+    void renderForecastModelRows(SignalsContext &ctx);  // regression + pattern-kNN rows
+    void renderTimingAndRiskRows(SignalsContext &ctx);  // stochastic, SMA-50, risk, change rows
+    void renderPredictionRow(SignalsContext &ctx);      // ensemble vote + confidence haircuts
+    void render3hForecastRow(const SignalsContext &ctx);  // drift extrapolation + watchdog corridor
+    void render3dForecastRow(SignalsContext &ctx);      // bounded 3-trading-day projection
+    void renderOverallSignalRow(SignalsContext &ctx);   // BUY/SELL/NEUTRAL majority call
+    void renderUpProbabilityRow(SignalsContext &ctx);   // logistic up-probability row
+    void dispatchMonteCarlo(const SignalsContext &ctx); // coalesced off-GUI-thread MC run
+    void renderAiRegimeRow(SignalsContext &ctx);        // Hurst trending/mean-reverting row
+    void renderAdviceRow(SignalsContext &ctx);          // synthesized BUY/SELL/HOLD line
     void updateOpenCost();              // refresh the estimated opening (spread) cost
     // Enable/disable BUY & SELL (and the "market closed" hint) from whether the selected
     // instrument's market is currently open. Respects the order cooldown and treats an
@@ -181,6 +204,32 @@ private:
     [[nodiscard]] QGroupBox *buildLimitOrderBox(QWidget *parent);
     // The resting-order table plus its Adjust/Cancel buttons, appended to `form`.
     void buildPendingOrdersView(QWidget *parent, QFormLayout *form);
+    // buildUi() is an orchestrator; the per-panel builders below (same ratchet
+    // reasoning as buildMarketClosedRow) run in its exact original order.
+    // Header row: title, instrument selector, header buttons, price/cash column.
+    [[nodiscard]] QHBoxLayout *buildHeaderRow(QWidget *central, const QString &sym);
+    // The header's window/dialog buttons (Graph … Closed trades…).
+    void buildHeaderButtons(QWidget *central);
+    // The parentless, stay-on-top price/time chart window (shown by the constructor).
+    void buildChartWindow(const QString &sym, qint32 chartW, qint32 chartH);
+    // "Trade <symbol>" panel: hours, amount/leverage/SL/TP fields, BUY/SELL buttons.
+    [[nodiscard]] QGroupBox *buildTradePanel(QWidget *lower, const QString &sym);
+    // The opening-cost and overnight-fee rows at the bottom of the trade panel.
+    void buildTradeCostRows(QGroupBox *tradeBox, QFormLayout *tradeForm);
+    // The floating stay-on-top window holding the signals AND the AI panel.
+    void buildSignalsWindow(const QString &sym);
+    // The labelled rows of the signals panel, each with its explanatory mouse-over.
+    void buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm);
+    // The AI decision-support panel, sharing the floating signals window.
+    void buildAiPanel(QVBoxLayout *signalsWinLayout);
+    // "Open trades" panel: positions view, totals, close-proposal banner, Close button.
+    [[nodiscard]] QGroupBox *buildPositionsPanel(QWidget *lower);
+    // Closed-trade monthly P/L summary panel (m_pnlBox and its buttons).
+    void buildMonthlyPnlPanel(QWidget *lower);
+    // Bottom splitter row: market events | Activity log | Buy / sell now.
+    void buildBottomRow(QWidget *lower, QVBoxLayout *lowerLayout, const QString &sym);
+    // "Buy / sell now" panel: BUY and SELL recommendation columns plus Refresh.
+    void buildRecommendationsPanel(QWidget *lower);
     void onMarketClosedOverrideToggled(bool on);  // log the change, re-gate the buttons
     // Wire the results of everything computed off the GUI thread (AI advisor + the three
     // QtConcurrent watchers). Called from the constructor; separate so its connection
@@ -394,7 +443,7 @@ private:
     QString m_nextEventTitle;
     QList<EconomicEvent> m_eventList;  // upcoming events, for the chart event marker
 
-    // Economic-calendar panel
+    // Economic-calendar panel (service injected by the composition root)
     EconomicCalendar *m_calendar = nullptr;
     QGroupBox *m_eventsBox = nullptr;  // "Market events … (with <symbol> impact)"
     QListWidget *m_events = nullptr;

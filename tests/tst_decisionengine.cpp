@@ -68,22 +68,22 @@ private slots:
     // @relation(REQ-F-008, scope=function)
     void TS_DEC_002_newsSentimentSign()
     {
-        qint32 n = 0;
         QList<NewsHeadline> pos;
         NewsHeadline h;
         h.title = QStringLiteral("Stocks surge to record on strong earnings");
         pos << h;
-        QVERIFY(newsSentimentScore(pos, n) > 0.0);
+        QVERIFY(newsSentimentScore(pos).score > 0.0);
+        QCOMPARE(newsSentimentScore(pos).count, 1);
 
         QList<NewsHeadline> neg;
         h.title = QStringLiteral("Markets plunge as recession fear grows");
         neg << h;
-        QVERIFY(newsSentimentScore(neg, n) < 0.0);
+        QVERIFY(newsSentimentScore(neg).score < 0.0);
 
         QList<NewsHeadline> neutral;
         h.title = QStringLiteral("Exchange announces new listing schedule");
         neutral << h;
-        QCOMPARE(newsSentimentScore(neutral, n), 0.0);
+        QCOMPARE(newsSentimentScore(neutral).score, 0.0);
     }
 
     //! @tstid TS-DEC-003 @design DES-DOM-DEC
@@ -91,20 +91,18 @@ private slots:
     void TS_DEC_003_marketRegime()
     {
         MarketSnapshot m;
-        bool eventRisk = true;
         m.vixValid = true;
         m.vix = 30.0;
-        QVERIFY(marketRegime(m, eventRisk) < 0.0);  // risk-off
-        QVERIFY(!eventRisk);                        // no events supplied
+        QVERIFY(marketRegime(m).tilt < 0.0);   // risk-off
+        QVERIFY(!marketRegime(m).eventRisk);   // no events supplied
         m.vix = 13.0;
-        QVERIFY(marketRegime(m, eventRisk) > 0.0);  // risk-on
+        QVERIFY(marketRegime(m).tilt > 0.0);   // risk-on
 
         EconomicEvent e;
         e.when = QDateTime::currentDateTime().addSecs(3600);
         e.impact = QStringLiteral("High");
         m.events << e;
-        static_cast<void>(marketRegime(m, eventRisk));
-        QVERIFY(eventRisk);  // imminent high-impact event flagged
+        QVERIFY(marketRegime(m).eventRisk);  // imminent high-impact event flagged
     }
 
     //! @tstid TS-DEC-004 @design DES-DOM-DEC

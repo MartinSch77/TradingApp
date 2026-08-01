@@ -8,7 +8,7 @@
 
 namespace trading {
 
-double parseNum(const QString &s, bool *ok)
+std::optional<double> parseNum(const QString &s)
 {
     QString clean;
     for (const QChar &c : s) {
@@ -21,7 +21,12 @@ double parseNum(const QString &s, bool *ok)
             // separator before the number starts — keep scanning
         }
     }
-    return clean.toDouble(ok);
+    bool ok = false;
+    const double value = clean.toDouble(&ok);
+    if (ok) {
+        return value;
+    }
+    return std::nullopt;
 }
 
 ImpactGuess guessImpact(const EconomicEvent &e)
@@ -34,12 +39,10 @@ ImpactGuess guessImpact(const EconomicEvent &e)
         return std::any_of(keys.begin(), keys.end(), has);
     };
 
-    bool haveF = false;
-    bool haveP = false;
-    const double f = parseNum(e.forecast, &haveF);
-    const double p = parseNum(e.previous, &haveP);
-    const bool haveDelta = haveF && haveP;
-    const double delta = haveDelta ? (f - p) : 0.0;
+    const std::optional<double> f = parseNum(e.forecast);
+    const std::optional<double> p = parseNum(e.previous);
+    const bool haveDelta = f.has_value() && p.has_value();
+    const double delta = haveDelta ? (*f - *p) : 0.0;
 
     qint32 dir = 0;  // +1 bullish, -1 bearish, 0 uncertain/volatile
     QString reason;
@@ -116,11 +119,8 @@ EventProposal proposeActivity(const EconomicEvent &e)
 
     // Only the parse-success flags matter here — the direction itself comes
     // from guessImpact(), and the rationale quotes the raw feed strings.
-    bool haveF = false;
-    bool haveP = false;
-    static_cast<void>(parseNum(e.forecast, &haveF));
-    static_cast<void>(parseNum(e.previous, &haveP));
-    const bool haveDelta = haveF && haveP;
+    const bool haveDelta =
+        parseNum(e.forecast).has_value() && parseNum(e.previous).has_value();
     const bool highImpact = e.impact.compare(QLatin1String("High"), Qt::CaseInsensitive) == 0;
 
     if (!haveDelta || (g.dir == 0)) {

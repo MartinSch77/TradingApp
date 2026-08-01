@@ -6,42 +6,22 @@
     "ccn": 19
   },
   "src/domain/Forecasting.cpp::trading::monteCarlo": {
-    "ccn": 23,
-    "params": 7
-  },
-  "src/domain/SignalEnsemble.cpp::trading::computeEnsemble": {
-    "ccn": 29
-  },
-  "src/domain/TradePlan.cpp::trading::buildTradePlan": {
-    "ccn": 52,
-    "nloc": 138
+    "ccn": 23
   },
   "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
     "ccn": 17
   },
-  "src/services/EtoroClient.cpp::EtoroClient::openPositionReal": {
-    "ccn": 33,
-    "nloc": 134,
-    "params": 6
-  },
-  "src/services/JsonHttp.cpp::JsonHttp::handleReply": {
-    "ccn": 20
+  "src/services/EtoroClient.cpp::EtoroClient::onOrderSubmitReply": {
+    "params": 7
   },
   "src/services/SimulationEngine.cpp::SimulationEngine::tick": {
     "ccn": 18
   },
   "src/ui/MainWindow.cpp::MainWindow::MainWindow": {
-    "nloc": 125
-  },
-  "src/ui/MainWindow.cpp::MainWindow::buildUi": {
-    "ccn": 24,
-    "nloc": 685
+    "nloc": 112
   },
   "src/ui/MainWindow.cpp::MainWindow::checkCloseProposals": {
     "ccn": 25
-  },
-  "src/ui/MainWindow.cpp::MainWindow::eventFilter": {
-    "ccn": 27
   },
   "src/ui/MainWindow.cpp::MainWindow::onPortfolio": {
     "ccn": 19
@@ -54,7 +34,7 @@
   },
   "src/ui/MainWindow.cpp::MainWindow::rebuildClosedTradesTable": {
     "ccn": 21,
-    "nloc": 104
+    "nloc": 103
   },
   "src/ui/MainWindow.cpp::MainWindow::rebuildDecision": {
     "ccn": 24,
@@ -64,8 +44,8 @@
     "ccn": 20
   },
   "src/ui/MainWindow.cpp::MainWindow::rebuildRecommendations": {
-    "ccn": 46,
-    "nloc": 138
+    "ccn": 36,
+    "nloc": 118
   },
   "src/ui/MainWindow.cpp::MainWindow::renderDecisionFocus": {
     "ccn": 72,
@@ -78,18 +58,14 @@
     "ccn": 30,
     "nloc": 160
   },
-  "src/ui/MainWindow.cpp::MainWindow::updateSignals": {
-    "ccn": 101,
-    "nloc": 351
-  },
   "src/ui/PositionsModel.cpp::PositionsModel::data": {
-    "ccn": 22
+    "ccn": 20
   },
   "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
-    "ccn": 19
+    "ccn": 18
   },
   "src/ui/PriceChart.cpp::PriceChart::PriceChart": {
-    "nloc": 177
+    "nloc": 176
   },
   "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
     "ccn": 20,

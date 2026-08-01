@@ -25,12 +25,14 @@ struct Ensemble {
     qint32 signalDir = 0;  // +1 BUY / -1 SELL / 0 NEUTRAL
 };
 
-Ensemble computeEnsemble(const QList<double> &series, bool vixValid, double vixChangePct);
+[[nodiscard]] Ensemble computeEnsemble(const QList<double> &series, bool vixValid,
+                                       double vixChangePct);
 
 // High absolute VIX = a fearful, choppy tape: trim confidence (instrument-
 // agnostic). The same haircut is applied wherever an ensemble confidence is
 // shown, so the live panel, screener and recommendations agree.
-double applyVixHaircut(double confidence, bool vixValid, double vixLevel);
+[[nodiscard]] double applyVixHaircut(double confidence, bool vixValid,
+                                     double vixLevel) noexcept;
 
 } // namespace trading
 

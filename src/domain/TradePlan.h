@@ -80,15 +80,15 @@ struct TradePlan {
 // Stop-loss / take-profit distances from recent volatility: the stop sits
 // ~1.5σ of the horizon's expected move away (noise shouldn't hit it), the
 // take-profit 1.5× further (reward:risk 1.5). Returned as a fraction of price.
-double proposedSlFraction(double volPctPerBar, qint32 horizonHours);
+[[nodiscard]] double proposedSlFraction(double volPctPerBar, qint32 horizonHours) noexcept;
 
 // The largest allowed multiplier that keeps the loss-at-stop within
 // riskBudgetFrac of the stake (default: quarter of the stake), stepped down to
 // the instrument's allowed leverage values.
-qint32 recommendLeverage(double slFrac, double riskBudgetFrac, qint32 maxLeverage,
-                         const QList<qint32> &steps);
+[[nodiscard]] qint32 recommendLeverage(double slFrac, double riskBudgetFrac,
+                                       qint32 maxLeverage, const QList<qint32> &steps);
 
-TradePlan buildTradePlan(const PlanInput &in);
+[[nodiscard]] TradePlan buildTradePlan(const PlanInput &in);
 
 } // namespace trading
 

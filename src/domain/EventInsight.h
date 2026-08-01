@@ -5,6 +5,8 @@
 
 #include <QString>
 
+#include <optional>
+
 // Heuristic read-outs for macro-economic calendar events: how an event tends to
 // move the traded instrument and a plain-language description of what it is.
 // Pure text/direction logic — the UI maps the direction to colours.
@@ -12,7 +14,8 @@ namespace trading {
 
 // Extract the leading numeric value from a feed string like "0.3%", "-0.2%",
 // "215K" (suffix ignored — fine for comparing a forecast against its previous).
-double parseNum(const QString &s, bool *ok);
+// nullopt when the string carries no parsable number.
+[[nodiscard]] std::optional<double> parseNum(const QString &s);
 
 struct ImpactGuess {
     QString text;   // e.g. "bullish (strong) — stronger data"
@@ -22,7 +25,7 @@ struct ImpactGuess {
 // Best-effort estimate of how an economic event tends to move the traded instrument,
 // from the event type and the forecast-vs-previous change. This is a heuristic, not a
 // forecast — real reactions depend on the surprise vs. the actual print.
-ImpactGuess guessImpact(const EconomicEvent &e);
+[[nodiscard]] ImpactGuess guessImpact(const EconomicEvent &e);
 
 // A concrete, advisory-only activity proposal around a calendar event: which side
 // to trade (if any), whether to act before or after the print, and why — derived
@@ -35,13 +38,13 @@ struct EventProposal {
     QString timing;           // when to act, e.g. "after the 14:30 print confirms"
     QString rationale;        // the forecast-vs-previous + impact reasoning
 };
-EventProposal proposeActivity(const EconomicEvent &e);
+[[nodiscard]] EventProposal proposeActivity(const EconomicEvent &e);
 
 // Plain-language explanation of what a calendar event measures and why it moves
 // the traded instrument, keyed off the same title cues as guessImpact()
 // (unemployment is tested before the general jobs bucket, matching that ordering).
 // `symbol` names the instrument in the few asset-specific sentences.
-QString eventAbout(const EconomicEvent &e, const QString &symbol);
+[[nodiscard]] QString eventAbout(const EconomicEvent &e, const QString &symbol);
 
 } // namespace trading
 

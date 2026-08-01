@@ -7,6 +7,7 @@
 #include "domain/PositionMath.h"
 #include "domain/SignalEnsemble.h"
 #include "services/AiAdvisor.h"
+#include "services/EconomicCalendar.h"
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
 #include "ui/Palette.h"
@@ -216,7 +217,7 @@ QString eventTooltip(const EconomicEvent &e, const trading::ImpactGuess &guess,
 } // namespace
 
 MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
-                       QWidget *parent)
+                       EconomicCalendar *calendar, QWidget *parent)
     : QMainWindow(parent)
     , m_client(client)
     , m_feeds(feeds)
@@ -224,7 +225,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // Declaration order (MainWindow.h), which is the order the members are
     // really initialized in — anything else is a -Wreorder warning.
     , m_pnlAfterCloseTimer(new QTimer(this))
-    , m_calendar(new EconomicCalendar(this))
+    , m_calendar(calendar)
     , m_eventTimer(new QTimer(this))
     , m_recoTimer(new QTimer(this))
     , m_orderCooldownTimer(new QTimer(this))
@@ -325,8 +326,10 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     static_cast<void>(
         connect(m_calendar, &EconomicCalendar::eventsUpdated, this, &MainWindow::onEvents));
     static_cast<void>(connect(m_calendar, &EconomicCalendar::log, this, &MainWindow::onLog));
-    m_calendar->setInstrument(m_client->config().symbol);
-    m_calendar->start();
+    // MarketFeeds failures are throttled log lines (a dead VIX/news source must
+    // not be silent); the calendar is started by the composition root, after
+    // these connections exist.
+    static_cast<void>(connect(m_feeds, &MarketFeeds::log, this, &MainWindow::onLog));
 
     // Age events out of the list ~10 min after they pass, without waiting for the
     // calendar's (30-min) re-fetch. Rebuilds only when an event actually drops off.
@@ -383,25 +386,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
-    // Ctrl + mouse wheel zooms the whole UI — both windows' size and all fonts.
-    // Requires an active app window (i.e. the user has clicked into the app). The
-    // chart is skipped: its own Ctrl+wheel zooms the price/time axis, which we keep.
-    if (event->type() == QEvent::Wheel) {
-        // Qt idiom: event->type() is checked above, so static_cast is the
-        // supported downcast here (see pro-type-static-cast-downcast note in
-        // .clang-tidy).
-        auto *we = static_cast<QWheelEvent *>(event);
-        const bool ctrlHeld = we->modifiers().testFlag(Qt::ControlModifier);
-        const qint32 wheelDelta = we->angleDelta().y();
-        if (ctrlHeld && (wheelDelta != 0) && (QApplication::activeWindow() != nullptr)) {
-            QWidget *w = qobject_cast<QWidget *>(watched);
-            const QWidget *top = (w != nullptr) ? w->window() : nullptr;
-            if ((top != nullptr) && (top != m_chart)) {
-                const double steps = static_cast<double>(wheelDelta) / 120.0;  // one notch = 120
-                setUiScale(m_uiScale * std::pow(1.1, steps));  // wheel up → larger
-                return true;  // consume so the widget under the cursor doesn't scroll
-            }
-        }
+    // Thin dispatcher: each leg reports whether it consumed the event; anything
+    // not consumed falls through to Qt (typing in spin boxes depends on that).
+    if (handleZoomWheel(watched, event)) {
+        return true;
     }
 
     // Reflect each auxiliary window's own show/hide (e.g. its title-bar X) in
@@ -425,6 +413,39 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             // other events on these windows are of no interest here
         }
     }
+    if (handleQuickKeyEvent(event)) {
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+bool MainWindow::handleZoomWheel(QObject *watched, QEvent *event)
+{
+    // Ctrl + mouse wheel zooms the whole UI — both windows' size and all fonts.
+    // Requires an active app window (i.e. the user has clicked into the app). The
+    // chart is skipped: its own Ctrl+wheel zooms the price/time axis, which we keep.
+    if (event->type() == QEvent::Wheel) {
+        // Qt idiom: event->type() is checked above, so static_cast is the
+        // supported downcast here (see pro-type-static-cast-downcast note in
+        // .clang-tidy).
+        auto *we = static_cast<QWheelEvent *>(event);
+        const bool ctrlHeld = we->modifiers().testFlag(Qt::ControlModifier);
+        const qint32 wheelDelta = we->angleDelta().y();
+        if (ctrlHeld && (wheelDelta != 0) && (QApplication::activeWindow() != nullptr)) {
+            QWidget *w = qobject_cast<QWidget *>(watched);
+            const QWidget *top = (w != nullptr) ? w->window() : nullptr;
+            if ((top != nullptr) && (top != m_chart)) {
+                const double steps = static_cast<double>(wheelDelta) / 120.0;  // one notch = 120
+                setUiScale(m_uiScale * std::pow(1.1, steps));  // wheel up → larger
+                return true;  // consume so the widget under the cursor doesn't scroll
+            }
+        }
+    }
+    return false;
+}
+
+bool MainWindow::handleQuickKeyEvent(QEvent *event)
+{
     if (event->type() == QEvent::KeyPress) {
         auto *ke = static_cast<QKeyEvent *>(event);  // guarded by type() above
         if (!ke->isAutoRepeat() && ((ke->key() == Qt::Key_S) || (ke->key() == Qt::Key_B))) {
@@ -461,7 +482,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
         }
     }
-    return QMainWindow::eventFilter(watched, event);
+    return false;
 }
 
 void MainWindow::handleQuickKey(qint32 key)
@@ -993,48 +1014,8 @@ bool MainWindow::marketClosedOverridden() const
     return m_tradeabilityKnown && !m_tradeableNow.contains(m_client->config().symbol);
 }
 
-void MainWindow::buildUi()
+QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
 {
-    // Seed every instrument-specific label from the configured symbol; onReady()
-    // refreshes them on each (re)resolution, so nothing stays pinned to SPX500.
-    const QString sym = m_client->config().symbol;
-    setWindowTitle(QStringLiteral("eToro Trader — %1").arg(sym));
-
-    // Size the controls window and the (separate) chart window to the current
-    // screen instead of a fixed 1000×760 / 940×560: the two sit side by side (the
-    // chart is placed to the right of the controls in the constructor), so split
-    // the available width between them, leaving a small gap. Sizes are a fraction
-    // of the screen but clamped — a floor so nothing is unusably small on a laptop,
-    // and a ceiling so the windows don't become absurdly large on a 4K display.
-    // If a small screen can't fit both at the target width, the chart is shrunk to
-    // whatever width is left so the pair still fits.
-    const QScreen *scr = (screen() != nullptr) ? screen() : QGuiApplication::primaryScreen();
-    const QRect avail = (scr != nullptr) ? scr->availableGeometry() : QRect(0, 0, 1000, 760);
-    constexpr qint32 kWindowGap = 16;  // matches the chart's placement offset
-
-    const qint32 winH = qBound(560, qRound(avail.height() * 0.85), 900);
-    const qint32 usableW = avail.width() - kWindowGap;
-    const qint32 mainW = qBound(720, qRound(usableW * 0.42), 1200);
-    qint32 chartW = qBound(560, qRound(usableW * 0.50), 1400);
-    if ((mainW + kWindowGap + chartW) > avail.width()) {
-        chartW = qMax(480, avail.width() - kWindowGap - mainW);
-    }
-    const qint32 chartH = winH;
-
-    // Remembered as the 1.0 baseline for the Ctrl+wheel UI zoom (see applyUiScale).
-    m_baseMainSize = QSize(mainW, winH);
-    m_baseChartSize = QSize(chartW, chartH);
-
-    resize(mainW, winH);
-
-    // The account is USD-based, but the UI is shown in euro: amounts are converted
-    // with the live EURUSD rate (see toDisplay/fromDisplay). Until the first rate
-    // arrives, values are shown at parity so nothing reads as a bogus number.
-    m_ccy = QStringLiteral("€");
-
-    auto *central = new QWidget(this);
-    auto *root = new QVBoxLayout(central);
-
     // --- Header: instrument name + live price --------------------------------
     auto *header = new QHBoxLayout;
     m_titleLabel = new QLabel(sym, central);
@@ -1107,6 +1088,25 @@ void MainWindow::buildUi()
     priceCol->addWidget(m_priceLabel);
     priceCol->addWidget(m_cashLabel);
 
+    buildHeaderButtons(central);
+
+    header->addWidget(m_titleLabel);
+    header->addSpacing(12);
+    header->addWidget(new QLabel(QStringLiteral("Instrument:"), central));
+    header->addWidget(m_instrumentBox);
+    header->addSpacing(8);
+    header->addWidget(m_chartToggle);
+    header->addWidget(m_signalsToggle);
+    header->addWidget(m_screenerButton);
+    header->addWidget(m_decisionButton);
+    header->addWidget(m_closedButton);
+    header->addStretch();
+    header->addLayout(priceCol);
+    return header;
+}
+
+void MainWindow::buildHeaderButtons(QWidget *central)
+{
     // Small toggle to show/hide the (separate) chart window.
     m_chartToggle = new QPushButton(QStringLiteral("Graph"), central);
     m_chartToggle->setCheckable(true);
@@ -1181,27 +1181,10 @@ void MainWindow::buildUi()
             m_signalsWindow->hide();
         }
     }));
+}
 
-    header->addWidget(m_titleLabel);
-    header->addSpacing(12);
-    header->addWidget(new QLabel(QStringLiteral("Instrument:"), central));
-    header->addWidget(m_instrumentBox);
-    header->addSpacing(8);
-    header->addWidget(m_chartToggle);
-    header->addWidget(m_signalsToggle);
-    header->addWidget(m_screenerButton);
-    header->addWidget(m_decisionButton);
-    header->addWidget(m_closedButton);
-    header->addStretch();
-    header->addLayout(priceCol);
-    root->addLayout(header);
-
-    // --- Mode badge ----------------------------------------------------------
-    m_modeLabel = new QLabel(central);
-    m_modeLabel->setAlignment(Qt::AlignCenter);
-    m_modeLabel->setContentsMargins(6, 4, 6, 4);
-    root->addWidget(m_modeLabel);
-
+void MainWindow::buildChartWindow(const QString &sym, qint32 chartW, qint32 chartH)
+{
     // --- Price/time chart as its own top-level window ------------------------
     // Independent, PARENTLESS top-level window (native title bar): freely movable
     // by its title bar, resizable, and draggable to another monitor. It must not
@@ -1218,14 +1201,10 @@ void MainWindow::buildUi()
     // Keep the Graph toggle in sync if the chart is closed/hidden via its own title bar.
     m_chart->installEventFilter(this);
     // It is shown after the main window appears (see the constructor).
+}
 
-    // --- Controls below the chart --------------------------------------------
-    auto *lower = new QWidget(central);
-    auto *lowerLayout = new QVBoxLayout(lower);
-    lowerLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto *controlsRow = new QHBoxLayout;
-
+QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
+{
     // Trade panel
     m_tradeBox = new QGroupBox(QStringLiteral("Trade %1").arg(sym), lower);
     auto *tradeBox = m_tradeBox;
@@ -1324,6 +1303,14 @@ void MainWindow::buildUi()
 
     tradeForm->addRow(buildMarketClosedRow(tradeBox));
 
+    buildTradeCostRows(tradeBox, tradeForm);
+
+    tradeBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    return tradeBox;
+}
+
+void MainWindow::buildTradeCostRows(QGroupBox *tradeBox, QFormLayout *tradeForm)
+{
     // Estimated opening cost: opening a CFD crosses the bid/ask spread, so the
     // position starts down by roughly spread × units. Shown per side (a buy fills
     // near the ask, a sell near the bid) and refreshed by updateOpenCost() as the
@@ -1350,13 +1337,10 @@ void MainWindow::buildUi()
         "credits paid to you."));
     tradeForm->addRow(QStringLiteral("Overnight fee:"), m_feeCost);
     updateOpenCost();
+}
 
-    tradeBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-
-    // Limit orders, held by eToro itself (REQ-F-027). Built in its own function to
-    // keep buildUi() off the metrics ratchet.
-    QGroupBox *limitBox = buildLimitOrderBox(lower);
-
+void MainWindow::buildSignalsWindow(const QString &sym)
+{
     // Trading-signals panel — buy/sell/close guidance from the instrument's
     // technicals. Shares ONE parentless top-level window with the AI panel
     // below (same reasoning as the chart: a parented Qt::Window is a transient
@@ -1404,6 +1388,13 @@ void MainWindow::buildUi()
     m_sigWeb->setFont(sigFont);
     m_sig3h->setFont(sigFont);
     m_sig3d->setFont(sigFont);
+
+    buildSignalRows(sigBox, sigForm);
+    buildAiPanel(signalsWinLayout);
+}
+
+void MainWindow::buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
+{
     // Add a labelled row whose caption and value both carry an explanatory
     // mouse-over describing what the signal means and how to read it.
     auto addSignalRow = [sigBox, sigForm](const QString &caption, QLabel *value,
@@ -1502,7 +1493,10 @@ void MainWindow::buildUi()
     addSignalRow(QStringLiteral("Signal:"), m_sigOverall,
                  QStringLiteral("Overall call from the same ensemble: BUY or SELL when a clear "
                                 "majority of indicators agree, otherwise NEUTRAL."));
+}
 
+void MainWindow::buildAiPanel(QVBoxLayout *signalsWinLayout)
+{
     // --- AI decision-support panel -------------------------------------------
     // Shares the floating signals window: one always-visible place for both.
     m_aiBox = new QGroupBox(QStringLiteral("AI decision support"), m_signalsWindow);
@@ -1550,26 +1544,10 @@ void MainWindow::buildUi()
              QStringLiteral("Explicit BUY / SELL / HOLD call synthesised from the signals above, "
                             "with a one-line rationale. Decision support only — always confirm "
                             "and manage your own risk."));
+}
 
-    // Left column: trade panel and limit orders (the signals panel lives in its
-    // own window now, toggled from the header).
-    auto *leftCol = new QVBoxLayout;
-    leftCol->addWidget(tradeBox);
-    leftCol->addWidget(limitBox);
-    leftCol->addStretch();
-    controlsRow->addLayout(leftCol, 0);
-
-    // Recompute the AI signals live when the trade parameters that feed the
-    // setup-edge calculation change.
-    static_cast<void>(
-        connect(m_amount, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
-    static_cast<void>(
-        connect(m_stopLoss, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
-    static_cast<void>(
-        connect(m_takeProfit, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
-    static_cast<void>(
-        connect(m_leverage, &QComboBox::currentTextChanged, this, &MainWindow::updateSignals));
-
+QGroupBox *MainWindow::buildPositionsPanel(QWidget *lower)
+{
     // Positions panel
     auto *posBox = new QGroupBox(QStringLiteral("Open trades"), lower);
     auto *posLayout = new QVBoxLayout(posBox);
@@ -1672,7 +1650,11 @@ void MainWindow::buildUi()
     m_closeButton = new QPushButton(QStringLiteral("Close marked trades"), posBox);
     m_closeButton->setMinimumHeight(34);
     posLayout->addWidget(m_closeButton);
+    return posBox;
+}
 
+void MainWindow::buildMonthlyPnlPanel(QWidget *lower)
+{
     // Closed-trade P/L summary: net profit/loss of the last 7 weeks' closed trades,
     // restricted to the instruments listed in the selector, summed in account currency.
     m_pnlBox = new QGroupBox(QStringLiteral("Closed trades — last 7 weeks (listed instruments)"), lower);
@@ -1712,15 +1694,10 @@ void MainWindow::buildUi()
     pnlButtons->addWidget(m_pnlRefresh);
     pnlButtons->addWidget(m_pnlDetails);
     pnlLayout->addLayout(pnlButtons);
+}
 
-    // Right column: open trades (stretches) with the closed-trade summary beneath
-    // it (the AI decision support lives in its own window now).
-    auto *rightCol = new QVBoxLayout;
-    rightCol->addWidget(posBox, 1);
-    rightCol->addWidget(m_pnlBox, 0);
-    controlsRow->addLayout(rightCol, 1);
-    lowerLayout->addLayout(controlsRow);
-
+void MainWindow::buildBottomRow(QWidget *lower, QVBoxLayout *lowerLayout, const QString &sym)
+{
     // Economic-calendar panel: macro events that could move the instrument, next 3 days.
     m_eventsBox = new QGroupBox(
         QStringLiteral("Market events — next 3 trading days (with %1 impact)").arg(sym), lower);
@@ -1734,6 +1711,36 @@ void MainWindow::buildUi()
     m_events->addItem(QStringLiteral("Loading economic calendar…"));
     eventsLayout->addWidget(m_events);
 
+    buildRecommendationsPanel(lower);
+
+    // Activity log, sharing the bottom row: its height is bounded like the
+    // events/reco lists so the row stays compact and spare vertical space keeps
+    // flowing to the open-trades panel above.
+    auto *logBox = new QGroupBox(QStringLiteral("Activity"), lower);
+    auto *logLayout = new QVBoxLayout(logBox);
+    logLayout->setContentsMargins(6, 4, 6, 4);
+    m_log = new QPlainTextEdit(logBox);
+    m_log->setReadOnly(true);
+    m_log->setMaximumBlockCount(500);
+    m_log->setMaximumHeight(120);
+    logLayout->addWidget(m_log);
+
+    // Events, activity log and recommendations side by side in one draggable
+    // splitter row: market events | Activity | Buy / sell now.
+    auto *eventsSplitter = new QSplitter(Qt::Horizontal, lower);
+    eventsSplitter->addWidget(m_eventsBox);
+    eventsSplitter->addWidget(logBox);
+    eventsSplitter->addWidget(m_recoBox);
+    eventsSplitter->setChildrenCollapsible(false);  // no pane can be dragged to zero
+    eventsSplitter->setStretchFactor(0, 3);  // events grows fastest on resize
+    eventsSplitter->setStretchFactor(1, 2);
+    eventsSplitter->setStretchFactor(2, 1);
+    eventsSplitter->setSizes({300, 200, 120});
+    lowerLayout->addWidget(eventsSplitter);
+}
+
+void MainWindow::buildRecommendationsPanel(QWidget *lower)
+{
     // "Buy / sell now" panel, right of the market events: instruments the signals +
     // web rating currently favour, newest news in each row's hover reasoning.
     m_recoBox = new QGroupBox(QStringLiteral("Buy / sell now"), lower);
@@ -1788,31 +1795,107 @@ void MainWindow::buildUi()
     static_cast<void>(connect(m_recoRefresh, &QPushButton::clicked, this,
                               &MainWindow::startRecommendationScan));
     recoLayout->addWidget(m_recoRefresh);
+}
 
-    // Activity log, sharing the bottom row: its height is bounded like the
-    // events/reco lists so the row stays compact and spare vertical space keeps
-    // flowing to the open-trades panel above.
-    auto *logBox = new QGroupBox(QStringLiteral("Activity"), lower);
-    auto *logLayout = new QVBoxLayout(logBox);
-    logLayout->setContentsMargins(6, 4, 6, 4);
-    m_log = new QPlainTextEdit(logBox);
-    m_log->setReadOnly(true);
-    m_log->setMaximumBlockCount(500);
-    m_log->setMaximumHeight(120);
-    logLayout->addWidget(m_log);
+void MainWindow::buildUi()
+{
+    // Seed every instrument-specific label from the configured symbol; onReady()
+    // refreshes them on each (re)resolution, so nothing stays pinned to SPX500.
+    const QString sym = m_client->config().symbol;
+    setWindowTitle(QStringLiteral("eToro Trader — %1").arg(sym));
 
-    // Events, activity log and recommendations side by side in one draggable
-    // splitter row: market events | Activity | Buy / sell now.
-    auto *eventsSplitter = new QSplitter(Qt::Horizontal, lower);
-    eventsSplitter->addWidget(m_eventsBox);
-    eventsSplitter->addWidget(logBox);
-    eventsSplitter->addWidget(m_recoBox);
-    eventsSplitter->setChildrenCollapsible(false);  // no pane can be dragged to zero
-    eventsSplitter->setStretchFactor(0, 3);  // events grows fastest on resize
-    eventsSplitter->setStretchFactor(1, 2);
-    eventsSplitter->setStretchFactor(2, 1);
-    eventsSplitter->setSizes({300, 200, 120});
-    lowerLayout->addWidget(eventsSplitter);
+    // Size the controls window and the (separate) chart window to the current
+    // screen instead of a fixed 1000×760 / 940×560: the two sit side by side (the
+    // chart is placed to the right of the controls in the constructor), so split
+    // the available width between them, leaving a small gap. Sizes are a fraction
+    // of the screen but clamped — a floor so nothing is unusably small on a laptop,
+    // and a ceiling so the windows don't become absurdly large on a 4K display.
+    // If a small screen can't fit both at the target width, the chart is shrunk to
+    // whatever width is left so the pair still fits.
+    const QScreen *scr = (screen() != nullptr) ? screen() : QGuiApplication::primaryScreen();
+    const QRect avail = (scr != nullptr) ? scr->availableGeometry() : QRect(0, 0, 1000, 760);
+    constexpr qint32 kWindowGap = 16;  // matches the chart's placement offset
+
+    const qint32 winH = qBound(560, qRound(avail.height() * 0.85), 900);
+    const qint32 usableW = avail.width() - kWindowGap;
+    const qint32 mainW = qBound(720, qRound(usableW * 0.42), 1200);
+    qint32 chartW = qBound(560, qRound(usableW * 0.50), 1400);
+    if ((mainW + kWindowGap + chartW) > avail.width()) {
+        chartW = qMax(480, avail.width() - kWindowGap - mainW);
+    }
+    const qint32 chartH = winH;
+
+    // Remembered as the 1.0 baseline for the Ctrl+wheel UI zoom (see applyUiScale).
+    m_baseMainSize = QSize(mainW, winH);
+    m_baseChartSize = QSize(chartW, chartH);
+
+    resize(mainW, winH);
+
+    // The account is USD-based, but the UI is shown in euro: amounts are converted
+    // with the live EURUSD rate (see toDisplay/fromDisplay). Until the first rate
+    // arrives, values are shown at parity so nothing reads as a bogus number.
+    m_ccy = QStringLiteral("€");
+
+    auto *central = new QWidget(this);
+    auto *root = new QVBoxLayout(central);
+
+    root->addLayout(buildHeaderRow(central, sym));
+
+    // --- Mode badge ----------------------------------------------------------
+    m_modeLabel = new QLabel(central);
+    m_modeLabel->setAlignment(Qt::AlignCenter);
+    m_modeLabel->setContentsMargins(6, 4, 6, 4);
+    root->addWidget(m_modeLabel);
+
+    buildChartWindow(sym, chartW, chartH);
+
+    // --- Controls below the chart --------------------------------------------
+    auto *lower = new QWidget(central);
+    auto *lowerLayout = new QVBoxLayout(lower);
+    lowerLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *controlsRow = new QHBoxLayout;
+
+    QGroupBox *tradeBox = buildTradePanel(lower, sym);
+
+    // Limit orders, held by eToro itself (REQ-F-027). Built in its own function to
+    // keep buildUi() off the metrics ratchet.
+    QGroupBox *limitBox = buildLimitOrderBox(lower);
+
+    buildSignalsWindow(sym);
+
+    // Left column: trade panel and limit orders (the signals panel lives in its
+    // own window now, toggled from the header).
+    auto *leftCol = new QVBoxLayout;
+    leftCol->addWidget(tradeBox);
+    leftCol->addWidget(limitBox);
+    leftCol->addStretch();
+    controlsRow->addLayout(leftCol, 0);
+
+    // Recompute the AI signals live when the trade parameters that feed the
+    // setup-edge calculation change.
+    static_cast<void>(
+        connect(m_amount, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
+    static_cast<void>(
+        connect(m_stopLoss, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
+    static_cast<void>(
+        connect(m_takeProfit, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateSignals));
+    static_cast<void>(
+        connect(m_leverage, &QComboBox::currentTextChanged, this, &MainWindow::updateSignals));
+
+    QGroupBox *posBox = buildPositionsPanel(lower);
+
+    buildMonthlyPnlPanel(lower);
+
+    // Right column: open trades (stretches) with the closed-trade summary beneath
+    // it (the AI decision support lives in its own window now).
+    auto *rightCol = new QVBoxLayout;
+    rightCol->addWidget(posBox, 1);
+    rightCol->addWidget(m_pnlBox, 0);
+    controlsRow->addLayout(rightCol, 1);
+    lowerLayout->addLayout(controlsRow);
+
+    buildBottomRow(lower, lowerLayout, sym);
 
     root->addWidget(lower);
 
@@ -2432,203 +2515,206 @@ void MainWindow::renderMonteCarlo(const trading::McOutlook &mc)
     }
 }
 
-void MainWindow::updateSignals()
+// Shared values of one updateSignals() pass — the indicator inputs and intermediate
+// verdicts its render helpers exchange. Created afresh by updateSignals() and threaded
+// through each helper by reference (TradePlan.cpp's PlanContext pattern); defined here
+// rather than in the header so the fields stay file-local.
+struct MainWindow::SignalsContext {
+    QList<double> series;     // hourly closes, forming bar pinned to the live price
+    QString green;            // shared row colours (hex)
+    QString red;
+    QString amber;
+    double fast = 0.0;        // SMA 10
+    double slow = 0.0;        // SMA 30
+    double r = 0.0;           // RSI 14
+    double hist = 0.0;        // MACD histogram
+    double pctB = 0.0;        // Bollinger %B (20)
+    double vol = 0.0;         // per-bar σ of returns (20 bars), in percent
+    double momentum = 0.0;    // 10-bar rate of change
+    double changePct = 0.0;   // change across the loaded window, in percent
+    bool bull = false;        // fast SMA above slow
+    trading::Regression reg;  // least-squares trend over the last 30 closes
+    trading::Knn kn;          // k-nearest-neighbours analog forecast
+    double stochK = 0.0;      // stochastic %K (14)
+    double sma50 = 0.0;       // 50-bar SMA trend filter
+    bool aboveTrend = false;  // price above the 50-bar SMA
+    qint32 score = 0;         // ensemble net vote
+    qint32 votes = 0;         // ensemble vote count
+    double confidence = 0.0;  // ensemble confidence after the VIX/event haircuts
+    qint32 signalDir = 0;     // +1 BUY / -1 SELL / 0 NEUTRAL — feeds the chart arrow
+    double pUp = 0.0;         // logistic up-probability
+    double hurst = 0.0;       // Hurst exponent of recent returns
+    qint32 adviceDir = 0;     // +1 BUY / -1 SELL / 0 HOLD — feeds the chart arrow
+};
+
+void MainWindow::renderRegimeAndNewsRows()
 {
-    // Keep the estimated opening (spread) cost in step with the live quote and the
-    // current amount/leverage — this slot is wired to all three. Done before the
-    // early return below so the cost still shows while the signal series fills.
-    updateOpenCost();
-
-    // Compute over the HOURLY close series (one bar = one hour), with the last
-    // (forming-hour) bar pinned to the live price so the signals still track the
-    // market. Hourly — not the minute tail — so a symbol reads the same here as in
-    // the leverage screener. Horizon maths below is therefore in hourly bars.
-    QList<double> series = m_hourlyCloses;
-    if (m_lastPrice > 0.0) {
-        if (series.isEmpty()) {
-            series.append(m_lastPrice);
-        } else {
-            series.last() = m_lastPrice;
-        }
-    }
-
     // VIX / calendar regime and news sentiment — the same two sources the Decision
     // window uses, surfaced here as signal rows. Independent of the price series, so
     // set them before any early return.
-    {
-        const QString green = QStringLiteral("#25b563");
-        const QString red = QStringLiteral("#e35555");
-        const QString amber = QStringLiteral("#e0b000");
-        const QString grey = QStringLiteral("#9a9a9a");
-
-        bool eventRisk = false;
-        const double regime = trading::marketRegime(marketSnapshot(), eventRisk);
-        if (!m_vixValid && !eventRisk) {
-            m_sigRegime->setText(QStringLiteral("gathering data…"));
-        } else {
-            const QString word = (regime > 0.05)
-                                     ? QStringLiteral("Risk-on ▲")
-                                     : ((regime < -0.05) ? QStringLiteral("Risk-off ▼")
-                                                         : QStringLiteral("Neutral"));
-            const QString col = (regime > 0.05) ? green : ((regime < -0.05) ? red : amber);
-            QString txt = QStringLiteral("<span style='color:%1'>%2</span>").arg(col, word);
-            if (m_vixValid) {
-                txt += QStringLiteral(" <span style='color:%1'>(VIX %2)</span>")
-                           .arg(grey).arg(m_vix, 0, 'f', 1);
-            }
-            if (eventRisk) {
-                txt += QStringLiteral(" <span style='color:%1'>⚠ event &lt;6h</span>").arg(amber);
-            }
-            m_sigRegime->setText(txt);
-        }
-
-        const QList<NewsHeadline> news = m_newsBySymbol.value(m_client->config().symbol);
-        if (news.isEmpty()) {
-            m_sigNews->setText(QStringLiteral("<span style='color:%1'>n/a</span>").arg(grey));
-        } else {
-            qint32 newsCount = 0;
-            const double s = trading::newsSentimentScore(news, newsCount);
-            const QString word = (s > 0.1) ? QStringLiteral("Positive ▲")
-                                           : ((s < -0.1) ? QStringLiteral("Negative ▼")
-                                                         : QStringLiteral("Neutral"));
-            const QString col = (s > 0.1) ? green : ((s < -0.1) ? red : amber);
-            m_sigNews->setText(QStringLiteral("<span style='color:%1'>%2</span> "
-                                              "<span style='color:%3'>(%4, %5 headlines)</span>")
-                                   .arg(col, word, grey)
-                                   .arg(s, 0, 'f', 2)
-                                   .arg(newsCount));
-        }
-    }
-
-    constexpr qsizetype kFast = 10;
-    constexpr qsizetype kSlow = 30;
-    constexpr qsizetype kRsi = 14;
-
-    if (series.size() < (kSlow + 1)) {
-        const QString wait = QStringLiteral("gathering data…");
-        for (QLabel *l : {m_sigTrend, m_sigMomentum, m_sigMacd, m_sigBoll, m_sigVol,
-                          m_sigRegression, m_sigKnn, m_sigStoch, m_sigTrend50, m_sigRisk,
-                          m_sigChange}) {
-            l->setText(wait);
-        }
-        m_sigPrediction->setText(QStringLiteral("—"));
-        m_sig3h->setText(QStringLiteral("—"));
-        m_sig3d->setText(QStringLiteral("—"));
-        m_sigOverall->setText(QStringLiteral("—"));
-        for (QLabel *l : {m_aiUpProb, m_aiMonteCarlo, m_aiEdge, m_aiRegime, m_aiAdvice}) {
-            l->setText(wait);
-        }
-        m_chart->setPredictionDirection(0);
-        m_forecastTarget = 0.0;  // no corridor → the close watchdog stands down
-        m_lastSignalDir = 0;
-        return;
-    }
-
-    const double fast = trading::sma(series, kFast);
-    const double slow = trading::sma(series, kSlow);
-    const double r = trading::rsi(series, kRsi);
-    const double hist = trading::macdHistogram(series);
-    const double pctB = trading::bollingerPercentB(series, 20);
-    const double vol = trading::volatilityPct(series, 20);
-    const double momentum = trading::roc(series, 10);
-    const double first = series.first();
-    const double changePct =
-        (first > 0.0) ? (((series.last() - first) / first) * 100.0) : 0.0;
-
     const QString green = QStringLiteral("#25b563");
     const QString red = QStringLiteral("#e35555");
     const QString amber = QStringLiteral("#e0b000");
+    const QString grey = QStringLiteral("#9a9a9a");
 
-    // --- Individual indicators ---------------------------------------------
-    const bool bull = fast > slow;
-    m_sigTrend->setText(colored(bull ? QStringLiteral("Bullish ▲") : QStringLiteral("Bearish ▼"),
-                                bull ? green : red));
+    const trading::RegimeRead regimeRead = trading::marketRegime(marketSnapshot());
+    const double regime = regimeRead.tilt;
+    const bool eventRisk = regimeRead.eventRisk;
+    if (!m_vixValid && !eventRisk) {
+        m_sigRegime->setText(QStringLiteral("gathering data…"));
+    } else {
+        const QString word = (regime > 0.05)
+                                 ? QStringLiteral("Risk-on ▲")
+                                 : ((regime < -0.05) ? QStringLiteral("Risk-off ▼")
+                                                     : QStringLiteral("Neutral"));
+        const QString col = (regime > 0.05) ? green : ((regime < -0.05) ? red : amber);
+        QString txt = QStringLiteral("<span style='color:%1'>%2</span>").arg(col, word);
+        if (m_vixValid) {
+            txt += QStringLiteral(" <span style='color:%1'>(VIX %2)</span>")
+                       .arg(grey).arg(m_vix, 0, 'f', 1);
+        }
+        if (eventRisk) {
+            txt += QStringLiteral(" <span style='color:%1'>⚠ event &lt;6h</span>").arg(amber);
+        }
+        m_sigRegime->setText(txt);
+    }
+
+    const QList<NewsHeadline> news = m_newsBySymbol.value(m_client->config().symbol);
+    if (news.isEmpty()) {
+        m_sigNews->setText(QStringLiteral("<span style='color:%1'>n/a</span>").arg(grey));
+    } else {
+        const trading::NewsRead newsRead = trading::newsSentimentScore(news);
+        const double s = newsRead.score;
+        const qint32 newsCount = newsRead.count;
+        const QString word = (s > 0.1) ? QStringLiteral("Positive ▲")
+                                       : ((s < -0.1) ? QStringLiteral("Negative ▼")
+                                                     : QStringLiteral("Neutral"));
+        const QString col = (s > 0.1) ? green : ((s < -0.1) ? red : amber);
+        m_sigNews->setText(QStringLiteral("<span style='color:%1'>%2</span> "
+                                          "<span style='color:%3'>(%4, %5 headlines)</span>")
+                               .arg(col, word, grey)
+                               .arg(s, 0, 'f', 2)
+                               .arg(newsCount));
+    }
+}
+
+void MainWindow::renderGatheringDataRows()
+{
+    const QString wait = QStringLiteral("gathering data…");
+    for (QLabel *l : {m_sigTrend, m_sigMomentum, m_sigMacd, m_sigBoll, m_sigVol,
+                      m_sigRegression, m_sigKnn, m_sigStoch, m_sigTrend50, m_sigRisk,
+                      m_sigChange}) {
+        l->setText(wait);
+    }
+    m_sigPrediction->setText(QStringLiteral("—"));
+    m_sig3h->setText(QStringLiteral("—"));
+    m_sig3d->setText(QStringLiteral("—"));
+    m_sigOverall->setText(QStringLiteral("—"));
+    for (QLabel *l : {m_aiUpProb, m_aiMonteCarlo, m_aiEdge, m_aiRegime, m_aiAdvice}) {
+        l->setText(wait);
+    }
+    m_chart->setPredictionDirection(0);
+    m_forecastTarget = 0.0;  // no corridor → the close watchdog stands down
+    m_lastSignalDir = 0;
+}
+
+void MainWindow::renderIndicatorRows(SignalsContext &ctx)
+{
+    ctx.bull = ctx.fast > ctx.slow;
+    m_sigTrend->setText(colored(ctx.bull ? QStringLiteral("Bullish ▲") : QStringLiteral("Bearish ▼"),
+                                ctx.bull ? ctx.green : ctx.red));
 
     QString rsiState = QStringLiteral("Neutral");
-    QString rsiColor = amber;
-    if (r >= 70.0) {
+    QString rsiColor = ctx.amber;
+    if (ctx.r >= 70.0) {
         rsiState = QStringLiteral("Overbought");
-        rsiColor = red;
-    } else if (r <= 30.0) {
+        rsiColor = ctx.red;
+    } else if (ctx.r <= 30.0) {
         rsiState = QStringLiteral("Oversold");
-        rsiColor = green;
+        rsiColor = ctx.green;
     }
     m_sigMomentum->setText(
-        colored(QStringLiteral("%1 (%2)").arg(r, 0, 'f', 1).arg(rsiState), rsiColor));
+        colored(QStringLiteral("%1 (%2)").arg(ctx.r, 0, 'f', 1).arg(rsiState), rsiColor));
 
-    m_sigMacd->setText(colored(hist >= 0.0 ? QStringLiteral("Bullish ▲") : QStringLiteral("Bearish ▼"),
-                               hist >= 0.0 ? green : red));
+    m_sigMacd->setText(colored(ctx.hist >= 0.0 ? QStringLiteral("Bullish ▲") : QStringLiteral("Bearish ▼"),
+                               ctx.hist >= 0.0 ? ctx.green : ctx.red));
 
     QString bollState = QStringLiteral("mid-band");
-    QString bollColor = amber;
-    if (pctB >= 0.9) {
+    QString bollColor = ctx.amber;
+    if (ctx.pctB >= 0.9) {
         bollState = QStringLiteral("upper — stretched");
-        bollColor = red;
-    } else if (pctB <= 0.1) {
+        bollColor = ctx.red;
+    } else if (ctx.pctB <= 0.1) {
         bollState = QStringLiteral("lower — stretched");
-        bollColor = green;
+        bollColor = ctx.green;
     }
-    m_sigBoll->setText(colored(QStringLiteral("%1 (%2)").arg(pctB, 0, 'f', 2).arg(bollState), bollColor));
+    m_sigBoll->setText(colored(QStringLiteral("%1 (%2)").arg(ctx.pctB, 0, 'f', 2).arg(bollState), bollColor));
 
-    m_sigVol->setText(colored(QStringLiteral("±%1%/bar").arg(vol, 0, 'f', 3), amber));
+    m_sigVol->setText(colored(QStringLiteral("±%1%/bar").arg(ctx.vol, 0, 'f', 3), ctx.amber));
+}
 
+void MainWindow::renderForecastModelRows(SignalsContext &ctx)
+{
     // Least-squares regression trend over the last 30 closes (slope + R² fit).
-    const trading::Regression reg = trading::linRegForecast(series, 30);
-    const QString regDir = (reg.slopePct > 0.0)
+    ctx.reg = trading::linRegForecast(ctx.series, 30);
+    const QString regDir = (ctx.reg.slopePct > 0.0)
                                ? QStringLiteral("↑")
-                               : ((reg.slopePct < 0.0) ? QStringLiteral("↓")
-                                                       : QStringLiteral("→"));
-    const QString slopeText = QString::number(reg.slopePct, 'f', 3);
-    const QString r2Text = QString::number(reg.r2, 'f', 2);
+                               : ((ctx.reg.slopePct < 0.0) ? QStringLiteral("↓")
+                                                           : QStringLiteral("→"));
+    const QString slopeText = QString::number(ctx.reg.slopePct, 'f', 3);
+    const QString r2Text = QString::number(ctx.reg.r2, 'f', 2);
     m_sigRegression->setText(colored(
         regDir + QLatin1Char(' ') + slopeText + QStringLiteral("%/bar  R² ") + r2Text,
-        (reg.slopePct > 0.0) ? green : ((reg.slopePct < 0.0) ? red : amber)));
+        (ctx.reg.slopePct > 0.0) ? ctx.green : ((ctx.reg.slopePct < 0.0) ? ctx.red : ctx.amber)));
 
     // k-Nearest-Neighbors analog forecast: match the current 10-bar pattern to
     // history and average what followed the 5 closest analogs.
-    const trading::Knn kn = trading::knnForecast(series, 10, 5);
-    const QString knnDir = (kn.retPct > 0.0)
+    ctx.kn = trading::knnForecast(ctx.series, 10, 5);
+    const QString knnDir = (ctx.kn.retPct > 0.0)
                                ? QStringLiteral("↑")
-                               : ((kn.retPct < 0.0) ? QStringLiteral("↓")
-                                                    : QStringLiteral("→"));
-    const QString knnRetText = QString::number(kn.retPct, 'f', 3);
-    const QString knnAgreeText = QString::number(kn.agree * 100.0, 'f', 0);
+                               : ((ctx.kn.retPct < 0.0) ? QStringLiteral("↓")
+                                                        : QStringLiteral("→"));
+    const QString knnRetText = QString::number(ctx.kn.retPct, 'f', 3);
+    const QString knnAgreeText = QString::number(ctx.kn.agree * 100.0, 'f', 0);
     m_sigKnn->setText(colored(
-        knnDir + QLatin1Char(' ') + ((kn.retPct >= 0.0) ? QStringLiteral("+") : QString())
+        knnDir + QLatin1Char(' ') + ((ctx.kn.retPct >= 0.0) ? QStringLiteral("+") : QString())
             + knnRetText + QStringLiteral("%  (") + knnAgreeText + QStringLiteral("% agree)"),
-        (kn.retPct > 0.0) ? green : ((kn.retPct < 0.0) ? red : amber)));
+        (ctx.kn.retPct > 0.0) ? ctx.green : ((ctx.kn.retPct < 0.0) ? ctx.red : ctx.amber)));
+}
 
+void MainWindow::renderTimingAndRiskRows(SignalsContext &ctx)
+{
     // Stochastic %K — entry timing (oversold in an uptrend is a good long entry).
-    const double stochK = trading::stochasticK(series, 14);
+    ctx.stochK = trading::stochasticK(ctx.series, 14);
     QString stochState = QStringLiteral("mid");
-    QString stochColor = amber;
-    if (stochK >= 80.0) {
+    QString stochColor = ctx.amber;
+    if (ctx.stochK >= 80.0) {
         stochState = QStringLiteral("overbought");
-        stochColor = red;
-    } else if (stochK <= 20.0) {
+        stochColor = ctx.red;
+    } else if (ctx.stochK <= 20.0) {
         stochState = QStringLiteral("oversold");
-        stochColor = green;
+        stochColor = ctx.green;
     }
     m_sigStoch->setText(
-        colored(QStringLiteral("%1 (%2)").arg(stochK, 0, 'f', 1).arg(stochState), stochColor));
+        colored(QStringLiteral("%1 (%2)").arg(ctx.stochK, 0, 'f', 1).arg(stochState), stochColor));
 
     // Trend filter: price above the 50-bar SMA = long-friendly regime.
-    const double sma50 = trading::sma(series, 50);
-    const bool aboveTrend = (sma50 > 0.0) && (series.last() > sma50);
+    ctx.sma50 = trading::sma(ctx.series, 50);
+    ctx.aboveTrend = (ctx.sma50 > 0.0) && (ctx.series.last() > ctx.sma50);
     m_sigTrend50->setText(
-        (sma50 <= 0.0) ? colored(QStringLiteral("n/a"), amber)
-                       : colored(aboveTrend ? QStringLiteral("above ▲ (uptrend)")
-                                            : QStringLiteral("below ▼ (downtrend)"),
-                                 aboveTrend ? green : red));
+        (ctx.sma50 <= 0.0) ? colored(QStringLiteral("n/a"), ctx.amber)
+                           : colored(ctx.aboveTrend ? QStringLiteral("above ▲ (uptrend)")
+                                                    : QStringLiteral("below ▼ (downtrend)"),
+                                     ctx.aboveTrend ? ctx.green : ctx.red));
 
     // Risk gauge for the selected leverage: expected ~1h move × leverage = the
     // swing in your margin. High leverage makes small moves large P/L. On the hourly
     // series one bar IS one hour, so the per-hour move is just the per-bar σ.
     const double lev = m_leverage->currentText().toDouble();
-    const double hourMovePct = vol;   // per-bar σ = per-hour σ (1 hourly bar = 1h)
+    const double hourMovePct = ctx.vol;   // per-bar σ = per-hour σ (1 hourly bar = 1h)
     const double marginSwing = hourMovePct * lev;
     const QString riskColor =
-        (marginSwing >= 30.0) ? red : ((marginSwing >= 15.0) ? amber : green);
+        (marginSwing >= 30.0) ? ctx.red : ((marginSwing >= 15.0) ? ctx.amber : ctx.green);
     m_sigRisk->setText(colored(QStringLiteral("±%1%/h → ±%2% margin (x%3)")
                                    .arg(hourMovePct, 0, 'f', 2)
                                    .arg(marginSwing, 0, 'f', 0)
@@ -2636,20 +2722,23 @@ void MainWindow::updateSignals()
                                riskColor));
 
     m_sigChange->setText(colored(QStringLiteral("%1%2%")
-                                     .arg((changePct >= 0.0) ? QStringLiteral("+") : QString())
-                                     .arg(changePct, 0, 'f', 2),
-                                 (changePct >= 0.0) ? green : red));
+                                     .arg((ctx.changePct >= 0.0) ? QStringLiteral("+") : QString())
+                                     .arg(ctx.changePct, 0, 'f', 2),
+                                 (ctx.changePct >= 0.0) ? ctx.green : ctx.red));
+}
 
+void MainWindow::renderPredictionRow(SignalsContext &ctx)
+{
     // --- Ensemble prediction ("model" vote across the indicators) ----------
     // The directional vote across the indicators is computed by the shared
     // trading::computeEnsemble() (the leverage screener uses the same call, so a symbol
     // ranks identically here and there). It returns the net score, the vote count
     // and the raw confidence; the VIX-level and event-risk confidence haircuts are
     // applied just below. Volatility sets the expected move.
-    const trading::Ensemble ens = trading::computeEnsemble(series, m_vixValid, m_vixChangePct);
-    const qint32 score = ens.score;
-    const qint32 votes = ens.votes;
-    double confidence = ens.confidence;
+    const trading::Ensemble ens = trading::computeEnsemble(ctx.series, m_vixValid, m_vixChangePct);
+    ctx.score = ens.score;
+    ctx.votes = ens.votes;
+    ctx.confidence = ens.confidence;
 
     // High absolute VIX = a fearful, choppy tape: trim confidence with the SHARED
     // domain haircut (the screener and the trade planner apply the same one, so a
@@ -2658,48 +2747,51 @@ void MainWindow::updateSignals()
     if (m_vixValid && (m_vix >= 25.0)) {
         vixNote = QStringLiteral(" · VIX %1").arg(m_vix, 0, 'f', 0);
     }
-    confidence = trading::applyVixHaircut(confidence, m_vixValid, m_vix);
+    ctx.confidence = trading::applyVixHaircut(ctx.confidence, m_vixValid, m_vix);
 
     // Event risk: an imminent calendar event lowers confidence and flags volatility.
     QString eventNote;
     if (m_nextEventTime.isValid()) {
         const qint64 mins = QDateTime::currentDateTime().secsTo(m_nextEventTime) / 60;
         if ((mins >= 0) && (mins <= 60)) {
-            confidence *= 0.5;
+            ctx.confidence *= 0.5;
             eventNote = QStringLiteral(" ⚠ %1 in %2m").arg(m_nextEventTitle).arg(mins);
         }
     }
     eventNote += vixNote;
 
-    const QString arrow = (score > 0) ? QStringLiteral("↑")
-                                      : ((score < 0) ? QStringLiteral("↓")
-                                                     : QStringLiteral("→"));
-    const QString dirWord = (score > 0) ? QStringLiteral("up")
-                                        : ((score < 0) ? QStringLiteral("down")
-                                                       : QStringLiteral("flat"));
-    const QString predColor = (score > 0) ? green : ((score < 0) ? red : amber);
-    const QString confText = QString::number(confidence, 'f', 0);
-    const QString volText = QString::number(vol, 'f', 2);
+    const QString arrow = (ctx.score > 0) ? QStringLiteral("↑")
+                                          : ((ctx.score < 0) ? QStringLiteral("↓")
+                                                             : QStringLiteral("→"));
+    const QString dirWord = (ctx.score > 0) ? QStringLiteral("up")
+                                            : ((ctx.score < 0) ? QStringLiteral("down")
+                                                               : QStringLiteral("flat"));
+    const QString predColor = (ctx.score > 0) ? ctx.green : ((ctx.score < 0) ? ctx.red : ctx.amber);
+    const QString confText = QString::number(ctx.confidence, 'f', 0);
+    const QString volText = QString::number(ctx.vol, 'f', 2);
     const QString predText = arrow + QLatin1Char(' ') + dirWord + QStringLiteral("  ~")
                              + confText + QStringLiteral("% conf, ±")
                              + volText + QLatin1Char('%') + eventNote;
     m_sigPrediction->setText(colored(predText, predColor));
     // NB: the chart arrow is now driven by the overall Signal + AI Recommendation
-    // (set at the end of this function), not by the raw ensemble score.
+    // (set at the end of updateSignals()), not by the raw ensemble score.
+}
 
+void MainWindow::render3hForecastRow(const SignalsContext &ctx)
+{
     // --- 3-hour forecast ---------------------------------------------------
     // Extrapolate the recent drift over a 3-hourly-bar horizon, with a ±1σ range
     // that scales with √horizon (random-walk diffusion). One bar = one hour now.
     constexpr qint32 kHorizonBars = 3;  // 3 hours = 3 hourly bars
-    const qsizetype driftWin = qMin<qsizetype>(series.size() - 1, 48);  // ~2 days of hours
-    const double drift = trading::meanReturn(series, driftWin);
+    const qsizetype driftWin = qMin<qsizetype>(ctx.series.size() - 1, 48);  // ~2 days of hours
+    const double drift = trading::meanReturn(ctx.series, driftWin);
     const double projPct = (std::pow(1.0 + drift, kHorizonBars) - 1.0) * 100.0;
-    const double bandPct = vol * std::sqrt(static_cast<double>(kHorizonBars));
+    const double bandPct = ctx.vol * std::sqrt(static_cast<double>(kHorizonBars));
     const double target = m_lastPrice * std::pow(1.0 + drift, kHorizonBars);
     const QString f3Arrow = (projPct > 0.0)
                                 ? QStringLiteral("↑")
                                 : ((projPct < 0.0) ? QStringLiteral("↓") : QStringLiteral("→"));
-    const QString f3Color = (projPct > 0.0) ? green : ((projPct < 0.0) ? red : amber);
+    const QString f3Color = (projPct > 0.0) ? ctx.green : ((projPct < 0.0) ? ctx.red : ctx.amber);
     const QString f3Change = QString::number(projPct, 'f', 2);
     const QString f3Target = QString::number(target, 'f', trading::priceDecimals(target));
     const QString f3Band = QString::number(bandPct, 'f', 1);
@@ -2713,7 +2805,10 @@ void MainWindow::updateSignals()
     // (checkCloseProposals) tests open positions against.
     m_forecastTarget = target;
     m_forecastBandPct = bandPct;
+}
 
+void MainWindow::render3dForecastRow(SignalsContext &ctx)
+{
     // --- AI forecast: next 3 trading days ----------------------------------
     // Ensemble-driven, bounded projection. The indicator vote (score/votes) sets
     // both direction and how far within the expected ±1σ range over the horizon
@@ -2722,20 +2817,20 @@ void MainWindow::updateSignals()
     constexpr qint32 kHoursPerDay = 24;  // most of these are 24/7 CFDs; hourly bars now
     constexpr qint32 kForecastDays = 3;
     constexpr qint32 kDaysHorizon = kForecastDays * kHoursPerDay;  // 72 hourly bars
-    const double dayRangePct = vol * std::sqrt(static_cast<double>(kDaysHorizon));
+    const double dayRangePct = ctx.vol * std::sqrt(static_cast<double>(kDaysHorizon));
     const double biasFrac =
-        (votes > 0) ? (score / static_cast<double>(votes)) : 0.0;  // [-1, 1]
+        (ctx.votes > 0) ? (ctx.score / static_cast<double>(ctx.votes)) : 0.0;  // [-1, 1]
     const double dayProjPct = biasFrac * dayRangePct;
     const double dayTarget = m_lastPrice * (1.0 + (dayProjPct / 100.0));
     const QString fdArrow = (dayProjPct > 0.0)
                                 ? QStringLiteral("↑")
                                 : ((dayProjPct < 0.0) ? QStringLiteral("↓")
                                                       : QStringLiteral("→"));
-    const QString fdColor = (dayProjPct > 0.0) ? green : ((dayProjPct < 0.0) ? red : amber);
+    const QString fdColor = (dayProjPct > 0.0) ? ctx.green : ((dayProjPct < 0.0) ? ctx.red : ctx.amber);
     const QString fdChange = QString::number(dayProjPct, 'f', 2);
     const QString fdTarget = QString::number(dayTarget, 'f', trading::priceDecimals(dayTarget));
     const QString fdBand = QString::number(dayRangePct, 'f', 1);
-    const QString fdConf = QString::number(confidence, 'f', 0);
+    const QString fdConf = QString::number(ctx.confidence, 'f', 0);
     const QString fdText = fdArrow + QLatin1Char(' ')
                            + ((dayProjPct >= 0.0) ? QStringLiteral("+") : QString())
                            + fdChange + QStringLiteral("% → ~")
@@ -2743,57 +2838,60 @@ void MainWindow::updateSignals()
                            + fdBand + QStringLiteral("%, ")
                            + fdConf + QStringLiteral("% conf)");
     m_sig3d->setText(colored(fdText, fdColor));
+}
 
+void MainWindow::renderOverallSignalRow(SignalsContext &ctx)
+{
     // Overall signal from the same ensemble (needs a clear majority).
     QString signal = QStringLiteral("NEUTRAL");
-    QString sigColor = amber;
-    qint32 signalDir = 0;  // +1 BUY / -1 SELL / 0 NEUTRAL — feeds the chart arrow
-    if (score >= 2) {
+    QString sigColor = ctx.amber;
+    if (ctx.score >= 2) {
         signal = QStringLiteral("BUY");
-        sigColor = green;
-        signalDir = 1;
-    } else if (score <= -2) {
+        sigColor = ctx.green;
+        ctx.signalDir = 1;
+    } else if (ctx.score <= -2) {
         signal = QStringLiteral("SELL");
-        sigColor = red;
-        signalDir = -1;
+        sigColor = ctx.red;
+        ctx.signalDir = -1;
     } else {
         // no clear majority — keep the NEUTRAL defaults
     }
     m_sigOverall->setText(colored(signal, sigColor));
     // Remember the call for the close watchdog (a confident flip against an open
     // position is one of its triggers).
-    m_lastSignalDir = signalDir;
-    m_lastSignalConf = confidence;
+    m_lastSignalDir = ctx.signalDir;
+    m_lastSignalConf = ctx.confidence;
+}
 
-    // Keep the SL/TP defaults tracking volatility while the user hasn't taken
-    // over — done before the edge estimate below so it prices the same values.
-    proposeSlTpDefaults(vol);
-
-    // --- AI decision support ------------------------------------------------
+void MainWindow::renderUpProbabilityRow(SignalsContext &ctx)
+{
     // 1) Logistic up-probability: a hand-weighted logistic model over the same
     //    features the indicators expose, squashed through a sigmoid.
-    double z = (1.0 * (bull ? 1.0 : -1.0)) + (0.8 * ((hist >= 0.0) ? 1.0 : -1.0))
-             + (0.05 * (r - 50.0)) + (0.02 * (50.0 - stochK));
-    if (vol > 0.0) {
-        z += 0.5 * (momentum / vol);
-        if (reg.valid) {
-            z += 0.5 * (reg.slopePct / vol);
+    double z = (1.0 * (ctx.bull ? 1.0 : -1.0)) + (0.8 * ((ctx.hist >= 0.0) ? 1.0 : -1.0))
+             + (0.05 * (ctx.r - 50.0)) + (0.02 * (50.0 - ctx.stochK));
+    if (ctx.vol > 0.0) {
+        z += 0.5 * (ctx.momentum / ctx.vol);
+        if (ctx.reg.valid) {
+            z += 0.5 * (ctx.reg.slopePct / ctx.vol);
         }
-        if (kn.k > 0) {
-            z += 0.4 * (kn.retPct / vol);
+        if (ctx.kn.k > 0) {
+            z += 0.4 * (ctx.kn.retPct / ctx.vol);
         }
     }
-    if (sma50 > 0.0) {
-        z += 0.6 * (aboveTrend ? 1.0 : -1.0);
+    if (ctx.sma50 > 0.0) {
+        z += 0.6 * (ctx.aboveTrend ? 1.0 : -1.0);
     }
-    const double pUp = trading::sigmoid(0.5 * z);
-    const QString upArrow = (pUp >= 0.55) ? QStringLiteral("▲")
-                                          : ((pUp <= 0.45) ? QStringLiteral("▼")
-                                                           : QStringLiteral("→"));
-    const QString upColor = (pUp >= 0.55) ? green : ((pUp <= 0.45) ? red : amber);
+    ctx.pUp = trading::sigmoid(0.5 * z);
+    const QString upArrow = (ctx.pUp >= 0.55) ? QStringLiteral("▲")
+                                              : ((ctx.pUp <= 0.45) ? QStringLiteral("▼")
+                                                                   : QStringLiteral("→"));
+    const QString upColor = (ctx.pUp >= 0.55) ? ctx.green : ((ctx.pUp <= 0.45) ? ctx.red : ctx.amber);
     m_aiUpProb->setText(colored(
-        QStringLiteral("%1 %2% up").arg(upArrow).arg(std::lround(pUp * 100.0)), upColor));
+        QStringLiteral("%1 %2% up").arg(upArrow).arg(std::lround(ctx.pUp * 100.0)), upColor));
+}
 
+void MainWindow::dispatchMonteCarlo(const SignalsContext &ctx)
+{
     // 2)+3) Bootstrap Monte-Carlo over the 3h horizon, reused for the price
     //       outlook and the take-profit-before-stop-loss edge of the user's setup.
     const double amount = m_amount->value();
@@ -2809,55 +2907,64 @@ void MainWindow::updateSignals()
     // new ticks are skipped — the next tick re-triggers with fresher inputs.
     if (!m_mcBusy && (m_aiMonteCarlo != nullptr)) {
         m_mcBusy = true;
-        m_mcScore = score;
+        m_mcScore = ctx.score;
         m_mcTp = tp;
         m_mcSl = sl;
         m_mcExposure = exposure;
         const double mcPrice = m_lastPrice;
         // series is captured by value — a cheap copy-on-write share for the worker.
-        m_mcWatcher.setFuture(QtConcurrent::run([series, mcPrice, tpFrac, slFrac] {
+        m_mcWatcher.setFuture(QtConcurrent::run([series = ctx.series, mcPrice, tpFrac, slFrac] {
             constexpr qint32 kMcHorizonBars = 3;  // 3 hours = 3 hourly bars
-            return trading::monteCarlo(series, mcPrice, kMcHorizonBars, tpFrac, slFrac, 1200);
+            return trading::monteCarlo(series, {.price = mcPrice,
+                                                .horizon = kMcHorizonBars,
+                                                .tpFrac = tpFrac,
+                                                .slFrac = slFrac,
+                                                .paths = 1200});
         }));
     }
+}
 
+void MainWindow::renderAiRegimeRow(SignalsContext &ctx)
+{
     // 4) Market regime from the Hurst exponent.
-    const double hurst = trading::hurstExponent(series);
+    ctx.hurst = trading::hurstExponent(ctx.series);
     QString regime = QStringLiteral("Random walk");
-    QString regimeColor = amber;
-    if (hurst >= 0.55) {
+    QString regimeColor = ctx.amber;
+    if (ctx.hurst >= 0.55) {
         regime = QStringLiteral("Trending");
-        regimeColor = green;
-    } else if (hurst <= 0.45) {
+        regimeColor = ctx.green;
+    } else if (ctx.hurst <= 0.45) {
         regime = QStringLiteral("Mean-reverting");
-        regimeColor = amber;
+        regimeColor = ctx.amber;
     } else {
         // in between — keep the "Random walk" default
     }
     m_aiRegime->setText(colored(
-        QStringLiteral("%1 (H %2)").arg(regime, QString::number(hurst, 'f', 3)), regimeColor));
+        QStringLiteral("%1 (H %2)").arg(regime, QString::number(ctx.hurst, 'f', 3)), regimeColor));
+}
 
+void MainWindow::renderAdviceRow(SignalsContext &ctx)
+{
     // 5) Explicit BUY / SELL / HOLD call, with a one-line rationale.
-    const bool bullishLean = (score >= 2) && (pUp >= 0.50);
-    const bool bearishLean = (score <= -2) && (pUp <= 0.50);
+    const bool bullishLean = (ctx.score >= 2) && (ctx.pUp >= 0.50);
+    const bool bearishLean = (ctx.score <= -2) && (ctx.pUp <= 0.50);
     QString advice;
-    QString adviceColor = amber;
-    qint32 adviceDir = 0;  // +1 BUY / -1 SELL / 0 HOLD — feeds the chart arrow
+    QString adviceColor = ctx.amber;
     if (bullishLean) {
         advice = QStringLiteral("BUY");
-        adviceColor = green;
-        adviceDir = 1;
+        adviceColor = ctx.green;
+        ctx.adviceDir = 1;
     } else if (bearishLean) {
         advice = QStringLiteral("SELL");
-        adviceColor = red;
-        adviceDir = -1;
+        adviceColor = ctx.red;
+        ctx.adviceDir = -1;
     } else {
         advice = QStringLiteral("HOLD — no clear edge, stay flat");
     }
     if (bullishLean || bearishLean) {
-        if (hurst >= 0.55) {
+        if (ctx.hurst >= 0.55) {
             advice += QStringLiteral(" — trend-following favoured");
-        } else if (hurst <= 0.45) {
+        } else if (ctx.hurst <= 0.45) {
             advice += QStringLiteral(" — choppy, size down / fade extremes");
         } else {
             // random-walk regime — nothing extra to add
@@ -2874,11 +2981,80 @@ void MainWindow::updateSignals()
         }
     }
     m_aiAdvice->setText(colored(advice, adviceColor));
+}
+
+void MainWindow::updateSignals()
+{
+    // Keep the estimated opening (spread) cost in step with the live quote and the
+    // current amount/leverage — this slot is wired to all three. Done before the
+    // early return below so the cost still shows while the signal series fills.
+    updateOpenCost();
+
+    // Compute over the HOURLY close series (one bar = one hour), with the last
+    // (forming-hour) bar pinned to the live price so the signals still track the
+    // market. Hourly — not the minute tail — so a symbol reads the same here as in
+    // the leverage screener. Horizon maths below is therefore in hourly bars.
+    SignalsContext ctx;
+    ctx.series = m_hourlyCloses;
+    if (m_lastPrice > 0.0) {
+        if (ctx.series.isEmpty()) {
+            ctx.series.append(m_lastPrice);
+        } else {
+            ctx.series.last() = m_lastPrice;
+        }
+    }
+
+    renderRegimeAndNewsRows();
+
+    constexpr qsizetype kFast = 10;
+    constexpr qsizetype kSlow = 30;
+    constexpr qsizetype kRsi = 14;
+
+    if (ctx.series.size() < (kSlow + 1)) {
+        renderGatheringDataRows();
+        return;
+    }
+
+    ctx.fast = trading::sma(ctx.series, kFast);
+    ctx.slow = trading::sma(ctx.series, kSlow);
+    ctx.r = trading::rsi(ctx.series, kRsi);
+    ctx.hist = trading::macdHistogram(ctx.series);
+    ctx.pctB = trading::bollingerPercentB(ctx.series, 20);
+    ctx.vol = trading::volatilityPct(ctx.series, 20);
+    ctx.momentum = trading::roc(ctx.series, 10);
+    const double first = ctx.series.first();
+    ctx.changePct =
+        (first > 0.0) ? (((ctx.series.last() - first) / first) * 100.0) : 0.0;
+
+    ctx.green = QStringLiteral("#25b563");
+    ctx.red = QStringLiteral("#e35555");
+    ctx.amber = QStringLiteral("#e0b000");
+
+    // --- Individual indicators ---------------------------------------------
+    renderIndicatorRows(ctx);
+    renderForecastModelRows(ctx);
+    renderTimingAndRiskRows(ctx);
+
+    renderPredictionRow(ctx);
+
+    render3hForecastRow(ctx);
+    render3dForecastRow(ctx);
+    renderOverallSignalRow(ctx);
+
+    // Keep the SL/TP defaults tracking volatility while the user hasn't taken
+    // over — done before the edge estimate below so it prices the same values.
+    proposeSlTpDefaults(ctx.vol);
+
+    // --- AI decision support ------------------------------------------------
+    renderUpProbabilityRow(ctx);
+    dispatchMonteCarlo(ctx);
+    renderAiRegimeRow(ctx);
+    renderAdviceRow(ctx);
 
     // Chart arrow = agreement of the overall Signal and the AI Recommendation:
     // both bullish → ▲, both bearish → ▼, a lean either way → the leaning arrow,
     // and a conflict (BUY vs SELL) or both flat → no arrow.
-    m_chart->setPredictionDirection(signalDir + adviceDir);
+    m_chart->setPredictionDirection(ctx.signalDir + ctx.adviceDir);
 }
 
 void MainWindow::onCash(double available, const QString &currency)
@@ -3789,59 +3965,43 @@ void MainWindow::rebuildRecommendations()
     };
     QList<Reco> recos;
 
-    for (const ScreenerRow &r : std::as_const(m_screenerRows)) {
-        if (!r.ok || r.closes.isEmpty()) {
-            continue;
+    // The panel renders the SAME ranked calls as the decision window: one
+    // weighted multi-source composite (trading::computeDecisionRows) instead of
+    // a second, hand-tuned blend that could disagree with it on screen. The UI
+    // adds presentation only — the row text, the tooltip and the market-open
+    // filter; the ensemble lines in the tooltip are recomputed for display and
+    // carry no decision weight. Rows arrive sorted by confidence descending.
+    const QList<trading::DecisionRow> rows = trading::computeDecisionRows(marketSnapshot());
+    for (const trading::DecisionRow &d : rows) {
+        if (d.dir == 0) {
+            continue;  // nothing actionable for this instrument right now
         }
         // "Buy / sell now" is actionable advice, so drop instruments whose market is
         // closed right now — you couldn't trade them anyway. (Unknown state = show all,
         // so the panel isn't emptied before the first tradeability check lands.)
-        if (m_tradeabilityKnown && !m_tradeableNow.contains(r.symbol)) {
+        if (m_tradeabilityKnown && !m_tradeableNow.contains(d.symbol)) {
             continue;
         }
-        const trading::Ensemble e = trading::computeEnsemble(r.closes, m_vixValid, m_vixChangePct);
-        const bool haveRating = m_ratingBySymbol.contains(r.symbol);
-        const double rating = haveRating ? m_ratingBySymbol.value(r.symbol).consensus() : 0.0;
 
-        // The call comes from the technical ensemble; a strong web rating can stand in
-        // when the ensemble is neutral, and otherwise confirms or tempers it.
-        qint32 dir = 0;
-        double confidence = 0.0;
-        if (e.valid && (e.signalDir != 0)) {
-            dir = e.signalDir;
-            // Same instrument-agnostic VIX-level haircut the live panel applies.
-            confidence = trading::applyVixHaircut(e.confidence, m_vixValid, m_vix);
-            if (haveRating) {
-                const bool agrees = (rating > 0) == (dir > 0);
-                if (agrees && (std::abs(rating) >= 0.1)) {
-                    confidence = std::min(100.0, confidence + 8.0);
-                } else if (!agrees && (std::abs(rating) >= 0.3)) {
-                    confidence *= 0.8;  // the market rating disagrees — temper it
-                } else {
-                    // weak rating — neither confirms nor tempers
-                }
-            }
-        } else if (haveRating && (std::abs(rating) >= 0.5)) {
-            dir = (rating > 0) ? 1 : -1;
-            confidence = std::abs(rating) * 100.0;
-        } else {
-            // no actionable signal from either source
-        }
-        if (dir == 0) {
-            continue;  // nothing actionable for this instrument right now
-        }
-
-        const QString side = (dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL");
+        const QString side = (d.dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL");
         Reco reco;
-        reco.symbol = r.symbol;
-        reco.dir = dir;
-        reco.confidence = confidence;
+        reco.symbol = d.symbol;
+        reco.dir = d.dir;
+        reco.confidence = d.confidence;
         // Side is conveyed by the column and colour, so the row is just symbol + confidence.
-        reco.row = QStringLiteral("%1   ·   %2%").arg(r.symbol).arg(qRound(confidence));
+        reco.row = QStringLiteral("%1   ·   %2%").arg(d.symbol).arg(qRound(d.confidence));
 
         QStringList tip;
-        tip << QStringLiteral("%1 — %2 (confidence %3%)").arg(r.symbol, side).arg(qRound(confidence));
+        tip << QStringLiteral("%1 — %2 (confidence %3%)")
+                   .arg(d.symbol, side)
+                   .arg(qRound(d.confidence));
         tip << QString();
+        const auto sr = std::find_if(m_screenerRows.cbegin(), m_screenerRows.cend(),
+                                     [&d](const ScreenerRow &r) { return r.symbol == d.symbol; });
+        const trading::Ensemble e =
+            ((sr != m_screenerRows.cend()) && sr->ok && !sr->closes.isEmpty())
+                ? trading::computeEnsemble(sr->closes, m_vixValid, m_vixChangePct)
+                : trading::Ensemble{};
         if (e.valid) {
             const QString bull = (e.dir > 0) ? QStringLiteral("bullish")
                                              : ((e.dir < 0) ? QStringLiteral("bearish")
@@ -3858,17 +4018,17 @@ void MainWindow::rebuildRecommendations()
         } else {
             tip << QStringLiteral("Technical ensemble: gathering data…");
         }
-        if (haveRating) {
+        if (d.haveRating) {
             tip << QStringLiteral("TradingView 1h rating: %1 (%2%3) — %4")
-                       .arg(trading::webRatingWord(rating),
-                            (rating >= 0.0) ? QStringLiteral("+") : QString())
-                       .arg(rating, 0, 'f', 2)
-                       .arg(((rating > 0) == (dir > 0)) ? QStringLiteral("confirms")
-                                                        : QStringLiteral("disagrees"));
+                       .arg(trading::webRatingWord(d.rating),
+                            (d.rating >= 0.0) ? QStringLiteral("+") : QString())
+                       .arg(d.rating, 0, 'f', 2)
+                       .arg(((d.rating > 0) == (d.dir > 0)) ? QStringLiteral("confirms")
+                                                            : QStringLiteral("disagrees"));
         } else {
             tip << QStringLiteral("TradingView rating: n/a for this instrument");
         }
-        const QList<NewsHeadline> news = m_newsBySymbol.value(r.symbol);
+        const QList<NewsHeadline> news = m_newsBySymbol.value(d.symbol);
         if (!news.isEmpty()) {
             tip << QString() << QStringLiteral("Recent news:");
             for (qsizetype i = 0; (i < news.size()) && (i < 3); ++i) {
@@ -3885,12 +4045,6 @@ void MainWindow::rebuildRecommendations()
         reco.tip = tip.join(QLatin1Char('\n'));
         recos.append(reco);
     }
-
-    // Strongest signal first within each column.
-    const auto sortBegin = recos.begin();
-    const auto sortEnd = recos.end();
-    std::sort(sortBegin, sortEnd,
-              [](const Reco &a, const Reco &b) { return a.confidence > b.confidence; });
 
     m_recoBuyList->clear();
     m_recoSellList->clear();
@@ -3961,23 +4115,6 @@ const ScreenerRow *screenerRowFor(const QList<ScreenerRow> &rows, const QString 
     return (it == rows.cend()) ? nullptr : &*it;
 }
 
-// TradingView rating bucket for a score in [-1, 1].
-QString decisionRatingWord(double s)
-{
-    if (s >= 0.5) {
-        return QStringLiteral("Strong Buy");
-    }
-    if (s >= 0.1) {
-        return QStringLiteral("Buy");
-    }
-    if (s > -0.1) {
-        return QStringLiteral("Neutral");
-    }
-    if (s > -0.5) {
-        return QStringLiteral("Sell");
-    }
-    return QStringLiteral("Strong Sell");
-}
 }  // namespace
 
 // Capture the latest market data as the plain snapshot the decision engine
@@ -4325,7 +4462,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
         const qint32 ratingDir =
             (focus->rating > 0) ? 1 : ((focus->rating < 0) ? -1 : 0);
         const QString ratingRead =
-            focus->haveRating ? decisionRatingWord(focus->rating) : QStringLiteral("n/a");
+            focus->haveRating ? trading::webRatingWord(focus->rating) : QStringLiteral("n/a");
         const QColor ratingColor = focus->haveRating ? callColour(ratingDir) : trading::ui::kGrey;
         const QString ratingConf =
             focus->haveRating ? QStringLiteral("%1").arg(focus->rating, 0, 'f', 2) : QString();

@@ -291,6 +291,29 @@ private:
     void fetchScanCandle(const QSharedPointer<ScanState> &st);
 
     void openPositionReal(const OrderRequest &req);
+    // The rate a new order's units and SL/TP are priced off: a buy fills near the
+    // ask, a sell near the bid (mid / instrument rate as fallbacks) — and a limit
+    // order at its own trigger, since that is where the position will open.
+    [[nodiscard]] double orderReferenceRate(const OrderRequest &req) const;
+    // The UnifiedOrderRequest body common to market and limit orders. The amount
+    // and the SL/TP rates are added by openPositionReal, after the unit-cap shrink.
+    // static: built purely from its arguments — it must not depend on client state.
+    [[nodiscard]] static QJsonObject baseOrderBody(const OrderRequest &req, qint64 instrumentId,
+                                                   const QString &orderCurrency);
+    // The order size after eToro's per-order unit cap (see openPositionReal):
+    // ok=false means even the smallest order exceeds the cap (already reported).
+    struct SizedOrder {
+        bool ok = false;
+        double amount = 0.0;
+        double units = 0.0;
+    };
+    SizedOrder applyUnitCap(const OrderRequest &req, qint64 instrumentId, double ref,
+                            const QString &symbolLabel, const QString &orderCurrency);
+    // The order POST's reply: report the submission, take a resting limit order
+    // into the registry, schedule the order-lookup confirmation of a market order.
+    void onOrderSubmitReply(const PendingOrder &rest, const QString &orderCurrency, bool ok,
+                            qint32 status, const QJsonDocument &doc, const QByteArray &raw,
+                            const QString &netError);
     // Take a just-accepted limit order into the pending registry and report it. Split
     // out of openPositionReal's reply handler so that function stays within its
     // complexity budget (and so the reply lambda captures one value, not a dozen).

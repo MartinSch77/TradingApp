@@ -7,7 +7,7 @@
 
 namespace trading {
 
-qint32 priceDecimals(double price)
+qint32 priceDecimals(double price) noexcept
 {
     const double a = std::abs(price);
     if (a >= 100.0) {

@@ -1,5 +1,6 @@
 #include "services/AiAdvisor.h"
 #include "services/Config.h"
+#include "services/EconomicCalendar.h"
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
 #include "ui/MainWindow.h"
@@ -47,7 +48,8 @@ int main(int argc, char *argv[])
     MarketFeeds feeds;
     feeds.setCurrentSymbol(config.symbol);
     AiAdvisor aiAdvisor(config.anthropicApiKey);
-    MainWindow window(&client, &feeds, &aiAdvisor);
+    EconomicCalendar calendar;
+    MainWindow window(&client, &feeds, &aiAdvisor, &calendar);
     window.show();
 
     // Kick off instrument resolution / history / polling after the UI exists
@@ -56,6 +58,8 @@ int main(int argc, char *argv[])
     // VIX + web rating move slowly; refresh them on the same ~20-poll cadence
     // the client used before the feeds were split out (100s at the default poll).
     feeds.start(config.pollIntervalMs * 20);
+    calendar.setInstrument(config.symbol);
+    calendar.start();
 
     // QA aid: TRADINGAPP_SHOT=<path> grabs every visible window to PNGs and quits.
     // TRADINGAPP_SHOT_OPEN=1 also opens the decision and closed-trades windows

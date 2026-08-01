@@ -17,7 +17,7 @@ struct Regression {
     bool valid = false;
 };
 
-Regression linRegForecast(const QList<double> &values, qsizetype n);
+[[nodiscard]] Regression linRegForecast(const QList<double> &values, qsizetype n);
 
 // --- k-Nearest-Neighbors analog forecast ------------------------------------
 // Finds the k historical return-windows most similar to the current one and
@@ -28,11 +28,11 @@ struct Knn {
     qint32 k = 0;
 };
 
-Knn knnForecast(const QList<double> &values, qsizetype window, qsizetype k);
+[[nodiscard]] Knn knnForecast(const QList<double> &values, qsizetype window, qsizetype k);
 
 // Hurst exponent via rescaled-range (R/S) over the last returns. ~0.5 = random
 // walk, >0.5 = trending/persistent, <0.5 = mean-reverting. A regime hint.
-double hurstExponent(const QList<double> &series);
+[[nodiscard]] double hurstExponent(const QList<double> &series);
 
 // Non-parametric Monte-Carlo outlook: bootstrap future paths by resampling the
 // series' own recent per-bar returns (captures its real distribution, fat tails
@@ -58,15 +58,28 @@ struct McOutlook {
     double expiryRetShort = 0.0;  // mean final move of paths that hit neither short barrier
 };
 
-// `seed` nonzero makes the resampling deterministic (tests); 0 = securely
-// seeded, a fresh sequence every call (QRandomGenerator::global() cannot be
-// reseeded, so determinism needs an owned generator — same pattern as
-// SimulationEngine::seedRng).
-McOutlook monteCarlo(const QList<double> &series, double price, qint32 horizon,
-                     double tpFrac, double slFrac, qint32 paths, quint32 seed = 0);
+// The scalar knobs of one Monte-Carlo run, as one named bundle (the series
+// travels separately — it is the data, these are the question). Designated
+// initializers keep call sites self-describing:
+//   monteCarlo(closes, {.price = p, .horizon = 24, .tpFrac = t, .slFrac = s,
+//                       .paths = 6000});
+struct McParams {
+    double price = 0.0;   // price the paths start from (must be > 0)
+    qint32 horizon = 0;   // bars to simulate (must be > 0)
+    double tpFrac = 0.0;  // take-profit barrier as a fraction of price (0 = no barriers)
+    double slFrac = 0.0;  // stop-loss barrier as a fraction of price (0 = no barriers)
+    qint32 paths = 0;     // simulated paths (must be > 0)
+    // Nonzero makes the resampling deterministic (tests); 0 = securely seeded,
+    // a fresh sequence every call (QRandomGenerator::global() cannot be
+    // reseeded, so determinism needs an owned generator — same pattern as
+    // SimulationEngine::seedRng).
+    quint32 seed = 0;
+};
+
+[[nodiscard]] McOutlook monteCarlo(const QList<double> &series, const McParams &params);
 
 // Logistic squash of x into (0, 1).
-double sigmoid(double x);
+[[nodiscard]] double sigmoid(double x) noexcept;
 
 } // namespace trading
 

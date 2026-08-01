@@ -110,12 +110,51 @@ try {
     $pkg = 'org.qtproject.example.TradingApp'
     Write-Host "launching $pkg"
     & $adb shell am start -n "$pkg/org.qtproject.qt.android.bindings.QtActivity" | Out-Host
-    Start-Sleep -Seconds 12
 
+    # Screenshot only when it can show the app (same reasoning as run_android.sh,
+    # keep both in lockstep): a fixed sleep + one screencap captures ANR dialogs
+    # or a pre-first-frame black window on a slow emulator. Wait for the app's
+    # own window to hold input focus, dismiss ANR dialogs via their "Wait" row
+    # (the AVD is always a 1080x2340 pixel_5, so the tap point is stable), and
+    # accept only a non-trivial PNG whose focus survived the capture (a black
+    # frame is ~20 KB, the real UI several hundred).
     New-Item -ItemType Directory -Path (Split-Path -Parent $Shot) -Force | Out-Null
-    # -Encoding Byte is PowerShell 5.1 syntax; screencap output is binary PNG.
-    & $adb exec-out screencap -p | Set-Content -Path $Shot -Encoding Byte
-    Write-Host "screenshot: $Shot"
+    $shotOk = $false
+    foreach ($i in 1..30) {
+        $win = & $adb shell dumpsys window 2>$null
+        if ($win -match 'Application Not Responding') {
+            Write-Host 'ANR dialog on screen - tapping Wait'
+            & $adb shell input tap 340 1320 | Out-Null
+            Start-Sleep -Seconds 4
+            continue
+        }
+        $focus = ($win | Where-Object { $_ -match 'mCurrentFocus' } | Select-Object -First 1)
+        if (-not ($focus -match [regex]::Escape($pkg))) {
+            Start-Sleep -Seconds 5
+            continue
+        }
+        Start-Sleep -Seconds 8   # focused: let Qt finish its first layout/paint pass
+        # -Encoding Byte is PowerShell 5.1 syntax; screencap output is binary PNG.
+        & $adb exec-out screencap -p | Set-Content -Path "$Shot.tmp" -Encoding Byte
+        $size = (Get-Item -LiteralPath "$Shot.tmp" -ErrorAction SilentlyContinue).Length
+        $focusAfter = (& $adb shell dumpsys window 2>$null |
+            Where-Object { $_ -match 'mCurrentFocus' } | Select-Object -First 1)
+        if (($focusAfter -match [regex]::Escape($pkg)) -and ($size -gt 61440)) {
+            Move-Item -Force -LiteralPath "$Shot.tmp" -Destination $Shot
+            $shotOk = $true
+            break
+        }
+        Write-Host "shot rejected ($size bytes, focus: $focusAfter) - retrying"
+    }
+    if (-not $shotOk) {
+        # Keep the last rejected frame as evidence rather than nothing.
+        if (Test-Path -LiteralPath "$Shot.tmp") {
+            Move-Item -Force -LiteralPath "$Shot.tmp" -Destination $Shot
+        }
+        Write-Host 'WARNING: no clean app frame captured - the screenshot may show a dialog or a blank window' -ForegroundColor Yellow
+    }
+    Remove-Item -LiteralPath "$Shot.tmp" -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Shot) { Write-Host "screenshot: $Shot" }
 
     Write-Host '--- logcat (app only) ---'
     & $adb logcat -d -s TradingApp:V QtCore:V Qt:V AndroidRuntime:E | Select-Object -Last 25

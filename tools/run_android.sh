@@ -111,11 +111,50 @@ PKG="$("$SDK"/cmdline-tools/latest/bin/apkanalyzer manifest application-id "$APK
     echo org.qtproject.example)"
 echo "launching $PKG"
 "$ADB" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
-sleep 12   # let Qt load its plugins, build the UI and take the first poll tick
 
+# Screenshot only when it can show the app. A fixed sleep + one screencap is not
+# enough (measured, not theoretical): a slow emulator ANRs its own system
+# processes and the "X isn't responding" dialog covers the screen, or the shot
+# fires before Qt's first frame and captures a black starting window. So wait
+# until the app's OWN window holds input focus (dismissing ANR dialogs by
+# tapping their "Wait" row — fixed coordinates are fine, the AVD above is always
+# a 1080x2340 pixel_5), give Qt a beat to paint, and accept the shot only if the
+# focus survived the capture and the PNG is non-trivial (a black frame is ~20 KB,
+# the real UI several hundred).
 mkdir -p "$(dirname "$SHOT")"
-"$ADB" exec-out screencap -p > "$SHOT"
-echo "screenshot: ${SHOT#"$ROOT"/}  ($(du -h "$SHOT" | cut -f1))"
+SHOT_OK=0
+for _ in $(seq 1 30); do
+    WIN="$("$ADB" shell dumpsys window 2>/dev/null | tr -d '\r')"
+    if printf '%s' "$WIN" | grep -q "Application Not Responding"; then
+        echo "ANR dialog on screen — tapping Wait"
+        "$ADB" shell input tap 340 1320
+        sleep 4
+        continue
+    fi
+    if ! printf '%s' "$WIN" | grep 'mCurrentFocus' | grep -q "$PKG"; then
+        sleep 5
+        continue
+    fi
+    sleep 8   # focused: let Qt finish its first layout/paint pass
+    "$ADB" exec-out screencap -p > "$SHOT.tmp"
+    SIZE="$(stat -c %s "$SHOT.tmp" 2>/dev/null || echo 0)"
+    FOCUS_AFTER="$("$ADB" shell dumpsys window 2>/dev/null | tr -d '\r' | grep 'mCurrentFocus' || true)"
+    if printf '%s' "$FOCUS_AFTER" | grep -q "$PKG" && [ "$SIZE" -gt 61440 ]; then
+        mv "$SHOT.tmp" "$SHOT"
+        SHOT_OK=1
+        break
+    fi
+    echo "shot rejected ($SIZE bytes, focus: ${FOCUS_AFTER:-none}) — retrying"
+done
+if [ "$SHOT_OK" -ne 1 ]; then
+    # Keep the last rejected frame as evidence rather than nothing.
+    [ -f "$SHOT.tmp" ] && mv "$SHOT.tmp" "$SHOT"
+    echo "WARNING: no clean app frame captured — the screenshot may show a dialog or a blank window" >&2
+fi
+rm -f "$SHOT.tmp"
+if [ -f "$SHOT" ]; then
+    echo "screenshot: ${SHOT#"$ROOT"/}  ($(du -h "$SHOT" | cut -f1))"
+fi
 
 # The app's own log is the proof it got past plugin loading and into its own code.
 echo "--- logcat (app only) ---"

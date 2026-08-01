@@ -157,7 +157,11 @@ jobs:
           ndk="$(grep -rhoE '"ndk_version"[^"]*"[0-9.]+"' "$HOME/Qt/$QT_VERSION/android_arm64_v8a/modules" |
             grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')"
           echo "Qt $QT_VERSION expects NDK $ndk"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null
+          # No `yes |` here: under pipefail, `yes` dies of SIGPIPE the moment
+          # sdkmanager closes stdin and the pipeline "fails" after a successful
+          # install (observed on the first run). The runner image has the SDK
+          # licenses pre-accepted, so no prompt needs answering.
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null < /dev/null
 
       - name: Build + sign the APK
         run: ./tools/build_android.sh --abi android_arm64_v8a --release

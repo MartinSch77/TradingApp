@@ -1,14 +1,16 @@
-# Downloadable builds: a Linux AppImage and a portable Windows ZIP.
+# Downloadable builds: a Linux AppImage, a portable Windows ZIP and an Android
+# APK (arm64-v8a, release, signed — sideloadable).
 #
 # Triggers
-#   push of a v* tag   -> builds both and attaches them to that release
-#   workflow_dispatch  -> builds both and uploads them as run artifacts only
-#                         (nothing is published), so the packaging can be
+#   push of a v* tag   -> builds all three and attaches them to that release
+#   workflow_dispatch  -> builds all three and uploads them as run artifacts
+#                         only (nothing is published), so the packaging can be
 #                         exercised without cutting a release
 #
-# The two jobs run the SAME scripts a developer runs locally
-# (tools/package_appimage.sh, tools\package_portable.ps1) — the packaging is not
-# reimplemented in YAML, so what CI publishes is what those scripts produce.
+# The jobs run the SAME scripts a developer runs locally
+# (tools/package_appimage.sh, tools\package_portable.ps1,
+# tools/build_android.sh) — the packaging is not reimplemented in YAML, so what
+# CI publishes is what those scripts produce.
 name: Release
 
 on:
@@ -124,12 +126,55 @@ jobs:
             downloads/*.zip
             downloads/*.zip.sha256
 
+  android-apk:
+    name: Android APK (arm64-v8a)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # build_android.sh expects the developer layout: ~/Qt/<ver>/<abi> plus the
+      # matching DESKTOP kit as androiddeployqt's host — install-qt-action puts
+      # kits elsewhere, so use aqt directly. Android kits come from the `all_os`
+      # host for Qt >= 6.8 (the same command the script's skip message prints).
+      - name: Install Qt kits (host + Android, with Charts)
+        run: |
+          python3 -m pip install aqtinstall
+          python3 -m aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -m qtcharts -O "$HOME/Qt"
+          python3 -m aqt install-qt all_os android "$QT_VERSION" android_arm64_v8a -m qtcharts -O "$HOME/Qt"
+
+      # The runner ships an Android SDK; add the exact NDK the Qt kit was built
+      # against (build_android.sh reads the version the same way and would warn
+      # on a mismatch — better to install the right one than to warn).
+      - name: Install the NDK the Qt kit expects
+        run: |
+          set -euo pipefail
+          ndk="$(grep -rhoE '"ndk_version"[^"]*"[0-9.]+"' "$HOME/Qt/$QT_VERSION/android_arm64_v8a/modules" |
+            grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')"
+          echo "Qt $QT_VERSION expects NDK $ndk"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null
+
+      - name: Build + sign the APK
+        run: ./tools/build_android.sh --abi android_arm64_v8a --release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: |
+            downloads/*.apk
+            downloads/*.apk.sha256
+
   publish:
     name: Attach to the release
-    # Tag pushes only: a manual run stops after the two build jobs, so the
+    # Tag pushes only: a manual run stops after the build jobs, so the
     # packaging can be tested without publishing anything.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [appimage, windows-zip]
+    needs: [appimage, windows-zip, android-apk]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

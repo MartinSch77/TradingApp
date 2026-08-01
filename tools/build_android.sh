@@ -7,7 +7,12 @@
 #   --abi      android_x86_64 (default: what an emulator on an x86_64 host runs
 #              natively) or android_arm64_v8a (phones/tablets). One Qt kit per
 #              ABI, so the kit must exist for the ABI you ask for.
-#   --release  release build (unsigned APK; a signed one needs your keystore)
+#   --release  release build. androiddeployqt leaves it UNSIGNED, and Android
+#              refuses to install an unsigned APK, so it is signed here: with
+#              $TRADINGAPP_KEYSTORE / _KEYSTORE_PASS / _KEY_ALIAS when set,
+#              else with the standard Android debug keystore (created on
+#              demand) — installable as a sideloaded download; only store
+#              distribution needs a real key.
 #   --run      after building: boot an AVD, install, launch, screenshot
 #   --sdk      Android SDK root (default $ANDROID_HOME, else ~/Android/Sdk)
 #
@@ -120,6 +125,34 @@ VERSION="$(grep -m1 -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' "$ROOT/CMakeLists.txt" 
 mkdir -p "$ROOT/downloads"
 OUT="$ROOT/downloads/TradingApp-${VERSION:-0.0.0}-${ABI#android_}-$(echo "$BUILD_TYPE" | tr 'A-Z' 'a-z').apk"
 cp "$APK" "$OUT"
+
+# A Release APK leaves androiddeployqt unsigned — see --release in the header.
+# zipalign BEFORE apksigner (the v2+ signature covers the aligned bytes), then
+# verify, so a broken signing config fails the build here rather than on the
+# user's phone. Note an upgrade install requires the SAME key as the previous
+# build: keep one keystore (or set TRADINGAPP_KEYSTORE) across releases.
+if [ "$BUILD_TYPE" = "Release" ]; then
+    BT="$(ls -d "$SDK/build-tools"/* 2>/dev/null | sort -V | tail -1)"
+    [ -n "$BT" ] || skip "no Android build-tools for signing (sdkmanager 'build-tools;36.0.0')"
+    KS="${TRADINGAPP_KEYSTORE:-$HOME/.android/debug.keystore}"
+    KS_PASS="${TRADINGAPP_KEYSTORE_PASS:-android}"
+    KS_ALIAS="${TRADINGAPP_KEY_ALIAS:-androiddebugkey}"
+    if [ ! -f "$KS" ]; then
+        mkdir -p "$(dirname "$KS")"
+        keytool -genkeypair -keystore "$KS" -storepass "$KS_PASS" -alias "$KS_ALIAS" \
+            -keypass "$KS_PASS" -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+    fi
+    "$BT/zipalign" -f 4 "$OUT" "$OUT.aligned"
+    mv "$OUT.aligned" "$OUT"
+    "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" \
+        --ks-key-alias "$KS_ALIAS" --key-pass "pass:$KS_PASS" "$OUT"
+    "$BT/apksigner" verify "$OUT"
+    echo "signed with $KS ($KS_ALIAS)"
+fi
+
+# Same convention as the AppImage: a checksum beside every downloadable.
+(cd "$ROOT/downloads" && sha256sum "$(basename "$OUT")" | tee "$(basename "$OUT").sha256")
 echo "APK: ${OUT#"$ROOT"/}  ($(du -h "$OUT" | cut -f1))"
 
 [ "$RUN" -eq 1 ] || exit 0

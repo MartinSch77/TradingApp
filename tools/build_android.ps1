@@ -18,6 +18,12 @@
 .PARAMETER Abi
     android_x86_64 (emulator on an x86_64 host) or android_arm64_v8a (devices).
 
+.PARAMETER Release
+    Release build, signed so the download is installable: with
+    $env:TRADINGAPP_KEYSTORE / _KEYSTORE_PASS / _KEY_ALIAS when set, else with
+    the standard Android debug keystore (created on demand). Only store
+    distribution needs a real key.
+
 .PARAMETER Run
     After building: boot an AVD, install, launch, screenshot (tools\run_android.ps1).
 
@@ -150,6 +156,45 @@ $downloads = Join-Path $Root 'downloads'
 New-Item -ItemType Directory -Path $downloads -Force | Out-Null
 $out = Join-Path $downloads ("TradingApp-$version-" + ($Abi -replace '^android_', '') + "-" + $buildType.ToLower() + ".apk")
 Copy-Item $apk.FullName $out -Force
+
+# A Release APK leaves androiddeployqt UNSIGNED and Android refuses to install
+# it — sign it here so the download is sideloadable (same contract as the .sh:
+# $env:TRADINGAPP_KEYSTORE / _KEYSTORE_PASS / _KEY_ALIAS, defaulting to the
+# standard Android debug keystore, created on demand). zipalign BEFORE
+# apksigner (the v2+ signature covers the aligned bytes), then verify, so a
+# broken signing config fails HERE rather than on the user's phone. An upgrade
+# install needs the SAME key as the previous build - keep one keystore.
+if ($buildType -eq 'Release') {
+    $bt = Get-ChildItem -Path (Join-Path $Sdk 'build-tools') -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Name } | Select-Object -Last 1 -ExpandProperty FullName
+    if (-not $bt) { Write-Skipped "no Android build-tools for signing (sdkmanager 'build-tools;36.0.0')" }
+    $ks = if ($env:TRADINGAPP_KEYSTORE) { $env:TRADINGAPP_KEYSTORE }
+          else { Join-Path $env:USERPROFILE '.android\debug.keystore' }
+    $ksPass = if ($env:TRADINGAPP_KEYSTORE_PASS) { $env:TRADINGAPP_KEYSTORE_PASS } else { 'android' }
+    $ksAlias = if ($env:TRADINGAPP_KEY_ALIAS) { $env:TRADINGAPP_KEY_ALIAS } else { 'androiddebugkey' }
+    if (-not (Test-Path -LiteralPath $ks)) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $ks) -Force | Out-Null
+        $ok = Invoke-Native -FilePath 'keytool' -Arguments @(
+            '-genkeypair', '-keystore', $ks, '-storepass', $ksPass, '-alias', $ksAlias,
+            '-keypass', $ksPass, '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000',
+            '-dname', 'CN=Android Debug,O=Android,C=US')
+        if (-not $ok) { Write-Host 'keystore creation FAILED' -ForegroundColor Red; exit 1 }
+    }
+    $ok = Invoke-Native -FilePath (Join-Path $bt 'zipalign.exe') -Arguments @('-f', '4', $out, "$out.aligned")
+    if (-not $ok) { Write-Host 'zipalign FAILED' -ForegroundColor Red; exit 1 }
+    Move-Item -Force -LiteralPath "$out.aligned" -Destination $out
+    $ok = Invoke-Native -FilePath (Join-Path $bt 'apksigner.bat') -Arguments @(
+        'sign', '--ks', $ks, '--ks-pass', "pass:$ksPass",
+        '--ks-key-alias', $ksAlias, '--key-pass', "pass:$ksPass", $out)
+    if (-not $ok) { Write-Host 'apksigner sign FAILED' -ForegroundColor Red; exit 1 }
+    $ok = Invoke-Native -FilePath (Join-Path $bt 'apksigner.bat') -Arguments @('verify', $out)
+    if (-not $ok) { Write-Host 'apksigner verify FAILED' -ForegroundColor Red; exit 1 }
+    Write-Host "signed with $ks ($ksAlias)"
+}
+
+# Same convention as the AppImage: a checksum beside every downloadable.
+$hash = (Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLower()
+"$hash  $(Split-Path -Leaf $out)" | Set-Content -Path "$out.sha256" -NoNewline
 Write-Host "APK: $out  ($([math]::Round((Get-Item $out).Length / 1MB, 1)) MB)" -ForegroundColor Green
 
 if ($Run) { & "$PSScriptRoot\run_android.ps1" -Apk $out -Sdk $Sdk; exit $LASTEXITCODE }

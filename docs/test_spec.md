@@ -77,6 +77,18 @@ event loop / local mock HTTP server).
 | TS-PLAN-007 | U | Verdict gates: a forced side with weak ensemble confidence is STAY OUT ("confidence too low"); with identical seeded Monte-Carlo draws, a cost bill that leaves the net edge below 0.25% of the stake flips an actionable BUY to STAY OUT ("too thin"). |
 | TS-PLAN-008 | U | Break-even gate: a forced short against a confidently rising market keeps the ensemble confidence (gate a passes) but its Monte-Carlo win rate sits below the reward:risk break-even rate — verdict STAY OUT ("break-even"), with the measured conditional win rate itself below `breakeven`. |
 
+## Trade script (tests/tst_tradescript.cpp, DES-DOM-SCRIPT, REQ-F-028)
+
+| Test id | Kind | Verifies |
+| --- | --- | --- |
+| TS-SCRIPT-001 | U | A fully-specified line parses into every field (side, trigger, window, SIGNALS, amount, SL/TP, TRAILING, LEV). |
+| TS-SCRIPT-002 | U | Comments, blank lines, date-only FROM and defaults for every optional field; line numbers are 1-based over the raw file. |
+| TS-SCRIPT-003 | U | All-or-nothing loading: one bad line rejects the whole file with its line number, reason and content. |
+| TS-SCRIPT-004 | U | Per-field validation messages (missing AMOUNT, non-positive numbers, empty symbol, missing @, LEV < 1, unknown/duplicate fields, FROM after TO, bad dates, flag with a value). |
+| TS-SCRIPT-005 | U | Leverage snaps to the next lower offered value; above all → highest offered; below all → lowest offered; unknown offering → unchanged. |
+| TS-SCRIPT-006 | U | The time window gates resting (before FROM no, at FROM/TO yes, after TO expired and final; no window = immediately, never expires). |
+| TS-SCRIPT-007 | U | SIGNALS entries place only when ensemble AND AI favour the side; neutral/disagreeing/unconfigured AI all wait; unflagged entries ignore the sources. |
+
 ## Position math (tests/tst_positionmath.cpp, DES-DOM-POS, REQ-F-003/-016)
 
 | ID | L | Case |

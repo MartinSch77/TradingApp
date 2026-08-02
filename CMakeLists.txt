@@ -114,6 +114,8 @@ qt_add_library(trading_domain STATIC
     src/domain/DecisionEngine.h
     src/domain/TradePlan.cpp
     src/domain/TradePlan.h
+    src/domain/TradeScript.cpp
+    src/domain/TradeScript.h
 )
 target_include_directories(trading_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trading_domain PUBLIC Qt6::Core)
@@ -151,6 +153,8 @@ qt_add_executable(TradingApp
     src/ui/PriceChart.cpp
     src/ui/PriceChart.h
     src/ui/ScreenerDialog.cpp
+    src/ui/TradeScriptPanel.cpp
+    src/ui/TradeScriptPanel.h
     src/ui/ScreenerDialog.h
     src/ui/ChartView.cpp
     src/ui/ChartView.h

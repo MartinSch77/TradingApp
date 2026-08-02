@@ -206,6 +206,18 @@ A resting order shall be adjustable from that list — trigger rate, stop-loss a
 A newly placed order shall appear in the list at once, and the list and its per-order statuses shall be refreshed on a fixed 4-second cycle of their own — not on the configurable price-poll cadence — running only while at least one order rests and staying inside the lookup endpoint's shared rate budget. A refresh shall not discard the row the user has marked for cancelling or adjusting. Because an accepted order (HTTP 200 with an order id) can still be REJECTED by the broker seconds later, the app shall additionally re-read a just-placed order's status ahead of that cycle, and shall report a rejection as an error carrying eToro's own reason and error code — an order the app lists as resting must never be one the broker has already refused.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-028
+VERIFICATION: T/I
+TITLE: Scripted trading from a loadable order file
+STATEMENT: >>>
+The app shall load a plain-text trade script: one order per line, semicolon-separated — `<instrument>; BUY @ <trigger>` or `<instrument>; SELL @ <trigger>` followed by optional keyworded fields in any order: `FROM <yyyy-MM-dd HH:mm>` and `TO <yyyy-MM-dd HH:mm>` (the trading window), `SIGNALS` (trade only on agreement, below), `AMOUNT <stake>`, `SL <amount>`, `TP <amount>`, `TRAILING` (the stop-loss trails), and `LEV <n>`. `#` starts a comment; blank lines are ignored. Loading is all-or-nothing: any unparsable line is reported with its line number and content, and nothing from that file is accepted — a half-loaded script that silently skips lines is how money gets traded that nobody asked for.
+
+Each entry shall be executed as a broker-side eToro limit order through the REQ-F-027 machinery — BUY enters at the trigger rate or LOWER, SELL at the trigger or HIGHER, off the broker's own feed — never by an in-app price watch. An entry's order is placed no earlier than its FROM time (immediately when absent) and cancelled at its TO time if still resting (absent TO = it rests until filled or disarmed). With the SIGNALS flag, the order is placed only while BOTH the technical ensemble and the AI advisor favour the entry's side, is cancelled if either flips while it rests, and may be re-placed if they align again inside the window; an unconfigured AI advisor counts as no recommendation, so flagged entries then never place — the panel shall say so rather than trade on half the evidence. The stop-loss, take-profit and trailing flag carry into the limit order unchanged (amounts, converted off the trigger rate per REQ-F-027). When the requested leverage is not among the instrument's offered values, the app shall use the next LOWER offered value and log the substitution; when the requested value exceeds every offered one, the highest offered value is already that next-lower choice.
+
+Scripted execution is real, unattended trading, so the double-press gate of manual orders is replaced by an equivalent two-step commitment: LOADING a script never places anything, and execution happens only while the user has explicitly ARMED the loaded script — a separate, visible action. Disarming (or loading a different file) shall cancel every scripted order still resting. Each entry executes at most once per arming; every placement, cancellation, substitution and skip shall be logged with the entry's script line; scripted orders count against the open-exposure cap like manual ones. While a script is loaded but DISARMED, the panel shall still evaluate every entry against the live data and log what WOULD be placed — a dry run, so a script can be rehearsed before it is trusted with money.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

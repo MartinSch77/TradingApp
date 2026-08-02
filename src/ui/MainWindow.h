@@ -23,6 +23,8 @@ class PositionsModel;
 class PriceChart;
 class ScreenerDialog;
 class TradeGaugeDialog;
+class TradeScriptDialog;
+class TradeScriptRunner;
 QT_FORWARD_DECLARE_CLASS(QCheckBox)
 QT_FORWARD_DECLARE_CLASS(QCloseEvent)
 QT_FORWARD_DECLARE_CLASS(QComboBox)
@@ -89,6 +91,16 @@ private slots:
     // Leverage screener (all instruments with a buy/sell signal from the same
     // ensemble as the live panel, ranked BUY-first then by confidence).
     void openScreener();
+    // Trade-script window (REQ-F-028): load / dry-run / arm a script of
+    // conditional orders. The RUNNER lives on regardless of the window.
+    void openScript();
+
+private:
+    // Construct + gate the trade-script runner (kept out of the constructor so
+    // the ctor stays within its metrics baseline, like connectWorkerResults).
+    void setupScriptRunner();
+
+private slots:
     void onScreenerRow(const ScreenerRow &row);
     void onScreenerProgress(int done, int total);
     void onScreenerFinished();
@@ -331,6 +343,11 @@ private:
 
     // Leverage screener window (its table/ranking live in ScreenerDialog).
     ScreenerDialog *m_screenerDialog = nullptr;
+    // Scripted trading (REQ-F-028): the runner exists from construction so an
+    // armed script keeps executing with its window closed; the dialog is lazy.
+    TradeScriptRunner *m_scriptRunner = nullptr;
+    TradeScriptDialog *m_scriptDialog = nullptr;
+    QPushButton *m_scriptButton = nullptr;
     QList<ScreenerRow> m_screenerRows;  // latest scan results, unsorted (arrival order)
     QGroupBox *m_tradeBox = nullptr;       // "Trade <symbol>" panel
     QLabel *m_tradeHours = nullptr;        // approx. trading hours (local) under the title

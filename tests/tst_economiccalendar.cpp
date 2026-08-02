@@ -170,7 +170,7 @@ private slots:
 
         EconomicCalendar cal;
         cal.setEndpointBaseForTesting(server.baseUrl());
-        QSignalSpy updated(&cal, &EconomicCalendar::eventsUpdated);
+        const QSignalSpy updated(&cal, &EconomicCalendar::eventsUpdated);
         QSignalSpy logs(&cal, &EconomicCalendar::log);
         cal.start();
         QVERIFY(logs.wait(kWaitMs));

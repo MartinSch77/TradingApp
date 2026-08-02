@@ -15,6 +15,7 @@
 #include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
+#include "ui/TradeScriptPanel.h"
 #include "ui/TradeGauge.h"
 
 #include <QAbstractItemView>
@@ -331,7 +332,6 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     // not be silent); the calendar is started by the composition root, after
     // these connections exist.
     static_cast<void>(connect(m_feeds, &MarketFeeds::log, this, &MainWindow::onLog));
-
     // Age events out of the list ~10 min after they pass, without waiting for the
     // calendar's (30-min) re-fetch. Rebuilds only when an event actually drops off.
     m_eventTimer->setInterval(30 * 1000);  // 30 s granularity on the 10-min rule
@@ -369,6 +369,31 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
             m_signalsWindow->show();
             m_signalsWindow->raise();
         }
+    });
+}
+
+// Scripted trading (REQ-F-028): the runner exists from construction so an
+// armed script keeps executing while its window is closed. It obeys the SAME
+// open-exposure cap as manual orders, through the gate injected here — the
+// cap and the committed totals belong to the trade panel's guard set.
+void MainWindow::setupScriptRunner()
+{
+    m_scriptRunner = new TradeScriptRunner(m_client, this);
+    static_cast<void>(
+        connect(m_scriptRunner, &TradeScriptRunner::log, this, &MainWindow::onLog));
+    m_scriptRunner->setExposureGate([this](double amount, QString *whyNot) {
+        const double committed = m_openTradesTotal + pendingExposureTotal();
+        if ((committed + amount) > (kMaxOpenExposure + 1e-6)) {
+            if (whyNot != nullptr) {
+                *whyNot = QStringLiteral("open trades plus resting orders would reach "
+                                         "%1%2, over the %1%3 exposure limit")
+                              .arg(m_ccy)
+                              .arg(toDisplay(committed + amount), 0, 'f', 2)
+                              .arg(toDisplay(kMaxOpenExposure), 0, 'f', 2);
+            }
+            return false;
+        }
+        return true;
     });
 }
 
@@ -485,6 +510,21 @@ bool MainWindow::handleQuickKeyEvent(QEvent *event)
     }
     return false;
 }
+
+namespace {
+// The AI advisor's call as a direction the script runner understands
+// (+1 BUY / -1 SELL / 0 anything else, including HOLD and errors).
+qint32 aiDecisionDir(const AiDecision &d)
+{
+    if (!d.ok) {
+        return 0;
+    }
+    if (d.action == QStringLiteral("BUY")) {
+        return 1;
+    }
+    return (d.action == QStringLiteral("SELL")) ? -1 : 0;
+}
+} // namespace
 
 void MainWindow::handleQuickKey(qint32 key)
 {
@@ -1088,6 +1128,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_signalsToggle);
     header->addWidget(m_screenerButton);
     header->addWidget(m_decisionButton);
+    header->addWidget(m_scriptButton);
     header->addWidget(m_closedButton);
     header->addStretch();
     header->addLayout(priceCol);
@@ -1146,6 +1187,17 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "— Claude AI) and get one final buy/sell recommendation with sizing."));
     static_cast<void>(
         connect(m_decisionButton, &QPushButton::clicked, this, &MainWindow::openDecision));
+
+    // Trade script: load a file of conditional orders, dry-run it, arm it.
+    m_scriptButton = new QPushButton(QStringLiteral("Script…"), central);
+    m_scriptButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_scriptButton->setToolTip(QStringLiteral(
+        "Scripted trading: load a text file of conditional orders (instrument, "
+        "BUY/SELL @ trigger, optional time window and signals+AI condition, amount, "
+        "SL/TP, leverage). Loading only shows a dry run; arming places the entries "
+        "as broker-side limit orders."));
+    static_cast<void>(
+        connect(m_scriptButton, &QPushButton::clicked, this, &MainWindow::openScript));
 
     // Toggle for the combined signals + AI window (both panels moved out of the
     // main window into ONE floating, stay-on-top window shown at startup); same
@@ -2177,6 +2229,7 @@ void MainWindow::applyUiScale()
 // plan). Out of the constructor so its wiring list stays within the metrics budget.
 void MainWindow::connectWorkerResults()
 {
+    setupScriptRunner();  // same reason this function exists: ctor metrics budget
     static_cast<void>(
         connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
     static_cast<void>(connect(&m_mcWatcher, &QFutureWatcher<trading::McOutlook>::finished,
@@ -2849,6 +2902,9 @@ void MainWindow::renderOverallSignalRow(SignalsContext &ctx)
     // Remember the call for the close watchdog (a confident flip against an open
     // position is one of its triggers).
     m_lastSignalDir = ctx.signalDir;
+    // Scripted trading: SIGNALS-flagged entries follow the ensemble + AI call.
+    m_scriptRunner->setSignalState(
+        m_lastSignalDir, aiDecisionDir(m_aiDecision), m_aiAdvisor->isConfigured());
     m_lastSignalConf = ctx.confidence;
 }
 
@@ -3803,6 +3859,16 @@ void MainWindow::onLog(const QString &message, bool isError)
 // Leverage screener
 // ---------------------------------------------------------------------------
 
+void MainWindow::openScript()
+{
+    if (m_scriptDialog == nullptr) {
+        m_scriptDialog = new TradeScriptDialog(m_scriptRunner, this);
+    }
+    m_scriptDialog->show();
+    m_scriptDialog->raise();
+    m_scriptDialog->activateWindow();
+}
+
 void MainWindow::openScreener()
 {
     if (m_screenerDialog == nullptr) {
@@ -4387,6 +4453,8 @@ void MainWindow::openDecision()
 void MainWindow::onAiDecision(const AiDecision &decision)
 {
     m_aiDecision = decision;
+    m_scriptRunner->setSignalState(
+        m_lastSignalDir, aiDecisionDir(decision), m_aiAdvisor->isConfigured());
     if (m_decisionAiStatus != nullptr) {
         if (decision.ok) {
             m_decisionAiStatus->setText(

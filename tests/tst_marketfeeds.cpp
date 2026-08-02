@@ -16,6 +16,8 @@
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 #include <cmath>
 
 namespace {
@@ -29,27 +31,25 @@ constexpr qint32 kWaitMs = 15000;
 // minutes.
 QByteArray yahooChartBody(const QByteArray &meta, const QByteArray &closes)
 {
-    return "{\"chart\":{\"result\":[{\"meta\":{" + meta + "},"
-           "\"indicators\":{\"quote\":[{\"close\":[" + closes + "]}]}}]}}";
+    return R"({"chart":{"result":[{"meta":{)" + meta + R"(},)"
+           R"("indicators":{"quote":[{"close":[)" + closes + R"(]}]}}]}})";
 }
 
 // TradingView scanner payload: one rated ticker with its "d" column values.
 QByteArray scanBody(const QByteArray &ticker, const QByteArray &columns)
 {
-    return "{\"data\":[{\"s\":\"" + ticker + "\",\"d\":[" + columns + "]}]}";
+    return R"({"data":[{"s":")" + ticker + R"(","d":[)" + columns + R"(]}]})";
 }
 
 // How many recorded requests hit a path containing `fragment`.
 qint32 requestCount(const MockHttpServer &server, const QString &fragment)
 {
-    qint32 hits = 0;
     const QList<MockHttpServer::Recorded> requests = server.requests();
-    for (const MockHttpServer::Recorded &r : requests) {
-        if (r.path.contains(fragment)) {
-            ++hits;
-        }
-    }
-    return hits;
+    return static_cast<qint32>(
+        std::count_if(requests.cbegin(), requests.cend(),
+                      [&fragment](const MockHttpServer::Recorded &r) {
+                          return r.path.contains(fragment);
+                      }));
 }
 
 // How many log-signal emissions start with `prefix` (per-feed error lines).
@@ -267,7 +267,7 @@ private slots:
         QVERIFY(server.listen(QHostAddress::LocalHost));
         MarketFeeds rejecting;
         rejecting.setEndpointBaseForTesting(server.baseUrl());
-        QSignalSpy rejected(&rejecting, &MarketFeeds::fearGreedUpdated);
+        const QSignalSpy rejected(&rejecting, &MarketFeeds::fearGreedUpdated);
         rejecting.start(60000);
         QTRY_VERIFY_WITH_TIMEOUT(requestCount(server, QStringLiteral("fearandgreed")) >= 1,
                                  kWaitMs);
@@ -360,7 +360,7 @@ private slots:
         QVERIFY(server.listen(QHostAddress::LocalHost));
         MarketFeeds feeds;
         feeds.setEndpointBaseForTesting(server.baseUrl());
-        QSignalSpy logs(&feeds, &MarketFeeds::log);
+        const QSignalSpy logs(&feeds, &MarketFeeds::log);
         feeds.start(150);  // fast cadence: several failing VIX fetches per second
         const QString vixLine = QStringLiteral("VIX feed unavailable");
         QTRY_VERIFY_WITH_TIMEOUT(logCount(logs, vixLine) >= 1, kWaitMs);

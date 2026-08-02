@@ -71,7 +71,7 @@ private slots:
         AiAdvisor advisor{QString()};  // no anthropicApiKey configured
         advisor.setEndpointBaseForTesting(server.baseUrl());
         QVERIFY(!advisor.isConfigured());
-        QSignalSpy ready(&advisor, &AiAdvisor::decisionReady);
+        const QSignalSpy ready(&advisor, &AiAdvisor::decisionReady);
         advisor.requestDecision(QStringLiteral("evidence"));
         QCOMPARE(ready.count(), 1);  // answered synchronously, without a round trip
         const auto d = qvariant_cast<AiDecision>(ready.at(0).at(0));

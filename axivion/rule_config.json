@@ -3,8 +3,15 @@
         "Architecture": {
             "child_order": [
                 "Architecture-CyclesView 1",
-                "Architecture-DeadCodeView 1"
+                "Architecture-DeadCodeView 1",
+                "Architecture-ScriptedArchitecture 1",
+                "Architecture-ArchitectureCheck 1"
             ]
+        },
+        "Architecture-ArchitectureCheck 1": {
+            ".#": "Verifies the code against the views architecture.py creates; divergences and absences land on the dashboard as AV findings.",
+            "_active": true,
+            "_copy_from": "Architecture-ArchitectureCheck"
         },
         "Architecture-CyclesView 1": {
             "_active": true,
@@ -13,6 +20,14 @@
         "Architecture-DeadCodeView 1": {
             "_active": true,
             "_copy_from": "Architecture-DeadCodeView"
+        },
+        "Architecture-ScriptedArchitecture 1": {
+            ".#": "Architecture-as-code: builds the Architecture + Mapping RFG views from architecture.py (the reference model of the linker-enforced domain<-services<-ui layering).",
+            "_active": true,
+            "_copy_from": "Architecture-ScriptedArchitecture",
+            "architecture_files": [
+                "architecture.py"
+            ]
         },
         "C++CloneDetection": {
             "_active": true

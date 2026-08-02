@@ -32,6 +32,7 @@ GENERATED=(
     build-portable
     build-ios
     dist
+    downloads # packaged artifacts (AppImage/APK/zip/report) — every producer re-creates it
     test-results
     coverage
     analysis-results

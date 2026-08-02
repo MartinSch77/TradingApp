@@ -21,7 +21,12 @@ AiAdvisor::AiAdvisor(QString apiKey, QObject *parent)
     // The manager default guards against silent stalls; the actual request below
     // overrides it with a longer per-request timeout while Claude composes.
     m_nam->setTransferTimeout(std::chrono::seconds{30});
-    
+
+}
+
+void AiAdvisor::setEndpointBaseForTesting(const QString &base)
+{
+    m_endpointBaseForTesting = base;
 }
 
 void AiAdvisor::requestDecision(const QString &evidencePrompt)
@@ -71,7 +76,10 @@ void AiAdvisor::requestDecision(const QString &evidencePrompt)
                                 {QStringLiteral("content"), evidencePrompt}}}},
     };
 
-    QNetworkRequest req(QUrl(QStringLiteral("https://api.anthropic.com/v1/messages")));
+    const QString host = m_endpointBaseForTesting.isEmpty()
+                             ? QStringLiteral("https://api.anthropic.com")
+                             : m_endpointBaseForTesting;
+    QNetworkRequest req(QUrl(host + QStringLiteral("/v1/messages")));
     const QByteArray apiKeyValue = m_apiKey.toUtf8();
     req.setRawHeader("x-api-key", apiKeyValue);
     const QByteArray versionName("anthropic-version");

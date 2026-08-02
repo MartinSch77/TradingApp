@@ -26,12 +26,19 @@ public:
 
     void requestDecision(const QString &evidencePrompt);
 
+    // Point the Messages endpoint at `base`, e.g. the tests' in-process
+    // MockHttpServer. The Anthropic host has no config entry, so this
+    // override is the test seam — mirroring Config::baseUrl for the broker
+    // client. Empty (the default) keeps the real https://api.anthropic.com.
+    void setEndpointBaseForTesting(const QString &base);
+
 signals:
     // Claude's synthesised final decision (or ok=false with an error / when unconfigured).
     void decisionReady(const AiDecision &decision);
 
 private:
     QString m_apiKey;
+    QString m_endpointBaseForTesting;  // empty = the real Anthropic host
     QNetworkAccessManager *m_nam = nullptr;
     JsonHttp *m_http = nullptr;
 };

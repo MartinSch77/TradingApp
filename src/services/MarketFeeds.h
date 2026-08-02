@@ -36,6 +36,13 @@ public:
     // every refreshIntervalMs (the slow-moving cadence of both sources).
     void start(qint32 refreshIntervalMs);
 
+    // Point EVERY feed host (Yahoo query1, TradingView scanner + news, CNN
+    // dataviz) at one base URL, e.g. the tests' in-process MockHttpServer.
+    // These are public feeds with no config entry, so this override is the
+    // test seam — mirroring Config::baseUrl for the broker client. Empty
+    // (the default) keeps the real hosts.
+    void setEndpointBaseForTesting(const QString &base);
+
 
     // Fetch TradingView's aggregated technical rating for every tradable instrument
     // that has a mapped web ticker, in one call; result via instrumentRatingsUpdated.
@@ -77,6 +84,9 @@ signals:
     void log(const QString &message, bool isError);
 
 private:
+    // The URL for one feed request: the real host + pathAndQuery, or the test
+    // override + pathAndQuery when setEndpointBaseForTesting() was called.
+    [[nodiscard]] QString feedUrl(const QString &host, const QString &pathAndQuery) const;
     // Emit a throttled log line for a failed feed fetch (see the log signal).
     void reportFeedError(const QString &feed, const QString &detail);
     // Fetch the spot CBOE VIX from a free public feed (eToro only lists monthly
@@ -95,6 +105,7 @@ private:
     QTimer *m_timer = nullptr;      // periodic VIX + current-instrument rating refresh
     QStringList m_tradableSymbols;  // instruments the bulk fetches cover
     QString m_currentSymbol;        // instrument the single-rating fetch tracks
+    QString m_endpointBaseForTesting;          // empty = the real feed hosts
     QHash<QString, qint64> m_lastFeedErrorMs;  // feed name -> last reported (throttle)
 };
 

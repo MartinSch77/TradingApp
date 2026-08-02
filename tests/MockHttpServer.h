@@ -61,7 +61,8 @@ public:
     struct Recorded {
         QByteArray method;
         QString path;
-        QByteArray body;   // empty for GET/DELETE
+        QByteArray body;      // empty for GET/DELETE
+        QByteArray headers;   // the raw request-header block — "did x-api-key reach the wire?"
     };
     [[nodiscard]] QList<Recorded> requests() const;
     // The body of the last request whose path contains `pathFragment` ({} if none).

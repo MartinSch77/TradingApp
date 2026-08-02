@@ -50,7 +50,7 @@ void MockHttpServer::serve(QTcpSocket *sock)
     const QList<QByteArray> requestLine = buf.left(buf.indexOf("\r\n")).split(' ');
     const QByteArray method = requestLine.value(0);
     const QString path = QString::fromUtf8(requestLine.value(1));
-    m_requests.append({method, path, buf.mid(headerEnd + 4, contentLength)});
+    m_requests.append({method, path, buf.mid(headerEnd + 4, contentLength), buf.left(headerEnd)});
     m_buffer.remove(sock);
 
     const Response r = m_handler(method, path);

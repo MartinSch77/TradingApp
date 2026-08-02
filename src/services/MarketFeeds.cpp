@@ -137,6 +137,16 @@ void MarketFeeds::setTradableSymbols(const QStringList &symbols)
     m_tradableSymbols = symbols;
 }
 
+void MarketFeeds::setEndpointBaseForTesting(const QString &base)
+{
+    m_endpointBaseForTesting = base;
+}
+
+QString MarketFeeds::feedUrl(const QString &host, const QString &pathAndQuery) const
+{
+    return (m_endpointBaseForTesting.isEmpty() ? host : m_endpointBaseForTesting) + pathAndQuery;
+}
+
 void MarketFeeds::setCurrentSymbol(const QString &symbol)
 {
     if (m_currentSymbol == symbol) {
@@ -168,8 +178,9 @@ void MarketFeeds::fetchVix()
     // spot index comes from a free, no-key public feed. A browser User-Agent is
     // required or the request is blocked. Pull a few months of daily closes so the
     // reading can be judged against a longer-term baseline, not just yesterday.
-    QNetworkRequest req(QUrl(QStringLiteral(
-        "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=3mo")));
+    QNetworkRequest req(QUrl(feedUrl(
+        QStringLiteral("https://query1.finance.yahoo.com"),
+        QStringLiteral("/v8/finance/chart/%5EVIX?interval=1d&range=3mo"))));
     JsonHttp::setBrowserHeaders(req);
     QNetworkReply *reply = m_nam->get(req);
     m_http->handleReply(reply, [this](bool ok, qint32 /*status*/, const QJsonDocument &doc,
@@ -228,7 +239,8 @@ void MarketFeeds::fetchExternalSignal()
     body[QStringLiteral("symbols")] = symbols;
     body[QStringLiteral("columns")] = QJsonArray{QStringLiteral("Recommend.All|60")};
 
-    QNetworkRequest req(QUrl(QStringLiteral("https://scanner.tradingview.com/global/scan")));
+    QNetworkRequest req(QUrl(feedUrl(QStringLiteral("https://scanner.tradingview.com"),
+                                     QStringLiteral("/global/scan"))));
     JsonHttp::setBrowserHeaders(req);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
@@ -282,7 +294,8 @@ void MarketFeeds::fetchInstrumentRatings()
                                                  QStringLiteral("Recommend.All|60"),
                                                  QStringLiteral("Recommend.All|1D")};
 
-    QNetworkRequest req(QUrl(QStringLiteral("https://scanner.tradingview.com/global/scan")));
+    QNetworkRequest req(QUrl(feedUrl(QStringLiteral("https://scanner.tradingview.com"),
+                                     QStringLiteral("/global/scan"))));
     JsonHttp::setBrowserHeaders(req);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
@@ -335,7 +348,8 @@ void MarketFeeds::fetchInstrumentNews()
         symbolsByWebTicker(m_tradableSymbols, tickers);
     // One request per unique ticker, published to every app symbol that shares it.
     for (const QString &ticker : std::as_const(tickers)) {
-        QUrl url(QStringLiteral("https://news-mediator.tradingview.com/public/view/v1/symbol"));
+        QUrl url(feedUrl(QStringLiteral("https://news-mediator.tradingview.com"),
+                         QStringLiteral("/public/view/v1/symbol")));
         // Build the query as a literal string: the filters carry ':' which the feed
         // expects unencoded (matching the browser widget's request).
         url.setQuery(QStringLiteral("filter=lang:en&filter=symbol:%1&client=overview&streaming=false")
@@ -390,8 +404,9 @@ void MarketFeeds::fetchFearGreed()
     // ratios, breadth, junk-bond demand, momentum, ...). The endpoint serves the
     // markets page and rejects plain clients: it needs the browser User-Agent AND
     // a Referer from the CNN page, or it answers 418.
-    QNetworkRequest req(QUrl(
-        QStringLiteral("https://production.dataviz.cnn.io/index/fearandgreed/graphdata")));
+    QNetworkRequest req(QUrl(feedUrl(
+        QStringLiteral("https://production.dataviz.cnn.io"),
+        QStringLiteral("/index/fearandgreed/graphdata"))));
     JsonHttp::setBrowserHeaders(req);
     const QByteArray refererKey("Referer");
     const QByteArray refererValue("https://edition.cnn.com/markets/fear-and-greed");
@@ -422,11 +437,10 @@ void MarketFeeds::fetchIntradaySeries()
         if (ticker.isEmpty()) {
             continue;
         }
-        QNetworkRequest req(QUrl(QStringLiteral(
-                                     "https://query1.finance.yahoo.com/v8/finance/chart/"
-                                     "%1?interval=1m&range=1d")
-                                     .arg(QString::fromLatin1(
-                                         QUrl::toPercentEncoding(ticker)))));
+        QNetworkRequest req(QUrl(feedUrl(
+            QStringLiteral("https://query1.finance.yahoo.com"),
+            QStringLiteral("/v8/finance/chart/%1?interval=1m&range=1d")
+                .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
         JsonHttp::setBrowserHeaders(req);
         QNetworkReply *reply = m_nam->get(req);
         m_http->handleReply(reply, [this, symbol](bool ok, qint32 /*status*/,
@@ -452,9 +466,10 @@ void MarketFeeds::fetchWebQuote()
     if (ticker.isEmpty()) {
         return;  // no Yahoo equivalent (eToro proprietary basket) — nothing to emit
     }
-    QNetworkRequest req(QUrl(
-        QStringLiteral("https://query1.finance.yahoo.com/v8/finance/chart/%1?interval=1m&range=1d")
-            .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker)))));
+    QNetworkRequest req(QUrl(feedUrl(
+        QStringLiteral("https://query1.finance.yahoo.com"),
+        QStringLiteral("/v8/finance/chart/%1?interval=1m&range=1d")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
     JsonHttp::setBrowserHeaders(req);
     QNetworkReply *reply = m_nam->get(req);
     const QString wantSymbol = m_currentSymbol;  // guard against a switch mid-flight

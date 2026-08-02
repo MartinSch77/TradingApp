@@ -41,6 +41,9 @@ tradingapp_add_test(tst_config tst_config.cpp)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
 tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_marketfeeds tst_marketfeeds.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_economiccalendar tst_economiccalendar.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_aiadvisor tst_aiadvisor.cpp MockHttpServer.cpp MockHttpServer.h)
 
 # --- unit test over the ui table model (headless: model only, no widgets) ---
 # The ui layer is compiled into the app executable, not a library, so the test

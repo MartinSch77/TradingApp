@@ -155,14 +155,53 @@ event loop / local mock HTTP server).
 | TS-CLI-015 | I | A rates row eToro publishes behind real time never decides a P/L: with instrument 27's row stamped 11 minutes ago at bid 5020 and its 1-minute candle live at 5100, the open trade is marked from the candle (10 units × 100 = 1000, quote flagged `fromCandle` with the row's 2.0 spread kept for the ask) and the delayed row's 200 is never emitted — eToro's own /pnl figure (150, computed from the same delayed rate) is not trusted either. Field regression: the column read ~€90 below eToro's own screen on a fast-moving index. |
 | TS-CLI-013 | I | Resting orders come from the broker's portfolio breakdown (`clientPortfolio.orders[]`), not only from what the session submitted: a payload with two orders the app never placed yields both — the listed one with its SL/TP rates converted back to amounts (4900/5200 around a 5000 trigger on 10 units → 1000 / 2000), the one on an unlisted instrument still visible as "#999" with its sentinel zero SL/TP left at zero (field regression: the panel was empty while two orders were open). The per-row current rate also resolves for an instrument that is NOT on screen (bulk-snapshot mid 202 for id 38) and stays 0 for an unknown one. |
 
+## Market feeds (tests/tst_marketfeeds.cpp, DES-SVC-FEEDS, REQ-F-009/-019/-020/-022) — integration, local mock server
+
+| ID | L | Case |
+|----|---|------|
+| TS-FEED-001 | I | VIX level and its change vs the multi-month baseline: null and non-positive closes are dropped before averaging (25 against a 20 average reads +25%). |
+| TS-FEED-002 | I | Current-instrument TradingView rating: the scan POST carries exactly the instrument's ticker on the 1h column, and the score is published with its rating word. |
+| TS-FEED-003 | I | A rating reply for an instrument that changed under us is dropped: with SPX500's scan reply held back and the instrument switched to EURUSD, only the EURUSD reading is published — one emission, not two. |
+| TS-FEED-004 | I | Bulk instrument ratings fan out ticker→symbols: one deduplicated scan request (three timeframe columns) for the shared SP:SPX ticker, the rating lands on both SPX500 and SP.24-7, an unmapped instrument (RUBBER) is omitted and a null timeframe stays NaN. |
+| TS-FEED-005 | I | News headlines per symbol: untitled items are skipped, the list is capped at five, provider and published epoch are parsed, and the query filter carries the ticker with its ':' unencoded. |
+| TS-FEED-006 | I | Fear & Greed score range validation: an out-of-range score (120) publishes nothing; a valid 72.5/"greed" reading is emitted (crowd sentiment, REQ-F-009). |
+| TS-FEED-007 | I | Independent web reference quote for the current instrument: Yahoo chart meta price plus the `regularMarketTime` exchange timestamp are emitted as `webQuoteUpdated`, from a byte-identical 1-minute chart query of the percent-encoded ticker (REQ-F-019). |
+| TS-FEED-008 | I | Intraday 1-minute close series: null minutes are skipped, a genuine 0.0 close survives (positiveOnly off), and instruments without a Yahoo ticker issue no request (REQ-F-022). |
+| TS-FEED-009 | I | A failing feed logs ONE throttled line per 10-minute window — repeated failing fetches within the window add no further lines. |
+
+## Economic calendar (tests/tst_economiccalendar.cpp, DES-SVC-CAL, REQ-F-020) — integration, local mock server
+
+| ID | L | Case |
+|----|---|------|
+| TS-CAL-001 | I | Fetch + parse: importance missing/0/1 maps to Low/Medium/High, forecast/previous arrive as string or number, events are time-sorted ascending, and events with an unparsable date or beyond the trading-day window are dropped. |
+| TS-CAL-002 | I | Region scoping via the InstrumentCatalog: EURUSD queries `countries=EU,US`, switching to HKG50 re-fetches `HK,CN` immediately, the same regions do not re-fetch, an unknown instrument falls back to `US`, and nothing is fetched before `start()`. |
+| TS-CAL-003 | I | A failed fetch emits one "Economic calendar fetch failed" error log line and publishes no event list. |
+
+## AI advisor (tests/tst_aiadvisor.cpp, DES-SVC-AI, REQ-F-008/REQ-N-005) — integration, local mock server
+
+| ID | L | Case |
+|----|---|------|
+| TS-AI-001 | I | Without an API key `isConfigured()` is false and `requestDecision` reports `decisionReady(ok=false, "No anthropicApiKey configured.")` synchronously — no HTTP request leaves the process. |
+| TS-AI-002 | I | Request shape on the wire: exactly ONE POST to `/v1/messages` carrying the model, `max_tokens`, the evidence prompt, the guaranteed-parseable `json_schema` output format, and the `x-api-key`/`anthropic-version` headers — the advisor's complete traffic is this advisory call; nothing order-like ever leaves it (REQ-N-005). |
+| TS-AI-003 | I | A Messages reply with the decision JSON in the first text block parses to ok=true with the action normalised to upper case. |
+| TS-AI-004 | I | An HTTP 500 yields ok=false with "Claude request failed (HTTP 500…)" and is not retried (POSTs are never auto-retried). |
+| TS-AI-005 | I | A 200 reply whose text block is not JSON yields ok=false with "Claude returned an unparsable response." |
+
 ## Coverage & gaps
 
-UI-level requirements (REQ-F-001, -002, -004, -013, -019, -021, -024, -026,
-REQ-N-001, -002, -005) are exercised manually / by the offscreen screenshot
+UI-level requirements (REQ-F-001, -002, -004, -013, -021, -024, -026,
+REQ-N-001, -002) are exercised manually / by the offscreen screenshot
 QA aid and are reported as *gaps* in the traceability matrix until automated
 GUI tests exist — the matrix makes this visible rather than hiding it.
 REQ-F-015's inference is covered at the service level by TS-CLI-007; only its
 BUY/SELL lock in the trade panel remains a manual check.
+REQ-F-019's quote acquisition (price + exchange timestamp) is covered at the
+service level by TS-FEED-007; the panel that shows the delta versus the eToro
+rate remains a manual check.
+REQ-N-005 is partially covered at the service level by TS-AI-002 (the
+advisor's only wire traffic is the advisory Messages call — nothing
+order-like); the double-press gate on the money-moving buttons remains a
+manual check.
 REQ-F-027 is covered end-to-end at the service level (TS-CLI-008…-014 against the
 real API shape, TS-SIM-004/-005 for the simulated broker); its panel legs — the two
 rate fields, the independent double-press gate on the limit buttons, and the

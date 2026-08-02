@@ -27,6 +27,12 @@ public:
     // immediately if the region set changed and start() has already run.
     void setInstrument(const QString &symbol);
 
+    // Point the calendar host at `base`, e.g. the tests' in-process
+    // MockHttpServer. The feed is public with no config entry, so this
+    // override is the test seam — mirroring Config::baseUrl for the broker
+    // client. Empty (the default) keeps the real host.
+    void setEndpointBaseForTesting(const QString &base);
+
 signals:
     void eventsUpdated(const QList<EconomicEvent> &events);
     void log(const QString &message, bool isError);
@@ -41,6 +47,7 @@ private:
     QTimer *m_timer = nullptr;          // periodic full refresh
     QTimer *m_nextEventTimer = nullptr;  // one-shot, fires when the next event is due
     QString m_countries = QStringLiteral("US");  // calendar regions for the current instrument
+    QString m_endpointBaseForTesting;    // empty = the real calendar host
     bool m_started = false;              // start() has run — setInstrument may refresh now
 };
 

@@ -23,7 +23,8 @@ namespace {
 
 // TradingView's public economic-calendar endpoint (no API key; used by their
 // embeddable widget). Supports a from/to range and country filter.
-constexpr auto kEndpoint = "https://economic-calendar.tradingview.com/events";
+constexpr auto kCalendarHost = "https://economic-calendar.tradingview.com";
+constexpr auto kEventsPath = "/events";
 
 // How many upcoming trading days (Mon–Fri) to include.
 constexpr qint32 kTradingDays = 3;
@@ -86,6 +87,11 @@ void EconomicCalendar::setInstrument(const QString &symbol)
     }
 }
 
+void EconomicCalendar::setEndpointBaseForTesting(const QString &base)
+{
+    m_endpointBaseForTesting = base;
+}
+
 void EconomicCalendar::refresh()
 {
     // Build the set of the next kTradingDays weekdays (local time), starting today.
@@ -104,7 +110,9 @@ void EconomicCalendar::refresh()
     const QDate dayAfterLast = tradingDays.last().addDays(1);
     const QDateTime toUtc = QDateTime(dayAfterLast, midnight, QTimeZone::LocalTime).toUTC();
 
-    QUrl url{QString::fromLatin1(kEndpoint)};
+    const QString host = m_endpointBaseForTesting.isEmpty() ? QString::fromLatin1(kCalendarHost)
+                                                            : m_endpointBaseForTesting;
+    QUrl url{host + QString::fromLatin1(kEventsPath)};
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("from"), fromUtc.toString(Qt::ISODateWithMs));
     query.addQueryItem(QStringLiteral("to"), toUtc.toString(Qt::ISODateWithMs));

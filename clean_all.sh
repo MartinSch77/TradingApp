@@ -28,6 +28,8 @@ GENERATED=(
     build-vs
     build_axivion
     build-android
+    build-appimage
+    build-portable
     build-ios
     dist
     test-results

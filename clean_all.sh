@@ -55,6 +55,19 @@ case "${1:-}" in
     ;;
 esac
 
+# Pattern-matched leftovers (nullglob: nothing there = nothing added):
+#   build-android-<abi>   the per-ABI Android build trees tools/build_android.sh
+#                         creates (the fixed "build-android" entry above never
+#                         matched them)
+#   *.log                 stray tool logs at the repo root — aqt writes
+#                         aqtinstall.log into the CWD on every Qt-kit install
+#                         (setup, CI, release), and nothing else puts a .log here
+shopt -s nullglob
+for p in "$ROOT"/build-android-* "$ROOT"/*.log; do
+    TARGETS+=("${p#"$ROOT"/}")
+done
+shopt -u nullglob
+
 EXISTING=()
 for p in "${TARGETS[@]}"; do
     [ -e "$ROOT/$p" ] && EXISTING+=("$p")

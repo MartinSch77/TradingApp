@@ -59,7 +59,18 @@ $DeepTargets = @(
     'tools/third-party'
 )
 
-$targets = $Generated
+# Pattern-matched leftovers (absent = simply nothing added):
+#   build-android-<abi>   the per-ABI Android build trees tools\build_android.ps1
+#                         creates (the fixed 'build-android' entry above never
+#                         matched them)
+#   *.log                 stray tool logs at the repo root — aqt writes
+#                         aqtinstall.log into the CWD on every Qt-kit install
+#                         (setup, CI, release), and nothing else puts a .log here
+$patternTargets = @(Get-ChildItem -Path $Root -Force -ErrorAction SilentlyContinue |
+    Where-Object { ($_.Name -like 'build-android-*') -or ($_.Name -like '*.log') } |
+    ForEach-Object { $_.Name })
+
+$targets = $Generated + $patternTargets
 if ($Deep) { $targets += $DeepTargets }
 
 $existing = @($targets | Where-Object { Test-Path (Join-Path $Root $_) })

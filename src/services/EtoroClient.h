@@ -65,6 +65,14 @@ public:
     // consumer can tell a live mark from a delayed publication (Quote::ageMs).
     [[nodiscard]] const QHash<qint64, Quote> &quotes() const & { return m_quoteById; }
 
+    // Instruments to keep quoting per tick even though the ACCOUNT holds nothing in
+    // them: the paper-trading bot's simulated positions (REQ-F-029). They join the
+    // one bulk rates call the poll already makes, so a simulated trade is marked
+    // from a quote of this tick — exactly like a real one — instead of at the much
+    // slower tradeability cadence. Read-only interest: nothing here can place an
+    // order, and an empty set restores the previous behaviour.
+    void setExtraQuoteInstruments(const QSet<qint64> &instrumentIds);
+
     // Live spread (percent of mid) for any listed symbol, from the most recent
     // bulk rates snapshot (the periodic tradeability refresh keeps it warm for
     // every resolved instrument). 0 while unknown.
@@ -391,6 +399,9 @@ private:
     // repair must not turn into a per-tick candle request per position.
     QHash<qint64, Quote> m_quoteById;
     QSet<qint64> m_heldInstrumentIds;
+    // Instruments the paper bot holds simulated positions in (see
+    // setExtraQuoteInstruments): quoted alongside the held ones, never traded.
+    QSet<qint64> m_extraQuoteIds;
     QSet<qint64> m_candleRepairInFlight;
     QHash<qint64, QDateTime> m_candleRepairAt;
     QHash<QString, qint64> m_instrumentByPosition;  // open positionId -> its instrumentId,

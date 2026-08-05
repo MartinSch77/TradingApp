@@ -30,11 +30,32 @@ void applyJson(Config &cfg, const QJsonObject &obj)
     applyString(obj, QStringLiteral("baseUrl"), cfg.baseUrl);
     applyString(obj, QStringLiteral("orderCurrency"), cfg.orderCurrency);
     applyString(obj, QStringLiteral("anthropicApiKey"), cfg.anthropicApiKey);
+    applyString(obj, QStringLiteral("ollamaHost"), cfg.ollamaHost);
+    applyString(obj, QStringLiteral("ollamaModel"), cfg.ollamaModel);
     if (obj.contains(QStringLiteral("defaultLeverage"))) {
         cfg.defaultLeverage = obj.value(QStringLiteral("defaultLeverage")).toDouble(cfg.defaultLeverage);
     }
     if (obj.contains(QStringLiteral("pollIntervalMs"))) {
         cfg.pollIntervalMs = obj.value(QStringLiteral("pollIntervalMs")).toInt(cfg.pollIntervalMs);
+    }
+    if (obj.contains(QStringLiteral("botDailyTarget"))) {
+        cfg.botDailyTarget = obj.value(QStringLiteral("botDailyTarget")).toDouble(cfg.botDailyTarget);
+    }
+    if (obj.contains(QStringLiteral("botDailyLossLimit"))) {
+        cfg.botDailyLossLimit =
+            obj.value(QStringLiteral("botDailyLossLimit")).toDouble(cfg.botDailyLossLimit);
+    }
+}
+
+void applyNonNegative(const QProcessEnvironment &env, const QString &key, double &target)
+{
+    if (!env.contains(key)) {
+        return;
+    }
+    bool ok = false;
+    const double v = env.value(key).toDouble(&ok);
+    if (ok && (v >= 0.0)) {
+        target = v;
     }
 }
 
@@ -100,6 +121,8 @@ void applyEnv(Config &cfg)
     take("ETORO_BASE_URL", cfg.baseUrl);
     take("ETORO_ORDER_CURRENCY", cfg.orderCurrency);
     take("ANTHROPIC_API_KEY", cfg.anthropicApiKey);
+    take("OLLAMA_HOST", cfg.ollamaHost);
+    take("OLLAMA_MODEL", cfg.ollamaModel);
 
     if (env.contains(QStringLiteral("ETORO_POLL_MS"))) {
         bool ok = false;
@@ -115,6 +138,10 @@ void applyEnv(Config &cfg)
             cfg.defaultLeverage = v;
         }
     }
+    // 0 is meaningful here (it switches the rule off), so only a NEGATIVE value is
+    // rejected — a typo must never quietly widen what the bot may lose.
+    applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_TARGET"), cfg.botDailyTarget);
+    applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_LOSS_LIMIT"), cfg.botDailyLossLimit);
 }
 
 } // namespace

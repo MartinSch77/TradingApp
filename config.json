@@ -1,9 +1,13 @@
 {
-  "_comment": "Non-secret app settings, safe to commit. The API keys live in apiKeyEtoro.json next to this file (git-ignored); env vars override both.",
+  "_comment": "Non-secret app settings, safe to commit. The API keys live in apiKeyEtoro.json next to this file (git-ignored); env vars override both. ollamaModel enables the bot simulation's LOCAL-model proposal source (REQ-F-030) — the bot still ignores it until you pick confirm/lead in the Bot sim window; install with ./setup.sh ollama. botDailyTarget / botDailyLossLimit are the bot's daily stopping rules in EUR of BOOKED net (REQ-F-031): reaching either stops opening for that day, 0 switches a rule off, and TRADINGAPP_BOT_TARGET / TRADINGAPP_BOT_LOSS_LIMIT override them.",
   "mode": "real",
   "symbol": "SPX500",
   "baseUrl": "https://public-api.etoro.com/api",
   "orderCurrency": "usd",
   "defaultLeverage": 20,
-  "pollIntervalMs": 1000
+  "pollIntervalMs": 1000,
+  "ollamaHost": "http://localhost:11434",
+  "ollamaModel": "qwen2.5:1.5b",
+  "botDailyTarget": 350.0,
+  "botDailyLossLimit": 350.0
 }

@@ -62,15 +62,19 @@ int main(int argc, char *argv[])
     calendar.start();
 
     // QA aid: TRADINGAPP_SHOT=<path> grabs every visible window to PNGs and quits.
-    // TRADINGAPP_SHOT_OPEN=1 also opens the decision and closed-trades windows
-    // first, and TRADINGAPP_SHOT_DELAY_MS overrides the capture delay (default
-    // 3000) so slow scans can finish before the grab.
+    // TRADINGAPP_SHOT_OPEN=1 also opens the decision, closed-trades and bot-simulation
+    // windows first, and TRADINGAPP_SHOT_DELAY_MS overrides the capture delay (default
+    // 3000) so slow scans can finish before the grab. TRADINGAPP_BOT_ARM=1 (see
+    // MainWindow::setupRunners) arms the paper-trading bot, which is what makes the
+    // bot window worth capturing at all, and TRADINGAPP_BOT_AI=off|confirm|lead
+    // selects whether the local model's proposal only gets logged, vetoes, or leads.
     const QString path = qEnvironmentVariable("TRADINGAPP_SHOT");
     if (!path.isEmpty()) {
         if (qEnvironmentVariableIsSet("TRADINGAPP_SHOT_OPEN")) {
             QTimer::singleShot(1500, &window, [&window]() {
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openDecision"));
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openClosedTrades"));
+                static_cast<void>(QMetaObject::invokeMethod(&window, "openBotSim"));
             });
         }
         const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")

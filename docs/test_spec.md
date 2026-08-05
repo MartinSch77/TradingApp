@@ -89,6 +89,62 @@ event loop / local mock HTTP server).
 | TS-SCRIPT-006 | U | The time window gates resting (before FROM no, at FROM/TO yes, after TO expired and final; no window = immediately, never expires). |
 | TS-SCRIPT-007 | U | SIGNALS entries place only when ensemble AND AI favour the side; neutral/disagreeing/unconfigured AI all wait; unflagged entries ignore the sources. |
 
+## Paper-trading bot (tests/tst_papertrader.cpp, DES-DOM-PAPER, REQ-F-029)
+
+The simulation is only worth reading if it cannot flatter itself, so these check
+the cost model and the accounting identity against hand-computed figures rather
+than against the implementation.
+
+| Test id | Kind | Verifies |
+| --- | --- | --- |
+| TS-PAPER-001 | U | Cost/P-L model: half the live spread on the notional per side (15 000 × 0.02% / 2 = 1.50), an unknown spread charges nothing, units = stake × leverage / rate, and the FX-free P/L identity (+1% on a 15 000 notional = ±150 by side). |
+| TS-PAPER-002 | U | Rollover: one night per date boundary crossed, a Friday night charged three times (Tue→Sat = 6), invalid/reversed ranges charge nothing; the per-unit fee scales by units, nights and EUR/USD, and a negative table entry stays a CREDIT. |
+| TS-PAPER-003 | U | Entry geometry: both sides fill at the quote's MID (the half-spread is a separate charge, so an ask fill would bill it twice), stop/target on the correct sides with reward:risk exactly 1.5, leverage inside the hard cap, and "cannot size" for a neutral call, a one-sided or missing quote, or too little history. |
+| TS-PAPER-004 | U | The entry gate refuses — each with its own stated reason AND its own countable code (the scan summary counts them) — a closed market, a stale quote, no call, sub-floor confidence, an unknown spread, an instrument already held, the trade limit, the ruin guard and the exposure cap; and takes the good candidate at 6% of equity. |
+| TS-PAPER-005 | U | Exits: stop and target on both sides, a gap past both legs read as the STOP (never the better outcome), signal flip only with conviction, neutral never closes, and the max-hold cut-off. |
+| TS-PAPER-006 | U | Book accounting reconciles to the cent: the opening spread leaves cash at once, a 1% mark shows the right open P/L, two rollover nights bill exactly, a round trip at the entry rate loses exactly the two spreads plus rollover, and the cash-based and P/L-based equity agree. |
+| TS-PAPER-007 | U | Persistence round trip: open and closed trades, cash, realised P/L and the close reason survive save→load; a restored book issues non-colliding ids; an unknown schema is refused instead of half-loaded. |
+| TS-PAPER-008 | U | Stake sizing compounds with equity (6% of 50 000 / 80 000 / 20 000), is clipped by the exposure cap, refuses a stake below the minimum, and never goes under the floor on a small account. |
+| TS-PAPER-010 | U | Proposal-symbol resolution: exact and case-insensitive matches, an exact match preferred over a substring one (`GOLD` vs `GoldMiners`), a chatty `"SPX500 composite"` still resolving, and ambiguous / unknown / empty answers resolving to nothing. |
+| TS-PAPER-011 | U | The AI gate per mode: OFF passes the composite through; CONFIRM allows only the model's pick while the composite agrees and refuses a disagreement, a neutral composite and any other instrument; LEAD trades the model's side even against the composite. A HOLD, an unusable answer and an unresolvable instrument refuse in both AI modes with their own reasons. Leverage honours a model's caution (asked 3 → 3) but never its ambition (asked 20, sized 10 → 10), and only in LEAD. |
+| TS-PAPER-012 | U | The RISK BUDGET, not a trade count, limits how many trades run: risk per euro of stake = leverage × stop distance, an early stake is conviction-sized, later ones are clipped to the room left and finally refused with the code of the limit that ACTUALLY bound — `risk-budget`, `margin-cap` or `cash`, each checked separately (the live log once mislabelled a margin refusal as a risk one), and no limit reported when the target stake fits; a trade's own contribution is notional × stop distance; the concurrency bound is above what one-position-per-instrument can reach. |
+| TS-PAPER-013 | U | The carry exits: remaining upside (450 EUR on a 3%-away target) vs the cost to hold — a cheap fee stays open, a dear one closes with `carry beats the edge`, a CREDIT never closes and unknown fees keep the rule silent; the Friday-night lookahead is right (Friday yes, Wednesday no, invalid no), a flat position closes before the tripled weekend charge while one already ahead of it rides through, a weekend credit does not close, and a touched stop still outranks the economics. |
+| TS-PAPER-014 | U | The account never commits more than it holds: opening trade after trade until the economics refuse, cash stays ≥ 0 at every step (it went negative once, at a 100% margin cap plus the from-cash opening costs), margin stays within its cap measured on the decision-time equity, free margin is left over, and it really does take many trades before stopping — the count is not the limit. |
+| TS-PAPER-015 | U | The day rules: a made day (booked net ≥ target) and a lost day (≤ −limit) both stop opening, one cent short of either does not, a new date starts open whatever yesterday did, Saturday/Sunday are refused unless weekday-only is switched off, zero disables a rule, the entry gate reports `day-target` / `day-loss`, and the stake after a losing day is SMALLER — never escalated to chase the number. |
+| TS-PAPER-016 | U | The measured record over three days (+200 / −150 / +400 short): trades, days, net, net/day, expectancy, profit factor 4.0, win rate, drawdown 150 EUR (0.3%), one day at target, the rolling window, the long/short split and costs; an empty record measures nothing; and the live gate refuses that record naming BOTH missing conditions, passes a record meeting every threshold, and blocks with exactly one reason per individually-failed threshold. |
+| TS-PAPER-020 | U | Adding to a position: allowed with nothing open, refused as `already-holding` without a model pick, taken with one, refused as `opposite-open` against the other side, refused as `symbol-count` at the per-instrument limit and as `symbol-risk` at its risk cap (which is tighter than the bucket cap), and the book aggregates count/side/risk per instrument itself. |
+| TS-PAPER-021 | U | The hold review: silence, an unrelated pick and an explicit HOLD all KEEP the position; the opposite side closes it as `ai-reversed` (carrying the model's reason) and an explicit CLOSE as `ai-close`; a short is the mirror image; with the model off nothing it "said" counts; and the prompt section names the held instrument, its side, its result and the CLOSE contract. |
+| TS-PAPER-022 | U | Costs decide entries and dynamics decide exits: the round trip is both half-spreads, a spread wide enough to swallow the target refuses with `cost-vs-edge` (and switching the rule off takes the same candidate), a faded signal on a losing position closes it while conviction or profit keeps it, a winner that has handed back most of its peak is banked while a trivial peak is not, and the peak survives a save/load. |
+| TS-PAPER-023 | U | The day ledger survives a restart — date, booked net, opened and closed counts all round-trip — and a book saved before the ledger existed still loads, starting a fresh day with its record intact. |
+| TS-PAPER-019 | U | Banking the day: nothing open or no sufficient winner books nothing, one sufficient winner is picked, the SMALLEST sufficient winner wins over bigger ones (least upside given up), already-booked net counts towards the gap, a made day and a lost day both leave the rule silent (the day gate and the loss limit govern), the switch and a zero target disable it, and the reason has its own word so a cut winner is visible in the record. |
+| TS-PAPER-018 | U | Correlated positions share one risk bucket: the index symbols, both FX names (including the dollar index, listed under Indices but an FX bet), the metal and the other commodities map as documented and an unknown symbol gets its own bucket; the per-bucket cap is below the portfolio budget and therefore binds; a full equity-index bucket refuses the next index trade with `group-risk` naming the bucket while the portfolio budget still has room, clips a partly-spent bucket to the room left, and leaves other buckets untouched; and the book itself aggregates per bucket from its open positions, summing to the portfolio risk. |
+| TS-PAPER-017 | U | Shorts are first-class: a SELL candidate clears the same gates, is sized identically (same stake, leverage, fill and risk per euro), has mirrored stop/target geometry, and earns when the price falls. |
+| TS-PAPER-009 | U | Every close reason has a word for the table, and the trade read-outs (notional, units, effective rate before the first mark, gross/costs/net, holding hours) are consistent. |
+
+## The learned outcome model (tests/tst_botnet.cpp, DES-DOM-BOTNET, REQ-F-033)
+
+| ID | Type | What it pins |
+|----|------|--------------|
+| TS-NET-001 | U | A model is read or rejected, never half-used: no file, a shape that does not line up, and a foreign feature list each yield a stated reason and `ok=false` (with a score of 0 that the gate can never mistake for an opinion), while a well-formed one reads back with its measured record. |
+| TS-NET-002 | U | The score is the arithmetic it claims to be: sigmoid(tanh(x)) for a one-unit model, 0.5 at the training mean, monotone in the feature it was given, inside [0, 1] at extremes, and neutral for inputs the caller does not have. |
+| TS-NET-003 | U | An unproven model never refuses a trade: off is not consulted, an absent model allows with a reason, too few samples or a coin-flip AUC score-but-allow, advise annotates only, and only a trusted model in gate mode refuses — with the `net-score` code — while still passing a setup it likes; the window's summary names each state. |
+| TS-NET-005 | U | The app trains itself with no second runtime: 300 separable examples produce a model with a held-out AUC above 0.9 that learns the separation and, having earned both trust thresholds, refuses a bad setup; two runs over one record agree exactly; the model round-trips through the file format; a record that is too small or one-sided yields NO weights and a stated reason; and one experience line becomes one example — or nothing, never a half-read one. |
+| TS-NET-004 | I | The Python trainer and this build agree on the model they exchange: `tools/train_bot_net.py` really runs over an app-shaped experience log, its output loads here with the same column order, it separates the two kinds of trade it was shown, and a record with nothing to learn from exits 3 ("skipped") without writing a model. |
+
+## Local-LLM advisor (tests/tst_ollamaadvisor.cpp, DES-SVC-OLLAMA, REQ-F-030)
+
+Against an in-process mock of Ollama's HTTP API — no test needs a running daemon.
+
+| Test id | Kind | Verifies |
+| --- | --- | --- |
+| TS-OLLAMA-001 | I | No model configured: an immediate error result and the availability probe's "no model configured" diagnosis, with NOTHING sent over the wire. |
+| TS-OLLAMA-002 | I | The request shape: `/api/generate` carrying the configured model, the caller's evidence verbatim, `stream:false`, `format:"json"`, a JSON-only system prompt and a temperature ≤ 0.3 — and the proposal parsed back out of `response`. |
+| TS-OLLAMA-003 | I | The availability probe diagnoses all three states: ready (model served, list returned), an implicit tag (`llama3.2` matches `llama3.2:latest`), and up-but-not-pulled — the last naming the `ollama pull` to run. |
+| TS-OLLAMA-004 | I | The defensive parse of what small models really answer: JSON inside prose and ```json fences, lower-case `sell`, `"high"` → 75, `"x3"` → 3, `0.62` → 62%, `"SELL (short)"` → SELL, an unknown action → HOLD, and prose with no JSON → a reported failure. |
+| TS-OLLAMA-007 | I | The model may name MANY instruments: a ranked `{"picks":[…]}` list comes back in order; a bare array, an alternative key (`trades`), a SYMBOL-KEYED map (the shape qwen2.5:1.5b really answers with, captured verbatim) and a single pick object are all accepted; an empty list is reported as "nothing worth trading" rather than as a failure or a HOLD; a runaway answer is bounded at 10 picks; and the `rationality`-for-`rationale` key a real model produced still reads. |
+| TS-OLLAMA-005 | I | Transport failures are reported, not swallowed: an HTTP 500 from the daemon and a port with nothing listening both yield ok=false with a message, and the advisor is usable again afterwards. |
+| TS-OLLAMA-006 | I | One request at a time (a second call while one is in flight is refused, the first still completes, exactly one request reaches the wire), and a scheme-less `127.0.0.1:11434/` host is normalised. |
+
 ## Position math (tests/tst_positionmath.cpp, DES-DOM-POS, REQ-F-003/-016)
 
 | ID | L | Case |
@@ -127,6 +183,7 @@ event loop / local mock HTTP server).
 | TS-CFG-001 | I | With no config files and no env vars, defaults apply (demo, SPX500, no credentials ⇒ simulation mode label). |
 | TS-CFG-002 | I | `config.json` (non-secret) and a sibling `apiKeyEtoro.json` (secrets) layer correctly: keys come only from the secrets file. |
 | TS-CFG-003 | I | Environment variables override both files. |
+| TS-CFG-005 | U | The bot's daily rules are configuration, not code: the documented 350/350 defaults hold with no files, `botDailyTarget`/`botDailyLossLimit` in `config.json` replace them, `TRADINGAPP_BOT_TARGET=0` switches a rule off (0 is a real value here), and a negative override is refused so a typo cannot widen what may be lost. |
 | TS-CFG-004 | I | `isLive` requires credentials AND mode "real"; mode labels match. |
 
 ## Simulation engine (tests/tst_simulationengine.cpp, DES-SVC-SIM, REQ-F-017/-027) — integration

@@ -17,7 +17,7 @@ in @ref windows.
 
 | Tool | Origin / vendor | Version | Role here |
 |------|-----------------|---------|-----------|
-| Qt (Widgets, Charts, Network, Test) | Qt Group, qt.io | 6.11.1 (gcc_64 kit at `~/Qt`); Windows CI uses 6.10.3 — aqtinstall cannot fetch Windows 6.11.x metadata, see @ref windows | Application framework; Qt Test drives the suite |
+| Qt (Widgets, Charts, Network, Test) | Qt Group, qt.io | 6.11.1 at `~/Qt`, kit per host architecture: `gcc_64` on x86-64, `gcc_arm64` on ARM64 (aqt host `linux_arm64`) — resolved by `tools/common.sh`, see @ref platforms; Windows CI uses 6.10.3 — aqtinstall cannot fetch Windows 6.11.x metadata, see @ref windows | Application framework; Qt Test drives the suite |
 | CMake | Kitware, cmake.org | 4.2.x (`cmake --version`) | Build system, CTest test runner |
 | GCC | GNU Project | Ubuntu 24.04 default (g++ 13) | Reference compiler; `--coverage` instrumentation |
 | Clang / LLVM | LLVM Project, llvm.org (Ubuntu pkg) | 18.1.3 | MC/DC coverage (`-fcoverage-mcdc`), clang-tidy host |
@@ -46,7 +46,9 @@ in @ref windows.
 | StrictDoc | strictdoc.readthedocs.io (Apache-2.0) | 0.27.0 (pipx) | Requirements-as-code: `requirements/requirements.sdoc` → HTML + requirement↔source traceability (`tools/make_requirements.sh`) |
 | Doorstop | doorstop.readthedocs.io (LGPL) | 3.2 (pipx) | Evaluated for versioned requirements in git — not adopted (StrictDoc owns the requirement set; see docs/verification.md) |
 | Doxygen | doxygen.nl | 1.9.8 | API + specification documentation, HTML output |
-| linuxdeploy + linuxdeploy-plugin-qt | linuxdeploy project (MIT) | pinned dated release + SHA256 in `tools/fetch_linuxdeploy.sh`, unpacked into `tools/third-party/` | Bundle the Qt runtime into the downloadable Linux **AppImage** (`tools/package_appimage.sh`). The Windows counterpart is windeployqt, which ships with Qt and is driven by the CMake install rules (`tools/package_portable.ps1`) |
+| `tools/train_bot_net.py` (optional) | stdlib Python 3 | none — no numpy, no torch; ships with the repo | The DESKTOP counterpart of the bot's own trainer (@ref requirements REQ-F-033). The app trains its outcome model itself, in C++, because the machines it runs on unattended may have no Python; this script exists for experimenting on a workstation (different hidden sizes, epochs, a copied log) and writes the byte-compatible model file. TS-NET-004 runs it and reads its output back, so the two halves cannot drift apart |
+| Ollama (optional) | Ollama (MIT) | `v0.32.5` runtime + one model, installed by `./setup.sh ollama` into `~/.local/ollama` (~1.4 GB + the model); nothing else in the pipeline needs it | Serves the LOCAL large language model the bot simulation can take its trading proposal from (@ref requirements REQ-F-030, `src/services/OllamaAdvisor.*`). No key, no cloud: the daemon runs as a user process on `localhost:11434`. The tests mock its HTTP API, so the suite never needs it installed |
+| linuxdeploy + linuxdeploy-plugin-qt | linuxdeploy project (MIT) | pinned dated release + SHA256 **per architecture** (x86_64, aarch64) in `tools/fetch_linuxdeploy.sh`, unpacked into `tools/third-party/` | Bundle the Qt runtime into the downloadable Linux **AppImage** (`tools/package_appimage.sh`) — the host's architecture decides which pair is fetched, so a Raspberry Pi packages an `aarch64` AppImage with the same script. The Windows counterpart is windeployqt, which ships with Qt and is driven by the CMake install rules (`tools/package_portable.ps1`) |
 | PlantUML | plantuml.com (GPL) | 1.2026.0 (`tools/third-party/plantuml.jar`, downloaded from the official GitHub release; re-fetch with `tools/fetch_plantuml.sh`) | Architecture/sequence diagrams inside Doxygen |
 | Graphviz (dot) | graphviz.org | Ubuntu 24.04 package | Doxygen graphs, PlantUML layout backend |
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |

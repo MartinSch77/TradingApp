@@ -26,7 +26,12 @@ tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
                                # so run it AFTER the axivion stage to include it
 tools/profile.sh               # perf/gperftools over build-release/
 tools/mcp_env.sh --persist     # env the .mcp.json Axivion MCP servers need
-tools/package_appimage.sh      # downloads/TradingApp-<ver>-x86_64.AppImage
+tools/common.sh                # sourced, not run: host arch -> Qt kit dir
+                               # (gcc_64 / gcc_arm64), aqt host+arch, AppImage
+                               # arch, LLVM toolset. Run it to print what a
+                               # machine resolves to
+tools/package_appimage.sh      # downloads/TradingApp-<ver>-<arch>.AppImage
+                               # (x86_64 or aarch64 — the host's)
 tools/build_android.sh [--abi android_arm64_v8a] [--run]   # APK -> downloads/;
                                # --run boots an emulator and screenshots the app
 tools/run_android.sh           # emulator only (needs /dev/kvm + the kvm group)
@@ -76,8 +81,101 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - Header-inline functions that grow logic: define out-of-line in one TU
   (comdat coverage records otherwise break llvm-cov).
 - Layering is linker-enforced: domain (Qt Core only) ← services ← ui.
+- Linux means x86-64 AND ARM64 (Raspberry Pi 4/5, 64-bit OS only). NEVER hardcode
+  `gcc_64`, `x86_64` or `clang-18` in a script again — those three names come from
+  `tools/common.sh` (`qt_kit_dir`, `host_arch`, `llvm_suffix`), which every Linux
+  entry point sources. A host with no `~/Qt` kit for its architecture resolves an
+  EMPTY prefix on purpose: the build then uses the distribution's Qt 6.
+  ARM64-unsupportable stages say so and skip — Axivion Suite is x86-64-only.
+  Evidence: the `build-linux-arm64` CI job runs `./build_all.sh build test trace`
+  on `ubuntu-24.04-arm` with no arch arguments; details in docs/platforms.md.
 - Money-moving actions need the double-press gate; advisory features never
   trade (REQ-N-005). Secrets only in git-ignored `apiKeyEtoro.json`.
+- The bot simulation (REQ-F-029, `domain/PaperTrader` + `ui/BotSimPanel`) is
+  SIMULATED money on LIVE prices, and must keep having NO route to an order
+  endpoint — reads only (quotes/spreads/fees/decision rows, plus
+  `EtoroClient::setExtraQuoteInstruments`, which registers quote interest, not an
+  order). Its cost model charges half the LIVE spread per side plus per-night
+  rollover with the tripled weekend night; never simplify those away — a
+  simulation without costs measures nothing. Those costs also DECIDE exits: close
+  when the remaining upside no longer covers rollover-to-horizon + exit spread, and
+  before the tripled weekend charge unless the position has earned it (a credit
+  never closes; unknown fees keep both rules silent). `TRADINGAPP_BOT_ARM=1` arms it at
+  startup for unattended runs, and the armed flag + AI mode are PERSISTED (an
+  experiment that stops silently on restart looks like a working bot finding
+  nothing). How many trades it holds is governed by the PORTFOLIO RISK BUDGET
+  (Σ loss-if-every-stop-hit ≤ `maxPortfolioRiskFraction` × equity), never by a
+  trade count — don't reintroduce a queue limit. Every scan logs one summary line
+  (candidates, opened, risk vs budget, refusals per `code`); those codes on
+  `EntryVerdict`/`AiGate` are what make it countable, so keep them stable.
+- The bot MANAGES positions (REQ-F-032): stacking in one instrument is allowed only
+  when the model names it again (`aiBacked`), never against an existing side
+  (`opposite-open`), and under `maxPositionsPerSymbol` + `maxSymbolRiskFraction`
+  (3%, the tightest of the three risk caps). The model is shown the OPEN book
+  (`paperHoldEvidence`) and may close a position (`paperAiHold`: opposite side or an
+  explicit CLOSE) — but SILENCE MUST NEVER CLOSE, because a 1.5B model routinely
+  answers about two instruments out of twenty-six. Two dynamic exits complete it:
+  `SignalFade` (conviction decayed below `signalFadeFraction` while the trade is not
+  paying) and `GiveBack` (handed back `giveBackFraction` of the persisted `peakNet`).
+  Entries price the whole round trip (`paperEntryEconomics`, refusal `cost-vs-edge`).
+- The bot LEARNS from its record (REQ-F-033, `domain/BotNet`): every close appends a
+  labelled example to `botsim-experience.jsonl` (label = NET after costs), and
+  `trainBotNet` fits a one-hidden-layer network IN C++ — deliberately, because the
+  target machine (a Pi left running for weeks) may have no Python;
+  `tools/train_bot_net.py` is the optional desktop twin and must keep writing the
+  IDENTICAL file (TS-NET-004 pins that contract, TS-NET-005 the in-app trainer).
+  Three rules are load-bearing: the validation split is by TIME (a random split
+  leaks the future and the AUC becomes fiction), inputs are matched BY NAME against
+  the model's own feature list (`entryFeatureNames` is append-only), and an
+  untrusted model (< `minSamples`, or AUC < `minAuc`) NEVER refuses a trade — it
+  only annotates. Retrains itself every `kRetrainEvery` closes, off the GUI thread.
+- Risk is aggregated by CORRELATION, not by count (REQ-F-031): `correlationGroup`
+  buckets a symbol (equity-index / fx / metals / commodity, own bucket when
+  unknown) from the catalog group plus documented exceptions (USDOLLAR is FX, not
+  an index), `BookState::riskByGroup` sums loss-at-stop per bucket, and
+  `maxGroupRiskFraction` (8%, deliberately below the 20% portfolio budget) refuses
+  with `group-risk` naming the bucket. Do not "simplify" this back to one pool:
+  without it the portfolio budget is satisfied by a dozen positions that share one
+  outcome. The scan line prints where the risk sits (`by view: …`).
+- The bot trades BOTH sides (REQ-F-031): shorts get mirrored stop/target geometry,
+  identical sizing and the sell-side rollover, and the record attributes net to
+  longs and shorts separately.
+- The daily target (REQ-F-031, default 350 €) is a STOPPING rule, and the whole
+  point is that it cannot become a chase: reaching it stops opening for the day,
+  reaching the loss limit stops opening for the day, and size NEVER grows after a
+  loss (stake is a fraction of current equity). Only BOOKED net counts towards
+  either — open profit can still turn, which is why `paperHarvestPick` books the
+  day by closing the SMALLEST open winner that already covers the target (the
+  truncated upside is a known, documented cost; `harvestForDailyTarget` switches it
+  off). `paperDayGate` runs FIRST in
+  `paperEntryVerdict` (codes `day-target`/`day-loss`/`weekend`); positions already
+  open keep being governed by their own stops/targets/carry rules.
+- Real money stays gated on MEASURED evidence, not impression: `paperPerformance`
+  computes the record (net, net/day, rolling few-day net, profit factor,
+  expectancy, win rate, peak-to-trough drawdown, target hit rate, long/short
+  split) and `paperLiveReadiness` reports readiness or EVERY unmet threshold. Live
+  execution is not wired; wiring it needs a REQ-N-005 carve-out (the REQ-F-028
+  arm-instead-of-double-press precedent), the gate passing, and per-order/daily
+  caps — never a silent removal of the safeguard. The window states the verdict
+  and its blockers at all times; do not let it claim more than the record shows.
+- The bot's proposal source can be a LOCAL model (REQ-F-030,
+  `services/OllamaAdvisor` + the pure `paperAiGate`): optional, no key,
+  `./setup.sh ollama` installs runtime + model under `~/.local/ollama`,
+  `ollamaModel`/`OLLAMA_MODEL` configures it, `TRADINGAPP_BOT_AI=off|confirm|lead`
+  picks the mode. Three things are load-bearing and easy to "tidy" wrongly:
+  (1) the response parse is DEFENSIVE because small models answer sloppily —
+  measured on qwen2.5:1.5b: `"symbol":"SPX500 composite"`, `rationality` for
+  `rationale`, `"high"` for a number, and — asked for a LIST — `{"picks":{"SPX500":
+  {...}}}`, a symbol-KEYED map instead of an array; hence `matchProposalSymbol` (one
+  unambiguous match or nothing), the word/`x3`/`0.62` normalisations and the shape
+  dispatcher in `picksFrom` (array / keyed map / alternative key / single object).
+  Every one of those shapes is pinned by TS-OLLAMA-007 — a mis-parse is a SILENT
+  no-trade, which is the worst failure this feature can have. (2) A proposal is
+  judged by AGE (< one scan cycle), NOT by whether a newer scan overtook it —
+  discarding overtaken answers silently disables the feature, since a CPU model is
+  regularly overtaken. (3) The model supplies DIRECTION only: it can never exceed
+  the stake/exposure/leverage/ruin limits, and `paperLeverageWithAi` honours a
+  model's caution but never its ambition.
 - Monte-Carlo/plan building stay off the GUI thread (QtConcurrent); the
   positions table stays model/view, allocation-free per tick (REQ-N-006).
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no
@@ -89,8 +187,10 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - Stage exit code 3 = "skipped" (both build_all runners report it and stay
   green; any other non-zero code is a real failure). Exit 3 exists in
   `axivion/start_analysis.{sh,ps1}`, `tools/coverage.{sh,ps1}` (Coco /
-  OpenCppCoverage / LLVM-mcdc) and `tools/make_docs.ps1` (doxygen). Caveat: a
-  missing clang-18 makes the Linux coverage stage FAIL, not skip.
+  OpenCppCoverage / LLVM-mcdc) and `tools/make_docs.ps1` (doxygen). On Linux the
+  MC/DC and TSan steps resolve the clang version (>= 18) via `llvm_suffix` and
+  report `skipped` when the host has none — `coverage.sh auto` still exits 0
+  because gcov measured something real; `coverage.sh mcdc` alone exits 3.
   Every OPEN-SOURCE tool the pipeline needs must be installable by setup.sh /
   setup.ps1 — if you add a tool dependency, add it there too.
 - No machine-specific absolute paths in committed scripts or Axivion configs.

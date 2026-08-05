@@ -15,6 +15,8 @@
 #include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
+#include "services/OllamaAdvisor.h"
+#include "ui/BotSimPanel.h"
 #include "ui/TradeScriptPanel.h"
 #include "ui/TradeGauge.h"
 
@@ -376,8 +378,44 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
 // armed script keeps executing while its window is closed. It obeys the SAME
 // open-exposure cap as manual orders, through the gate injected here — the
 // cap and the committed totals belong to the trade panel's guard set.
-void MainWindow::setupScriptRunner()
+void MainWindow::setupRunners()
 {
+    // Both autonomous runners are built here, and both outlive their windows: an
+    // armed script keeps placing broker-side orders and the bot simulation keeps
+    // its books whether or not anyone is looking at them.
+
+    // --- the paper-trading bot (REQ-F-029) ---------------------------------
+    // Reads quotes/spreads/fees and the decision rows the scan produces; it has no
+    // route to an order endpoint, which is what makes "simulated money only" a
+    // property of the design rather than a promise.
+    // The local-model advisor (REQ-F-030) is optional: without an ollamaModel in
+    // the configuration it reports itself unconfigured and the bot runs on the
+    // composite alone. It is owned here and handed to the runner.
+    m_ollama = new OllamaAdvisor(m_client->config().ollamaHost, m_client->config().ollamaModel, this);
+    m_botRunner = new BotSimRunner(m_client, m_ollama, this);
+    m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
+                                 m_client->config().botDailyLossLimit);
+    static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
+    // Unattended experiments (and the headless QA run): TRADINGAPP_BOT_ARM=1 arms
+    // the simulation at startup, so a machine left running — a Raspberry Pi, say —
+    // collects days of paper results without anyone clicking anything. Safe by
+    // construction: the bot has no route to a real order (REQ-F-029).
+    if (qEnvironmentVariableIsSet("TRADINGAPP_BOT_ARM")) {
+        m_botRunner->setArmed(true);
+    }
+    // …and TRADINGAPP_BOT_AI=off|confirm|lead selects how the local model's
+    // proposal is used (REQ-F-030), so an unattended experiment can be started in
+    // the mode being measured without a click.
+    const QString aiMode = qEnvironmentVariable("TRADINGAPP_BOT_AI").trimmed().toLower();
+    if (aiMode == QStringLiteral("confirm")) {
+        m_botRunner->setAiMode(trading::BotAiMode::Confirm);
+    } else if (aiMode == QStringLiteral("lead")) {
+        m_botRunner->setAiMode(trading::BotAiMode::Lead);
+    } else if (aiMode == QStringLiteral("off")) {
+        m_botRunner->setAiMode(trading::BotAiMode::Off);
+    }
+
+    // --- the trade-script runner (REQ-F-028) -------------------------------
     m_scriptRunner = new TradeScriptRunner(m_client, this);
     static_cast<void>(
         connect(m_scriptRunner, &TradeScriptRunner::log, this, &MainWindow::onLog));
@@ -1129,6 +1167,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_screenerButton);
     header->addWidget(m_decisionButton);
     header->addWidget(m_scriptButton);
+    header->addWidget(m_botButton);
     header->addWidget(m_closedButton);
     header->addStretch();
     header->addLayout(priceCol);
@@ -1198,6 +1237,17 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "as broker-side limit orders."));
     static_cast<void>(
         connect(m_scriptButton, &QPushButton::clicked, this, &MainWindow::openScript));
+
+    // Trading-bot simulation: paper money, live prices, no order ever placed.
+    m_botButton = new QPushButton(QStringLiteral("Bot sim…"), central);
+    m_botButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_botButton->setToolTip(QStringLiteral(
+        "Trading-bot simulation (REQ-F-029): the app's own multi-source decision, traded "
+        "across ALL instruments with SIMULATED money on live prices — spread, overnight "
+        "fees and slippage-free fills charged like the real path, so the P/L is worth "
+        "reading. It never places an order at eToro and never moves real funds."));
+    static_cast<void>(
+        connect(m_botButton, &QPushButton::clicked, this, &MainWindow::openBotSim));
 
     // Toggle for the combined signals + AI window (both panels moved out of the
     // main window into ONE floating, stay-on-top window shown at startup); same
@@ -2229,7 +2279,7 @@ void MainWindow::applyUiScale()
 // plan). Out of the constructor so its wiring list stays within the metrics budget.
 void MainWindow::connectWorkerResults()
 {
-    setupScriptRunner();  // same reason this function exists: ctor metrics budget
+    setupRunners();  // same reason this function exists: ctor metrics budget
     static_cast<void>(
         connect(m_aiAdvisor, &AiAdvisor::decisionReady, this, &MainWindow::onAiDecision));
     static_cast<void>(connect(&m_mcWatcher, &QFutureWatcher<trading::McOutlook>::finished,
@@ -3869,6 +3919,16 @@ void MainWindow::openScript()
     m_scriptDialog->activateWindow();
 }
 
+void MainWindow::openBotSim()
+{
+    if (m_botDialog == nullptr) {
+        m_botDialog = new BotSimDialog(m_botRunner, this);
+    }
+    m_botDialog->show();
+    m_botDialog->raise();
+    m_botDialog->activateWindow();
+}
+
 void MainWindow::openScreener()
 {
     if (m_screenerDialog == nullptr) {
@@ -3939,6 +3999,15 @@ void MainWindow::onScreenerFinished()
     }
     rebuildRecommendations();
     rebuildDecision();
+
+    // The paper-trading bot's decision tick (REQ-F-029): this is the moment the
+    // all-instruments data is as complete as it gets, so the composite is computed
+    // once here and handed to the runner — which trades it with simulated money.
+    // Unconditional on purpose: the bot must keep running with its window closed.
+    if (m_botRunner != nullptr) {
+        const trading::MarketSnapshot snap = marketSnapshot();
+        m_botRunner->onDecisions(trading::computeDecisionRows(snap), snap);
+    }
 
     // If the decision window kicked this scan and Claude is configured, ask it now
     // (once per scan) — the candidate data is as complete as it will get.

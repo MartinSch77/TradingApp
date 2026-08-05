@@ -33,6 +33,13 @@ tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)
 tradingapp_add_test(tst_decisionengine tst_decisionengine.cpp)
 tradingapp_add_test(tst_tradeplan tst_tradeplan.cpp)
 tradingapp_add_test(tst_tradescript tst_tradescript.cpp)
+tradingapp_add_test(tst_papertrader tst_papertrader.cpp)
+tradingapp_add_test(tst_botnet tst_botnet.cpp)
+# The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
+# back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
+# and only an end-to-end round trip can show that they do.
+target_compile_definitions(tst_botnet PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 tradingapp_add_test(tst_positionmath tst_positionmath.cpp)
 tradingapp_add_test(tst_eventinsight tst_eventinsight.cpp)
 tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
@@ -45,6 +52,7 @@ tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockH
 tradingapp_add_test(tst_marketfeeds tst_marketfeeds.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_economiccalendar tst_economiccalendar.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_aiadvisor tst_aiadvisor.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_ollamaadvisor tst_ollamaadvisor.cpp MockHttpServer.cpp MockHttpServer.h)
 
 # --- unit test over the ui table model (headless: model only, no widgets) ---
 # The ui layer is compiled into the app executable, not a library, so the test

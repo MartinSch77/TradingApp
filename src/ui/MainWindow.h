@@ -16,9 +16,12 @@
 #include <QStringList>
 
 class AiAdvisor;
+class BotSimDialog;
+class BotSimRunner;
 class EconomicCalendar;
 class EtoroClient;
 class MarketFeeds;
+class OllamaAdvisor;
 class PositionsModel;
 class PriceChart;
 class ScreenerDialog;
@@ -94,11 +97,17 @@ private slots:
     // Trade-script window (REQ-F-028): load / dry-run / arm a script of
     // conditional orders. The RUNNER lives on regardless of the window.
     void openScript();
+    // Trading-bot simulation window (REQ-F-029): the paper account, its open and
+    // closed simulated trades and the bot's decision log. The runner keeps its
+    // books with the window closed, so an experiment can run for days.
+    void openBotSim();
 
 private:
-    // Construct + gate the trade-script runner (kept out of the constructor so
-    // the ctor stays within its metrics baseline, like connectWorkerResults).
-    void setupScriptRunner();
+    // Construct + gate the two autonomous runners — the trade script (REQ-F-028)
+    // and the paper-trading bot simulation (REQ-F-029). Kept out of the
+    // constructor so the ctor stays within its metrics baseline, like
+    // connectWorkerResults.
+    void setupRunners();
 
 private slots:
     void onScreenerRow(const ScreenerRow &row);
@@ -348,6 +357,15 @@ private:
     TradeScriptRunner *m_scriptRunner = nullptr;
     TradeScriptDialog *m_scriptDialog = nullptr;
     QPushButton *m_scriptButton = nullptr;
+    // Paper-trading bot simulation (REQ-F-029): like the script runner, the RUNNER
+    // exists from construction (it keeps marking its simulated positions and
+    // persists its books) while the window is created on demand.
+    // Local-model advisor for the bot simulation (REQ-F-030); unconfigured is the
+    // normal case and costs nothing.
+    OllamaAdvisor *m_ollama = nullptr;
+    BotSimRunner *m_botRunner = nullptr;
+    BotSimDialog *m_botDialog = nullptr;
+    QPushButton *m_botButton = nullptr;
     QList<ScreenerRow> m_screenerRows;  // latest scan results, unsorted (arrival order)
     QGroupBox *m_tradeBox = nullptr;       // "Trade <symbol>" panel
     QLabel *m_tradeHours = nullptr;        // approx. trading hours (local) under the title

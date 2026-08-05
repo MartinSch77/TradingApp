@@ -1,6 +1,7 @@
 # eToro Trader (Qt)
 
 [![build linux](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build linux arm64](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux-arm64.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![build windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-windows.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![build macos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-macos.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
@@ -36,14 +37,80 @@ It provides:
   ensemble, TradingView, news, VIX regime, Fear & Greed, Yahoo intraday,
   optional Claude synthesis) plus a costed **trade plan**;
 - **closed-trades history** (7–13 weeks) with cost accounting, a macro-economic
-  **event calendar** with activity proposals, and an activity log.
+  **event calendar** with activity proposals, and an activity log;
+- a **trading-bot simulation**: the same composite decision traded across **all**
+  instruments with **simulated money** (50 000 € to start) on live prices, with the
+  real cost model charged — spread on both sides, overnight rollover with the
+  tripled weekend night — so the question "would this strategy have made money
+  over weeks" gets an answer that is not flattered. It shows the invested amount
+  and costs per trade, open and closed simulated trades, and the running P/L. It
+  takes **as many trades as it judges worthwhile** — the limit is a portfolio risk
+  budget (summed loss-if-every-stop-is-hit ≤ 20% of equity, and ≤ 8% inside any one
+  **correlation bucket** — twelve long index positions are one bet, not twelve), not
+  a trade count —
+  closes on its stop/target, on a signal flip, on the holding limit and — because a
+  leveraged position pays rent nightly and triple over the weekend — when the carry
+  no longer covers what is left to win. It trades **both directions** on equal
+  terms — a negative composite opens a short with mirrored geometry, the same
+  sizing and the sell-side rollover — and reports the long and short result
+  separately, so an edge that only exists in a rising market cannot hide inside a
+  total. It logs one summary line per scan so
+  "nothing happened" is never silent, resumes
+  where it left off after a restart, and **never places an order at eToro**
+  (REQ-F-029);
+- **daily discipline and an evidence gate before real money** (REQ-F-031): a daily
+  result target (350 € by default) that is a *stopping rule*, not a promise — when
+  the day's **booked** net reaches it the bot opens nothing further that day, and
+  when it reaches the mirror-image loss limit it also stops. Since only booked money
+  counts, the bot banks the day by closing the *smallest* open winner that already
+  covers the target (bigger winners keep running) — giving up that one position's
+  remaining upside is the deliberate cost of aiming at a daily number. Size is never
+  increased to win a loss back (the stake is a fraction of *current* equity, so it
+  can only shrink), and trading is Monday–Friday only. Whether the strategy may be
+  trusted with real money is then decided by the closed-trade record alone: trades
+  and distinct days, net after costs, net per day and over the last few days,
+  profit factor, expectancy, win rate, deepest drawdown in € and %, how often the
+  target was actually reached, and the long/short split — compared against
+  thresholds and reported as either "ready" or **every** unmet condition, always
+  visible in the window. No fixed daily profit can be guaranteed by any strategy;
+  what the app guarantees is that the claim is measured before capital is risked;
+- the bot **manages** positions rather than only opening them (REQ-F-032): it may
+  hold **several positions in one instrument** when the model names it again (never
+  both sides at once, and under a per-instrument risk cap tighter than the bucket
+  one), it shows the model **what it already holds** and closes a position when the
+  answer comes back with the other side or an explicit CLOSE — while *silence* never
+  closes anything — and it exits on the trade's own **dynamics**: a signal that has
+  faded while the position is not paying, or a winner that has handed back most of
+  its best result. Costs are part of the **entry** decision too: the move to the
+  target must be worth a multiple of the full round trip (both half-spreads plus the
+  rollover to the horizon), or the trade is refused as `cost-vs-edge`;
+- the bot **learns from its own record** (REQ-F-033): every closed trade is appended
+  to an experience log — the features that were true at entry, and what the trade
+  actually kept after costs — and a small neural network is fitted to it **inside the
+  app**, in C++, with no Python or other runtime needed on the machine (it retrains
+  itself every 25 closed trades, or on the button). The model scores each candidate
+  before it is taken, but it has to **earn** the right to refuse: below 200 examples
+  or an out-of-sample AUC of 0.55 it only annotates. Validation always uses the
+  *latest* trades, never a random sample. `TRADINGAPP_BOT_NET=off|advise|gate`
+  chooses how much say it gets; [`tools/train_bot_net.py`](tools/train_bot_net.py) is
+  an optional desktop counterpart that writes the identical model file;
+- an optional **local LLM** (Ollama, no key, nothing leaves the machine) as the
+  bot's proposal source: it gets the same evidence as the cloud advisor and
+  answers with a ranked list of every instrument it considers worth trading, each
+  with side, confidence, leverage and rationale. Three
+  settings decide what the simulator does with it — *off* (log only), *confirm*
+  (the model may veto the composite) or *lead* (trade the model's pick) — and in
+  none of them can it exceed the risk limits (REQ-F-030). `./setup.sh ollama`
+  installs the runtime and a small model under `~/.local`.
 
 If no API keys are configured it runs in a clearly-labelled **SIMULATION** mode
 with a synthetic price feed, so it is fully usable before you have credentials.
 
 ## Build
 
-The full quality pipeline runs natively on **both Linux and Windows**. Each
+The full quality pipeline runs natively on **both Linux and Windows**, on
+x86-64 and on ARM64 (Raspberry Pi included — the few stages whose tools are
+x86-64-only report `skipped`, see [docs/platforms.md](docs/platforms.md)). Each
 `*.sh` entry point has a one-to-one PowerShell counterpart; see
 [docs/windows.md](docs/windows.md) for the complete tool mapping and the
 Windows-specific notes.
@@ -104,8 +171,8 @@ session, so no "x64 Native Tools" prompt is required. Override the kit with
 Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
 (developed against Qt 6.11.1), CMake ≥ 4.2 and a C++23-capable compiler
 (GCC 13+, Clang 17+, MSVC 19.38+). The sources are
-plain cross-platform Qt/C++ — the same code builds on Linux, Windows, and
-Android; only the Qt kit and the packaging step differ.
+plain cross-platform Qt/C++ — the same code builds on Linux (x86-64 **and**
+ARM64), Windows, and Android; only the Qt kit and the packaging step differ.
 
 ### Linux / macOS
 
@@ -115,6 +182,27 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 cmake --build build
 ./build/TradingApp
 ```
+
+### Raspberry Pi (ARM64)
+
+A Pi 4/5 with a **64-bit Raspberry Pi OS Trixie** (Debian 13) or newer builds and
+runs it with the ordinary commands — the scripts resolve the ARM64 Qt kit
+(`~/Qt/<ver>/gcc_arm64`) themselves, so nothing needs an extra flag:
+
+```bash
+./setup.sh install                  # installs Qt's Linux ARM64 kit + the toolchain
+./build_all.sh build test trace
+./build/TradingApp
+```
+
+`sudo apt-get install qt6-base-dev qt6-charts-dev` instead of the aqt kit also
+works on Trixie, and `tools/package_appimage.sh` produces
+`TradingApp-<version>-aarch64.AppImage`. Bookworm (Debian 12) has no supported
+route: its glibc 2.36 is below what Qt's aarch64 binaries need (2.38) and its own
+Qt is 6.4.2, below the app's floor — upgrade the OS.
+Details — display server (`xcb` / `wayland` / `eglfs`), which pipeline stages
+report `skipped` on ARM64 and why, and what CI verifies —
+in [docs/platforms.md](docs/platforms.md).
 
 ### Windows (MSVC)
 
@@ -214,13 +302,15 @@ Caveats specific to Android:
 | Platform | Artifact | How to run it |
 |---|---|---|
 | Linux (x86-64) | `TradingApp-<version>-x86_64.AppImage` | `chmod +x` it and run — one file, no install, Qt bundled |
+| Linux (ARM64, incl. Raspberry Pi 4/5) | `TradingApp-<version>-aarch64.AppImage` | same — needs a 64-bit OS with glibc ≥ 2.39: Raspberry Pi OS **Trixie** or Ubuntu 24.04 for Pi (Qt's own aarch64 binaries require 2.38, see [docs/platforms.md](docs/platforms.md)) |
 | Windows (x64) | `TradingApp-<version>-windows-x64.zip` | unzip anywhere and run `TradingApp.exe` — every DLL is inside, no Qt and no MSVC redistributable needed |
 
-Both are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
+All are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
 each with a `.sha256` next to it. Build them yourself into `downloads/`:
 
 ```bash
-tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-x86_64.AppImage
+tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-<arch>.AppImage
+                                   #           (arch = the host's: x86_64 or aarch64)
 ```
 ```powershell
 .\tools\package_portable.ps1       # Windows -> downloads\TradingApp-<version>-windows-x64.zip
@@ -348,6 +438,8 @@ independently unit-testable and shared by every view that shows a signal.
 | [`TradePlan.*`](src/domain/TradePlan.h)           | Costed trade proposal: verdict, P(win), risk factor, leverage, SL/TP, cost bill |
 | [`PositionMath.*`](src/domain/PositionMath.h)     | SL/TP amount↔rate maths, value-per-point, price decimals |
 | [`EventInsight.*`](src/domain/EventInsight.h)     | Macro-event impact heuristics and descriptions |
+| [`TradeScript.*`](src/domain/TradeScript.h)       | Trade-script parsing + per-entry execution predicates |
+| [`PaperTrader.*`](src/domain/PaperTrader.h)       | Paper-trading bot: simulated account, real cost model, entry/exit rules |
 
 ### `src/services/` — integration (`trading_services`, adds Qt Network)
 
@@ -358,6 +450,7 @@ independently unit-testable and shared by every view that shows a signal.
 | [`SimulationEngine.*`](src/services/SimulationEngine.h) | Synthetic feed + virtual account (no-credentials fallback) |
 | [`MarketFeeds.*`](src/services/MarketFeeds.h)         | Public web feeds: VIX, TradingView ratings, news |
 | [`AiAdvisor.*`](src/services/AiAdvisor.h)             | Claude (Anthropic API) decision synthesis |
+| [`OllamaAdvisor.*`](src/services/OllamaAdvisor.h)     | Local-LLM trading proposal (Ollama, optional, no key) |
 | [`JsonHttp.*`](src/services/JsonHttp.h)               | Shared reply/retry/JSON plumbing for all REST calls |
 | [`EconomicCalendar.*`](src/services/EconomicCalendar.h) | Macro-economic calendar feed |
 
@@ -371,6 +464,8 @@ independently unit-testable and shared by every view that shows a signal.
 | [`ChartView.*`](src/ui/ChartView.h)           | Interactive pan/zoom chart view |
 | [`PositionsModel.*`](src/ui/PositionsModel.h) | Open-trades table model, in-place re-price |
 | [`TradeGauge.*`](src/ui/TradeGauge.h)         | Per-trade gauge window |
+| [`TradeScriptPanel.*`](src/ui/TradeScriptPanel.h) | Trade-script runner + window |
+| [`BotSimPanel.*`](src/ui/BotSimPanel.h)       | Paper-trading bot runner + window (simulated money, live prices) |
 | [`Palette.h`](src/ui/Palette.h)               | Shared UI colors |
 | [`main.cpp`](src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
 
@@ -381,6 +476,22 @@ to one PNG each (further windows get a `-1`, `-2`, … suffix) after 3000 ms and
 exits — handy for headless screenshots (`QT_QPA_PLATFORM=offscreen`).
 `TRADINGAPP_SHOT_OPEN=1` opens the decision and closed-trades windows first;
 `TRADINGAPP_SHOT_DELAY_MS` overrides the capture delay.
+
+## The bot's switches
+
+| Variable / setting | Effect |
+|---|---|
+| `TRADINGAPP_BOT_ARM=1` | arms the paper bot at start-up, for unattended runs (the armed flag is persisted anyway) |
+| `TRADINGAPP_BOT_AI=off\|confirm\|lead` | how much say the local model gets over ENTRIES (REQ-F-030); it may also close positions it no longer believes in (REQ-F-032) |
+| `TRADINGAPP_BOT_NET=off\|advise\|gate` | how much say the LEARNED model gets (REQ-F-033): score only, or refuse below the floor once it is trusted |
+| `TRADINGAPP_BOT_TARGET` / `TRADINGAPP_BOT_LOSS_LIMIT` | the daily stopping rules in EUR of booked net; `0` switches one off (REQ-F-031) |
+| `TRADINGAPP_BOT_TRAIN=1` | refit the learned model once at start-up (for headless machines with nobody to press the button) |
+| `config.json`: `botDailyTarget`, `botDailyLossLimit`, `ollamaHost`, `ollamaModel` | the same settings, without the environment |
+
+The bot writes three files next to its config (`~/.config/TradingApp/eToro Trader/`
+on Linux): `botsim.json` (the book — open trades, closed trades, the day ledger),
+`botsim-experience.jsonl` (one training example per closed trade) and `botnet.json`
+(the model it fitted to them).
 
 
 ## Additional build information

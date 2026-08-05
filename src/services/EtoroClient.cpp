@@ -932,6 +932,11 @@ void EtoroClient::fetchFeesReal()
     });
 }
 
+void EtoroClient::setExtraQuoteInstruments(const QSet<qint64> &instrumentIds)
+{
+    m_extraQuoteIds = instrumentIds;
+}
+
 double EtoroClient::spreadPctFor(const QString &symbol) const
 {
     return m_spreadPctById.value(m_idBySymbol.value(symbol, 0), 0.0);
@@ -1198,7 +1203,10 @@ void EtoroClient::pollPriceReal()
     // The instrument on screen plus every held one, in ONE call. Marking the
     // open-trades rows used to depend on a second bulk call issued per portfolio poll,
     // which left every row but the one on screen as stale as that snapshot.
+    // The paper bot's simulated holdings ride along in the same call (REQ-F-029) —
+    // the endpoint takes a batch of ids, so more instruments cost no extra request.
     QSet<qint64> want = m_heldInstrumentIds;
+    want.unite(m_extraQuoteIds);
     if (m_instrument.isValid()) {
         static_cast<void>(want.insert(m_instrument.instrumentId));
     }

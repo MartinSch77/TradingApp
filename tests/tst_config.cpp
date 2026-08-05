@@ -26,7 +26,8 @@ constexpr std::array kEnvVars{"ETORO_CONFIG",     "ETORO_API_KEY",
                               "ETORO_MODE",       "ETORO_SYMBOL",
                               "ETORO_BASE_URL",   "ETORO_ORDER_CURRENCY",
                               "ETORO_POLL_MS",    "ETORO_LEVERAGE",
-                              "ANTHROPIC_API_KEY"};
+                              "ANTHROPIC_API_KEY", "TRADINGAPP_BOT_TARGET",
+                              "TRADINGAPP_BOT_LOSS_LIMIT"};
 
 } // namespace
 
@@ -104,6 +105,31 @@ private slots:
         QCOMPARE(cfg.mode, QStringLiteral("demo"));           // env beats file
         QCOMPARE(cfg.apiKey, QStringLiteral("env-key"));      // env beats secrets file
         QCOMPARE(cfg.userKey, QStringLiteral("file-user"));   // untouched key stays
+    }
+
+    //! @tstid TS-CFG-005 @design DES-SVC-CFG
+    // @relation(REQ-F-031, scope=function)
+    void TS_CFG_005_dailyRulesAreConfigurable()
+    {
+        const QTemporaryDir dir;
+        QVERIFY(QDir::setCurrent(dir.path()));
+        const Config defaults = Config::load();
+        QCOMPARE(defaults.botDailyTarget, 350.0);        // the documented default
+        QCOMPARE(defaults.botDailyLossLimit, 350.0);
+
+        writeFile(dir.filePath(QStringLiteral("config.json")),
+                  R"({"botDailyTarget":500.0,"botDailyLossLimit":250.0})");
+        const Config fromFile = Config::load();
+        QCOMPARE(fromFile.botDailyTarget, 500.0);
+        QCOMPARE(fromFile.botDailyLossLimit, 250.0);
+
+        // 0 is a real value here: it switches the rule off. And a negative number is
+        // rejected rather than applied — a typo must never widen what may be lost.
+        qputenv("TRADINGAPP_BOT_TARGET", "0");
+        qputenv("TRADINGAPP_BOT_LOSS_LIMIT", "-100");
+        const Config fromEnv = Config::load();
+        QCOMPARE(fromEnv.botDailyTarget, 0.0);
+        QCOMPARE(fromEnv.botDailyLossLimit, 250.0);      // the file value stands
     }
 
     //! @tstid TS-CFG-004 @design DES-SVC-CFG

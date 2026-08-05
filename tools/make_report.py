@@ -732,7 +732,7 @@ def build_report(out_path, build_dir):
     rows = [["Measurement", "Result"],
             ["Lines (gcov/lcov)", status_cell(pct(coverage["lines"]), GREEN if coverage["lines"] else GREY)],
             ["Functions (gcov/lcov)", status_cell(pct(coverage["functions"]), GREEN if coverage["functions"] else GREY)],
-            ["MC/DC (clang-18 source-based)", status_cell(coverage["mcdc"] or "—", GREEN if coverage["mcdc"] else GREY)]]
+            ["MC/DC (clang source-based)", status_cell(coverage["mcdc"] or "—", GREEN if coverage["mcdc"] else GREY)]]
     rep.table(rows, [80 * mm, 40 * mm])
     if coverage["mcdc_rows"]:
         rep.gap(2)

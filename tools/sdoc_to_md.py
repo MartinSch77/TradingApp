@@ -16,11 +16,34 @@ OUT = ROOT / "docs" / "requirements.md"
 
 text = SDOC.read_text(encoding="utf-8")
 
+
+def cell(value: str) -> str:
+    """One markdown table cell out of a (possibly multi-paragraph) sdoc field.
+
+    A table cell cannot contain a newline, so paragraphs are joined with <br><br>
+    and wrapped lines are reflowed. '|' would end the cell, hence the escape.
+    """
+    paragraphs = [" ".join(p.split()) for p in value.split("\n\n")]
+    return "<br><br>".join(p for p in paragraphs if p).replace("|", "\\|")
+
+
 sections: list[tuple[str, list[dict]]] = []
 current: list[dict] | None = None
 req: dict | None = None
+# Name of the field whose >>> … <<< block is being collected, and its lines.
+# StrictDoc writes long fields as such a block, and reading only the first line
+# put a literal ">>>" into the table for every multi-paragraph requirement.
+collecting: str | None = None
+block: list[str] = []
 for line in text.splitlines():
-    if line.startswith("[[SECTION]]"):
+    if collecting is not None:
+        if line.strip() == "<<<":
+            if req is not None:
+                req[collecting] = cell("\n".join(block))
+            collecting, block = None, []
+        else:
+            block.append(line)
+    elif line.startswith("[[SECTION]]"):
         current = []
         req = None
     elif m := re.match(r"^TITLE: (.+)$", line):
@@ -33,11 +56,15 @@ for line in text.splitlines():
         if current is not None:
             current.append(req)
     elif req is not None and (m := re.match(r"^(UID|VERIFICATION|STATEMENT): (.+)$", line)):
-        value = m.group(2)
+        field, value = m.group(1).lower(), m.group(2)
+        if value.strip() == ">>>":
+            # multi-line field: the value follows, terminated by <<<
+            collecting = field
+            continue
         # single-line sdoc strings may be quoted to protect ':' — unquote
         if value.startswith("'") and value.endswith("'"):
             value = value[1:-1]
-        req[m.group(1).lower()] = value
+        req[field] = cell(value)
 
 if not sections or any(not reqs for _, reqs in sections):
     sys.exit(f"error: no sections/requirements parsed from {SDOC}")

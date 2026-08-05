@@ -27,6 +27,20 @@ struct Config {
     qint32 pollIntervalMs = 5000;                         // price/portfolio poll cadence
     QString anthropicApiKey;                              // optional: enables the Claude AI
                                                           // source in the decision window
+    // Optional LOCAL model via Ollama (REQ-F-030): the trading-proposal source the
+    // bot simulation can run on. No key — it is a service on your own machine, so
+    // only the host and the model name are configuration. An empty model means
+    // "not configured": the feature reports itself unavailable and nothing else
+    // changes.
+    QString ollamaHost = QStringLiteral("http://localhost:11434");
+    QString ollamaModel;                                  // e.g. "llama3.2" or "qwen2.5:7b"
+
+    // The bot's daily stopping rules (REQ-F-031), in EUR of BOOKED net. The target
+    // is what the day aims at, the limit what it refuses to lose; reaching either
+    // stops opening for that day. Configurable because "how much per day" is a
+    // capital decision, not a code decision — 0 disables the rule it belongs to.
+    double botDailyTarget = 350.0;
+    double botDailyLossLimit = 350.0;
 
     [[nodiscard]] bool hasCredentials() const;  // out-of-line: keeps coverage records unambiguous
 

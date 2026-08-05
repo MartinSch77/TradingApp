@@ -35,6 +35,8 @@ suspect-link review on item changes) is the one reason to reconsider.
 
 ## Structural coverage — line, branch, MC/DC
 
+    tools/publish_release.sh --dry-run  # what a release would attach, and whether the
+                                        # evidence supports publishing at all
     tools/coverage.sh coco-components   # Coco again, but only the COMPONENT tests,
                                         # reported per test case: which functions of
                                         # each integrated component (domain +

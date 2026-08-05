@@ -13,7 +13,7 @@ if(POLICY CMP0156)
 endif()
 
 project(TradingApp
-    VERSION 1.0.0
+    VERSION 1.0.1
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 

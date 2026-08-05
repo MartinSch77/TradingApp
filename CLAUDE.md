@@ -19,6 +19,10 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
                                # g++ -fanalyzer+lizard+PMD CPD+codespell
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
+tools/publish_release.sh       # release: REFUSES unless the evidence is there
+                               # (tests green, 7 analyzers at 0, ratchet clean,
+                               # 0 hard gaps, PDF newer than the sources), then
+                               # attaches binaries + docs + qualification bundle
 tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
                                # whole run in one colour PDF (build_all `report`
                                # stage; skips with exit 3 without reportlab). Reads
@@ -257,6 +261,13 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - Coverity Scan runs on its weekly cron or `gh workflow run coverity.yml` only.
   Do NOT add a push trigger: the free tier's weekly submission cap plus a
   shared analysis queue (~188 builds deep) make per-push builds pure waste.
+- Publishing goes through `tools/publish_release.{sh,ps1}` and NOWHERE else: it
+  re-checks the evidence (tests, the seven analyzers at zero, the metrics ratchet,
+  0 hard gaps) and that every artefact is NEWER than the newest tracked source,
+  then attaches the binaries for THAT version plus the docs and qualification
+  bundles. Artefacts named for another version are skipped and named — the release
+  workflow rebuilds all four platforms on the tag. The qualification bundle is the
+  one CI cannot produce alone: its PDF carries the Axivion result.
 - Stage exit code 3 = "skipped" (both build_all runners report it and stay
   green; any other non-zero code is a real failure). Exit 3 exists in
   `axivion/start_analysis.{sh,ps1}`, `tools/coverage.{sh,ps1}` (Coco /

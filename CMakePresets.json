@@ -75,7 +75,7 @@
         {
             "name": "linux-gcc-debug",
             "displayName": "Linux · GCC · Debug (Ninja)",
-            "description": "Reference-platform development build. Needs QT_PREFIX (e.g. ~/Qt/6.10.2/gcc_64).",
+            "description": "Reference-platform development build. Needs QT_PREFIX (e.g. ~/Qt/6.11.1/gcc_64, or ~/Qt/6.11.1/gcc_arm64 on ARM64/Raspberry Pi — tools/common.sh prints the right one).",
             "inherits": "qt-from-env",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build",

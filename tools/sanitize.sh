@@ -5,9 +5,11 @@
 #   asan-ubsan  GCC build with AddressSanitizer (incl. LeakSanitizer) +
 #               UndefinedBehaviorSanitizer; halt_on_error makes any finding
 #               fail the run loudly.
-#   tsan        clang-18 build with ThreadSanitizer (data races, lock-order
+#   tsan        clang build with ThreadSanitizer (data races, lock-order
 #               inversions). Separate build tree: TSan cannot be combined
-#               with ASan.
+#               with ASan. The clang version is resolved (llvm_suffix in
+#               tools/common.sh, >= 18 to match the rest of the pipeline);
+#               without one this mode reports `skipped`, not failed.
 #   valgrind    memcheck over the plain build's tests with full leak search:
 #               --leak-check=full --show-leak-kinds=all --track-origins=yes
 #               --error-exitcode=1
@@ -27,7 +29,8 @@ set -uo pipefail
 
 MODE="${1:-all}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
+. "$ROOT/tools/common.sh"
+QT_PREFIX="${QT_PREFIX:-$(qt_prefix)}"
 JOBS="$(nproc)"
 OUT="$ROOT/analysis-results"
 mkdir -p "$OUT"
@@ -56,9 +59,20 @@ run_asan_ubsan() {
 
 run_tsan() {
     local BUILD="$ROOT/build-san-tsan"
+    # TSan is a clang build here (GCC's TSan and Qt do not mix as cleanly), and
+    # clang++ / llvm-symbolizer must be the same installation. Exit 3 =
+    # "skipped" when the host has no clang >= 18: ASan+UBSan and valgrind still
+    # provide dynamic evidence, so this is not a failure of the code.
+    local llvm
+    if ! llvm="$(llvm_suffix 18)"; then
+        echo "SKIPPED: no clang >= 18 on this host — ThreadSanitizer build needs clang." >&2
+        echo "         Debian/Ubuntu: apt-get install clang-18 llvm-18 (or a newer clang-NN + llvm-NN)." >&2
+        return 3
+    fi
+    echo "TSan toolset: clang++$llvm"
     cmake -S "$ROOT" -B "$BUILD" -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_CXX_COMPILER=clang++-18 \
+        -DCMAKE_CXX_COMPILER="clang++$llvm" \
         -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g" \
         -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" &&
         cmake --build "$BUILD" -j"$JOBS" || return 1
@@ -71,8 +85,9 @@ run_tsan() {
     # ignore_noninstrumented_modules=1 is the canonical fix for mixing TSan
     # with a non-TSan Qt; project code stays fully checked. The ctest timeout
     # is the belt-and-braces guard against any future hang; the explicit
-    # symbolizer path gives file:line in reports (only -18 binaries exist).
-    (cd "$BUILD" && TSAN_OPTIONS="exitcode=1:second_deadlock_stack=1:ignore_noninstrumented_modules=1:suppressions=$ROOT/tools/tsan.supp:external_symbolizer_path=/usr/bin/llvm-symbolizer-18" \
+    # symbolizer path gives file:line in reports (TSan will not search PATH for
+    # a versioned llvm-symbolizer on its own).
+    (cd "$BUILD" && TSAN_OPTIONS="exitcode=1:second_deadlock_stack=1:ignore_noninstrumented_modules=1:suppressions=$ROOT/tools/tsan.supp:external_symbolizer_path=$(command -v "llvm-symbolizer$llvm")" \
         ctest --output-on-failure --timeout 600) 2>&1 | tee "$OUT/sanitize-tsan.raw.txt" || rc=1
     normalize tsan
     [ $rc -eq 0 ] && echo "TSan: all tests clean"
@@ -83,6 +98,12 @@ run_valgrind() {
     # Second, independent dynamic checker over the already-built plain tests.
     local BUILD="$ROOT/build"
     local rc=0 exe
+    # Said out loud, not skipped quietly: without valgrind this evidence is
+    # simply absent (exit 3 = skipped), and the run must not look complete.
+    if ! command -v valgrind >/dev/null 2>&1; then
+        echo "SKIPPED: valgrind is not installed (Debian/Ubuntu: apt-get install valgrind)." >&2
+        return 3
+    fi
     : > "$OUT/sanitize-valgrind.raw.txt"
     for exe in "$BUILD"/tests/tst_*; do
         [ -f "$exe" ] && [ -x "$exe" ] || continue
@@ -106,9 +127,22 @@ tsan) run_tsan ;;
 valgrind) run_valgrind ;;
 all)
     FAIL=0
-    run_asan_ubsan || FAIL=1
-    run_tsan || FAIL=1
-    run_valgrind || FAIL=1
+    # A checker the host cannot provide (no clang >= 18, no valgrind) reports 3 =
+    # skipped and is announced as such; only a real finding or build error fails
+    # the stage. Running two of three checkers is still evidence — pretending all
+    # three ran would not be.
+    run_one() { # mode-function, label
+        local rc=0
+        "$1" || rc=$?
+        case $rc in
+        0) ;;
+        3) echo "$2: SKIPPED — see the message above" ;;
+        *) FAIL=1 ;;
+        esac
+    }
+    run_one run_asan_ubsan "ASan+UBSan"
+    run_one run_tsan "TSan"
+    run_one run_valgrind "valgrind"
     exit $FAIL
     ;;
 *)

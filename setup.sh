@@ -12,10 +12,18 @@
 #          PlantUML), python3 + pipx, Qt xcb/OpenGL runtime libraries
 #   pipx   cmake (>= 4.2 — distro cmake is usually too old), strictdoc,
 #          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr
-#   aqt    Qt ${QT_VERSION} (gcc_64 + qtcharts) into ~/Qt — the layout the
-#          build scripts expect (override with QT_PREFIX at build time)
+#   aqt    Qt ${QT_VERSION} (+ qtcharts) into ~/Qt — the layout the build
+#          scripts expect (override with QT_PREFIX at build time). The kit
+#          follows the host: gcc_64 on x86-64, gcc_arm64 on ARM64 (Raspberry
+#          Pi 4/5 with a 64-bit OS — Qt ships official Linux ARM64 binaries
+#          from 6.7 on). See docs/platforms.md for the Raspberry Pi route.
 #   curl   PlantUML jar (pinned in tools/fetch_plantuml.sh); supply-chain
 #          tools syft / grype / trivy into ~/.local/bin
+#
+# Separate, opt-in modes (large downloads nobody building the app should need):
+#   ./setup.sh android   SDK + NDK + system image + a Qt kit per ABI (~6 GB)
+#   ./setup.sh ollama    local LLM runtime + a small model (~2.4 GB), which is
+#                        what the bot simulation's proposal source uses (REQ-F-030)
 #
 # NOT installable here — LICENSE-BOUND, so they are detected and reported, and
 # the stages that need them SKIP with a message instead of failing (exit 3 =
@@ -36,6 +44,10 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 QT_VERSION="${QT_VERSION:-6.11.1}"
 QT_DIR="$HOME/Qt"
 export PATH="$HOME/.local/bin:$PATH"
+# Host-dependent names (Qt kit directory, aqt coordinates, AppImage arch) —
+# the same helper the build scripts use, so both agree on one answer.
+. "$ROOT/tools/common.sh"
+QT_KIT="$(qt_kit_dir)"
 
 SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
@@ -72,7 +84,7 @@ version_of() {
     # aqt has no --version; the subcommand is spelled "version".
     aqt) aqt version 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 ;;
     clang-18) clang-18 --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 ;;
-    qt) [ -d "$QT_DIR/$QT_VERSION/gcc_64" ] && echo "$QT_VERSION" ;;
+    qt) [ -n "$QT_KIT" ] && [ -d "$QT_DIR/$QT_VERSION/$QT_KIT" ] && echo "$QT_VERSION" ;;
     # PMD prints a banner before the version line.
     pmd) local pmd_bin; pmd_bin="$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)"
         [ -x "$pmd_bin" ] && "$pmd_bin" --version 2>/dev/null | grep -oE 'PMD [0-9.]+' | head -1 | awk '{print $2}' ;;
@@ -168,7 +180,86 @@ android_install() {
     echo "Run:    tools/build_android.sh --abi android_x86_64 --run  (emulator + screenshot)"
 }
 
+# ---------------------------------------------------------------------------
+# Ollama (separate mode: ~1.4 GB of runtime + a model, and only the local-LLM
+# proposal source of REQ-F-030 needs it — nobody building the app should have to
+# download it). Everything lands under $HOME: no root, no system service.
+# ---------------------------------------------------------------------------
+OLLAMA_DIR="${OLLAMA_DIR:-$HOME/.local/ollama}"
+OLLAMA_VERSION="${OLLAMA_VERSION:-v0.32.5}"
+# A small instruct model that answers in JSON and runs on CPU in seconds. Bigger
+# is better for the actual trading calls — qwen2.5:7b, llama3.1:8b — but this one
+# makes the feature demonstrable on any machine.
+OLLAMA_PULL_MODEL="${OLLAMA_PULL_MODEL:-qwen2.5:1.5b}"
+
+ollama_install() {
+    echo "== Ollama ($OLLAMA_DIR) =="
+    local arch tarball
+    case "$(host_arch)" in
+    x86_64) arch="amd64" ;;
+    aarch64) arch="arm64" ;;
+    *)
+        echo "no Ollama build for $(host_arch)" >&2
+        return 1
+        ;;
+    esac
+    if [ ! -x "$OLLAMA_DIR/bin/ollama" ]; then
+        have zstd || { echo "zstd is required to unpack the Ollama archive (apt-get install zstd)" >&2; return 1; }
+        mkdir -p "$OLLAMA_DIR"
+        tarball="$OLLAMA_DIR/ollama.tar.zst"
+        echo "-- downloading ollama $OLLAMA_VERSION ($arch, ~1.4 GB)"
+        curl -sSL -o "$tarball" \
+            "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-$arch.tar.zst" ||
+            { echo "download failed" >&2; return 1; }
+        tar --use-compress-program=unzstd -xf "$tarball" -C "$OLLAMA_DIR" || return 1
+        rm -f "$tarball"
+    fi
+    echo "ollama: $("$OLLAMA_DIR/bin/ollama" --version 2>&1 | head -1)"
+
+    # The daemon is a user process, not a system service: start it if nothing is
+    # answering yet, and leave an already-running one alone.
+    if ! curl -sf http://localhost:11434/api/version >/dev/null 2>&1; then
+        echo "-- starting the daemon (background; log: $OLLAMA_DIR/serve.log)"
+        (nohup "$OLLAMA_DIR/bin/ollama" serve >"$OLLAMA_DIR/serve.log" 2>&1 &)
+        local waited=0
+        while [ "$waited" -lt 20 ] && ! curl -sf http://localhost:11434/api/version >/dev/null 2>&1; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+    fi
+    curl -sf http://localhost:11434/api/version >/dev/null 2>&1 &&
+        echo "daemon: up at http://localhost:11434" ||
+        { echo "daemon did not come up — see $OLLAMA_DIR/serve.log" >&2; return 1; }
+
+    echo "-- pulling $OLLAMA_PULL_MODEL"
+    PATH="$OLLAMA_DIR/bin:$PATH" "$OLLAMA_DIR/bin/ollama" pull "$OLLAMA_PULL_MODEL" >/dev/null 2>&1 ||
+        { echo "pull failed" >&2; return 1; }
+    echo
+    echo "Configured models: $(curl -sf http://localhost:11434/api/tags |
+        python3 -c 'import json,sys; print(", ".join(m["name"] for m in json.load(sys.stdin)["models"]))' 2>/dev/null)"
+    echo
+    echo "Point the app at it (either one):"
+    echo "  config.json:  \"ollamaModel\": \"$OLLAMA_PULL_MODEL\""
+    echo "  environment:  OLLAMA_MODEL=$OLLAMA_PULL_MODEL"
+    echo "Then open 'Bot sim…' and pick confirm or lead next to \"Local model\"."
+}
+
 status() {
+    echo "== host =="
+    report "arch" "$(host_arch)" "$(uname -sr)"
+    if [ -n "$QT_KIT" ]; then
+        report "Qt kit dir" "$QT_KIT" "aqt: $(qt_aqt_host) / $(qt_aqt_arch)"
+    else
+        report "Qt kit dir" "n/a" "no official Qt binaries for $(host_arch) — use the distro Qt 6"
+    fi
+    # The MC/DC coverage and TSan stages need clang >= 18 and resolve the version
+    # themselves; report what they will find rather than only probing clang-18.
+    local llvm
+    if llvm="$(llvm_suffix 18)"; then
+        report "llvm >= 18" "ok" "clang++$llvm (MC/DC + TSan available)"
+    else
+        report "llvm >= 18" "missing" "MC/DC coverage and TSan report 'skipped'"
+    fi
     echo "== toolchain status =="
     # Keep this list in step with Show-Status in setup.ps1 so both platforms
     # report the same set of tools.
@@ -212,13 +303,17 @@ status() {
     else
         report "reportlab" "MISSING" "PDF report stage skips (apt python3-reportlab)"
     fi
-    # Any gcc_64 kit will do; the build scripts take the newest.
+    # Any kit for THIS architecture will do; the build scripts take the newest.
+    # Without one they fall back to a distribution Qt 6, so report that instead of
+    # a bare MISSING when the system has one.
     local qt
-    qt="$(ls -d "$QT_DIR"/*/gcc_64 2>/dev/null | sort -V | tail -1)"
+    qt="$(qt_prefix "$QT_VERSION")"
     if [ -n "$qt" ]; then
         report "Qt" "ok" "$qt"
+    elif command -v qmake6 >/dev/null 2>&1; then
+        report "Qt" "ok" "distribution Qt $(qmake6 -query QT_VERSION 2>/dev/null) ($(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null))"
     else
-        report "Qt" "MISSING" "expected $QT_DIR/$QT_VERSION/gcc_64"
+        report "Qt" "MISSING" "expected $QT_DIR/$QT_VERSION/${QT_KIT:-<no kit for this arch>}"
     fi
     [ -f "$ROOT/tools/third-party/plantuml.jar" ] &&
         report "plantuml" "ok" "$(version_of plantuml)" ||
@@ -226,8 +321,8 @@ status() {
     [ -x "$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)" ] &&
         report "pmd" "ok" "$(version_of pmd)" ||
         report "pmd" "missing" "copy-paste detection skips; ./setup.sh install fetches it"
-    [ -x "$ROOT/tools/third-party/linuxdeploy-x86_64.AppImage" ] &&
-        report "linuxdeploy" "ok" "tools/third-party" ||
+    [ -x "$ROOT/tools/third-party/linuxdeploy-$(host_arch).AppImage" ] &&
+        report "linuxdeploy" "ok" "tools/third-party (linuxdeploy-$(host_arch).AppImage)" ||
         report "linuxdeploy" "missing" "AppImage packaging; ./setup.sh install fetches it"
     echo "== no Linux counterpart =="
     report "OpenCppCov" "n/a" "Windows-only; gcov+lcov is the Linux line/branch tool"
@@ -236,6 +331,10 @@ status() {
         report "axivion" "ok" "$HOME/bauhaus-suite"
     elif command -v axivion_ci >/dev/null 2>&1; then
         report "axivion" "ok" "$(command -v axivion_ci)"
+    elif [ "$(host_arch)" != "x86_64" ]; then
+        # Not merely unlicensed: the Suite is published for x86-64 hosts only, so
+        # on an ARM64 box (Raspberry Pi) the stage can never do more than skip.
+        report "axivion" "n/a" "no $(host_arch) Suite build; 'axivion' stage reports skipped"
     else
         report "axivion" "manual" "license required; 'axivion' stage reports skipped"
     fi
@@ -255,15 +354,61 @@ status() {
     [ -x /opt/SquishCoco/bin/coveragescanner ] &&
         report "coco" "ok" "/opt/SquishCoco ($(/opt/SquishCoco/bin/cocolic --check 2>&1 | head -1))" ||
         report "coco" "manual" "license required; 'coverage.sh coco' reports skipped"
+    # Local LLM for the bot simulation's proposal source (REQ-F-030): optional, and
+    # installed by its own mode because it is a ~1.4 GB download plus a model.
+    if curl -sf http://localhost:11434/api/version >/dev/null 2>&1; then
+        report "ollama" "ok" "daemon up; models: $(curl -sf http://localhost:11434/api/tags |
+            python3 -c 'import json,sys; print(", ".join(m["name"] for m in json.load(sys.stdin)["models"]) or "none")' 2>/dev/null)"
+    elif [ -x "${OLLAMA_DIR:-$HOME/.local/ollama}/bin/ollama" ]; then
+        report "ollama" "manual" "installed but not running: ${OLLAMA_DIR:-$HOME/.local/ollama}/bin/ollama serve &"
+    else
+        report "ollama" "missing" "./setup.sh ollama (optional: the bot's local-LLM proposals)"
+    fi
     [ -f "$ROOT/apiKeyEtoro.json" ] &&
         report "api keys" "ok" "apiKeyEtoro.json present" ||
         report "api keys" "manual" "cp apiKeyEtoro.example.json apiKeyEtoro.json + fill in keys (app runs in SIMULATION without)"
 }
 
+# Packages of APT_PKGS this distribution actually has, and the ones it does not.
+# `apt-get install` is all-or-nothing: ONE unknown name aborts the whole step and
+# leaves the machine unprovisioned. That is not hypothetical — the clang-18 /
+# llvm-18 / clang-tools-18 names exist on Ubuntu 24.04 but not on every Debian or
+# Raspberry Pi OS release (Debian 13 ships clang-19, Debian 12 clang-16), and
+# those three are needed only for the MC/DC and TSan EVIDENCE, which reports
+# `skipped` without them (tools/coverage.sh, tools/sanitize.sh resolve the clang
+# version at run time). So install what exists and NAME what does not.
+apt_split_available() {
+    AVAILABLE=()
+    UNAVAILABLE=()
+    local p
+    for p in "${APT_PKGS[@]}"; do
+        if apt-cache show "$p" >/dev/null 2>&1; then
+            AVAILABLE+=("$p")
+        else
+            UNAVAILABLE+=("$p")
+        fi
+    done
+}
+
 apt_install() {
     echo "== apt packages =="
     $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq
-    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${APT_PKGS[@]}"
+    apt_split_available
+    if [ ${#UNAVAILABLE[@]} -gt 0 ]; then
+        echo "not offered by this distribution, skipping: ${UNAVAILABLE[*]}"
+        echo "  (clang-NN/llvm-NN only gate the MC/DC coverage and TSan stages, which"
+        echo "   then report 'skipped'; apt.llvm.org has packages for Debian/Ubuntu"
+        echo "   on both x86-64 and ARM64 if you want them.)"
+    fi
+    if [ ${#AVAILABLE[@]} -eq 0 ]; then
+        # Not "nothing to do": apt-cache knew none of the names, so this is not a
+        # Debian-family system (or its lists are empty) — say so instead of
+        # running apt-get with no arguments and reporting success.
+        echo "apt knows none of the required packages — is this a Debian/Ubuntu system" >&2
+        echo "with populated apt lists? (see the tool list in this script's header)" >&2
+        return 1
+    fi
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${AVAILABLE[@]}"
 }
 
 pipx_install() {
@@ -295,14 +440,26 @@ supply_chain_install() {
 }
 
 qt_install() {
-    echo "== Qt $QT_VERSION =="
-    if [ -d "$QT_DIR/$QT_VERSION/gcc_64" ]; then
-        echo "already at $QT_DIR/$QT_VERSION/gcc_64"
+    echo "== Qt $QT_VERSION ($(host_arch)) =="
+    if [ -z "$QT_KIT" ]; then
+        # No official Qt desktop binaries for this architecture (32-bit ARM,
+        # i686). The build then uses the distribution's Qt 6 — which the build
+        # scripts fall back to on their own — so this is a note, not a failure.
+        echo "Qt publishes no desktop binaries for $(host_arch); install the"
+        echo "distribution's Qt 6 instead (Debian/Raspberry Pi OS:"
+        echo "  sudo apt-get install qt6-base-dev qt6-charts-dev libqt6charts6"
+        echo "and note that the app needs Qt >= 6.5). See docs/platforms.md."
+        return 0
+    fi
+    if [ -d "$QT_DIR/$QT_VERSION/$QT_KIT" ]; then
+        echo "already at $QT_DIR/$QT_VERSION/$QT_KIT"
         return 0
     fi
     have aqt || { echo "aqt missing — pipx step must run first" >&2; return 1; }
     # qtbase (Widgets/Network/Test) + the Charts add-on the app links against.
-    aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -m qtcharts -O "$QT_DIR"
+    # ARM64 lives under its own aqt host name (linux_arm64) and installs into
+    # ~/Qt/<ver>/gcc_arm64 — hence qt_aqt_host/qt_aqt_arch instead of literals.
+    aqt install-qt "$(qt_aqt_host)" desktop "$QT_VERSION" "$(qt_aqt_arch)" -m qtcharts -O "$QT_DIR"
 }
 
 plantuml_install() {
@@ -352,16 +509,19 @@ install)
 update)
     echo "== apt update =="
     $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq
-    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade "${APT_PKGS[@]}"
+    # Same all-or-nothing trap as the install path: upgrade only what this
+    # distribution actually offers.
+    apt_split_available
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade "${AVAILABLE[@]}"
     echo "== pipx update =="
     pipx upgrade-all || true
     echo "== Qt =="
-    if have aqt; then
-        LATEST_QT="$(aqt list-qt linux desktop 2>/dev/null | tr ' ' '\n' | grep -E '^6\.' | sort -V | tail -1)"
-        if [ -n "${LATEST_QT:-}" ] && [ "$LATEST_QT" != "$QT_VERSION" ] && [ ! -d "$QT_DIR/$LATEST_QT/gcc_64" ]; then
+    if have aqt && [ -n "$QT_KIT" ]; then
+        LATEST_QT="$(aqt list-qt "$(qt_aqt_host)" desktop 2>/dev/null | tr ' ' '\n' | grep -E '^6\.' | sort -V | tail -1)"
+        if [ -n "${LATEST_QT:-}" ] && [ "$LATEST_QT" != "$QT_VERSION" ] && [ ! -d "$QT_DIR/$LATEST_QT/$QT_KIT" ]; then
             echo "newer Qt available: $LATEST_QT (installed: $QT_VERSION)."
             echo "install with:  QT_VERSION=$LATEST_QT ./setup.sh install"
-            echo "then build with:  QT_PREFIX=$QT_DIR/$LATEST_QT/gcc_64 ./build_all.sh"
+            echo "then build with:  QT_PREFIX=$QT_DIR/$LATEST_QT/$QT_KIT ./build_all.sh"
         else
             echo "Qt $QT_VERSION is current (or the newer version is already installed)"
         fi
@@ -388,8 +548,11 @@ status)
 android)
     android_install
     ;;
+ollama)
+    ollama_install
+    ;;
 *)
-    echo "usage: $0 [install|update|status|android]" >&2
+    echo "usage: $0 [install|update|status|android|ollama]" >&2
     exit 2
     ;;
 esac

@@ -10,22 +10,32 @@
 #      expect, plus packaging/TradingApp.desktop and packaging/tradingapp.png,
 #   3. linuxdeploy + its Qt plugin bundle the Qt libraries, the xcb platform
 #      plugin, the TLS backend the eToro API needs and the image formats,
-#   4. output: downloads/TradingApp-<version>-x86_64.AppImage
+#   4. output: downloads/TradingApp-<version>-<arch>.AppImage
+#      (x86_64, or aarch64 when built on an ARM64 host — a Raspberry Pi 4/5 with
+#      a 64-bit OS builds its own package with this same script)
 #
-# The Qt kit is taken from QT_PREFIX, else the newest ~/Qt/*/gcc_64 that has the
-# Charts module — a kit installed without Charts cannot build this app, and
-# picking "newest" blindly is how you get a configure error instead of a package.
+# The Qt kit is taken from QT_PREFIX, else the newest ~/Qt/*/<kit> that has the
+# Charts module, where <kit> is gcc_64 on x86-64 and gcc_arm64 on ARM64 — a kit
+# installed without Charts cannot build this app, and picking "newest" blindly is
+# how you get a configure error instead of a package.
 # The AppImage tooling comes from tools/fetch_linuxdeploy.sh (run by ./setup.sh,
-# or on demand here).
+# or on demand here) and is fetched for the host architecture.
 #
 # Glibc: an AppImage is only as portable as the glibc it was linked against, so
 # a build on Ubuntu 24.04 needs glibc >= 2.39 on the target machine. The release
 # workflow (.github/workflows/release.yml) therefore builds on ubuntu-22.04.
+# The ARM64 package cannot go that low: Qt's own aarch64 binaries reference
+# GLIBC_2.38 in libQt6Gui/libQt6Network (measured on the 6.8.3, 6.9.3 and 6.11.1
+# kits), where the x86-64 build of the same Qt stops at 2.34 — so the aarch64
+# package is built on ubuntu-24.04-arm and needs Raspberry Pi OS Trixie (glibc
+# 2.41) or Ubuntu 24.04 for Pi, not Bookworm (2.36). See docs/platforms.md.
 # OpenSSL is deliberately NOT bundled: Qt loads the system libssl at run time,
 # and shipping a copy would freeze its CVE state into the download.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/common.sh"
+ARCH="$(host_arch)"
 SKIP_BUILD=0
 for a in "$@"; do
     case "$a" in
@@ -43,7 +53,7 @@ OUT_DIR="$ROOT/downloads"
 JOBS="$(nproc)"
 
 if [ -z "${QT_PREFIX:-}" ]; then
-    for kit in $(ls -d "$HOME"/Qt/*/gcc_64 2>/dev/null | sort -Vr); do
+    for kit in $(ls -d "$HOME"/Qt/*/"$(qt_kit_dir)" 2>/dev/null | sort -Vr); do
         if [ -d "$kit/lib/cmake/Qt6Charts" ]; then
             QT_PREFIX="$kit"
             break
@@ -51,8 +61,8 @@ if [ -z "${QT_PREFIX:-}" ]; then
     done
 fi
 if [ -z "${QT_PREFIX:-}" ] || [ ! -d "$QT_PREFIX" ]; then
-    echo "no Qt kit with the Charts module found — set QT_PREFIX or run" >&2
-    echo "./setup.sh install (it installs Qt with -m qtcharts)" >&2
+    echo "no Qt kit with the Charts module found under ~/Qt/*/$(qt_kit_dir) — set" >&2
+    echo "QT_PREFIX or run ./setup.sh install (it installs Qt with -m qtcharts)" >&2
     exit 1
 fi
 if [ ! -d "$QT_PREFIX/lib/cmake/Qt6Charts" ]; then
@@ -63,7 +73,7 @@ fi
 VERSION="$(grep -m1 -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' "$ROOT/CMakeLists.txt" | awk '{print $2}')"
 VERSION="${VERSION:-0.0.0}"
 
-echo "== AppImage: TradingApp $VERSION (Qt at $QT_PREFIX) =="
+echo "== AppImage: TradingApp $VERSION $ARCH (Qt at $QT_PREFIX) =="
 
 # A tree cached against a different source dir or a different Qt kit keeps its
 # old Qt6_DIR even when -DCMAKE_PREFIX_PATH says otherwise (that is how a kit
@@ -111,8 +121,8 @@ install -Dm644 "$ROOT/apiKeyEtoro.example.json" \
     "$APPDIR/usr/share/TradingApp/apiKeyEtoro.example.json"
 install -Dm644 "$ROOT/config.json" "$APPDIR/usr/share/TradingApp/config.json"
 
-LD="$ROOT/tools/third-party/linuxdeploy-x86_64.AppImage"
-if [ ! -x "$LD" ] || [ ! -x "$ROOT/tools/third-party/linuxdeploy-plugin-qt-x86_64.AppImage" ]; then
+LD="$ROOT/tools/third-party/linuxdeploy-$ARCH.AppImage"
+if [ ! -x "$LD" ] || [ ! -x "$ROOT/tools/third-party/linuxdeploy-plugin-qt-$ARCH.AppImage" ]; then
     echo "-- fetching the AppImage tooling (pinned) --"
     "$ROOT/tools/fetch_linuxdeploy.sh"
 fi
@@ -137,7 +147,7 @@ export EXTRA_QT_PLUGINS="tls;imageformats;iconengines;styles;platformthemes"
 # QT_QPA_PLATFORM=offscreen. Wayland is deliberately not bundled: it would
 # drag in the whole libwayland stack, and XWayland serves xcb fine.
 export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
-export OUTPUT="$OUT_DIR/TradingApp-$VERSION-x86_64.AppImage"
+export OUTPUT="$OUT_DIR/TradingApp-$VERSION-$ARCH.AppImage"
 export VERSION
 
 "$LD" --appdir "$APPDIR" \

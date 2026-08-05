@@ -36,13 +36,19 @@
 # Usage: ./build_all.sh [stage ...]          default: all stages in the order above
 #        ./build_all.sh --skip axivion       everything except a stage (repeatable);
 #                                            the Axivion run is by far the slowest
-#        QT_PREFIX=<qt-kit> ./build_all.sh   (default: ~/Qt/6.11.1/gcc_64)
+#        QT_PREFIX=<qt-kit> ./build_all.sh   (default: the newest ~/Qt kit for this
+#                                            architecture — gcc_64 on x86-64,
+#                                            gcc_arm64 on ARM64/Raspberry Pi; empty
+#                                            when there is none, which lets CMake
+#                                            find a distribution Qt 6)
 #
 # Counterpart: ./clean_all.sh removes everything these stages generate.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-export QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
+# host-dependent bits (Qt kit directory per architecture) live in one place
+. "$ROOT/tools/common.sh"
+export QT_PREFIX="${QT_PREFIX:-$(qt_prefix)}"
 JOBS="$(nproc)"
 
 ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
@@ -181,6 +187,14 @@ EXIT_SKIPPED=3
 declare -A RESULT
 FAIL=0
 SKIPPED=0
+# Say which Qt is about to be used: on a host with no ~/Qt kit (a Raspberry Pi
+# built against apt's qt6-base-dev, say) the answer is "whatever CMake finds",
+# and that is worth stating rather than leaving to be inferred from a log.
+if [ -n "$QT_PREFIX" ]; then
+    echo "Qt kit: $QT_PREFIX ($(host_arch))"
+else
+    echo "Qt kit: none under ~/Qt for $(host_arch) — using the distribution Qt 6 CMake finds"
+fi
 for s in "${STAGES[@]}"; do
     echo
     echo "==================== $s ===================="

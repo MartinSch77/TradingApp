@@ -38,7 +38,7 @@ suspect-link review on item changes) is the one reason to reconsider.
     tools/coverage.sh        # auto: Squish Coco when installed AND licensed,
                              # otherwise both free modes below
     tools/coverage.sh gcov   # GCC --coverage → lcov/genhtml, line + branch
-    tools/coverage.sh mcdc   # clang-18 -fcoverage-mcdc → llvm-cov, incl. MC/DC
+    tools/coverage.sh mcdc   # clang >= 18 -fcoverage-mcdc → llvm-cov, incl. MC/DC
     tools/coverage.sh coco   # Squish Coco csg++ build, incl. native MC/DC
 
 Both reports land under `coverage/`. MC/DC (modified condition/decision
@@ -58,6 +58,13 @@ path above as the measuring tool of record. Note that clang-18 cannot
 instrument decisions with more than 6 conditions for MC/DC, so the sources keep
 every decision at ≤ 6 conditions (keyword groups are tested via
 `hasAny()`/`std::any_of`).
+
+The clang VERSION is resolved on the host, not hardcoded (`llvm_suffix` in
+`tools/common.sh`): `-fcoverage-mcdc` needs ≥ 18, and clang++, llvm-profdata and
+llvm-cov must come from one installation or the merged profile is rejected. A
+machine whose distribution ships an older clang — a Raspberry Pi OS Bookworm, say
+— gets gcov line/branch coverage and a `skipped` MC/DC step with the reason
+named, instead of a failed stage (@ref platforms).
 
 ### MC/DC on Windows — measured twice
 
@@ -102,7 +109,7 @@ computeDecisionRows over 25 instruments 4.5 → 0.22 ms per iteration.
 
     tools/sanitize.sh              # all three checkers in sequence
     tools/sanitize.sh asan-ubsan   # GCC ASan (incl. LeakSanitizer) + UBSan
-    tools/sanitize.sh tsan         # clang-18 ThreadSanitizer (data races)
+    tools/sanitize.sh tsan         # clang >= 18 ThreadSanitizer (data races)
     tools/sanitize.sh valgrind     # memcheck: --leak-check=full
                                    # --show-leak-kinds=all --track-origins=yes
                                    # --error-exitcode=1

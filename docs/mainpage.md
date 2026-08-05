@@ -19,7 +19,7 @@ cost/fee accounting.
   static analysis (Axivion, clang-tidy, cppcheck, clazy, g++ -fanalyzer)
 - @ref vmodel — how the V-model is covered with everything-as-code artefacts
 - @ref tools — the tools used: origin, version, role
-- @ref platforms — building for Linux, Windows, Android, iOS
+- @ref platforms — building for Linux (x86-64 and ARM64/Raspberry Pi), Windows, Android, iOS
 - @ref windows — the Windows (PowerShell) quality pipeline: script-by-script
   mapping against the `*.sh` entry points, tool substitutions and real gaps
 

@@ -11,6 +11,7 @@ analysis, sanitizers, Axivion — runs natively without WSL.
 
 | purpose | Linux | Windows |
 |---|---|---|
+| shared helpers (host arch → Qt kit, LLVM toolset) | `tools/common.sh` (sourced) | `tools\common.ps1` (dot-sourced) |
 | provision the toolchain | `./setup.sh` | `.\setup.ps1` |
 | build everything | `./build_all.sh` | `.\build_all.ps1` |
 | remove everything generated | `./clean_all.sh` | `.\clean_all.ps1` |

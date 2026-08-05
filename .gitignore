@@ -28,6 +28,7 @@ aqtinstall.log
 .DS_Store
 
 # Test / coverage / docs artifacts
+build-cov/
 build-cov-gcc/
 build-cov-mcdc/
 build-cov-coco/

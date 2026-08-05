@@ -33,6 +33,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/common.sh"
 EXIT_SKIPPED=3
 ABI="android_x86_64"
 BUILD_TYPE="Debug"
@@ -70,8 +71,10 @@ done
     skip "no Qt for Android kit with Charts for $ABI (aqt install-qt all_os android <ver> $ABI -m qtcharts -O ~/Qt)"
 QT_VER="$(basename "$(dirname "$QT_ANDROID")")"
 
-# The host (desktop) kit of the SAME Qt version builds the tools androiddeployqt runs.
-QT_HOST="$HOME/Qt/$QT_VER/gcc_64"
+# The host (desktop) kit of the SAME Qt version builds the tools androiddeployqt
+# runs — so it has to be the kit for the HOST architecture (gcc_64 on x86-64,
+# gcc_arm64 when cross-building for Android from an ARM64 box).
+QT_HOST="$HOME/Qt/$QT_VER/$(qt_kit_dir)"
 [ -d "$QT_HOST" ] || skip "the Android kit needs the matching desktop kit as its host: $QT_HOST"
 
 # --- SDK / NDK -------------------------------------------------------------

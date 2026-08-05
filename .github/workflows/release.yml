@@ -1,9 +1,10 @@
-# Downloadable builds: a Linux AppImage, a portable Windows ZIP and an Android
-# APK (arm64-v8a, release, signed — sideloadable).
+# Downloadable builds: a Linux AppImage for x86-64 AND one for ARM64 (Raspberry
+# Pi 4/5 on a 64-bit OS), a portable Windows ZIP and an Android APK (arm64-v8a,
+# release, signed — sideloadable).
 #
 # Triggers
-#   push of a v* tag   -> builds all three and attaches them to that release
-#   workflow_dispatch  -> builds all three and uploads them as run artifacts
+#   push of a v* tag   -> builds all four and attaches them to that release
+#   workflow_dispatch  -> builds all four and uploads them as run artifacts
 #                         only (nothing is published), so the packaging can be
 #                         exercised without cutting a release
 #
@@ -87,6 +88,69 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: appimage
+          path: |
+            downloads/*.AppImage
+            downloads/*.AppImage.sha256
+
+  appimage-arm64:
+    name: Linux AppImage (ARM64 / Raspberry Pi)
+    # NOT ubuntu-22.04-arm, even though the x86-64 job above uses 22.04 to reach
+    # the oldest possible glibc. Qt's own ARM64 binaries set the floor here, and
+    # they are stricter than the x86-64 ones: measured 2026-08-04 with objdump -T
+    # on the aqt kits, libQt6Gui/libQt6Network for aarch64 reference GLIBC_2.38
+    # (in 6.8.3, 6.9.3 AND 6.11.1 — there is no older, laxer ARM64 kit), while
+    # the x86-64 build of the same version stops at GLIBC_2.34. A 22.04-arm
+    # runner (glibc 2.35) therefore cannot even link this package.
+    # Consequence for the download: it needs glibc >= 2.39, i.e. Raspberry Pi OS
+    # TRIXIE (2.41) or Ubuntu 24.04 for Pi — Bookworm (2.36) is below Qt's own
+    # floor and no build setting here can change that. See docs/platforms.md.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      # aqt, not install-qt-action: the ARM64 desktop kit lives under its own aqt
+      # host (linux_arm64) and belongs in the ~/Qt layout package_appimage.sh
+      # resolves on its own — the same command ./setup.sh runs on a Pi.
+      - name: Install Qt for Linux ARM64 (with Charts)
+        run: |
+          set -euo pipefail
+          # --break-system-packages: the 24.04 image's python3 is externally
+          # managed (PEP 668), unlike the 22.04 one the x86-64 job runs on.
+          python3 -m pip install --break-system-packages --upgrade aqtinstall
+          python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
+            -m qtcharts -O "$HOME/Qt"
+
+      - name: Install build + AppImage dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build libfuse2 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libxkbcommon-x11-0
+          python3 -m pip install --break-system-packages --upgrade cmake
+
+      # No QT_PREFIX on purpose: the script has to find ~/Qt/<ver>/gcc_arm64 by
+      # itself, exactly as it must on a Raspberry Pi.
+      - name: Package
+        run: ./tools/package_appimage.sh
+
+      - name: Smoke test (headless start)
+        run: |
+          set -euo pipefail
+          app="$(ls downloads/TradingApp-*-aarch64.AppImage)"
+          QT_QPA_PLATFORM=offscreen ETORO_MODE=demo timeout 25 "$app" && rc=$? || rc=$?
+          # 124 = still running when the timeout fired: the healthy outcome for a
+          # GUI app. Anything else means it exited on its own.
+          if [ "$rc" -ne 124 ]; then
+            echo "AppImage exited with $rc instead of running" >&2
+            exit 1
+          fi
+          echo "aarch64 AppImage started and stayed up"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: appimage-arm64
           path: |
             downloads/*.AppImage
             downloads/*.AppImage.sha256
@@ -183,7 +247,7 @@ jobs:
     # Tag pushes only: a manual run stops after the build jobs, so the
     # packaging can be tested without publishing anything.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [appimage, windows-zip, android-apk]
+    needs: [appimage, appimage-arm64, windows-zip, android-apk]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

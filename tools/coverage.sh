@@ -19,6 +19,11 @@
 #    conditions ("unsupported MC/DC boolean expression") — the sources keep
 #    every decision at ≤ 6 conditions (see the hasAny() keyword-group helpers
 #    in EventInsight.cpp and signalAgainstPosition in MainWindow.cpp).
+#  * The clang VERSION is resolved, not hardcoded (llvm_suffix in
+#    tools/common.sh): -fcoverage-mcdc needs >= 18, and a Debian or Raspberry Pi
+#    OS release ships exactly one clang. Without a new enough one this mode
+#    reports `skipped` (exit 3) instead of failing — gcov still measures line and
+#    branch coverage.
 #  * "warning: N functions have mismatched data" is emitted by llvm-cov when
 #    the test binaries are cross-referenced against the one merged profile:
 #    a handful of identically-named symbols that every Qt Test executable
@@ -33,7 +38,8 @@ set -euo pipefail
 
 MODE="${1:-auto}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QT_PREFIX="${QT_PREFIX:-$HOME/Qt/6.11.1/gcc_64}"
+. "$ROOT/tools/common.sh"
+QT_PREFIX="${QT_PREFIX:-$(qt_prefix)}"
 JOBS="$(nproc)"
 COCO_DIR="${COCO_DIR:-/opt/SquishCoco}"
 
@@ -63,11 +69,23 @@ run_gcov() {
 
 run_mcdc() {
     local BUILD="$ROOT/build-cov-mcdc"
+    # One matched LLVM installation for the compiler, the profile merge and the
+    # report — see llvm_suffix() on why they must not be mixed. Exit 3 =
+    # "skipped" (build_all.sh), because no clang >= 18 is a property of the
+    # machine, not a defect in the code.
+    local llvm
+    if ! llvm="$(llvm_suffix 18)"; then
+        echo "SKIPPED: no clang >= 18 on this host — MC/DC needs -fcoverage-mcdc (clang 18+)." >&2
+        echo "         Install one (Debian/Ubuntu: apt-get install clang-18 llvm-18," >&2
+        echo "         or a newer clang-NN + llvm-NN) — gcov line/branch coverage is unaffected." >&2
+        return 3
+    fi
+    echo "MC/DC toolset: clang++$llvm ($("clang++$llvm" --version | head -1))"
     # C++-only project: set only the CXX compiler (a -DCMAKE_C_COMPILER would
     # draw a "Manually-specified variables were not used" warning).
     cmake -S "$ROOT" -B "$BUILD" -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_CXX_COMPILER=clang++-18 \
+        -DCMAKE_CXX_COMPILER="clang++$llvm" \
         -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc" \
         -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
     cmake --build "$BUILD" -j"$JOBS"
@@ -79,7 +97,7 @@ run_mcdc() {
         [ -f "$exe" ] && [ -x "$exe" ] || continue
         LLVM_PROFILE_FILE="$OUT/$(basename "$exe").profraw" "$exe" >/dev/null
     done
-    llvm-profdata-18 merge -sparse "$OUT"/*.profraw -o "$OUT/merged.profdata"
+    "llvm-profdata$llvm" merge -sparse "$OUT"/*.profraw -o "$OUT/merged.profdata"
     # llvm-cov takes the first binary positionally and the rest via -object.
     local BINS=()
     for exe in "$BUILD"/tests/tst_*; do
@@ -92,9 +110,9 @@ run_mcdc() {
     done
     local SOURCES=("$ROOT"/src/domain/*.cpp "$ROOT"/src/domain/*.h
         "$ROOT"/src/services/*.cpp "$ROOT"/src/services/*.h)
-    llvm-cov-18 report "${BINS[@]}" -instr-profile "$OUT/merged.profdata" \
+    "llvm-cov$llvm" report "${BINS[@]}" -instr-profile "$OUT/merged.profdata" \
         --show-mcdc-summary "${SOURCES[@]}" | tee "$OUT/summary.txt"
-    llvm-cov-18 show "${BINS[@]}" -instr-profile "$OUT/merged.profdata" \
+    "llvm-cov$llvm" show "${BINS[@]}" -instr-profile "$OUT/merged.profdata" \
         --show-mcdc --show-branches=count --format=html \
         --output-dir="$OUT" "${SOURCES[@]}"
     echo "HTML: $OUT/index.html   (MC/DC column in summary.txt and per-file views)"
@@ -150,9 +168,18 @@ auto)
         echo "auto: Squish Coco found at $COCO_DIR with a valid license — measuring with Coco"
         run_coco
     else
-        echo "auto: Squish Coco unavailable ($COCO_DIR missing or license invalid) — measuring with gcov + clang-18 MC/DC"
+        echo "auto: Squish Coco unavailable ($COCO_DIR missing or license invalid) — measuring with gcov + clang MC/DC"
         run_gcov
-        run_mcdc
+        # gcov above is real measurement, so a host without clang >= 18 must not
+        # turn the whole stage into `skipped` — the MC/DC part says so itself and
+        # the stage stays green. Any OTHER failure still fails the stage.
+        rc=0
+        run_mcdc || rc=$?
+        if [ "$rc" -eq 3 ]; then
+            echo "auto: MC/DC skipped (see above) — gcov line/branch coverage was measured"
+        elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+        fi
     fi
     ;;
 *)

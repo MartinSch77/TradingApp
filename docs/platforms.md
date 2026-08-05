@@ -1,18 +1,161 @@
 # Platform support
 
-@page platforms Building for Linux, Windows, Android, iOS
+@page platforms Building for Linux (x86-64 and ARM64/Raspberry Pi), Windows, Android, iOS
 @tableofcontents
 
-One CMake project covers all four targets (REQ-N-001, DES-BLD-CMAKE). The
+One CMake project covers all targets (REQ-N-001, DES-BLD-CMAKE). The
 code base contains no platform-specific API usage outside `main.cpp`'s WSL
 display-platform selection (guarded by environment checks) — everything else
-is portable Qt.
+is portable Qt, and there is no architecture-specific code at all: no
+intrinsics, no inline assembly, no assumptions about `char` signedness or type
+sizes, which is why the ARM64 port below is a toolchain matter rather than a
+code one.
+
+Where the host architecture matters — the Qt kit directory name, the AppImage
+architecture, the LLVM version — it is resolved in ONE place, `tools/common.sh`
+(the Linux counterpart of `tools/common.ps1`). Run it to see what a machine
+resolves to:
+
+    tools/common.sh
+    #   host arch      aarch64
+    #   Qt kit dir     gcc_arm64
+    #   aqt host       linux_arm64
+    #   aqt arch       linux_gcc_arm64
+    #   Qt prefix      /home/pi/Qt/6.11.1/gcc_arm64
+    #   LLVM toolset   clang++-19 (MC/DC + TSan available)
 
 ## Linux (reference platform)
 
     cmake -S . -B build -DCMAKE_PREFIX_PATH=~/Qt/6.10.2/gcc_64
     cmake --build build && ./build/TradingApp
     cd build && ctest                       # test suite
+
+## Raspberry Pi (Linux ARM64)
+
+Supported: any 64-bit-capable Pi — Pi 4, Pi 5, Pi 400, Compute Module 4/5,
+Zero 2 W — running a **64-bit Raspberry Pi OS Trixie (Debian 13) or newer**, or
+Ubuntu 24.04+ for ARM. Nothing about the app is x86: the ARM64 port is entirely a
+matter of pointing the toolchain at the right Qt kit, which the scripts now do
+themselves.
+
+Two OS-level constraints decide this, and both were measured rather than
+assumed (2026-08-04, `objdump -T` over the aqt kits):
+
+* **glibc ≥ 2.38.** Qt's official *aarch64* binaries reference `GLIBC_2.38` in
+  `libQt6Gui` and `libQt6Network` — in 6.8.3, 6.9.3 and 6.11.1 alike, so there is
+  no older, laxer ARM64 kit to fall back on. The *x86-64* build of the same Qt
+  stops at `GLIBC_2.34`, which is why this floor is an ARM-only surprise.
+  Raspberry Pi OS **Trixie** has glibc 2.41 and is fine; **Bookworm** has 2.36 —
+  below Qt's own floor, and no build setting on this side can change that.
+  Bookworm's distribution Qt (6.4.2) is in turn below the app's Qt ≥ 6.5 floor,
+  so a Bookworm Pi has no supported route: upgrade the OS (or run Ubuntu
+  24.04 for Pi, glibc 2.39).
+* **64-bit userland.** Qt publishes no desktop binaries for 32-bit ARM, and the
+  32-bit distribution's Qt is 6.4 — below the same floor. Check with `uname -m`:
+  `aarch64` is the supported answer, `armv7l`/`armv6l` is not (reinstall the
+  64-bit image; the hardware is fine).
+
+### Route 1: the project toolchain (what CI verifies)
+
+    ./setup.sh install          # same command as on x86-64
+    ./build_all.sh build test trace
+    ./build/TradingApp
+
+`setup.sh` needs no Raspberry-Pi-specific flags. It resolves the host
+architecture and installs Qt's official **Linux ARM64** kit —
+`aqt install-qt linux_arm64 desktop <version> linux_gcc_arm64 -m qtcharts`,
+which lands in `~/Qt/<version>/gcc_arm64` — and every entry point
+(`build_all.sh`, `tools/coverage.sh`, `tools/sanitize.sh`,
+`tools/package_appimage.sh`, `axivion/start_analysis.sh`) picks that kit up
+without `QT_PREFIX`. Two other things it handles that a Pi specifically needs:
+
+* **CMake ≥ 4.2**, which no Debian release ships (Trixie has 3.31) — it comes
+  from pipx, and the aarch64 wheels exist.
+* **Packages the distribution does not have.** `apt-get install` is
+  all-or-nothing, so one unknown name used to abandon the whole provisioning
+  step. The apt list is now filtered against `apt-cache` and the dropped names
+  are printed. On a Pi that is typically `clang-18`/`llvm-18`/`clang-tools-18`:
+  Raspberry Pi OS Trixie ships clang-19, and the version is resolved at run time
+  (below), so nothing needs those exact names.
+
+### Route 2: the distribution's Qt (no aqt download)
+
+    sudo apt-get install qt6-base-dev qt6-charts-dev qt6-base-dev-tools
+    ./build_all.sh build test           # finds the system Qt on its own
+
+When no `~/Qt` kit exists for the architecture, `tools/common.sh` resolves an
+EMPTY prefix on purpose: the scripts then configure without
+`CMAKE_PREFIX_PATH` and CMake finds the distribution Qt 6. `build_all.sh` says
+which of the two it used in its first line. This route sidesteps the glibc
+question entirely — the distribution's Qt is built against the distribution's
+glibc — but it substitutes a version question: Trixie's Qt 6.8 clears the app's
+Qt ≥ 6.5 floor, Bookworm's 6.4.2 does not.
+
+### Route 3: don't build at all
+
+`TradingApp-<version>-aarch64.AppImage` from the
+[latest release](https://github.com/MartinSch77/TradingApp/releases/latest) —
+one file, Qt bundled, `chmod +x` and run. Built by the same
+`tools/package_appimage.sh` as the x86-64 package (it fetches the aarch64
+linuxdeploy tooling, pinned by tag AND sha256 per architecture) on an
+`ubuntu-24.04-arm` runner — 24.04 and not 22.04 because of the GLIBC_2.38 floor
+above, so the artifact needs glibc ≥ 2.39: Trixie and Ubuntu 24.04 for Pi, not
+Bookworm. This is also the answer for the small boards — a Zero 2 W has 512 MB of
+RAM and will not compile a C++23 Qt application in reasonable time or memory, but
+it runs the AppImage.
+
+Build times for scale (4 cores): expect tens of minutes for
+`build_all.sh build test` on a Pi 5 and to want 4 GB of RAM or swap for a
+parallel build; `-j2` (`JOBS` is `nproc`) is the lever if the OOM killer
+appears.
+
+### Running it on the Pi
+
+The ARM64 kit ships the same platform plugins as the x86-64 one, so all three
+Pi situations are covered:
+
+| Situation | Platform plugin | Notes |
+|---|---|---|
+| Pi OS Desktop, Pi 5 (labwc/Wayland) | `xcb` via XWayland, or `wayland` | Default works; nothing to set |
+| Pi OS Desktop, Pi 4 and older (X11) | `xcb` | Default works |
+| Pi OS Lite, no desktop (KMS/DRM) | `QT_QPA_PLATFORM=eglfs` | Full-screen appliance mode; the user must be in the `video` and `render` groups |
+| Over SSH, tests only | `QT_QPA_PLATFORM=offscreen` | What CI and `tools/run_tests.sh` use |
+
+Performance: the app's own work is either network-bound (the polled REST calls)
+or already off the GUI thread (Monte-Carlo and plan building via QtConcurrent,
+REQ-N-006), and the positions table is allocation-free per tick — so a Pi 4/5
+is adequate for what it does. Use a **Release** build for daily use
+(`./build_all.sh release`, or the AppImage, which is one): the compute paths run
+5–20× faster than the Debug build the pipeline measures. The domain benchmarks
+(`tools/profile.sh`, `/perf-check`) run on a Pi unchanged, but no numbers from
+Pi hardware are recorded here — the figures in @ref verification are x86-64.
+
+### What the quality pipeline can and cannot do on ARM64
+
+| Stage | On a Raspberry Pi |
+|---|---|
+| build, test, trace, docs, analysis (cppcheck, clang-tidy, CSA, clazy, `g++ -fanalyzer`, lizard, PMD CPD, codespell) | run normally |
+| coverage — gcov/lcov line+branch | runs normally |
+| coverage — MC/DC, and sanitize — TSan | need clang ≥ 18; the version is **resolved**, not hardcoded (`llvm_suffix` in `tools/common.sh`), and both report `skipped` with the reason when the OS ships an older one. Trixie's clang-19 satisfies them |
+| sanitize — ASan+UBSan, valgrind | run normally (valgrind supports aarch64); a missing valgrind now reports `skipped` instead of failing |
+| axivion | **`skipped` always** — the Axivion Suite is published for x86-64 hosts only, which `start_analysis.sh` now says out loud. Run that stage on an x86-64 machine; the analysis is host-side, so nothing about it is Pi-specific |
+| coverage — Squish Coco | not available (x86-64 Linux / Windows only), same `skipped` contract |
+
+### Verification status
+
+`.github/workflows/ci.yml` runs **`build-linux-arm64`** on GitHub's
+`ubuntu-24.04-arm` runner: it installs the ARM64 Qt kit the way `setup.sh` does,
+then runs `./build_all.sh build test trace` with **no** architecture arguments —
+so a regression in kit resolution fails the job, warnings are errors, and every
+test has to pass on aarch64. It then **starts the app** through the
+`TRADINGAPP_SHOT` hook and uploads the PNGs, so the evidence includes the
+aarch64 GUI rendering rather than only compiling.
+`.github/workflows/release.yml` additionally builds the aarch64 AppImage and
+smoke-starts it headless.
+
+What that does **not** cover, and is therefore claimed by inspection only: the
+Pi's own GPU/display stack (`eglfs` on V3D), thermals and SD-card I/O, and any
+measured performance figure on Pi silicon.
 
 ## Windows (MSVC or MinGW)
 

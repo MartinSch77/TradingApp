@@ -16,6 +16,9 @@ set -uo pipefail
 
 EXIT_SKIPPED=3
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# host_arch / qt_kit_dir: the Qt kit below is architecture-dependent, and the
+# Suite itself is published for x86-64 hosts only.
+. "$ROOT/tools/common.sh"
 
 # --- locate the Suite ------------------------------------------------------
 # No hardcoded paths: honour BAUHAUS_HOME / AXIVIONBASE, then the usual install
@@ -46,7 +49,15 @@ find_suite() {
 
 SUITE="$(find_suite)" || {
     echo "SKIPPED: the Axivion Suite is not installed (license-bound; ./setup.sh cannot install it)."
-    echo "         Install it and set BAUHAUS_HOME, or put its bin/ on PATH."
+    if [ "$(host_arch)" != "x86_64" ]; then
+        # Worth saying plainly rather than letting someone hunt for an install:
+        # the Suite ships x86-64 binaries only, so this stage stays `skipped` on
+        # an ARM64 host (Raspberry Pi) no matter what license is available.
+        echo "         This host is $(host_arch), and the Suite is published for x86-64 only —"
+        echo "         run the Axivion stage on an x86-64 machine (the analysis is host-side)."
+    else
+        echo "         Install it and set BAUHAUS_HOME, or put its bin/ on PATH."
+    fi
     exit $EXIT_SKIPPED
 }
 echo "Axivion Suite: $SUITE"
@@ -80,9 +91,9 @@ export BAUHAUS_CONFIG="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # The Axivion cmake configure doesn't pass -DCMAKE_PREFIX_PATH, so find_package
 # would fall back to a system Qt6 (which lacks Qt6Charts) and fail. Point it at
 # the same kit the normal build uses; prepend so any existing value still wins.
-QT_PREFIX="${QT_PREFIX:-$(ls -d "$HOME"/Qt/*/gcc_64 2>/dev/null | sort -V | tail -1)}"
+QT_PREFIX="${QT_PREFIX:-$(qt_prefix)}"
 if [ -z "${QT_PREFIX:-}" ] || [ ! -d "$QT_PREFIX" ]; then
-    echo "SKIPPED: no Qt 6 kit found for the analysis build (looked for ~/Qt/*/gcc_64)." >&2
+    echo "SKIPPED: no Qt 6 kit found for the analysis build (looked for ~/Qt/*/$(qt_kit_dir))." >&2
     echo "         Set QT_PREFIX, or run ./setup.sh install." >&2
     exit $EXIT_SKIPPED
 fi

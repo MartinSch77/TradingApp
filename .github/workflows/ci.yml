@@ -115,6 +115,91 @@ jobs:
             test-results/
             docs/traceability.html
 
+  # ARM64 Linux — the evidence behind the Raspberry Pi claim in REQ-N-001. A
+  # GitHub ARM runner is not a Pi (more cores, more RAM), but it is the same
+  # architecture, the same Debian-family userland and the same Qt ARM64 kit, so
+  # it proves what a Pi actually needs proven: that the code compiles for
+  # aarch64 warning-free and that every test passes there. Anything Pi-specific
+  # beyond the architecture (GPU, display server, thermals) is documented in
+  # docs/platforms.md instead of pretended here.
+  #
+  # This job deliberately runs the SCRIPTS rather than hand-written cmake lines:
+  # the point is that ./build_all.sh needs no arch-specific arguments, because
+  # tools/common.sh resolves the gcc_arm64 kit on its own.
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build \
+            libgl1-mesa-dev libglx-dev libopengl0 libegl1 \
+            libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libfreetype6 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+          # cmake >= 4.2 (no distro ships it), ninja, and aqt for the Qt kit.
+          # The trace stage needs nothing but the standard library.
+          python3 -m pip install --break-system-packages --upgrade cmake ninja aqtinstall
+
+      # Not install-qt-action: it resolves the kit for the RUNNER it thinks it is
+      # on, and the whole point here is the ARM64 kit in the ~/Qt layout the
+      # scripts expect — the same aqt command ./setup.sh runs on a Raspberry Pi.
+      - name: Install Qt for Linux ARM64 (with Charts)
+        run: |
+          set -euo pipefail
+          python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
+            -m qtcharts -O "$HOME/Qt"
+          test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Charts"
+
+      - name: Toolchain status (host detection)
+        run: ./setup.sh status
+
+      - name: Provide API key for CI (copy example if missing)
+        run: |
+          if [ -f apiKeyEtoro.example.json ] && [ ! -f apiKeyEtoro.json ]; then
+            cp apiKeyEtoro.example.json apiKeyEtoro.json
+          fi
+
+      # No QT_PREFIX, no -DCMAKE_PREFIX_PATH: if the kit resolution regressed,
+      # this step is what says so. Warnings are errors in build_all.sh, so an
+      # aarch64-only diagnostic — `char` is unsigned there, which is what turns a
+      # signedness assumption into a warning — fails the job instead of slipping
+      # through as a difference nobody looked for.
+      - name: Build + tests + traceability (build_all.sh)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./build_all.sh build test trace
+
+      # "Builds and passes its tests" is not the same claim as "runs". The app's
+      # own QA hook (TRADINGAPP_SHOT, see src/main.cpp) starts the real
+      # QApplication, brings up the window and every dialog, grabs them to PNG
+      # and quits — so this step is the aarch64 GUI actually rendering, and the
+      # PNGs are the artifact to look at. Without API keys it runs in SIMULATION.
+      - name: Start the app on aarch64 and screenshot it
+        env:
+          QT_QPA_PLATFORM: offscreen
+          TRADINGAPP_SHOT: arm64-start.png
+          TRADINGAPP_SHOT_OPEN: '1'
+          TRADINGAPP_SHOT_DELAY_MS: '8000'
+        run: |
+          set -euo pipefail
+          timeout 120 ./build/TradingApp
+          ls -l arm64-start*.png
+          test -s arm64-start.png
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-linux-arm64
+          path: |
+            test-results/
+            docs/traceability.html
+            arm64-start*.png
+
   sanitize:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -460,7 +545,7 @@ jobs:
   # if: always() — a FAILING platform must publish "failing"; a badge that only
   # updates on success would freeze at "passing" the moment something breaks.
   badges:
-    needs: [build-and-test, build-windows, build-macos]
+    needs: [build-and-test, build-linux-arm64, build-windows, build-macos]
     if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
@@ -471,6 +556,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LINUX: ${{ needs.build-and-test.result }}
+          LINUX_ARM64: ${{ needs.build-linux-arm64.result }}
           WINDOWS: ${{ needs.build-windows.result }}
           MACOS: ${{ needs.build-macos.result }}
         run: |
@@ -486,5 +572,6 @@ jobs:
             ./tools/publish_badge.sh "$1" "$2" "$msg" "$colour"
           }
           publish build-linux.json "build linux" "$LINUX"
+          publish build-linux-arm64.json "build linux arm64" "$LINUX_ARM64"
           publish build-windows.json "build windows" "$WINDOWS"
           publish build-macos.json "build macos" "$MACOS"

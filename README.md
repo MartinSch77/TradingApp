@@ -7,7 +7,7 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
-[![sonarcloud](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
+[![sonarcloud issues](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=violations)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![coverity](https://scan.coverity.com/projects/33200/badge.svg)](https://scan.coverity.com/projects/TradingApp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -51,7 +51,12 @@ It provides:
   stack of oscillators over one set of closes. Each says whether it could be
   **measured at all**, and an unmeasured read *never* counts as agreement. The count
   is shown per instrument, given to the model in those words, and gates the bot
-  (`no-confluence`). Heavyweight participation is labelled a **stand-in** for market
+  (`no-confluence`). The bot's own record is broken down **by exit rule**, worst first,
+  because that is the view that says which rule is losing the money — on the first 18
+  real closes it read `signal faded −97.12 over 7` against `banked +99.10 over 2`, on a
+  book whose gross was **+119.35** against **148.77 of costs**. Named instruments are
+  traded only **reluctantly** — the dollar index has to promise a real move per hour
+  and doubled conviction before it is worth its spread (3 trades, −19.22 € measured); Heavyweight participation is labelled a **stand-in** for market
   breadth everywhere it appears — real breadth needs per-constituent data this app
   does not fetch;
 - **scripted trading**: a plain-text file of conditional orders, executed as
@@ -527,6 +532,18 @@ independently unit-testable and shared by every view that shows a signal.
 | [`Palette.h`](src/ui/Palette.h)               | Shared UI colors |
 | [`main.cpp`](src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
 
+## SonarCloud is informational, not a gate
+
+The badge above links SonarCloud's issue count, not its quality gate. That is
+deliberate: Sonar's default gate fails on *hotspot* categories that need a human
+"safe" verdict on their dashboard — a pseudorandom generator used for reproducible
+model training, plain HTTP to a model server on `localhost`, unpinned action
+versions — and none of those can be answered by a build. This project's gates are
+the ones in `build_all.sh`: the test suite, requirements traceability, the metrics
+ratchet, eight analyzers at zero findings, clone detection, the sanitizers and
+Axivion's MISRA C++ 2023. SonarCloud runs alongside them as a second opinion, and
+its findings are read rather than obeyed.
+
 ## QA helper
 
 `TRADINGAPP_SHOT=/path/out.png ./build/TradingApp` grabs every visible window
@@ -543,6 +560,7 @@ exits — handy for headless screenshots (`QT_QPA_PLATFORM=offscreen`).
 | `TRADINGAPP_BOT_AI=off\|confirm\|lead` | how much say the local model gets over ENTRIES (REQ-F-030); it may also close positions it no longer believes in (REQ-F-032) |
 | `TRADINGAPP_BOT_NET=off\|advise\|gate` | how much say the LEARNED model gets (REQ-F-033): score only, or refuse below the floor once it is trusted |
 | `TRADINGAPP_BOT_TARGET` / `TRADINGAPP_BOT_LOSS_LIMIT` | the daily stopping rules in EUR of booked net; `0` switches one off (REQ-F-031) |
+| `TRADINGAPP_FORCE_SIMULATION=1` | the app runs in SIMULATION whatever the keys say — no live mode, no broker network, no order path. What makes the Squish GUI suite safe on a machine that has real credentials (REQ-N-007) |
 | `TRADINGAPP_BOT_TRAIN=1` | refit the learned model once at start-up (for headless machines with nobody to press the button) |
 | `config.json`: `botDailyTarget`, `botDailyLossLimit`, `ollamaHost`, `ollamaModel` | the same settings, without the environment |
 

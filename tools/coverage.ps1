@@ -48,7 +48,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('auto', 'msvc', 'mcdc', 'coco')][string]$Mode = 'auto',
+    [ValidateSet('auto', 'msvc', 'mcdc', 'coco', 'coco-components', 'coco-ai')][string]$Mode = 'auto',
     [string]$CocoDir = $(if ($env:COCO_DIR) { $env:COCO_DIR } else { 'C:\Program Files\squishcoco' })
 )
 
@@ -82,8 +82,21 @@ function Invoke-Configure {
 }
 
 function Get-TestExecutables {
-    param([string]$BuildDir)
-    return @(Get-ChildItem (Join-Path $BuildDir 'tests') -Filter 'tst_*.exe' -File -ErrorAction SilentlyContinue)
+    param(
+        [string]$BuildDir,
+        # Only the tests that drive a COMPONENT through its real seams — the broker
+        # client and the feeds against the in-process mock HTTP server, the advisors
+        # against a mocked endpoint, the simulated broker, the learning loop against
+        # the real trainer, configuration against real files. Marked type "I" in
+        # docs/test_spec.md; the same list as component_tests() in tools/coverage.sh.
+        [switch]$ComponentsOnly
+    )
+    $all = @(Get-ChildItem (Join-Path $BuildDir 'tests') -Filter 'tst_*.exe' -File -ErrorAction SilentlyContinue)
+    if (-not $ComponentsOnly) { return $all }
+    $wanted = @('tst_etoroclient', 'tst_marketfeeds', 'tst_jsonhttp', 'tst_simulationengine',
+        'tst_aiadvisor', 'tst_ollamaadvisor', 'tst_botnet', 'tst_config',
+        'tst_economiccalendar', 'tst_positionsmodel', 'tst_tradescript')
+    return @($all | Where-Object { $wanted -contains $_.BaseName })
 }
 
 # Coco ships one wrapper executable per native compiler; pick the one matching
@@ -255,7 +268,8 @@ function Invoke-CocoCoverage {
     $wrapper = Get-CocoWrapper
     Write-Host "Coco wrapper: $wrapper" -ForegroundColor DarkGray
 
-    $build = Join-Path $Root 'build-cov-coco'
+    $build = if ($ComponentsOnly) { Join-Path $Root 'build-cov-coco-components' }
+    else { Join-Path $Root 'build-cov-coco' }
 
     # The wrapper drives the native compiler; instrumentation only happens with
     # --cs-on. --cs-mcdc adds MC/DC, --cs-mcc multiple-condition coverage.
@@ -268,6 +282,8 @@ function Invoke-CocoCoverage {
     # instrumentation to src\domain + src\services also matches the scope of the
     # gcov/mcdc reports on Linux.
     $csflags = @('--cs-on', '--cs-mcdc', '--cs-mcc')
+    # In component mode src\ui stays instrumented-out too (the suite drives no GUI),
+    # so the exclude list is the same either way — what differs is WHICH tests run.
     foreach ($p in @($QtPrefix, $build, "$Root\tests", "$Root\src\ui")) {
         $csflags += "--cs-exclude-file-abs-wildcard=$(ConvertTo-CocoWildcard $p)"
     }
@@ -309,7 +325,7 @@ function Invoke-CocoCoverage {
     # is run from the tests directory, otherwise the .csexe files pile up in
     # the repository root and the import below finds nothing.
     $testDir = Join-Path $build 'tests'
-    $exes = Get-TestExecutables $build
+    $exes = Get-TestExecutables $build -ComponentsOnly:$ComponentsOnly
     if ($exes.Count -eq 0) { Write-Warning "no test executables in $testDir"; return $false }
 
     $imported = 0

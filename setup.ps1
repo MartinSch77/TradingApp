@@ -16,6 +16,7 @@
               Doxygen, Graphviz, OpenCppCoverage, syft, grype, trivy,
               a JRE (for PlantUML), Python 3
       pip     strictdoc, doorstop, codespell, sphinx + myst-parser, gcovr,
+              clang-format (pinned by wheel: one version on every platform),
               reportlab (PDF quality report),
               aqtinstall  (user scope — no admin needed)
       aqt     Qt $QtVersion (win64_msvc2022_64 + qtcharts) into C:\Qt — the
@@ -40,7 +41,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'update', 'status', 'android')]
+    [ValidateSet('install', 'update', 'status', 'android', 'squish')]
     [string]$Mode = 'install',
 
     # Qt version installed by aqt when no usable kit is found.
@@ -107,6 +108,10 @@ $PipPkgs = [ordered]@{
     'aqtinstall'  = 'aqt'
     'lizard'      = 'lizard'
     'reportlab'   = ''          # library only, imported by tools\make_report.py
+    # From pip rather than the LLVM installer: the wheel pins ONE clang-format
+    # version on every platform, and a formatting check that answers differently on
+    # two machines is worse than no check (.clang-format explains the CI check).
+    'clang-format' = 'clang-format'
 }
 
 # The supply-chain scanners used to be fetched from GitHub releases into
@@ -490,6 +495,75 @@ function Install-AxivionMcpEnv {
 
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Licence-bound test tools: Squish (GUI tests), Squish Test Center (result store)
+# and Squish Coco (coverage). None can be installed unattended — they are licensed
+# products behind a Qt account — so this mode does the two things that ARE possible:
+# report exactly what this machine has, and print the remaining steps with the real
+# paths filled in. Nothing here gates a build: every stage that uses these tools
+# exits 3 ("skipped") without them, and the quality PDF lists the missing licence.
+# Lockstep with `./setup.sh squish`.
+function Show-SquishStatus {
+    Write-Host '== licence-bound test tools ==' -ForegroundColor Cyan
+    $cocoDir = if ($env:COCO_DIR) { $env:COCO_DIR } else { 'C:\Program Files\squishcoco' }
+    $squishDir = if ($env:SQUISH_DIR) { $env:SQUISH_DIR }
+    elseif ($env:SQUISH_PREFIX) { $env:SQUISH_PREFIX }
+    else { 'C:\Program Files\froglogic\Squish' }
+
+    $runner = Get-Command squishrunner -ErrorAction SilentlyContinue
+    $runnerPath = if ($runner) { $runner.Source } else { Join-Path $squishDir 'bin\squishrunner.exe' }
+    if (Test-Path $runnerPath) {
+        & $runnerPath --version *> $null
+        if ($LASTEXITCODE -eq 0) { Report 'squishrunner' 'ok' $runnerPath }
+        else { Report 'squishrunner' 'NO LICENCE' $runnerPath }
+    }
+    else { Report 'squishrunner' 'MISSING' '' }
+
+    $cscl = Join-Path $cocoDir 'cscl.exe'
+    $cocolic = Join-Path $cocoDir 'cocolic.exe'
+    if (Test-Path $cscl) {
+        & $cocolic --check *> $null
+        if ($LASTEXITCODE -eq 0) { Report 'Squish Coco' 'ok' $cocoDir }
+        else { Report 'Squish Coco' 'NO LICENCE' "$cocoDir (installed)" }
+    }
+    else { Report 'Squish Coco' 'MISSING' '' }
+
+    if ($env:TESTCENTER_URL -and $env:TESTCENTER_TOKEN) {
+        Report 'Test Center' 'ok' $env:TESTCENTER_URL
+    }
+    else { Report 'Test Center' 'MISSING' 'set TESTCENTER_URL and TESTCENTER_TOKEN' }
+
+    @'
+
+--- Squish for Qt (GUI tests) ------------------------------------------------
+1. https://account.qt.io -> Downloads -> Squish (the GUI tool, NOT Coco). Take the
+   Windows package for Qt 6.
+2. Install it, then point this project at it if it went somewhere unusual:
+       $env:SQUISH_DIR = 'C:\Program Files\froglogic\Squish'
+3. Install the licence (file or server), then:
+       & "$env:SQUISH_DIR\bin\squishrunner.exe" --version     # must exit 0
+4. Run the suite:
+       .\tools\squish_run.ps1 -BuildDir build
+   Every run is FORCED into simulation (TRADINGAPP_FORCE_SIMULATION=1 plus an
+   isolated APPDATA), so a GUI test can never reach a real eToro account — the
+   guarantee is in the app, not in the script (tests\tst_config.cpp TS-CFG-007).
+
+--- Squish Test Center (every test result in one place) ----------------------
+1. Same download page -> Squish Test Center; install it (default port 8800).
+2. Create a project named TradingApp and an API token in its settings.
+3. $env:TESTCENTER_URL = 'http://localhost:8800'
+   $env:TESTCENTER_TOKEN = '<token>'
+   .\tools\testcenter_upload.ps1 -DryRun     # what it would send
+   .\tools\testcenter_upload.ps1             # send it
+
+--- Squish Coco (coverage incl. MC/DC and per-test call coverage) ------------
+       .\tools\coverage.ps1 -Mode coco
+       .\tools\coverage.ps1 -Mode coco-components
+See cocoSetupInstructions.txt for the licence steps.
+'@ | Write-Host
+}
+
 switch ($Mode) {
     'install' {
         Install-WingetPackages
@@ -533,6 +607,7 @@ switch ($Mode) {
         Show-Status
     }
     'android' { Install-Android }
+    'squish' { Show-SquishStatus }
     'status' {
         Show-Status
         # A status REPORT never gates: missing optional/license-bound tools are the

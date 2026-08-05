@@ -140,6 +140,14 @@ void applyEnv(Config &cfg)
     }
     // 0 is meaningful here (it switches the rule off), so only a NEGATIVE value is
     // rejected — a typo must never quietly widen what the bot may lose.
+    // A one-way switch: present at all (any value except "0"/"false") means the app
+    // runs in simulation whatever the keys say. There is no env variable that turns
+    // it back off, and nothing in the app sets it — only a caller can.
+    if (env.contains(QStringLiteral("TRADINGAPP_FORCE_SIMULATION"))) {
+        const QString raw = env.value(QStringLiteral("TRADINGAPP_FORCE_SIMULATION")).trimmed();
+        cfg.forceSimulation = !raw.isEmpty() && (raw != QStringLiteral("0"))
+                              && (raw.compare(QStringLiteral("false"), Qt::CaseInsensitive) != 0);
+    }
     applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_TARGET"), cfg.botDailyTarget);
     applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_LOSS_LIMIT"), cfg.botDailyLossLimit);
 }
@@ -148,6 +156,16 @@ void applyEnv(Config &cfg)
 
 bool Config::hasCredentials() const
 {
+    // The forced-simulation switch answers here, at the ONE place every mode
+    // question ultimately reads: with no credentials the app is in SIMULATION by
+    // construction — synthetic feed, no network to the broker, no order path at all
+    // — so a GUI test suite cannot reach a real account however it is configured
+    // (REQ-N-005). Deliberately not a UI-level check and not a convention in a test
+    // script: a switch that only the scripts respect is a switch that stops working
+    // the first time someone runs the app by hand.
+    if (forceSimulation) {
+        return false;
+    }
     return !apiKey.isEmpty() && !userKey.isEmpty();
 }
 
@@ -159,6 +177,12 @@ bool Config::isLive() const
 
 QString Config::modeLabel() const
 {
+    if (forceSimulation) {
+        // Says WHY, so a screenshot from a test run cannot be mistaken for the app
+        // failing to find credentials that are in fact present.
+        return QStringLiteral("SIMULATION — forced by TRADINGAPP_FORCE_SIMULATION "
+                              "(credentials ignored)");
+    }
     if (!hasCredentials()) {
         return QStringLiteral("SIMULATION — no API keys (synthetic price feed)");
     }

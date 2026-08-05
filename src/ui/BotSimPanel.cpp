@@ -1195,25 +1195,37 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     auto *account = new QGroupBox(QStringLiteral("Simulated account"), this);
     auto *accountLayout = new QVBoxLayout(account);
     m_accountLabel = new QLabel(account);
+    m_accountLabel->setObjectName(QStringLiteral("accountLabel"));
     m_pnlLabel = new QLabel(account);
+    m_pnlLabel->setObjectName(QStringLiteral("pnlLabel"));
     m_statsLabel = new QLabel(account);
+    m_statsLabel->setObjectName(QStringLiteral("statsLabel"));
     m_dayLabel = new QLabel(account);
+    m_dayLabel->setObjectName(QStringLiteral("dayLabel"));
     m_recordLabel = new QLabel(account);
+    m_recordLabel->setObjectName(QStringLiteral("recordLabel"));
     m_recordLabel->setWordWrap(true);
     m_liveLabel = new QLabel(account);
+    m_liveLabel->setObjectName(QStringLiteral("liveLabel"));
     m_liveLabel->setWordWrap(true);
+    m_reasonLabel = new QLabel(account);
+    m_reasonLabel->setObjectName(QStringLiteral("reasonLabel"));
+    m_reasonLabel->setWordWrap(true);
     m_modelLabel = new QLabel(account);
+    m_modelLabel->setObjectName(QStringLiteral("modelLabel"));
     m_modelLabel->setWordWrap(true);
     m_storeLabel = new QLabel(account);
+    m_storeLabel->setObjectName(QStringLiteral("storeLabel"));
     m_storeLabel->setStyleSheet(QStringLiteral("color: #666;"));
     for (QLabel *label : {m_accountLabel, m_pnlLabel, m_statsLabel, m_dayLabel, m_recordLabel,
-                          m_liveLabel, m_modelLabel, m_storeLabel}) {
+                          m_reasonLabel, m_liveLabel, m_modelLabel, m_storeLabel}) {
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
         accountLayout->addWidget(label);
     }
 
     auto *buttons = new QHBoxLayout;
     m_armButton = new QPushButton(QStringLiteral("Arm the bot"), account);
+    m_armButton->setObjectName(QStringLiteral("armButton"));
     m_armButton->setCheckable(true);
     m_armButton->setToolTip(QStringLiteral(
         "Start / stop the simulation. The bot trades SIMULATED money on live prices — "
@@ -1222,6 +1234,7 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
         m_runner->setArmed(on);
     }));
     m_resetButton = new QPushButton(QStringLiteral("Reset to start capital"), account);
+    m_resetButton->setObjectName(QStringLiteral("resetButton"));
     static_cast<void>(
         connect(m_resetButton, &QPushButton::clicked, this, &BotSimDialog::confirmReset));
     buttons->addWidget(m_armButton);
@@ -1234,6 +1247,7 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     auto *aiRow = new QHBoxLayout;
     aiRow->addWidget(new QLabel(QStringLiteral("Local model (Ollama):"), account));
     m_aiModeBox = new QComboBox(account);
+    m_aiModeBox->setObjectName(QStringLiteral("aiModeBox"));
     m_aiModeBox->addItem(QStringLiteral("off — composite decides"),
                          static_cast<int>(trading::BotAiMode::Off));
     m_aiModeBox->addItem(QStringLiteral("confirm — model must agree"),
@@ -1253,10 +1267,12 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     }));
     aiRow->addWidget(m_aiModeBox);
     m_aiCheckButton = new QPushButton(QStringLiteral("Check model"), account);
+    m_aiCheckButton->setObjectName(QStringLiteral("aiCheckButton"));
     static_cast<void>(connect(m_aiCheckButton, &QPushButton::clicked, this,
                               [this]() { m_runner->checkAi(); }));
     aiRow->addWidget(m_aiCheckButton);
     m_trainButton = new QPushButton(QStringLiteral("Train from experience"), account);
+    m_trainButton->setObjectName(QStringLiteral("trainButton"));
     m_trainButton->setToolTip(QStringLiteral(
         "Refit the outcome model on every trade this bot has closed (REQ-F-033). Runs in "
         "the app itself — no Python needed — and happens automatically every 25 closed "
@@ -1268,6 +1284,7 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     aiRow->addStretch(1);
     accountLayout->addLayout(aiRow);
     m_aiStatusLabel = new QLabel(account);
+    m_aiStatusLabel->setObjectName(QStringLiteral("aiStatusLabel"));
     m_aiStatusLabel->setWordWrap(true);
     m_aiStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     accountLayout->addWidget(m_aiStatusLabel);
@@ -1280,6 +1297,7 @@ void BotSimDialog::buildTables(QVBoxLayout *layout)
     auto *openBox = new QGroupBox(QStringLiteral("Open simulated trades"), this);
     auto *openLayout = new QVBoxLayout(openBox);
     m_openTable = new QTableWidget(openBox);
+    m_openTable->setObjectName(QStringLiteral("openTable"));
     configureTable(m_openTable, {QStringLiteral("Instrument"), QStringLiteral("Side"),
                                  QStringLiteral("Invested"), QStringLiteral("Lev"),
                                  QStringLiteral("Entry"), QStringLiteral("Now"),
@@ -1292,6 +1310,7 @@ void BotSimDialog::buildTables(QVBoxLayout *layout)
     auto *closedBox = new QGroupBox(QStringLiteral("Closed simulated trades"), this);
     auto *closedLayout = new QVBoxLayout(closedBox);
     m_closedTable = new QTableWidget(closedBox);
+    m_closedTable->setObjectName(QStringLiteral("closedTable"));
     configureTable(m_closedTable, {QStringLiteral("Instrument"), QStringLiteral("Side"),
                                    QStringLiteral("Invested"), QStringLiteral("Lev"),
                                    QStringLiteral("Entry"), QStringLiteral("Exit"),
@@ -1303,6 +1322,7 @@ void BotSimDialog::buildTables(QVBoxLayout *layout)
     auto *logBox = new QGroupBox(QStringLiteral("Bot decisions"), this);
     auto *logLayout = new QVBoxLayout(logBox);
     m_log = new QPlainTextEdit(logBox);
+    m_log->setObjectName(QStringLiteral("log"));
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(2000);
     logLayout->addWidget(m_log);
@@ -1407,6 +1427,26 @@ void BotSimDialog::rebuildAccount()
             .arg(trading::botNetSummary(m_runner->net(), m_runner->netMode(),
                                         trading::NetGateConfig{}),
                  BotSimRunner::experiencePath()));
+    // Which RULE is making or losing the money — the view that answers "why is the
+    // record what it is" without anyone reading the JSON.
+    QStringList byReason;
+    QList<QPair<double, QString>> ranked;
+    for (auto it = perf.netByReason.cbegin(); it != perf.netByReason.cend(); ++it) {
+        ranked.append({it.value(), it.key()});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first;   // worst first: that is the one to look at
+    });
+    for (const auto &[net, reason] : ranked) {
+        byReason << QStringLiteral("%1 %2x %3")
+                        .arg(reason)
+                        .arg(perf.countByReason.value(reason))
+                        .arg(money(net));
+    }
+    m_reasonLabel->setText(byReason.isEmpty()
+                               ? QStringLiteral("<b>By exit rule</b> nothing closed yet")
+                               : QStringLiteral("<b>By exit rule</b> (worst first) %1")
+                                     .arg(byReason.join(u" · ")));
     m_liveLabel->setText(
         live.ready
             ? QStringLiteral("<b style='color:#1b8a3a'>Real-money criteria met</b> — the paper "

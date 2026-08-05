@@ -1,0 +1,16 @@
+# Every Squish run of this AUT is a SIMULATION run. The switch is read by
+# Config::load and answers inside Config::hasCredentials(), so the app has no
+# credentials, no live mode and no order path while it is set — see
+# tests/tst_config.cpp TS-CFG-007. A GUI suite must never be one misconfiguration
+# away from a real order (REQ-N-005).
+TRADINGAPP_FORCE_SIMULATION=1
+# …and belt with braces: an isolated config directory, so neither the developer's
+# apiKeyEtoro.json nor their bot books are visible to the test run at all.
+XDG_CONFIG_HOME=/tmp/tradingapp-squish/config
+ETORO_MODE=demo
+ETORO_API_KEY=
+ETORO_USER_KEY=
+# The bot must not arm itself during a GUI test, and the local model must not be
+# consulted (a CPU model would make every test time out).
+TRADINGAPP_BOT_AI=off
+TRADINGAPP_BOT_NET=off

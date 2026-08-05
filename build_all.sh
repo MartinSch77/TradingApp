@@ -52,7 +52,11 @@ export QT_PREFIX="${QT_PREFIX:-$(qt_prefix)}"
 JOBS="$(nproc)"
 
 ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
-EXTRA_STAGES=(app release android) # selectable by name, not part of the default run
+# gui and testcenter are extra stages because both are licence-bound: Squish drives
+# the GUI suite, Test Center stores every result. Each exits 3 ("skipped") without
+# its licence, so naming them on a machine that has none reports skipped rather than
+# failing — the quality PDF then lists which licence was missing.
+EXTRA_STAGES=(app release android gui testcenter) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
 # with and refuses to be reused if either changed. This repository invites that
@@ -127,6 +131,13 @@ stage_report() { python3 "$ROOT/tools/make_report.py" --build-dir build; }
 # rather than failing. --run additionally boots an emulator; not done here, because a
 # pipeline stage must not depend on a hypervisor being available.
 stage_android() { "$ROOT/tools/build_android.sh" --abi android_arm64_v8a; }
+
+# Extra stages (named only), both licence-bound and both exit 3 without a licence:
+#  gui         the Squish GUI suite, FORCED into simulation so it can never reach a
+#              real account (tools/squish_run.sh explains the guarantee)
+#  testcenter  every JUnit XML in test-results/ uploaded to Qt Test Center
+stage_gui() { "$ROOT/tools/squish_run.sh" build; }
+stage_testcenter() { "$ROOT/tools/testcenter_upload.sh"; }
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

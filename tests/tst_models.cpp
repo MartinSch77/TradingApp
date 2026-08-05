@@ -84,6 +84,31 @@ private slots:
         QVERIFY(roundTrip(NewsHeadline{}));
         QVERIFY(roundTrip(WebRating{}));
         QVERIFY(roundTrip(AiDecision{}));
+
+        // A resting order also travels as a LIST across those signals, and its fields
+        // survive the trip — the member-by-member copy is what the equality above
+        // compares, so both need to be exercised.
+        PendingOrder order;
+        order.orderId = QStringLiteral("o-9");
+        order.instrumentId = 27;
+        order.symbol = QStringLiteral("SPX500");
+        order.isBuy = false;
+        order.triggerRate = 5100.0;
+        order.amount = 750.0;
+        order.leverage = 10.0;
+        order.stopLossAmount = 90.0;
+        order.takeProfitAmount = 180.0;
+        order.trailingStop = true;
+        order.status = QStringLiteral("Waiting for market");
+        order.submitted = QDateTime(QDate(2026, 8, 5), QTime(9, 0), QTimeZone::UTC);
+        const QVariant packedList = QVariant::fromValue(QList<PendingOrder>{order});
+        QVERIFY(packedList.canConvert<QList<PendingOrder>>());
+        const auto back = packedList.value<QList<PendingOrder>>();
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(back.constFirst(), order);
+        QCOMPARE(back.constFirst().symbol, QStringLiteral("SPX500"));
+        QCOMPARE(back.constFirst().status, QStringLiteral("Waiting for market"));
+        QVERIFY(back.constFirst().trailingStop);
     }
 };
 

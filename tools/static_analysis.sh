@@ -236,6 +236,18 @@ fi
 CPD_N=$(grep -c . "$OUT/pmd-cpd.txt" || true)
 echo "pmd-cpd findings: $CPD_N (analysis-results/pmd-cpd.txt)"
 
+echo "== objectName check (GUI-test addressability) =="
+# A widget without a stable objectName can only be found by text or position, both
+# of which a refactor breaks silently — and the Squish object map is built from these
+# names (REQ-N-007).
+OBJ_N=0
+if python3 "$ROOT/tools/check_object_names.py" > "$OUT/object-names.txt" 2>&1; then
+    echo "objectName findings: 0"
+else
+    OBJ_N=$(grep -c "has no objectName" "$OUT/object-names.txt" || true)
+    echo "objectName findings: $OBJ_N (analysis-results/object-names.txt)"
+fi
+
 CODESPELL_N=0
 if command -v codespell >/dev/null 2>&1; then
     echo "== codespell ($(codespell --version 2>&1)) =="
@@ -291,7 +303,7 @@ if ! python3 "$ROOT/tools/merge_findings.py" "$OUT"; then
     exit 1
 fi
 
-TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N))
+TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N + OBJ_N))
 echo "TOTAL findings: $TOTAL"
 # The lizard metrics are reported separately: their violations are ratcheted
 # against a recorded baseline, so a nonzero count is expected — the gate is the

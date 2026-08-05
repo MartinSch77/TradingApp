@@ -544,6 +544,63 @@ jobs:
   #
   # if: always() — a FAILING platform must publish "failing"; a badge that only
   # updates on success would freeze at "passing" the moment something breaks.
+  # Report-only until the tree converges: .clang-format was derived from the code
+  # (7% divergence on the newest file, 50% on the oldest hand-wrapped one), so the
+  # first pushes will still show suggestions on lines written before the config
+  # existed. Flip it to a gate by deleting the `continue-on-error` line below —
+  # nothing else changes.
+  format:
+    name: Format (changed lines)
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # git-clang-format needs the base commit
+
+      # The pip wheel rather than apt: it pins ONE clang-format version across all
+      # three platforms, and a formatting check that answers differently on two
+      # machines is worse than none.
+      - name: Install clang-format
+        run: python3 -m pip install --upgrade clang-format
+
+      # HUNK-scoped on purpose (.clang-format explains why): only lines this push
+      # actually changed have to comply, so the oldest hand-wrapped files are left
+      # alone until someone touches them.
+      - name: Check the changed lines
+        id: fmt
+        run: |
+          set -uo pipefail
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "comparing against $base"
+          diff="$(git-clang-format --diff "$base" || true)"
+          if [ -z "$diff" ] || [ "$diff" = "no modified files to format" ] \
+             || [ "$diff" = "clang-format did not modify any files" ]; then
+            echo "changed lines are formatted"
+            exit 0
+          fi
+          printf '%s\n' "$diff" | tee format.diff
+          {
+            echo "### Formatting suggestions for the lines this push changed"
+            echo '```diff'
+            head -c 60000 format.diff
+            echo '```'
+            echo "Apply locally with: git-clang-format $base"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: format-diff
+          path: format.diff
+          if-no-files-found: ignore
+
   badges:
     needs: [build-and-test, build-linux-arm64, build-windows, build-macos]
     if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'

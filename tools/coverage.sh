@@ -13,6 +13,10 @@
 #   tools/coverage.sh coco    — Squish Coco (Qt Group, $COCO_DIR): csg++
 #                               instrumented build incl. MC/DC
 #                               → coverage/coco/index.html
+#   tools/coverage.sh coco-ai — CocoAI's test-case SUGGESTIONS over the coverage
+#                               database the coco mode produced (newer Coco
+#                               releases only; skips when the installation has no
+#                               AI tool)
 #   tools/coverage.sh coco-components
 #                             — the same instrumented libraries, but exercised by
 #                               the COMPONENT/INTEGRATION tests only, reported per
@@ -138,6 +142,21 @@ component_tests() {
         tst_positionsmodel tst_tradescript
 }
 
+# What must NOT be instrumented, in both Coco modes. The test code is excluded so a
+# function only counts when a COMPONENT executed it — and the Qt, libstdc++ and
+# system headers because each translation unit instantiates those templates
+# differently: cmmerge then reports "source file qmetatype.h is differently
+# instrumented in the database" for every test binary and cmreport crashes on the
+# result. The Windows counterpart learned that first (see tools/coverage.ps1); the
+# same applies here.
+coco_excludes() {
+    local out=" --cs-exclude-path=$ROOT/tests"
+    [ -n "${QT_PREFIX:-}" ] && out+=" --cs-exclude-path=$QT_PREFIX"
+    out+=" --cs-exclude-file-abs-wildcard=*/usr/include/*"
+    out+=" --cs-exclude-file-abs-wildcard=*/c++/*"
+    printf '%s' "$out"
+}
+
 # Shared by both Coco modes: configure and build an instrumented tree.
 #   $1 = build dir, $2 = extra --cs flags
 coco_build() {
@@ -147,10 +166,24 @@ coco_build() {
     # exactly as the Windows counterpart does (CMakeLists only defaults the standard
     # when it is not already defined). Without it the instrumenting compiler fails on
     # C++23 constructs before any measurement can happen.
+    # Instrumented objects reference a per-TU coverage table that Coco's own
+    # librarian emits; this project links domain/services/ui as STATIC libraries, so
+    # archiving them with plain ar drops those tables and every test binary fails to
+    # link. The Windows path sets CMAKE_AR=cslib for exactly this reason — use Coco's
+    # wrapper here too when the installation ships one.
+    local ar_arg=()
+    local coco_ar
+    for coco_ar in "$COCO_DIR/bin/csar" "$COCO_DIR/bin/cslib"; do
+        if [ -x "$coco_ar" ]; then
+            ar_arg=("-DCMAKE_AR=$coco_ar")
+            break
+        fi
+    done
     cmake -S "$ROOT" -B "$build" -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Debug \
         -DCMAKE_CXX_STANDARD=20 \
         -DCMAKE_CXX_COMPILER="$COCO_DIR/bin/csg++" \
+        "${ar_arg[@]}" \
         -DCMAKE_CXX_FLAGS="$csflags"
     cmake --build "$build" -j"$JOBS"
 }
@@ -163,6 +196,47 @@ coco_run_one() {
     rm -f "$exe.csexe"
     QT_QPA_PLATFORM=offscreen "$exe" >/dev/null 2>&1 || true
     "$COCO_DIR/bin/cmcsexeimport" -m "$exe.csmes" -e "$exe.csexe" -t "$(basename "$exe")"
+}
+
+# CocoAI turns an existing coverage database into suggestions for the tests that
+# would close its biggest gaps. It ships only with newer Coco releases: this
+# installation's bin/ holds cmcsexeimport, cmedit, cmmerge, cmreport and cmvs and no
+# AI tool at all, so the mode looks for the candidates by name and says exactly what
+# it looked for when it finds none. Nothing here is invented — when a release that
+# has it is installed, the call below is the one its manual documents, and the first
+# licensed run is the validation run (as for the rest of the Coco path).
+run_coco_ai() {
+    if ! coco_usable; then
+        echo "SKIPPED: Squish Coco not usable — $COCO_DIR/bin/csg++ missing or license invalid"
+        exit 3
+    fi
+    local db="$ROOT/coverage/coco/merged.csmes"
+    if [ ! -f "$db" ]; then
+        echo "no coverage database at $db — run tools/coverage.sh coco first" >&2
+        exit 1
+    fi
+    local ai=""
+    local candidate
+    for candidate in cocoai coco-ai cmai cmsuggest; do
+        if [ -x "$COCO_DIR/bin/$candidate" ]; then
+            ai="$COCO_DIR/bin/$candidate"
+            break
+        fi
+    done
+    if [ -z "$ai" ]; then
+        echo "SKIPPED: this Coco installation has no AI tool"
+        echo "         (looked for cocoai, coco-ai, cmai, cmsuggest in $COCO_DIR/bin)"
+        echo "         CocoAI ships with newer releases — see cocoSetupInstructions.txt."
+        exit 3
+    fi
+    local out="$ROOT/coverage/coco/ai-suggestions.txt"
+    echo "== CocoAI test-case suggestions =="
+    "$ai" --csmes "$db" --output "$out" || {
+        echo "SKIPPED: $ai rejected these arguments — the switch names differ on this"
+        echo "         version; paste its --help output and they will be matched."
+        exit 3
+    }
+    echo "suggestions: $out"
 }
 
 run_coco_components() {
@@ -180,7 +254,7 @@ run_coco_components() {
     local BUILD="$ROOT/build-cov-coco-components"
     # The COMPONENTS are instrumented; the test code itself is not, so a function
     # only counts as reached when the component executed it.
-    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc --cs-exclude-path=$ROOT/tests"
+    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc$(coco_excludes)"
     coco_build "$BUILD" "$CSFLAGS"
     local OUT="$ROOT/coverage/coco-components"
     mkdir -p "$OUT"
@@ -222,8 +296,8 @@ run_coco() {
     local BUILD="$ROOT/build-cov-coco"
     # csg++ wraps g++; instrumentation only happens with --cs-on. Tests and UI
     # are excluded from instrumentation to match the gcov/mcdc report scope.
-    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc"
-    CSFLAGS+=" --cs-exclude-path=$ROOT/tests --cs-exclude-path=$ROOT/src/ui"
+    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc$(coco_excludes)"
+    CSFLAGS+=" --cs-exclude-path=$ROOT/src/ui"
     coco_build "$BUILD" "$CSFLAGS"
     local OUT="$ROOT/coverage/coco"
     mkdir -p "$OUT"
@@ -246,6 +320,7 @@ gcov) run_gcov ;;
 mcdc) run_mcdc ;;
 coco) run_coco ;;
 coco-components) run_coco_components ;;
+coco-ai) run_coco_ai ;;
 auto)
     if coco_usable; then
         echo "auto: Squish Coco found at $COCO_DIR with a valid license — measuring with Coco"

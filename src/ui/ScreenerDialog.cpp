@@ -65,6 +65,7 @@ ScreenerDialog::ScreenerDialog(QWidget *parent)
     auto *footer = new QHBoxLayout;
     
     m_rescan = new QPushButton(QStringLiteral("Rescan"), this);
+    m_rescan->setObjectName(QStringLiteral("rescan"));
     static_cast<void>(
         connect(m_rescan, &QPushButton::clicked, this, &ScreenerDialog::rescanRequested));
     auto *closeBtn = new QPushButton(QStringLiteral("Close"), this);

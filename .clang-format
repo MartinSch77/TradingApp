@@ -1,0 +1,47 @@
+# Formatting rules for this project, DERIVED from the code rather than imposed on
+# it: each option below was chosen by running clang-format over PaperTrader.cpp,
+# BotSimPanel.cpp, EtoroClient.cpp and IndexConfluence.h and keeping whichever
+# value moved fewest lines. The starting point measured best of the four built-in
+# styles (LLVM 424 changed lines on PaperTrader.cpp, WebKit 1276, Mozilla 778,
+# GNU 2707); the options after it close the remaining systematic gaps —
+# namespace braces on the same line, `&&` at the start of a continuation, three
+# spaces before a trailing comment, and no include reordering (the include blocks
+# here are grouped by layer on purpose).
+#
+# Pre-existing files are NOT retro-formatted. The CI check is hunk-scoped
+# (git-clang-format over the pushed range), so only lines someone actually
+# changes have to comply, and the oldest hand-wrapped code is left alone until it
+# is touched. That is deliberate: a one-shot reformat of everything would bury
+# real history under a mechanical diff.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+PointerAlignment: Right
+AlwaysBreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: Inline
+# The include blocks are ordered by layer (domain -> services -> ui -> Qt -> std)
+# and that ordering carries meaning; alphabetising across the blocks would lose it.
+SortIncludes: false
+# `} // namespace` is written by hand where it helps and left off where the block
+# is short — clang-format's own guess is not better than the author's.
+FixNamespaceComments: false
+SpacesBeforeTrailingComments: 3
+# A continuation starts with the operator, so a long condition reads as a list of
+# clauses rather than as lines ending in dangling `&&`.
+BreakBeforeBinaryOperators: NonAssignment
+AlignTrailingComments:
+  Kind: Never
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterNamespace: false
+  AfterClass: true
+  AfterStruct: false
+  AfterEnum: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false

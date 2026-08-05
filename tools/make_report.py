@@ -29,6 +29,7 @@ import csv
 import glob
 import json
 import os
+import shutil
 import platform
 import re
 import subprocess
@@ -275,6 +276,62 @@ def collect_coverage():
                 if pct:
                     result["mcdc"] = pct[-1]
     return result
+
+
+def _runs_ok(argv):
+    """True when the command exists and exits 0 — a licence check, not a version print."""
+    try:
+        return subprocess.run(argv, capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def licensed_tools():
+    """(name, available, detail) for every tool this project can use but not ship.
+
+    None of them gates a build: each stage exits 3 ("skipped") when its licence is
+    absent, and this table is how the final report says so — the alternative is a PDF
+    that looks complete while three measurements silently did not happen.
+    """
+    out = []
+
+    # The SAME two-part check tools/coverage.sh makes: the wrapper has to exist AND
+    # the licence has to be valid. Reporting "licensed" because a binary is on disk is
+    # how a PDF ends up claiming a measurement that never ran.
+    coco_dir = Path(os.environ.get("COCO_DIR", "/opt/SquishCoco"))
+    coco_installed = (coco_dir / "bin" / "csg++").exists()
+    coco = coco_installed and _runs_ok([str(coco_dir / "bin" / "cocolic"), "--check"])
+    if coco:
+        coco_detail = (f"licensed at {coco_dir} — tools/coverage.sh coco measures MC/DC, "
+                       "and coco-components the per-test call coverage of the integrated "
+                       "components")
+    elif coco_installed:
+        coco_detail = (f"installed at {coco_dir} but the licence check fails "
+                       f"({coco_dir}/bin/cocolic --check) — only the licence is missing; "
+                       "gcov and clang MC/DC measured the coverage above")
+    else:
+        coco_detail = ("not installed here — gcov and clang MC/DC measured the coverage "
+                       "above (tools/coverage.sh coco is the licensed path)")
+    out.append(("Squish Coco", coco, coco_detail))
+
+    squish_dir = Path(os.environ.get("SQUISH_DIR", os.environ.get("SQUISH_PREFIX", "/opt/squish")))
+    squish = bool(shutil.which("squishrunner")) or (squish_dir / "bin" / "squishrunner").exists()
+    out.append(("Squish (GUI tests)", squish,
+                "the GUI suite in squish/suite_gui runs the app FORCED into simulation "
+                "(TRADINGAPP_FORCE_SIMULATION) so it can never reach a real account. Not "
+                "installed here — tools/squish_run.sh skipped"
+                if not squish else
+                "GUI suite available; every run is forced into simulation and can never "
+                "reach a real account"))
+
+    tc_url = os.environ.get("TESTCENTER_URL", "")
+    tc = bool(tc_url) and bool(os.environ.get("TESTCENTER_TOKEN", ""))
+    out.append(("Qt Test Center", tc,
+                "central store for every test result (unit, integration and GUI). Not "
+                "configured here — set TESTCENTER_URL and TESTCENTER_TOKEN; "
+                "tools/testcenter_upload.sh skipped"
+                if not tc else f"uploading to {tc_url}"))
+    return out
 
 
 def collect_axivion():
@@ -610,6 +667,12 @@ def build_report(out_path, build_dir):
     add("Sanitizers", san_findings == 0,
         "CLEAN" if san_findings == 0 else f"{san_findings} FINDINGS",
         " · ".join(f"{name}: {n}" for name, n in sanitizers) or "not run")
+    # Licence-bound tools are never a gate here: they run when a licence is present
+    # and skip cleanly otherwise (exit code 3). The report is where that shows, so a
+    # reader knows the difference between "clean" and "not measured on this machine".
+    for name, available, detail in licensed_tools():
+        add(name, available, "licensed" if available else "no licence here", detail,
+            warn=not available)
     rep.table(rows, [30 * mm, 26 * mm, 120 * mm])
 
     if trace:

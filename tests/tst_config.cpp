@@ -27,7 +27,8 @@ constexpr std::array kEnvVars{"ETORO_CONFIG",     "ETORO_API_KEY",
                               "ETORO_BASE_URL",   "ETORO_ORDER_CURRENCY",
                               "ETORO_POLL_MS",    "ETORO_LEVERAGE",
                               "ANTHROPIC_API_KEY", "TRADINGAPP_BOT_TARGET",
-                              "TRADINGAPP_BOT_LOSS_LIMIT"};
+                              "TRADINGAPP_BOT_LOSS_LIMIT",
+                              "TRADINGAPP_FORCE_SIMULATION"};
 
 } // namespace
 
@@ -184,6 +185,54 @@ private slots:
         writeFile(elsewhere.filePath(QStringLiteral("other.json")), "{ this is not json");
         const Config broken = Config::load();
         QVERIFY(!broken.symbol.isEmpty());   // the built-in default survived
+    }
+
+    //! @tstid TS-CFG-007 @design DES-UI-GUITEST
+    // @relation(REQ-N-005, REQ-N-007, REQ-F-017, scope=function)
+    void TS_CFG_007_forcedSimulationCannotBeTalkedOutOfIt()
+    {
+        // What makes a GUI test suite safe on a machine that HAS real keys: the
+        // guarantee lives in the app, not in the test scripts. With the switch on, the
+        // app has no credentials — so no live mode, no broker network, no order path —
+        // however the keys and the mode are configured.
+        const QTemporaryDir dir;
+        QVERIFY(QDir::setCurrent(dir.path()));
+        writeFile(dir.filePath(QStringLiteral("config.json")), R"({"mode":"real"})");
+        writeFile(dir.filePath(QStringLiteral("apiKeyEtoro.json")),
+                  R"({"apiKey":"real-key","userKey":"real-user"})");
+
+        // Without it: exactly the dangerous configuration.
+        const Config live = Config::load();
+        QVERIFY(live.hasCredentials());
+        QVERIFY(live.isLive());
+        QVERIFY(live.modeLabel().contains(QStringLiteral("REAL MONEY")));
+
+        // With it: the same files, and no way to reach the account.
+        qputenv("TRADINGAPP_FORCE_SIMULATION", "1");
+        const Config forced = Config::load();
+        QVERIFY(forced.forceSimulation);
+        QVERIFY(!forced.hasCredentials());   // the ONE place every mode question reads
+        QVERIFY(!forced.isLive());
+        QVERIFY(forced.modeLabel().contains(QStringLiteral("SIMULATION")));
+        // …and it says WHY, so a screenshot from a test run is not mistaken for the
+        // app failing to find keys that are in fact present.
+        QVERIFY(forced.modeLabel().contains(QStringLiteral("FORCE_SIMULATION")));
+        // The keys are still READ (nothing hides them) — they are simply unusable.
+        QCOMPARE(forced.apiKey, QStringLiteral("real-key"));
+
+        // "0", "false" and an empty value all mean "not forced": a switch that could
+        // be turned on by accident would be as bad as one that cannot be turned on.
+        for (const char *off : {"0", "false", "FALSE", ""}) {
+            qputenv("TRADINGAPP_FORCE_SIMULATION", off);
+            const Config notForced = Config::load();
+            QVERIFY2(!notForced.forceSimulation, off);
+            QVERIFY2(notForced.isLive(), off);
+        }
+        // …and anything else means on.
+        for (const char *on : {"1", "yes", "true", "please"}) {
+            qputenv("TRADINGAPP_FORCE_SIMULATION", on);
+            QVERIFY2(!Config::load().isLive(), on);
+        }
     }
 
     //! @tstid TS-CFG-004 @design DES-SVC-CFG

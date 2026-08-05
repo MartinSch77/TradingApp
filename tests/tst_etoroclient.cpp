@@ -66,6 +66,38 @@ QByteArray historyPage(qint32 page)
 // orders:lookup is answered with lookupBody(). The limit-order tests differ only in those
 // two payloads, so everything else lives here once (which is also what keeps them off the
 // clone gate).
+// The endpoints every ORDER-side test needs answered the same way: the instrument
+// search that resolves SPX500 and a live rates row. Extracted because three tests
+// otherwise repeat the same fifteen lines, which the clone gate rightly objects to.
+MockHttpServer::Response commonMarketData(const QString &path, bool *handled)
+{
+    *handled = true;
+    if (path.contains(QStringLiteral("/market-data/search"))) {
+        const bool ger = path.contains(QStringLiteral("GER40"));
+        return MockHttpServer::Response{
+            200,
+            QStringLiteral(R"({"items":[{"instrumentId":%1,
+                "internalSymbolFull":"%2","displayname":"%2",
+                "currentRate":5000.0}]})")
+                .arg(ger ? QStringLiteral("1001") : QStringLiteral("27"),
+                     ger ? QStringLiteral("GER40") : QStringLiteral("SPX500"))
+                .toUtf8(),
+            {}};
+    }
+    if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        return MockHttpServer::Response{
+            200,
+            QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":5001.0,
+                                         "date":"%1"}]})")
+                .arg(now)
+                .toUtf8(),
+            {}};
+    }
+    *handled = false;
+    return MockHttpServer::Response{404, "{}", {}};
+}
+
 MockHttpServer::Handler limitOrderMock(std::function<QByteArray()> postBody,
                                       std::function<QByteArray()> lookupBody,
                                       std::function<QByteArray()> portfolioBody = {})
@@ -860,6 +892,235 @@ private slots:
         // 500 × 2 / 210 = 4.7619 units → SL 10.5 above, TP 21 below the new trigger.
         QCOMPARE(body.value(QStringLiteral("stopLossRate")).toDouble(), 220.5);
         QCOMPARE(body.value(QStringLiteral("takeProfitRate")).toDouble(), 189.0);
+    }
+
+    //! @tstid TS-CLI-016 @design DES-SVC-CLIENT
+    // @relation(REQ-F-019, REQ-F-024, scope=function)
+    void TS_CLI_016_aRejectedOrderNamesTheFieldTheBrokerObjectedTo()
+    {
+        // eToro rejects with ASP.NET ValidationProblemDetails: a generic title and the
+        // real reasons under "errors": {field: [msg, …]}. Reporting only the title
+        // ("One or more validation errors occurred.") is what made a rejected order
+        // unexplainable — the message has to name the offending field.
+        MockHttpServer server([](const QByteArray &method, const QString &path) {
+            bool handled = false;
+            MockHttpServer::Response common = commonMarketData(path, &handled);
+            if (handled) {
+                return common;   // moved out, so not const
+            }
+            if (path.contains(QStringLiteral("/execution")) && (method == "POST")) {
+                return MockHttpServer::Response{
+                    400,
+                    R"({"title":"One or more validation errors occurred.","status":400,
+                        "errors":{"orderCurrency":["'eur' is not supported for this account"],
+                                  "units":["exceeds maxUnitsPerOrder"]}})",
+                    {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        LimitOrderFixture fix(server, 50000);
+        QVERIFY(fix.resolved());
+
+        fix.client.openPosition(limitOrder(/*isBuy=*/true, 4900.0));
+        QVERIFY(fix.results.wait(kWaitMs));
+        const QList<QVariant> args = fix.results.takeLast();
+        QVERIFY(!args.at(0).toBool());
+        const QString message = args.at(1).toString();
+        // The generic title alone is useless; the per-field reasons are the answer.
+        QVERIFY2(message.contains(QStringLiteral("orderCurrency")), qPrintable(message));
+        QVERIFY2(message.contains(QStringLiteral("not supported")), qPrintable(message));
+        QVERIFY2(message.contains(QStringLiteral("units")), qPrintable(message));
+    }
+
+    //! @tstid TS-CLI-017 @design DES-SVC-CLIENT
+    // @relation(REQ-F-019, scope=function)
+    void TS_CLI_017_leverageComesFromTheAccountsCfdConfiguration()
+    {
+        // The eligibility endpoint answers per instrument with leverageConfigs; only the
+        // CFD settlement type applies to what this app trades, and the values arrive
+        // unsorted and with duplicates.
+        MockHttpServer server([](const QByteArray & /*method*/, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
+                    "internalSymbolFull":"SPX500","displayname":"S&P 500",
+                    "currentRate":5000.0}]})", {}};
+            }
+            if (path.contains(QStringLiteral("/eligibility"))) {
+                // The real shape: {"eligibilities":[…]} — one entry per requested id.
+                return MockHttpServer::Response{
+                    200,
+                    R"({"eligibilities":[{"instrumentId":27,"leverageConfigs":[
+                          {"settlementType":"realStock","leverageValues":[1]},
+                          {"settlementType":"CFD","leverageValues":[10,2,20,2,0,5]}]}]})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":5001.0,
+                                                 "date":"%1"}]})").arg(now).toUtf8(),
+                    {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        EtoroClient client(mockConfig(server));
+        QSignalSpy levels(&client, &EtoroClient::leverageOptions);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.start();
+        QVERIFY(levels.wait(kWaitMs));
+        const auto values = levels.takeLast().at(0).value<QList<int>>();
+        // CFD only (the realStock 1 is not offered), sorted, de-duplicated, and the
+        // nonsense 0 dropped.
+        QCOMPARE(values, QList<int>({2, 5, 10, 20}));
+    }
+
+    //! @tstid TS-CLI-018 @design DES-SVC-CLIENT
+    // @relation(REQ-F-019, REQ-F-025, scope=function)
+    void TS_CLI_018_closingAndAdjustingAPositionReportTheirOutcome()
+    {
+        // Both money-moving position operations, including the failure branch: a
+        // rejected close has to say so rather than leave the row looking closed.
+        auto failNext = QSharedPointer<bool>::create(false);
+        MockHttpServer server([failNext](const QByteArray &method, const QString &path) {
+            bool handled = false;
+            MockHttpServer::Response common = commonMarketData(path, &handled);
+            if (handled) {
+                return common;   // moved out, so not const
+            }
+            if (path.contains(QStringLiteral("/positions"))) {
+                if (*failNext) {
+                    return MockHttpServer::Response{
+                        409, R"({"detail":"position already closed"})", {}};
+                }
+                // A close is POSTed to market-close-orders/positions/<id>; an SL/TP
+                // change is a PATCH on positions/<id>. Both land here.
+                static_cast<void>(method);
+                return MockHttpServer::Response{200, "{}", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        LimitOrderFixture fix(server, 50000);
+        QVERIFY(fix.resolved());
+
+        QSignalSpy closed(&fix.client, &EtoroClient::positionClosed);
+        fix.client.closePosition(QStringLiteral("998877"));
+        QVERIFY(closed.wait(kWaitMs));
+        QVERIFY(closed.takeLast().at(0).toBool());
+
+        // Adjusting SL/TP goes down the same road and reports through the same signal.
+        QSignalSpy logs(&fix.client, &EtoroClient::log);
+        fix.client.modifyPosition(QStringLiteral("998877"), 4900.0, 5200.0, false);
+        QVERIFY(logs.wait(kWaitMs) || closed.wait(kWaitMs));
+
+        // …and a refusal is reported as one, with the broker's own reason.
+        *failNext = true;
+        fix.client.closePosition(QStringLiteral("998877"));
+        QVERIFY(closed.wait(kWaitMs));
+        const QList<QVariant> refusal = closed.takeLast();
+        QVERIFY(!refusal.at(0).toBool());
+        QVERIFY2(refusal.at(1).toString().contains(QStringLiteral("already closed")),
+                 qPrintable(refusal.at(1).toString()));
+    }
+
+    //! @tstid TS-CLI-019 @design DES-SVC-CLIENT
+    // @relation(REQ-F-019, REQ-F-020, scope=function)
+    void TS_CLI_019_theScreenerWalksEveryResolvedInstrument()
+    {
+        // The screener is one bulk eligibility call for the leverage caps, then one
+        // candle request per instrument, then a row each. Progress is reported as it
+        // goes and finished exactly once — a scan that ends silently is a scan the
+        // window waits on forever.
+        MockHttpServer server([](const QByteArray & /*method*/, const QString &path) {
+            bool handled = false;
+            MockHttpServer::Response common = commonMarketData(path, &handled);
+            if (handled) {
+                return common;   // search resolves BOTH listed instruments (moved out)
+            }
+            if (path.contains(QStringLiteral("/eligibility"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"eligibilities":[
+                         {"instrumentId":27,"leverageConfigs":[
+                            {"settlementType":"CFD","leverageValues":[2,5,20]}]},
+                         {"instrumentId":1001,"leverageConfigs":[
+                            {"settlementType":"CFD","leverageValues":[2,10]}]}]})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/history/candles"))) {
+                // 60 hourly candles: enough for the indicators the row carries.
+                QByteArray candles = "{\"candles\":[";
+                for (int i = 0; i < 60; ++i) {
+                    if (i > 0) {
+                        candles += ',';
+                    }
+                    const double close = 5000.0 + (i * 3.0);
+                    candles += QStringLiteral(R"({"fromDate":"2026-08-01T%1:00:00Z",
+                        "open":%2,"high":%3,"low":%4,"close":%2})")
+                                   .arg(i % 24, 2, 10, QLatin1Char('0'))
+                                   .arg(close, 0, 'f', 2)
+                                   .arg(close + 5.0, 0, 'f', 2)
+                                   .arg(close - 5.0, 0, 'f', 2)
+                                   .toUtf8();
+                }
+                candles += "]}";
+                return MockHttpServer::Response{200, candles, {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":5001.0,
+                                                 "date":"%1"}]})").arg(now).toUtf8(),
+                    {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 50000;   // no background polling: only the scan is observed
+        EtoroClient client(cfg);
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        const QSignalSpy progress(&client, &EtoroClient::screenerProgress);
+        QSignalSpy finished(&client, &EtoroClient::screenerFinished);
+        const QSignalSpy rows(&client, &EtoroClient::screenerRow);
+        client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("GER40")});
+        client.start();
+        QVERIFY(ready.wait(kWaitMs));
+
+        // A scan works on the ids resolved SO FAR and nudges the stragglers, so the
+        // documented contract is that a rescan is complete — which is what this waits
+        // for rather than racing the first one.
+        client.scanInstruments();
+        QVERIFY(finished.wait(kWaitMs * 4));
+        QCOMPARE(finished.size(), 1);          // exactly once per scan
+        QVERIFY(!progress.isEmpty());          // and it reported as it went
+        for (int attempt = 0; (attempt < 4) && (rows.size() < 2); ++attempt) {
+            finished.clear();
+            client.scanInstruments();
+            QVERIFY(finished.wait(kWaitMs * 4));
+        }
+
+        // One signal per instrument, as its data arrives.
+        QVERIFY2(rows.size() >= 2, qPrintable(QStringLiteral("%1 rows").arg(rows.size())));
+        QList<ScreenerRow> scanned;
+        for (const QList<QVariant> &emitted : rows) {
+            scanned.append(emitted.at(0).value<ScreenerRow>());
+        }
+        // The leverage column is the CAP from the bulk eligibility call, per instrument.
+        for (const ScreenerRow &row : scanned) {
+            if (row.symbol == QStringLiteral("SPX500")) {
+                QCOMPARE(row.maxLeverage, 20);
+            }
+            if (row.symbol == QStringLiteral("GER40")) {
+                QCOMPARE(row.maxLeverage, 10);
+            }
+            QVERIFY(!row.closes.isEmpty());    // the candles reached the row
+        }
     }
 
     //! @tstid TS-CLI-012 @design DES-SVC-CLIENT

@@ -74,7 +74,12 @@ $Root = Get-RepoRoot
 $Jobs = Get-JobCount
 
 $AllStages = @('build', 'test', 'trace', 'docs', 'coverage', 'analysis', 'sanitize', 'axivion', 'report')
-$ExtraStages = @('app', 'release', 'android', 'vs', 'deploy')   # selectable by name, not part of the default run
+# gui and testcenter are extra stages because both are licence-bound: Squish drives
+# the GUI suite, Test Center stores every result. Each exits 3 ("skipped") without
+# its licence, so naming them on a machine that has none reports skipped rather than
+# failing — the quality PDF then lists which licence was missing. Lockstep with
+# build_all.sh.
+$ExtraStages = @('app', 'release', 'android', 'vs', 'deploy', 'gui', 'testcenter')   # selectable by name, not part of the default run
 
 # ---------------------------------------------------------------------------
 # toolchain
@@ -198,6 +203,12 @@ function Invoke-ReportStage {
 function Invoke-AndroidStage { & "$Root\tools\build_android.ps1" -Abi android_arm64_v8a | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-VsStage { & "$Root\tools\make_vs_solution.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-DeployStage { & "$Root\tools\deploy_app.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
+# Extra stages (named only), both licence-bound and both exit 3 without a licence:
+#  gui         the Squish GUI suite, FORCED into simulation so it can never reach a
+#              real account (tools\squish_run.ps1 explains the guarantee)
+#  testcenter  every JUnit XML in test-results\ uploaded to Qt Test Center
+function Invoke-GuiStage { & "$Root\tools\squish_run.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
+function Invoke-TestcenterStage { & "$Root\tools\testcenter_upload.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 
 # ---------------------------------------------------------------------------
 # stage selection

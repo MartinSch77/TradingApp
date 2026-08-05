@@ -42,6 +42,13 @@ struct Config {
     double botDailyTarget = 350.0;
     double botDailyLossLimit = 350.0;
 
+    // Forced SIMULATION, set by TRADINGAPP_FORCE_SIMULATION and by nothing else.
+    // While it is on, hasCredentials() answers false — so isLive() is false, the
+    // broker client uses its synthetic feed, and no order path exists to be reached.
+    // It is what makes a GUI test suite (Squish) safe to point at this app on a
+    // machine that HAS real keys: the guarantee is in the app, not in the scripts.
+    bool forceSimulation = false;
+
     [[nodiscard]] bool hasCredentials() const;  // out-of-line: keeps coverage records unambiguous
 
     // True only when we have credentials AND the user explicitly asked for real

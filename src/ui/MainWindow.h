@@ -134,6 +134,7 @@ private slots:
     void onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines);
     // One reference ticker's session series (^VIX, ^VXN, ^TNX, a heavyweight).
     void connectInstrumentFeeds();
+    void buildDecisionSourcesTable(QVBoxLayout *lay);
     void onReferenceSeries(const QString &ticker, const QList<double> &closes);
     void updateConfluenceSignal();
 

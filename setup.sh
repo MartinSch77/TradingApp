@@ -11,7 +11,8 @@
 #          clang-tidy, cppcheck, clazy, valgrind, lcov, doxygen, Java (for
 #          PlantUML), python3 + pipx, Qt xcb/OpenGL runtime libraries
 #   pipx   cmake (>= 4.2 — distro cmake is usually too old), strictdoc,
-#          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr
+#          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr,
+#          clang-format (pinned by wheel: one version on every platform)
 #   aqt    Qt ${QT_VERSION} (+ qtcharts) into ~/Qt — the layout the build
 #          scripts expect (override with QT_PREFIX at build time). The kit
 #          follows the host: gcc_64 on x86-64, gcc_arm64 on ARM64 (Raspberry
@@ -71,7 +72,11 @@ APT_PKGS=(
 # Keep in sync with $PipPkgs in setup.ps1 so both platforms carry the same
 # python-based tooling (gcovr is the CI-friendly gcov reporter named in
 # docs/tools.md).
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard)
+# clang-format comes from pip rather than apt on purpose: the wheel pins ONE
+# version across Linux, Windows and macOS, and a formatting check that answers
+# differently on two machines is worse than no check (.clang-format explains the
+# hunk-scoped CI check it feeds).
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard clang-format)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -265,7 +270,7 @@ status() {
     # report the same set of tools.
     for t in g++ cmake ninja git gh clang-18 clang-tidy cppcheck clazy-standalone \
         valgrind lcov gcovr doxygen dot java python3 pipx \
-        strictdoc doorstop codespell sphinx-build aqt lizard syft grype trivy; do
+        strictdoc doorstop codespell sphinx-build aqt lizard clang-format syft grype trivy; do
         if have "$t"; then
             report "$t" "ok" "$(version_of "$t")"
         else
@@ -491,6 +496,78 @@ mcp_env_install() {
     "$ROOT/tools/mcp_env.sh" --persist || true
 }
 
+# ---------------------------------------------------------------------------
+# Licence-bound test tools: Squish (GUI tests), Squish Test Center (result store)
+# and Squish Coco (coverage). None can be installed unattended — they are licensed
+# products behind a Qt account — so this mode does the two things that ARE possible:
+# report exactly what this machine has, and print the remaining steps with the real
+# paths filled in. Nothing here gates a build: every stage that uses these tools
+# exits 3 ("skipped") without them, and the quality PDF lists the missing licence.
+squish_status() {
+    echo "== licence-bound test tools =="
+    local coco_dir="${COCO_DIR:-/opt/SquishCoco}"
+    local squish_dir="${SQUISH_DIR:-${SQUISH_PREFIX:-/opt/squish}}"
+    local runner
+    runner="$(command -v squishrunner || echo "$squish_dir/bin/squishrunner")"
+    if [ -x "$runner" ]; then
+        if "$runner" --version >/dev/null 2>&1; then
+            report "squishrunner" "ok" "$("$runner" --version 2>&1 | head -1)"
+        else
+            report "squishrunner" "NO LICENCE" "$runner"
+        fi
+    else
+        report "squishrunner" "MISSING" ""
+    fi
+    if [ -x "$coco_dir/bin/csg++" ]; then
+        if "$coco_dir/bin/cocolic" --check >/dev/null 2>&1; then
+            report "Squish Coco" "ok" "$coco_dir"
+        else
+            report "Squish Coco" "NO LICENCE" "$coco_dir (installed)"
+        fi
+    else
+        report "Squish Coco" "MISSING" ""
+    fi
+    if [ -n "${TESTCENTER_URL:-}" ] && [ -n "${TESTCENTER_TOKEN:-}" ]; then
+        report "Test Center" "ok" "$TESTCENTER_URL"
+    else
+        report "Test Center" "MISSING" "set TESTCENTER_URL and TESTCENTER_TOKEN"
+    fi
+    cat <<'GUIDE'
+
+--- Squish for Qt (GUI tests) ------------------------------------------------
+1. Download the Linux x86-64 package from https://account.qt.io -> Downloads ->
+   Squish (the GUI test tool, not Coco). A self-extracting .run installer.
+2. Install it and point this project at it:
+       sudo ./squish-<version>-qt<qtver>-linux64.run     # accept /opt/squish
+       export SQUISH_DIR=/opt/squish                     # or wherever it went
+3. Licence: install the licence file where squishrunner looks for it, or use a
+   licence server. The check this project makes:
+       $SQUISH_DIR/bin/squishrunner --version            # must exit 0
+4. Run the suite:
+       tools/squish_run.sh build
+   Every run is FORCED into simulation (TRADINGAPP_FORCE_SIMULATION=1 plus an
+   isolated XDG_CONFIG_HOME), so a GUI test can never reach a real eToro account —
+   the guarantee is in the app, not in the script (tests/tst_config.cpp TS-CFG-007).
+
+--- Squish Test Center (every test result in one place) ----------------------
+1. Download Squish Test Center from the same account page and install it (it ships
+   its own server; default port 8800).
+2. Create a project named TradingApp and an API token in its settings.
+3. Point the uploader at it:
+       export TESTCENTER_URL=http://localhost:8800
+       export TESTCENTER_TOKEN=<the token>
+       tools/testcenter_upload.sh --dry-run     # what it would send
+       tools/testcenter_upload.sh               # send it
+   It uploads EVERY JUnit XML in test-results/ — the Qt Test suites and the Squish
+   GUI suite alike.
+
+--- Squish Coco (coverage incl. MC/DC and per-test call coverage) ------------
+See cocoSetupInstructions.txt in the repository root. On this machine Coco is
+already installed under /opt/SquishCoco and only the LICENCE is missing.
+GUIDE
+}
+
+
 case "$MODE" in
 install)
     apt_install
@@ -551,8 +628,11 @@ android)
 ollama)
     ollama_install
     ;;
+squish)
+    squish_status
+    ;;
 *)
-    echo "usage: $0 [install|update|status|android|ollama]" >&2
+    echo "usage: $0 [install|update|status|android|ollama|squish]" >&2
     exit 2
     ;;
 esac

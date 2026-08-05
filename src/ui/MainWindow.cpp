@@ -706,11 +706,13 @@ QGroupBox *MainWindow::buildLimitOrderBox(QWidget *parent)
                        "opens. eToro holds the order and executes it even with this app closed.");
 
     m_limitBuyRate = new QDoubleSpinBox(box);
+    m_limitBuyRate->setObjectName(QStringLiteral("limitBuyRate"));
     m_limitBuyRate->setRange(0.0, 10'000'000.0);
     m_limitBuyRate->setDecimals(2);
     m_limitBuyRate->setSpecialValueText(QStringLiteral("off"));  // shown when 0
     m_limitBuyRate->setToolTip(rateTip);
     m_limitBuyButton = new QPushButton(QStringLiteral("Place limit BUY"), box);
+    m_limitBuyButton->setObjectName(QStringLiteral("limitBuyButton"));
     m_limitBuyButton->setToolTip(
         QStringLiteral("Send a BUY limit order to eToro (press twice within 650 ms)."));
     static_cast<void>(connect(m_limitBuyButton, &QPushButton::clicked, this,
@@ -721,11 +723,13 @@ QGroupBox *MainWindow::buildLimitOrderBox(QWidget *parent)
     form->addRow(QStringLiteral("Buy at rate"), buyRow);
 
     m_limitSellRate = new QDoubleSpinBox(box);
+    m_limitSellRate->setObjectName(QStringLiteral("limitSellRate"));
     m_limitSellRate->setRange(0.0, 10'000'000.0);
     m_limitSellRate->setDecimals(2);
     m_limitSellRate->setSpecialValueText(QStringLiteral("off"));
     m_limitSellRate->setToolTip(rateTip);
     m_limitSellButton = new QPushButton(QStringLiteral("Place limit SELL"), box);
+    m_limitSellButton->setObjectName(QStringLiteral("limitSellButton"));
     m_limitSellButton->setToolTip(
         QStringLiteral("Send a SELL (short) limit order to eToro (press twice within 650 ms)."));
     static_cast<void>(connect(m_limitSellButton, &QPushButton::clicked, this,
@@ -750,6 +754,7 @@ void MainWindow::buildPendingOrdersView(QWidget *parent, QFormLayout *form)
     // open orders" endpoint, so this shows the orders THIS app placed (and their live
     // status from the per-order lookup) — see EtoroClient::pendingOrders().
     m_pendingTable = new QTableWidget(0, kPendingColumns, parent);
+    m_pendingTable->setObjectName(QStringLiteral("pendingTable"));
     m_pendingTable->setHorizontalHeaderLabels({QStringLiteral("Side"),
                                                QStringLiteral("Instr."),
                                                QStringLiteral("Trigger"),
@@ -792,6 +797,7 @@ void MainWindow::buildPendingOrdersView(QWidget *parent, QFormLayout *form)
     form->addRow(m_pendingTable);
 
     m_editPendingButton = new QPushButton(QStringLiteral("Adjust SL / TP…"), parent);
+    m_editPendingButton->setObjectName(QStringLiteral("editPendingButton"));
     m_editPendingButton->setEnabled(false);
     m_editPendingButton->setToolTip(
         QStringLiteral("Change the selected resting order's trigger rate, stop loss and take "
@@ -802,6 +808,7 @@ void MainWindow::buildPendingOrdersView(QWidget *parent, QFormLayout *form)
                               [this] { openPendingOrderEditor(selectedPendingRow()); }));
 
     m_cancelPendingButton = new QPushButton(QStringLiteral("Cancel selected limit order"), parent);
+    m_cancelPendingButton->setObjectName(QStringLiteral("cancelPendingButton"));
     m_cancelPendingButton->setEnabled(false);
     m_cancelPendingButton->setToolTip(
         QStringLiteral("Ask eToro to cancel the selected resting order. It can fail if the "
@@ -1048,6 +1055,7 @@ QWidget *MainWindow::buildMarketClosedRow(QWidget *parent)
     // rejects opening orders then); the BUY/SELL buttons are disabled alongside it.
     m_marketClosedLabel = new QLabel(
         QStringLiteral("⚠ Market closed — opening trades unavailable right now"), parent);
+    m_marketClosedLabel->setObjectName(QStringLiteral("marketClosedLabel"));
     m_marketClosedLabel->setStyleSheet(QStringLiteral("color:#e35555; font-weight:bold;"));
     m_marketClosedLabel->setAlignment(Qt::AlignCenter);
     m_marketClosedLabel->setWordWrap(true);
@@ -1055,6 +1063,7 @@ QWidget *MainWindow::buildMarketClosedRow(QWidget *parent)
     // (it was: a delay added to the public rates feed read as "frozen quote" and locked
     // every instrument mid-session). This override is the way out — REQ-F-026.
     m_marketClosedOverride = new QCheckBox(QStringLiteral("Trade anyway"), parent);
+    m_marketClosedOverride->setObjectName(QStringLiteral("marketClosedOverride"));
     m_marketClosedOverride->setChecked(false);
     m_marketClosedOverride->setToolTip(QStringLiteral(
         "Re-enable BUY/SELL although the market reads closed. The open/closed state is "
@@ -1067,6 +1076,7 @@ QWidget *MainWindow::buildMarketClosedRow(QWidget *parent)
     // One row, shown/hidden as a unit by updateTradeButtonsEnabled(): the warning is
     // pointless without its way out, and the override is meaningless without the warning.
     m_marketClosedRow = new QWidget(parent);
+    m_marketClosedRow->setObjectName(QStringLiteral("marketClosedRow"));
     auto *rowLayout = new QHBoxLayout(m_marketClosedRow);
     rowLayout->setContentsMargins(0, 0, 0, 0);
     rowLayout->addWidget(m_marketClosedLabel, 1);
@@ -1101,6 +1111,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     // --- Header: instrument name + live price --------------------------------
     auto *header = new QHBoxLayout;
     m_titleLabel = new QLabel(sym, central);
+    m_titleLabel->setObjectName(QStringLiteral("titleLabel"));
     QFont titleFont = m_titleLabel->font();
     titleFont.setPointSize(titleFont.pointSize() + 6);
     titleFont.setBold(true);
@@ -1111,6 +1122,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     // it. The universe itself lives in the domain InstrumentCatalog (single
     // source of truth) — the UI only renders it, one bold header per group.
     m_instrumentBox = new QComboBox(central);
+    m_instrumentBox->setObjectName(QStringLiteral("instrumentBox"));
     m_instrumentBox->setToolTip(QStringLiteral("Switch the traded instrument"));
     auto *instModel = new QStandardItemModel(m_instrumentBox);
     QString currentGroup;
@@ -1142,6 +1154,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
         }));
 
     m_priceLabel = new QLabel(QStringLiteral("—"), central);
+    m_priceLabel->setObjectName(QStringLiteral("priceLabel"));
     QFont priceFont = m_priceLabel->font();
     priceFont.setPointSize(priceFont.pointSize() + 6);
     priceFont.setBold(true);
@@ -1150,6 +1163,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
 
     // Available cash for trading, shown beneath the live price.
     m_cashLabel = new QLabel(QStringLiteral("Available for trading: —"), central);
+    m_cashLabel->setObjectName(QStringLiteral("cashLabel"));
     m_cashLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_cashLabel->setToolTip(QStringLiteral("Free funds available to open new positions"));
 
@@ -1181,6 +1195,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
 {
     // Small toggle to show/hide the (separate) chart window.
     m_chartToggle = new QPushButton(QStringLiteral("Graph"), central);
+    m_chartToggle->setObjectName(QStringLiteral("chartToggle"));
     m_chartToggle->setCheckable(true);
     m_chartToggle->setChecked(true);
     m_chartToggle->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
@@ -1200,6 +1215,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
 
     // Leverage screener: ranks every instrument by max leverage with a buy/sell call.
     m_screenerButton = new QPushButton(QStringLiteral("Screener…"), central);
+    m_screenerButton->setObjectName(QStringLiteral("screenerButton"));
     m_screenerButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     m_screenerButton->setToolTip(QStringLiteral(
         "Rank every tradable instrument by its maximum leverage, each with a BUY/SELL "
@@ -1211,6 +1227,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
     // opens, reachable from the header too — the history of the app's own instruments
     // is a top-level question, not a detail of the summary panel.
     m_closedButton = new QPushButton(QStringLiteral("Closed trades…"), central);
+    m_closedButton->setObjectName(QStringLiteral("closedButton"));
     m_closedButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     m_closedButton->setToolTip(QStringLiteral(
         "Every closed trade over a selectable 7–13-week lookback, restricted to the "
@@ -1222,6 +1239,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
 
     // Decision window: alternative sources + AI + algorithm → one final call.
     m_decisionButton = new QPushButton(QStringLiteral("Decision…"), central);
+    m_decisionButton->setObjectName(QStringLiteral("decisionButton"));
     m_decisionButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     m_decisionButton->setToolTip(QStringLiteral(
         "Cross-check several independent sources (technical ensemble, TradingView "
@@ -1232,6 +1250,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
 
     // Trade script: load a file of conditional orders, dry-run it, arm it.
     m_scriptButton = new QPushButton(QStringLiteral("Script…"), central);
+    m_scriptButton->setObjectName(QStringLiteral("scriptButton"));
     m_scriptButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     m_scriptButton->setToolTip(QStringLiteral(
         "Scripted trading: load a text file of conditional orders (instrument, "
@@ -1243,6 +1262,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
 
     // Trading-bot simulation: paper money, live prices, no order ever placed.
     m_botButton = new QPushButton(QStringLiteral("Bot sim…"), central);
+    m_botButton->setObjectName(QStringLiteral("botButton"));
     m_botButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     m_botButton->setToolTip(QStringLiteral(
         "Trading-bot simulation (REQ-F-029): the app's own multi-source decision, traded "
@@ -1257,6 +1277,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
     // show/hide pattern as the Graph toggle. The window is created further down,
     // hence the null check at toggle time.
     m_signalsToggle = new QPushButton(QStringLiteral("Signals && AI"), central);
+    m_signalsToggle->setObjectName(QStringLiteral("signalsToggle"));
     m_signalsToggle->setCheckable(true);
     m_signalsToggle->setChecked(true);  // window is shown once the app is up
     m_signalsToggle->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
@@ -1301,11 +1322,13 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
 {
     // Trade panel
     m_tradeBox = new QGroupBox(QStringLiteral("Trade %1").arg(sym), lower);
+    m_tradeBox->setObjectName(QStringLiteral("tradeBox"));
     auto *tradeBox = m_tradeBox;
     auto *tradeForm = new QFormLayout(tradeBox);
 
     // Approximate trading hours (local time) right under the "Trade <symbol>" title.
     m_tradeHours = new QLabel(tradeBox);
+    m_tradeHours->setObjectName(QStringLiteral("tradeHours"));
     m_tradeHours->setStyleSheet(QStringLiteral("color:#777"));
     m_tradeHours->setToolTip(QStringLiteral(
         "Approximate market hours for this instrument, shown in your local time. eToro's "
@@ -1315,6 +1338,7 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
     updateTradeHours(sym);
 
     m_amount = new QDoubleSpinBox(tradeBox);
+    m_amount->setObjectName(QStringLiteral("amount"));
     m_amount->setRange(1.0, 10'000'000.0);
     m_amount->setDecimals(2);
     m_amount->setValue(3750.0);  // default stake per order
@@ -1324,12 +1348,14 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
     tradeForm->addRow(QStringLiteral("Amount:"), m_amount);
 
     m_leverage = new QComboBox(tradeBox);
+    m_leverage->setObjectName(QStringLiteral("leverage"));
     m_leverage->addItems({QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("5"),
                           QStringLiteral("10"), QStringLiteral("20")});
     m_leverage->setCurrentText(QStringLiteral("20"));  // SPX500 max leverage
     tradeForm->addRow(QStringLiteral("Leverage (x):"), m_leverage);
 
     m_stopLoss = new QDoubleSpinBox(tradeBox);
+    m_stopLoss->setObjectName(QStringLiteral("stopLoss"));
     m_stopLoss->setRange(0.0, 10'000'000.0);
     m_stopLoss->setDecimals(2);
     m_stopLoss->setValue(130.0);  // placeholder until the volatility proposal lands
@@ -1341,6 +1367,7 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
         "the automatic proposal."));
 
     m_trailingStop = new QCheckBox(QStringLiteral("Trailing"), tradeBox);
+    m_trailingStop->setObjectName(QStringLiteral("trailingStop"));
     m_trailingStop->setChecked(false);  // trailing stop-loss off by default
     m_trailingStop->setToolTip(QStringLiteral(
         "Trailing stop-loss: the stop follows the price as the trade moves in your "
@@ -1354,6 +1381,7 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
     tradeForm->addRow(QStringLiteral("Stop loss:"), slRow);
 
     m_takeProfit = new QDoubleSpinBox(tradeBox);
+    m_takeProfit->setObjectName(QStringLiteral("takeProfit"));
     m_takeProfit->setRange(0.0, 10'000'000.0);
     m_takeProfit->setDecimals(2);
     m_takeProfit->setValue(290.0);  // placeholder until the volatility proposal lands
@@ -1376,7 +1404,9 @@ QGroupBox *MainWindow::buildTradePanel(QWidget *lower, const QString &sym)
 
     auto *buttonRow = new QHBoxLayout;
     m_buyButton = new QPushButton(QStringLiteral("BUY"), tradeBox);
+    m_buyButton->setObjectName(QStringLiteral("buyButton"));
     m_sellButton = new QPushButton(QStringLiteral("SELL"), tradeBox);
+    m_sellButton->setObjectName(QStringLiteral("sellButton"));
     m_buyButton->setMinimumHeight(40);
     m_sellButton->setMinimumHeight(40);
     m_buyButton->setStyleSheet(QStringLiteral(
@@ -1410,6 +1440,7 @@ void MainWindow::buildTradeCostRows(QGroupBox *tradeBox, QFormLayout *tradeForm)
     // near the ask, a sell near the bid) and refreshed by updateOpenCost() as the
     // price, amount or leverage change.
     m_openCost = new QLabel(QStringLiteral("—"), tradeBox);
+    m_openCost->setObjectName(QStringLiteral("openCost"));
     m_openCost->setStyleSheet(QStringLiteral("color:#777"));
     m_openCost->setTextFormat(Qt::RichText);
     m_openCost->setToolTip(QStringLiteral(
@@ -1422,6 +1453,7 @@ void MainWindow::buildTradeCostRows(QGroupBox *tradeBox, QFormLayout *tradeForm)
     // Rollover fees for this order size: charged per night a leveraged position is
     // held; the weekend figure is the one-off triple charge on the rollover night.
     m_feeCost = new QLabel(QStringLiteral("—"), tradeBox);
+    m_feeCost->setObjectName(QStringLiteral("feeCost"));
     m_feeCost->setStyleSheet(QStringLiteral("color:#777"));
     m_feeCost->setTextFormat(Qt::RichText);
     m_feeCost->setToolTip(QStringLiteral(
@@ -1443,40 +1475,65 @@ void MainWindow::buildSignalsWindow(const QString &sym)
     // trading; shown at startup, toggled via the header "Signals & AI" button,
     // closed with the app in closeEvent.
     m_signalsWindow = new QWidget(nullptr);
+    m_signalsWindow->setObjectName(QStringLiteral("signalsWindow"));
     m_signalsWindow->setWindowTitle(QStringLiteral("Trading signals & AI — %1").arg(sym));
     m_signalsWindow->setWindowFlag(Qt::WindowStaysOnTopHint, true);
     auto *signalsWinLayout = new QVBoxLayout(m_signalsWindow);
     m_signalsWindow->installEventFilter(this);  // keep the header toggle in sync
     m_sigBox = new QGroupBox(QStringLiteral("Trading signals — %1").arg(sym),
                              m_signalsWindow);
+    m_sigBox->setObjectName(QStringLiteral("sigBox"));
     signalsWinLayout->addWidget(m_sigBox);
     auto *sigBox = m_sigBox;
     auto *sigForm = new QFormLayout(sigBox);
     sigForm->setVerticalSpacing(2);          // 17 rows — keep them compact so the panel fits
     sigForm->setContentsMargins(9, 6, 9, 6);
     m_sigTrend = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigTrend->setObjectName(QStringLiteral("sigTrend"));
     m_sigMomentum = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigMomentum->setObjectName(QStringLiteral("sigMomentum"));
     m_sigMacd = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigMacd->setObjectName(QStringLiteral("sigMacd"));
     m_sigBoll = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigBoll->setObjectName(QStringLiteral("sigBoll"));
     m_sigVol = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigVol->setObjectName(QStringLiteral("sigVol"));
     m_sigVix = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigVix->setObjectName(QStringLiteral("sigVix"));
     m_sigRegime = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigRegime->setObjectName(QStringLiteral("sigRegime"));
     m_sigNews = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigNews->setObjectName(QStringLiteral("sigNews"));
     m_sigWeb = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigWeb->setObjectName(QStringLiteral("sigWeb"));
     m_sigCrowd = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigCrowd->setObjectName(QStringLiteral("sigCrowd"));
     m_sigLocalAi = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigLocalAi->setObjectName(QStringLiteral("sigLocalAi"));
     m_sigConfluence = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigConfluence->setObjectName(QStringLiteral("sigConfluence"));
     m_sigWebQuote = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigWebQuote->setObjectName(QStringLiteral("sigWebQuote"));
     m_sigRegression = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigRegression->setObjectName(QStringLiteral("sigRegression"));
     m_sigKnn = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigKnn->setObjectName(QStringLiteral("sigKnn"));
     m_sigStoch = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigStoch->setObjectName(QStringLiteral("sigStoch"));
     m_sigTrend50 = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigTrend50->setObjectName(QStringLiteral("sigTrend50"));
     m_sigRisk = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigRisk->setObjectName(QStringLiteral("sigRisk"));
     m_sigChange = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigChange->setObjectName(QStringLiteral("sigChange"));
     m_sigPrediction = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigPrediction->setObjectName(QStringLiteral("sigPrediction"));
     m_sig3h = new QLabel(QStringLiteral("—"), sigBox);
+    m_sig3h->setObjectName(QStringLiteral("sig3h"));
     m_sig3d = new QLabel(QStringLiteral("—"), sigBox);
+    m_sig3d->setObjectName(QStringLiteral("sig3d"));
     m_sigOverall = new QLabel(QStringLiteral("—"), sigBox);
+    m_sigOverall->setObjectName(QStringLiteral("sigOverall"));
     QFont sigFont = m_sigOverall->font();
     sigFont.setBold(true);
     m_sigOverall->setFont(sigFont);
@@ -1631,15 +1688,21 @@ void MainWindow::buildAiPanel(QVBoxLayout *signalsWinLayout)
     // --- AI decision-support panel -------------------------------------------
     // Shares the floating signals window: one always-visible place for both.
     m_aiBox = new QGroupBox(QStringLiteral("AI decision support"), m_signalsWindow);
+    m_aiBox->setObjectName(QStringLiteral("aiBox"));
     signalsWinLayout->addWidget(m_aiBox);
     auto *aiForm = new QFormLayout(m_aiBox);
     aiForm->setVerticalSpacing(2);
     aiForm->setContentsMargins(9, 6, 9, 6);
     m_aiUpProb = new QLabel(QStringLiteral("—"), m_aiBox);
+    m_aiUpProb->setObjectName(QStringLiteral("aiUpProb"));
     m_aiMonteCarlo = new QLabel(QStringLiteral("—"), m_aiBox);
+    m_aiMonteCarlo->setObjectName(QStringLiteral("aiMonteCarlo"));
     m_aiEdge = new QLabel(QStringLiteral("—"), m_aiBox);
+    m_aiEdge->setObjectName(QStringLiteral("aiEdge"));
     m_aiRegime = new QLabel(QStringLiteral("—"), m_aiBox);
+    m_aiRegime->setObjectName(QStringLiteral("aiRegime"));
     m_aiAdvice = new QLabel(QStringLiteral("—"), m_aiBox);
+    m_aiAdvice->setObjectName(QStringLiteral("aiAdvice"));
     m_aiAdvice->setWordWrap(true);
     QFont aiFont = m_aiAdvice->font();
     aiFont.setBold(true);
@@ -1689,6 +1752,7 @@ QGroupBox *MainWindow::buildPositionsPanel(QWidget *lower)
     m_positionsModel = new PositionsModel(posBox);
     m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);
     m_positions = new QTableView(posBox);
+    m_positions->setObjectName(QStringLiteral("positions"));
     m_positions->setModel(m_positionsModel);
     m_positions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_positions->verticalHeader()->setVisible(false);
@@ -1758,6 +1822,7 @@ QGroupBox *MainWindow::buildPositionsPanel(QWidget *lower)
     // is worth right now. Updated with every re-price, not only per portfolio poll, so it
     // moves with the P/L column it sums.
     m_openTradesSummary = new QLabel(posBox);
+    m_openTradesSummary->setObjectName(QStringLiteral("openTradesSummary"));
     m_openTradesSummary->setTextFormat(Qt::RichText);
     m_openTradesSummary->setToolTip(QStringLiteral(
         "Totals over the open trades above: the invested amounts as the Amount column "
@@ -1768,6 +1833,7 @@ QGroupBox *MainWindow::buildPositionsPanel(QWidget *lower)
     // Close-proposal banner: filled by the watchdog when the live price breaks the
     // forecast corridor against an open trade (or the signal flips hard against it).
     m_closeAdvice = new QLabel(posBox);
+    m_closeAdvice->setObjectName(QStringLiteral("closeAdvice"));
     m_closeAdvice->setTextFormat(Qt::RichText);
     m_closeAdvice->setWordWrap(true);
     m_closeAdvice->setVisible(false);
@@ -1779,6 +1845,7 @@ QGroupBox *MainWindow::buildPositionsPanel(QWidget *lower)
     posLayout->addWidget(m_closeAdvice);
 
     m_closeButton = new QPushButton(QStringLiteral("Close marked trades"), posBox);
+    m_closeButton->setObjectName(QStringLiteral("closeButton"));
     m_closeButton->setMinimumHeight(34);
     posLayout->addWidget(m_closeButton);
     return posBox;
@@ -1789,13 +1856,16 @@ void MainWindow::buildMonthlyPnlPanel(QWidget *lower)
     // Closed-trade P/L summary: net profit/loss of the last 7 weeks' closed trades,
     // restricted to the instruments listed in the selector, summed in account currency.
     m_pnlBox = new QGroupBox(QStringLiteral("Closed trades — last 7 weeks (listed instruments)"), lower);
+    m_pnlBox->setObjectName(QStringLiteral("pnlBox"));
     auto *pnlLayout = new QVBoxLayout(m_pnlBox);
     m_pnlSummary = new QLabel(QStringLiteral("Loading closed-trade P/L…"), m_pnlBox);
+    m_pnlSummary->setObjectName(QStringLiteral("pnlSummary"));
     m_pnlSummary->setTextFormat(Qt::RichText);
     m_pnlSummary->setWordWrap(true);
     pnlLayout->addWidget(m_pnlSummary);
 
     m_pnlTable = new QTableWidget(0, 4, m_pnlBox);
+    m_pnlTable->setObjectName(QStringLiteral("pnlTable"));
     m_pnlTable->setHorizontalHeaderLabels(
         {QStringLiteral("Instrument"), QStringLiteral("Trades"),
          QStringLiteral("Net P/L (%1)").arg(m_ccy), QStringLiteral("Costs (%1)").arg(m_ccy)});
@@ -1814,9 +1884,11 @@ void MainWindow::buildMonthlyPnlPanel(QWidget *lower)
 
     auto *pnlButtons = new QHBoxLayout;
     m_pnlRefresh = new QPushButton(QStringLiteral("Refresh closed-trade P/L"), m_pnlBox);
+    m_pnlRefresh->setObjectName(QStringLiteral("pnlRefresh"));
     static_cast<void>(connect(m_pnlRefresh, &QPushButton::clicked, this,
                               [this] { m_client->fetchClosedTrades(closedLookbackWeeks()); }));
     m_pnlDetails = new QPushButton(QStringLiteral("All trades…"), m_pnlBox);
+    m_pnlDetails->setObjectName(QStringLiteral("pnlDetails"));
     m_pnlDetails->setToolTip(QStringLiteral(
         "Every closed trade of the last 7–13 weeks (lookback selectable), with net "
         "P/L, rollover fees and estimated opening/closing spread costs per trade."));
@@ -1832,8 +1904,10 @@ void MainWindow::buildBottomRow(QWidget *lower, QVBoxLayout *lowerLayout, const 
     // Economic-calendar panel: macro events that could move the instrument, next 3 days.
     m_eventsBox = new QGroupBox(
         QStringLiteral("Market events — next 3 trading days (with %1 impact)").arg(sym), lower);
+    m_eventsBox->setObjectName(QStringLiteral("eventsBox"));
     auto *eventsLayout = new QVBoxLayout(m_eventsBox);
     m_events = new QListWidget(m_eventsBox);
+    m_events->setObjectName(QStringLiteral("events"));
     m_events->setMaximumHeight(120);
     m_events->setSelectionMode(QAbstractItemView::NoSelection);
     m_events->setFocusPolicy(Qt::NoFocus);
@@ -1851,6 +1925,7 @@ void MainWindow::buildBottomRow(QWidget *lower, QVBoxLayout *lowerLayout, const 
     auto *logLayout = new QVBoxLayout(logBox);
     logLayout->setContentsMargins(6, 4, 6, 4);
     m_log = new QPlainTextEdit(logBox);
+    m_log->setObjectName(QStringLiteral("log"));
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(500);
     m_log->setMaximumHeight(120);
@@ -1875,6 +1950,7 @@ void MainWindow::buildRecommendationsPanel(QWidget *lower)
     // "Buy / sell now" panel, right of the market events: instruments the signals +
     // web rating currently favour, newest news in each row's hover reasoning.
     m_recoBox = new QGroupBox(QStringLiteral("Buy / sell now"), lower);
+    m_recoBox->setObjectName(QStringLiteral("recoBox"));
     auto *recoLayout = new QVBoxLayout(m_recoBox);
     // Two columns: BUY calls on the left, SELL calls on the right (each strongest first).
     auto makeRecoList = [this]() {
@@ -1922,6 +1998,7 @@ void MainWindow::buildRecommendationsPanel(QWidget *lower)
     recoLayout->addLayout(recoCols);
 
     m_recoRefresh = new QPushButton(QStringLiteral("Refresh"), m_recoBox);
+    m_recoRefresh->setObjectName(QStringLiteral("recoRefresh"));
     m_recoRefresh->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
     static_cast<void>(connect(m_recoRefresh, &QPushButton::clicked, this,
                               &MainWindow::startRecommendationScan));
@@ -1974,6 +2051,7 @@ void MainWindow::buildUi()
 
     // --- Mode badge ----------------------------------------------------------
     m_modeLabel = new QLabel(central);
+    m_modeLabel->setObjectName(QStringLiteral("modeLabel"));
     m_modeLabel->setAlignment(Qt::AlignCenter);
     m_modeLabel->setContentsMargins(6, 4, 6, 4);
     root->addWidget(m_modeLabel);
@@ -3719,6 +3797,7 @@ void MainWindow::openClosedTrades()
 {
     if (m_closedDialog == nullptr) {
         m_closedDialog = new QDialog(this);
+        m_closedDialog->setObjectName(QStringLiteral("closedDialog"));
         m_closedDialog->setWindowTitle(QStringLiteral("Closed trades — details & costs"));
         m_closedDialog->resize(980, 520);
         auto *lay = new QVBoxLayout(m_closedDialog);
@@ -3726,6 +3805,7 @@ void MainWindow::openClosedTrades()
         auto *top = new QHBoxLayout;
         top->addWidget(new QLabel(QStringLiteral("Lookback:"), m_closedDialog));
         m_closedWeeks = new QComboBox(m_closedDialog);
+        m_closedWeeks->setObjectName(QStringLiteral("closedWeeks"));
         for (qint32 w = 7; w <= 13; ++w) {
             const QString label = QStringLiteral("%1 weeks").arg(w);
             m_closedWeeks->addItem(label, w);
@@ -3733,12 +3813,14 @@ void MainWindow::openClosedTrades()
         m_closedWeeks->setCurrentIndex(m_closedWeeks->count() - 1);  // default: 13 weeks
         top->addWidget(m_closedWeeks);
         m_closedRefresh = new QPushButton(QStringLiteral("Refresh"), m_closedDialog);
+        m_closedRefresh->setObjectName(QStringLiteral("closedRefresh"));
         top->addWidget(m_closedRefresh);
         // Default ON: the account's history can span hundreds of instruments, while the
         // question this window answers is "how did MY instruments do". Unticking keeps
         // the old behaviour — the whole account, foreign rows greyed as context.
         m_closedListedOnly = new QCheckBox(QStringLiteral("Only this app's instruments"),
                                            m_closedDialog);
+        m_closedListedOnly->setObjectName(QStringLiteral("closedListedOnly"));
         m_closedListedOnly->setChecked(true);
         m_closedListedOnly->setToolTip(QStringLiteral(
             "Show only trades on the instruments in this app's selector. Unticked, every "
@@ -3750,11 +3832,13 @@ void MainWindow::openClosedTrades()
         lay->addLayout(top);
 
         m_closedSummary = new QLabel(QStringLiteral("Loading closed trades…"), m_closedDialog);
+        m_closedSummary->setObjectName(QStringLiteral("closedSummary"));
         m_closedSummary->setTextFormat(Qt::RichText);
         m_closedSummary->setWordWrap(true);
         lay->addWidget(m_closedSummary);
 
         m_closedTable = new QTableWidget(0, 12, m_closedDialog);
+        m_closedTable->setObjectName(QStringLiteral("closedTable"));
         m_closedTable->setHorizontalHeaderLabels(
             {QStringLiteral("Closed"), QStringLiteral("Instrument"), QStringLiteral("Side"),
              QStringLiteral("Lev"), QStringLiteral("Invest (%1)").arg(m_ccy),
@@ -4269,6 +4353,24 @@ void MainWindow::connectInstrumentFeeds()
                               &MainWindow::onReferenceSeries));
 }
 
+// The per-instrument source table of the decision window: eight rows now (the six
+// market reads plus BOTH advisors), which is the point of that window — so it gets
+// the room to be read without scrolling for the last two.
+void MainWindow::buildDecisionSourcesTable(QVBoxLayout *lay)
+{
+    m_decisionSources = new QTableWidget(0, 4, m_decisionDialog);
+    m_decisionSources->setObjectName(QStringLiteral("decisionSources"));
+    m_decisionSources->setHorizontalHeaderLabels(
+        {QStringLiteral("Source"), QStringLiteral("Read"), QStringLiteral("Confidence"),
+         QStringLiteral("Note")});
+    m_decisionSources->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_decisionSources->setSelectionMode(QAbstractItemView::NoSelection);
+    m_decisionSources->verticalHeader()->setVisible(false);
+    m_decisionSources->horizontalHeader()->setStretchLastSection(true);
+    m_decisionSources->setMinimumHeight(270);
+    lay->addWidget(m_decisionSources);
+}
+
 void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &closes)
 {
     static_cast<void>(m_referenceSeries.insert(ticker, closes));
@@ -4669,6 +4771,7 @@ void MainWindow::openDecision()
 {
     if (m_decisionDialog == nullptr) {
         m_decisionDialog = new QDialog(this);
+        m_decisionDialog->setObjectName(QStringLiteral("decisionDialog"));
         m_decisionDialog->setWindowTitle(QStringLiteral("Trade decision — sources & AI"));
         m_decisionDialog->resize(760, 620);
         auto *lay = new QVBoxLayout(m_decisionDialog);
@@ -4682,6 +4785,7 @@ void MainWindow::openDecision()
         lay->addWidget(intro);
 
         m_decisionConclusion = new QLabel(m_decisionDialog);
+        m_decisionConclusion->setObjectName(QStringLiteral("decisionConclusion"));
         m_decisionConclusion->setTextFormat(Qt::RichText);
         m_decisionConclusion->setWordWrap(true);
         m_decisionConclusion->setContentsMargins(4, 6, 4, 6);
@@ -4693,12 +4797,14 @@ void MainWindow::openDecision()
         // against the expected gain. Apply pushes it into the trade panel —
         // it never places an order (BUY/SELL keep their double-press gate).
         m_decisionPlanLabel = new QLabel(m_decisionDialog);
+        m_decisionPlanLabel->setObjectName(QStringLiteral("decisionPlanLabel"));
         m_decisionPlanLabel->setTextFormat(Qt::RichText);
         m_decisionPlanLabel->setWordWrap(true);
         m_decisionPlanLabel->setContentsMargins(4, 2, 4, 2);
         lay->addWidget(m_decisionPlanLabel);
         m_decisionApply = new QPushButton(
             QStringLiteral("Apply plan to trade panel (no order placed)"), m_decisionDialog);
+        m_decisionApply->setObjectName(QStringLiteral("decisionApply"));
         m_decisionApply->setEnabled(false);
         m_decisionApply->setToolTip(QStringLiteral(
             "Selects the plan's instrument and fills Amount, Leverage, Stop loss and "
@@ -4711,22 +4817,12 @@ void MainWindow::openDecision()
         m_decisionSourcesLabel =
             new QLabel(QStringLiteral("Sources for the recommended instrument:"), m_decisionDialog);
         lay->addWidget(m_decisionSourcesLabel);
-        m_decisionSources = new QTableWidget(0, 4, m_decisionDialog);
-        m_decisionSources->setHorizontalHeaderLabels(
-            {QStringLiteral("Source"), QStringLiteral("Read"), QStringLiteral("Confidence"),
-             QStringLiteral("Note")});
-        m_decisionSources->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        m_decisionSources->setSelectionMode(QAbstractItemView::NoSelection);
-        m_decisionSources->verticalHeader()->setVisible(false);
-        m_decisionSources->horizontalHeader()->setStretchLastSection(true);
-        // Eight source rows now (the six market reads plus BOTH advisors), and they
-        // are the point of this window: room to read them without scrolling.
-        m_decisionSources->setMinimumHeight(270);
-        lay->addWidget(m_decisionSources);
+        buildDecisionSourcesTable(lay);
 
         lay->addWidget(new QLabel(QStringLiteral("All instruments, ranked by composite:"),
                                   m_decisionDialog));
         m_decisionRanked = new QTableWidget(0, RankedColCount, m_decisionDialog);
+        m_decisionRanked->setObjectName(QStringLiteral("decisionRanked"));
         m_decisionRanked->setHorizontalHeaderLabels(
             {QStringLiteral("Instrument"), QStringLiteral("Call"), QStringLiteral("Composite"),
              QStringLiteral("Confidence"), QStringLiteral("Web signal"),
@@ -4773,11 +4869,13 @@ void MainWindow::openDecision()
         lay->addWidget(m_decisionRanked, 1);
 
         m_decisionAiStatus = new QLabel(m_decisionDialog);
+        m_decisionAiStatus->setObjectName(QStringLiteral("decisionAiStatus"));
         m_decisionAiStatus->setWordWrap(true);
         lay->addWidget(m_decisionAiStatus);
 
         auto *footer = new QHBoxLayout;
         m_decisionRefresh = new QPushButton(QStringLiteral("Refresh"), m_decisionDialog);
+        m_decisionRefresh->setObjectName(QStringLiteral("decisionRefresh"));
         static_cast<void>(connect(m_decisionRefresh, &QPushButton::clicked, this,
                                   &MainWindow::startDecisionScan));
         auto *closeBtn = new QPushButton(QStringLiteral("Close"), m_decisionDialog);

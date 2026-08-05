@@ -179,6 +179,40 @@ double volatileWindowFactor(SessionPhase phase, const BotConfig &cfg)
     return (phase == SessionPhase::Normal) ? 1.0 : std::max(1.0, cfg.volatileWindowFactor);
 }
 
+// Instruments the bot is reluctant to trade at all: allowed only when the expected
+// move is both big and fast enough to be worth the spread (REQ-F-034). "Expected move
+// per hour" is the instrument's own hourly sigma multiplied by the leverage actually
+// chosen, i.e. a percentage of the STAKE rather than of the price — which is what
+// decides whether a position can outrun its costs in a short time.
+EntryVerdict reluctanceVerdict(const CandidateInput &in, const EntrySignal &sig,
+                               const BotConfig &cfg)
+{
+    EntryVerdict out;
+    if (!cfg.reluctantSymbols.contains(in.symbol, Qt::CaseInsensitive)) {
+        return out;
+    }
+    const double perHour = sig.volPct * static_cast<double>(sig.leverage);
+    if (perHour < cfg.reluctantMinHourlyMovePct) {
+        out.why = QStringLiteral("%1 moves %2%% of the stake per hour at x%3 — under the %4%% "
+                                 "this instrument has to promise to be worth trading")
+                      .arg(in.symbol)
+                      .arg(perHour, 0, 'f', 2)
+                      .arg(sig.leverage)
+                      .arg(cfg.reluctantMinHourlyMovePct, 0, 'f', 2);
+        out.code = QStringLiteral("reluctant-symbol");
+        return out;
+    }
+    const double floor = cfg.minConfidence * std::max(1.0, cfg.reluctantConfidenceFactor);
+    if (in.confidence < floor) {
+        out.why = QStringLiteral("%1 needs %2%% conviction to be worth trading, not %3%%")
+                      .arg(in.symbol)
+                      .arg(floor, 0, 'f', 0)
+                      .arg(in.confidence, 0, 'f', 0);
+        out.code = QStringLiteral("reluctant-symbol");
+    }
+    return out;
+}
+
 // Never INTO a fresh break of the session's opening range: the session has just told
 // everyone which way it is going (REQ-F-022). Empty code = nothing in the way.
 EntryVerdict rangeBreakVerdict(const CandidateInput &in, const BotConfig &cfg)
@@ -1160,6 +1194,10 @@ EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
     }
     // Size down in a loud window: the same stop is a wider bet when the range of
     // the next ten minutes is three times the usual.
+    if (const EntryVerdict reluctant = reluctanceVerdict(in, sig, cfg);
+        !reluctant.code.isEmpty()) {
+        return reluctant;
+    }
     const double stake = room.stake / windowFactor;
     if (stake < cfg.minStake) {
         verdict.why = QStringLiteral("the %1 leaves too little size to be worth its costs")
@@ -1368,32 +1406,45 @@ namespace {
 // signal that justified it has faded while it is not paying, and a winner that has
 // handed back most of its best result. Between the stop and the target, these are
 // the only rules that can act on what actually happened.
-CloseReason dynamicExit(const PaperTrade &trade, const ExitContext &ctx, const BotConfig &cfg)
+// Has the signal that justified the trade faded, and is acting on it worth the
+// spread? Compared against the COMPOSITE's conviction at entry, never the model's:
+// in lead mode the two live on different scales, and mixing them made every
+// model-led trade look faded the instant it opened.
+bool fadedAndWorthClosing(const PaperTrade &trade, const ExitContext &ctx,
+                          const BotConfig &cfg, double net)
 {
     const qint32 side = trade.isBuy ? 1 : -1;
+    const bool stillMine = (ctx.dirNow == side) || (ctx.dirNow == 0);
+    if (!stillMine || (trade.entryCompositeConf <= 0.0) || (ctx.confNow < 0.0) || (net > 0.0)) {
+        return false;
+    }
+    if (ctx.confNow >= (trade.entryCompositeConf * cfg.signalFadeFraction)) {
+        return false;   // the conviction is intact
+    }
+    // Closing a position that is down less than the round trip costs pays the spread
+    // to save nothing — which is how a rule with a sound premise became the biggest
+    // single loss in the measured book (7 fades, −13.87 average).
+    const double exitCost = paperHalfSpreadCost(trade.stake, trade.leverage, ctx.spreadPct);
+    return (exitCost <= 0.0) || (-net >= (exitCost * std::max(0.0, cfg.fadeMinLossOverCost)));
+}
+
+CloseReason dynamicExit(const PaperTrade &trade, const ExitContext &ctx, const BotConfig &cfg)
+{
     const double net = trade.netPnl();
     // Every rule here is DISCRETIONARY, so every one of them waits out the minimum
-    // holding time. Closing a position minutes after opening it pays two half-
-    // spreads for a price that has not had time to do anything.
+    // holding time. Closing a position minutes after opening it pays two half-spreads
+    // for a price that has not had time to do anything.
     if (trade.openTime.isValid() && ctx.now.isValid()) {
         const double heldMinutes = static_cast<double>(trade.openTime.secsTo(ctx.now)) / 60.0;
         if (heldMinutes < static_cast<double>(cfg.minHoldMinutes)) {
             return CloseReason::None;
         }
     }
-    // Faded: the composite still points the trade's way (or nowhere) but with a
-    // fraction of the conviction that opened it, and the position is not paying.
-    // A profitable position is left alone — the give-back rule governs that one.
-    // Compared against the COMPOSITE's conviction at entry, never against the
-    // model's: in lead mode the two live on different scales, and mixing them made
-    // every model-led trade look faded the instant it opened.
-    const bool stillMine = (ctx.dirNow == side) || (ctx.dirNow == 0);
-    if (stillMine && (trade.entryCompositeConf > 0.0) && (ctx.confNow >= 0.0) && (net <= 0.0)
-        && (ctx.confNow < (trade.entryCompositeConf * cfg.signalFadeFraction))) {
+    if (fadedAndWorthClosing(trade, ctx, cfg, net)) {
         return CloseReason::SignalFade;
     }
-    // Given back: it was up by something that mattered and has since surrendered
-    // most of it. Banking what is left beats hoping for the target again.
+    // Given back: it was up by something that mattered and has since surrendered most
+    // of it. Banking what is left beats hoping for the target again.
     if ((trade.peakNet >= cfg.giveBackMinNet) && (net > 0.0)
         && (net <= (trade.peakNet * (1.0 - cfg.giveBackFraction)))) {
         return CloseReason::GiveBack;
@@ -1463,6 +1514,9 @@ PaperPerformance paperPerformance(const QList<PaperClosedTrade> &closed, double 
         if (c.closeTime.isValid()) {
             perDay[c.closeTime.date()] += c.netPnl;
         }
+        const QString reason = closeReasonWord(c.reason);
+        perf.netByReason[reason] += c.netPnl;
+        perf.countByReason[reason] += 1;
         // Both sides, separately: a strategy that only earns on longs in a rising
         // market has not shown an edge, it has shown a market.
         if (c.isBuy) {

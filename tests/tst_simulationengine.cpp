@@ -215,6 +215,51 @@ private slots:
         QVERIFY(result.last().at(1).toString().contains(QStringLiteral("Insufficient")));
     }
 
+    //! @tstid TS-SIM-007 @design DES-SVC-SIM
+    // @relation(REQ-F-017, REQ-F-020, scope=function)
+    void TS_SIM_007_theSimulatedScreenerAnswersForEveryInstrument()
+    {
+        // The screener has to work before credentials exist — that is the whole point
+        // of SIMULATION mode: a reader can see what the app does with no account at
+        // all. It answers synchronously, one row per instrument, progress reported and
+        // finished exactly once.
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(2026U);
+        const QSignalSpy rows(&sim, &SimulationEngine::screenerRow);
+        const QSignalSpy progress(&sim, &SimulationEngine::screenerProgress);
+        const QSignalSpy finished(&sim, &SimulationEngine::screenerFinished);
+
+        const QStringList symbols{QStringLiteral("SPX500"), QStringLiteral("GER40"),
+                                  QStringLiteral("EURUSD"), QStringLiteral("Gold.24-7")};
+        sim.scanInstruments(symbols);
+
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(rows.size(), symbols.size());
+        QVERIFY(!progress.isEmpty());
+        QCOMPARE(progress.constFirst().at(1).toInt(), static_cast<int>(symbols.size()));
+
+        for (const QList<QVariant> &emitted : rows) {
+            const auto row = emitted.at(0).value<ScreenerRow>();
+            QVERIFY(symbols.contains(row.symbol));
+            // Each row carries what the ranked table shows: a leverage cap from the
+            // instrument's own ladder and a price series the indicators can read.
+            QVERIFY2(row.maxLeverage > 0, qPrintable(row.symbol));
+            QVERIFY2(row.closes.size() > 30, qPrintable(QStringLiteral("%1: %2 closes")
+                                                            .arg(row.symbol)
+                                                            .arg(row.closes.size())));
+            for (const double close : row.closes) {
+                QVERIFY(close > 0.0);
+            }
+        }
+
+        // An empty universe is answered, not ignored: finished still fires so the
+        // window stops waiting.
+        const QSignalSpy secondFinish(&sim, &SimulationEngine::screenerFinished);
+        sim.scanInstruments({});
+        QCOMPARE(secondFinish.size(), 1);
+    }
+
     //! @tstid TS-SIM-004 @design DES-SVC-SIM
     // @relation(REQ-F-027, scope=function)
     void TS_SIM_004_limitOrderRestsUntilTriggeredAndCanBeCancelled()

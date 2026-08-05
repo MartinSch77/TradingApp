@@ -157,6 +157,22 @@ struct BotConfig {
     // strength → the reason to be in the trade is gone; a position that is not in
     // profit is let go rather than ridden to its stop.
     double signalFadeFraction = 0.45;
+    // …and the fade must be worth ACTING on. Measured over 18 real closes: the fade
+    // rule fired 7 times for −97.12 EUR (−13.87 average) while the whole book's gross
+    // was +119.35 against 148.77 of costs. Closing a position that is down less than
+    // the round trip costs pays ~3 EUR to save ~1: the rule now needs the loss to
+    // exceed the exit cost by this multiple before it may act.
+    double fadeMinLossOverCost = 1.5;
+    // Instruments the bot is RELUCTANT to trade: it may, but only when the move it
+    // expects is big enough and fast enough to be worth the attempt. USDOLLAR is the
+    // measured example — 3 trades for −19.22 EUR, because the dollar index moves a few
+    // hundredths of a percent an hour and the spread does not care.
+    QStringList reluctantSymbols{QStringLiteral("USDOLLAR")};
+    // For those: the expected move per HOUR at the chosen leverage, as a percentage of
+    // the stake, must reach this…
+    double reluctantMinHourlyMovePct = 1.0;
+    // …and the conviction floor is multiplied by this.
+    double reluctantConfidenceFactor = 2.0;
     // A position that was up and has given back this fraction of its best result is
     // closed while it is still a winner. Only above giveBackMinNet, so noise on a
     // few euros of profit does not churn the book.
@@ -796,6 +812,12 @@ struct PaperPerformance {
     // that cannot be positive every single day.
     double netLastDays = 0.0;
     qint32 rollingDays = 0;      // how many days that figure actually covers
+    // Net and count per EXIT REASON. This is the single most diagnostic number the
+    // record holds: over the first 18 real closes the fade rule was −97.12 EUR over 7
+    // trades while give-back was +99.10 over 2, and no other view of the same book
+    // makes that visible.
+    QHash<QString, double> netByReason;
+    QHash<QString, qint32> countByReason;
     qint32 shortTrades = 0;      // closed SELL trades — the bot trades both sides
     double shortNet = 0.0;       // …and what they contributed, so a one-sided
     double longNet = 0.0;        // …edge is visible instead of assumed

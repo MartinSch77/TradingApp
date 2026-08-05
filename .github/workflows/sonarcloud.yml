@@ -1,4 +1,9 @@
-# SonarCloud analysis — free for public GitHub repositories. Self-activating:
+# SonarCloud analysis — INFORMATIONAL, never a gate. Sonar's own quality gate
+# fails on hotspot categories that only a human can rule on (a deterministic PRNG
+# for reproducible training, plain HTTP to a localhost model server, unpinned
+# action versions), so its verdict is read rather than obeyed; the gates that block
+# this project are the ones in build_all.sh. Free for public GitHub repositories.
+# Self-activating:
 # the job runs only when the SONAR_TOKEN repository secret is configured
 # (create the project at sonarcloud.io, then add the secret); without it the
 # workflow succeeds as a no-op. Locally, tools/sonar_scan.sh does the same

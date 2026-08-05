@@ -140,6 +140,26 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   True market breadth (advance/decline, up-volume, constituents above VWAP) is NOT
   available here: it needs per-constituent data the app does not fetch, and the
   Nasdaq-vs-S&P read is the honest stand-in — don't let a comment claim otherwise.
+- Some instruments are traded RELUCTANTLY (REQ-F-034, `reluctantSymbols`, default
+  USDOLLAR): allowed only when the expected move per hour at the chosen leverage
+  clears `reluctantMinHourlyMovePct` AND conviction clears
+  `minConfidence × reluctantConfidenceFactor`. Refusal code `reluctant-symbol`.
+  Measured: 3 USDOLLAR trades for −19.22 EUR on a dollar index that moves hundredths
+  of a percent an hour.
+- The record is decomposed BY EXIT RULE (`PaperPerformance::netByReason`) and the
+  window shows it worst-first: on the first 18 real closes that view said
+  `signal faded` −97.12 over 7 trades vs `banked before giving it back` +99.10 over 2,
+  on a book whose GROSS was +119.35 against 148.77 of costs. Keep that view — a total
+  hides which rule is the problem. The fade rule now also needs the loss to exceed
+  `fadeMinLossOverCost` × the exit cost, because closing a barely-losing position pays
+  the spread to save nothing.
+- Every widget in src/ui carries a stable objectName, enforced by
+  `tools/check_object_names.py` in the analysis stage (REQ-N-007) — the Squish object
+  map addresses by name only. A GUI run cannot reach a real account:
+  `TRADINGAPP_FORCE_SIMULATION` makes `Config::hasCredentials()` answer false at the
+  ONE place every mode question reads (TS-CFG-007), and `squish/suite_gui/envvars`
+  sets it for every run. Licence-bound stages (`gui`, `testcenter`, coco, axivion) exit
+  3 and are listed as MISSING LICENCES in the quality PDF — never a gate.
 - Churn, not strategy, is what lost money in the first measured hour (6 closes, median
   hold 5.2 min, gross +1.64 EUR against 19.38 EUR of costs). REQ-F-034 answers it and
   the numbers are load-bearing: `reentryCooldownMinutes` (45), `maxOpensPerHour` (6),
@@ -229,6 +249,11 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no
   clean/build while it runs. External findings import: `axivion/external_import.py`
   (Python layer — matchlist is not expressible in the JSON configs).
+- SonarCloud is INFORMATIONAL, never a gate: its default gate fails on hotspot
+  categories only a human can rule on (deterministic PRNG for reproducible
+  training, plain HTTP to a localhost model server, unpinned action versions). The
+  README badge shows its issue COUNT, not `alert_status`. Do not wire it into
+  build_all or CI as a pass/fail.
 - Coverity Scan runs on its weekly cron or `gh workflow run coverity.yml` only.
   Do NOT add a push trigger: the free tier's weekly submission cap plus a
   shared analysis queue (~188 builds deep) make per-push builds pure waste.

@@ -1084,6 +1084,209 @@ private slots:
         QCOMPARE(sessionPhaseWord(SessionPhase::Normal), QStringLiteral("normal"));
     }
 
+    //! @tstid TS-PAPER-029 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    void TS_PAPER_029_someInstrumentsHaveToEarnTheAttempt()
+    {
+        // Measured: USDOLLAR took 3 trades for −19.22 EUR. The dollar index moves a few
+        // hundredths of a percent an hour and the spread does not care, so it is traded
+        // only when the expected move is big AND fast enough to outrun its costs.
+        const BotConfig cfg;
+        QVERIFY(cfg.reluctantSymbols.contains(QStringLiteral("USDOLLAR")));
+
+        // A quiet dollar index: refused BY NAME, with the numbers that refused it.
+        CandidateInput quiet = goodCandidate();
+        quiet.symbol = QStringLiteral("USDOLLAR");
+        quiet.bid = 99.60;
+        quiet.ask = 99.62;
+        quiet.spreadPct = 0.02;
+        quiet.closes = QList<double>(120, 99.6);
+        for (qsizetype i = 0; i < quiet.closes.size(); ++i) {
+            quiet.closes[i] = 99.6 + (0.004 * static_cast<double>(i % 5));   // ~0.004%/h
+        }
+        const EntrySignal quietSig = buildEntrySignal(quiet, cfg);
+        const EntryVerdict refused = paperEntryVerdict(quiet, quietSig, freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("reluctant-symbol"));
+        QVERIFY(refused.why.contains(QStringLiteral("USDOLLAR")));
+        QVERIFY(refused.why.contains(QStringLiteral("per hour")));
+
+        // The SAME quiet series on an instrument that is not on the list is taken —
+        // the rule is about this instrument, not about quiet markets in general.
+        CandidateInput other = quiet;
+        other.symbol = QStringLiteral("SPX500");
+        QVERIFY(paperEntryVerdict(other, buildEntrySignal(other, cfg), freshBook(), cfg).take);
+
+        // A dollar index that IS moving, and with conviction, may be traded: the rule is
+        // reluctance, not a ban.
+        CandidateInput lively = quiet;
+        lively.confidence = cfg.minConfidence * cfg.reluctantConfidenceFactor + 5.0;
+        for (qsizetype i = 0; i < lively.closes.size(); ++i) {
+            lively.closes[i] = 99.6 + (0.55 * static_cast<double>(i % 5));   // a real move
+        }
+        const EntrySignal livelySig = buildEntrySignal(lively, cfg);
+        QVERIFY(livelySig.volPct * livelySig.leverage >= cfg.reluctantMinHourlyMovePct);
+        QVERIFY2(paperEntryVerdict(lively, livelySig, freshBook(), cfg).take,
+                 qPrintable(paperEntryVerdict(lively, livelySig, freshBook(), cfg).why));
+
+        // …but a lively dollar index with ORDINARY conviction is still refused: both
+        // conditions have to hold.
+        CandidateInput halfHearted = lively;
+        halfHearted.confidence = cfg.minConfidence + 1.0;
+        const EntryVerdict thin =
+            paperEntryVerdict(halfHearted, buildEntrySignal(halfHearted, cfg), freshBook(), cfg);
+        QVERIFY(!thin.take);
+        QCOMPARE(thin.code, QStringLiteral("reluctant-symbol"));
+        QVERIFY(thin.why.contains(QStringLiteral("conviction")));
+
+        // And the list is configuration: emptying it removes the reluctance entirely.
+        BotConfig eager = cfg;
+        eager.reluctantSymbols.clear();
+        QVERIFY(paperEntryVerdict(quiet, quietSig, freshBook(), eager).take);
+    }
+
+    //! @tstid TS-PAPER-028 @design DES-DOM-DAY
+    // @relation(REQ-F-031, REQ-F-034, scope=function)
+    void TS_PAPER_028_theRecordSaysWhichRuleMadeOrLostTheMoney()
+    {
+        // The most diagnostic number the record holds, and the one that answered "why
+        // is the bot losing" on the first 18 real closes: the fade rule was −97.12 EUR
+        // over 7 trades while give-back was +99.10 over 2. A total hides that; a split
+        // by exit rule does not.
+        QList<PaperClosedTrade> closed;
+        const auto add = [&closed](CloseReason reason, double net, int day) {
+            PaperClosedTrade c;
+            c.symbol = QStringLiteral("SPX500");
+            c.isBuy = true;
+            c.netPnl = net;
+            c.reason = reason;
+            c.openTime = QDateTime(QDate(2026, 8, day), QTime(10, 0), QTimeZone::utc());
+            c.closeTime = c.openTime.addSecs(3600);
+            closed.append(c);
+        };
+        add(CloseReason::SignalFade, -40.0, 3);
+        add(CloseReason::SignalFade, -57.12, 3);
+        add(CloseReason::GiveBack, +99.10, 4);
+        add(CloseReason::AiExit, -12.0, 4);
+
+        const PaperPerformance perf = paperPerformance(closed, 50000.0, 350.0);
+        QCOMPARE(perf.countByReason.value(QStringLiteral("signal faded")), 2);
+        QVERIFY(qAbs(perf.netByReason.value(QStringLiteral("signal faded")) + 97.12) < 1e-9);
+        QCOMPARE(perf.countByReason.value(QStringLiteral("banked before giving it back")), 1);
+        QVERIFY(qAbs(perf.netByReason.value(QStringLiteral("banked before giving it back"))
+                     - 99.10)
+                < 1e-9);
+        QCOMPARE(perf.countByReason.value(QStringLiteral("AI says exit")), 1);
+        // The split has to add up to the total, or it is a second opinion rather than a
+        // decomposition.
+        double sum = 0.0;
+        for (auto it = perf.netByReason.cbegin(); it != perf.netByReason.cend(); ++it) {
+            sum += it.value();
+        }
+        QVERIFY(qAbs(sum - perf.netTotal) < 1e-9);
+        // A rule that never fired is absent rather than zero — "0.00" reads as
+        // "measured and neutral", which would be a different claim.
+        QVERIFY(!perf.netByReason.contains(QStringLiteral("stop-loss")));
+
+        // And the fade rule now has to be worth acting on: a position down less than
+        // the round trip is left alone, because closing it pays the spread to save
+        // nothing (measured: 7 fades, −13.87 average, on a book whose gross was
+        // POSITIVE).
+        const BotConfig cfg;
+        QVERIFY(cfg.fadeMinLossOverCost > 1.0);
+        PaperTrade faded = tradeAt(5000.0, true);
+        faded.entryConfidence = 60.0;
+        faded.entryCompositeConf = 60.0;
+        faded.markRate = 4999.5;                    // barely under water
+        const QDateTime late =
+            faded.openTime.addSecs(qint64{60} * (cfg.minHoldMinutes + 5));
+        ExitContext ctx = exitAt(4999.5, 1, 10.0, late);
+        ctx.spreadPct = 0.05;                       // a real exit cost to compare against
+        QCOMPARE(paperCloseDecision(faded, ctx, cfg), CloseReason::None);
+        // …once the loss is worth more than the round trip, the same fade acts.
+        faded.markRate = 4950.0;
+        const ExitContext deeper = exitAt(4950.0, 1, 10.0, late);
+        QCOMPARE(paperCloseDecision(faded, deeper, cfg), CloseReason::SignalFade);
+    }
+
+    //! @tstid TS-PAPER-027 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, REQ-F-035, scope=function)
+    void TS_PAPER_027_everyWordAndEveryClockFamilyIsReachable()
+    {
+        // The wording tables and the two clock families the phase classifier supports
+        // besides Europe: an exit or a refusal nobody can name is one nobody can audit,
+        // and a Hong Kong instrument is judged on the Hong Kong clock.
+        for (const SessionPhase phase :
+             {SessionPhase::Normal, SessionPhase::OpeningChaos, SessionPhase::OpeningBurst,
+              SessionPhase::DataWindow, SessionPhase::PolicyWindow, SessionPhase::PowerHour,
+              SessionPhase::ClosingBurst}) {
+            QVERIFY(!sessionPhaseWord(phase).isEmpty());
+        }
+        QCOMPARE(sessionPhaseWord(SessionPhase::DataWindow),
+                 QStringLiteral("macro-data window"));
+        QCOMPARE(sessionPhaseWord(SessionPhase::PowerHour), QStringLiteral("power hour"));
+        QCOMPARE(sessionPhaseWord(SessionPhase::ClosingBurst), QStringLiteral("closing burst"));
+        for (const DayGate gate :
+             {DayGate::Open, DayGate::TargetReached, DayGate::LossLimitReached,
+              DayGate::Weekend}) {
+            QVERIFY(!dayGateWord(gate).isEmpty());
+        }
+        QVERIFY(dayGateWord(DayGate::Weekend).contains(QStringLiteral("weekend")));
+
+        // Hong Kong: opens at 09:30 local, which is 03:30 in Berlin — the classifier
+        // reads the instrument's OWN exchange, not the user's.
+        // 09:35 local is still inside the first quarter hour after the 09:30 open.
+        const QDateTime hkOpen(QDate(2026, 8, 4), QTime(9, 35), QTimeZone("Asia/Hong_Kong"));
+        QCOMPARE(sessionPhaseFor(QStringLiteral("HKG50"), hkOpen), SessionPhase::OpeningChaos);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("HKG50"),
+                                 QDateTime(QDate(2026, 8, 4), QTime(10, 5),
+                                           QTimeZone("Asia/Hong_Kong"))),
+                 SessionPhase::OpeningBurst);
+        // …and the user's clock is irrelevant: 09:35 in Berlin is 15:35 in Hong Kong,
+        // which is the run into the 16:00 close there.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("HKG50"),
+                                 QDateTime(QDate(2026, 8, 4), QTime(9, 35),
+                                           QTimeZone("Europe/Berlin"))),
+                 SessionPhase::ClosingBurst);
+        // Small hours in Hong Kong: no session to be at the edge of.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("HKG50"),
+                                 QDateTime(QDate(2026, 8, 4), QTime(4, 0),
+                                           QTimeZone("Asia/Hong_Kong"))),
+                 SessionPhase::Normal);
+
+        // The 08:00 Berlin European release slot, on a European instrument.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"),
+                                 QDateTime(QDate(2026, 8, 4), QTime(8, 5),
+                                           QTimeZone("Europe/Berlin"))),
+                 SessionPhase::DataWindow);
+
+        // The confluence refusal names the numbers it was given.
+        const BotConfig cfg;
+        CandidateInput thin = goodCandidate();
+        thin.agreeingReads = 1;
+        thin.measuredReads = 5;
+        const EntryVerdict refused =
+            paperEntryVerdict(thin, buildEntrySignal(thin, cfg), freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("no-confluence"));
+        QVERIFY(refused.why.contains(QStringLiteral("1 of 5")));
+        // …and a threshold above what could be measured is clamped to it, so an
+        // instrument with only two readable feeds is still tradable.
+        CandidateInput few = goodCandidate();
+        few.agreeingReads = 2;
+        few.measuredReads = 2;
+        QVERIFY(paperEntryVerdict(few, buildEntrySignal(few, cfg), freshBook(), cfg).take);
+
+        // An unclassified instrument keeps its own leverage ceiling and its own bucket.
+        QVERIFY(correlationGroup(QStringLiteral("NOT-LISTED")).contains(QStringLiteral("other")));
+        QCOMPARE(groupLeverageCap(QStringLiteral("other:NOT-LISTED")), 5);
+        // …and the catalog's own ladder is what an uncatalogued caller falls back to.
+        CandidateInput gold = goodCandidate();
+        gold.symbol = QStringLiteral("Gold.24-7");
+        gold.leverageSteps.clear();
+        QVERIFY(buildEntrySignal(gold, cfg).leverage <= 8);
+    }
+
     //! @tstid TS-PAPER-026 @design DES-DOM-WHEN
     // @relation(REQ-F-034, REQ-F-035, scope=function)
     void TS_PAPER_026_loudWindowsChurnAndConfluenceAllGateTheEntry()

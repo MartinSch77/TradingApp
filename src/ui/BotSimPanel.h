@@ -277,6 +277,7 @@ private:
     QLabel *m_recordLabel = nullptr;        // the measured record (REQ-F-031)
     QLabel *m_liveLabel = nullptr;          // the real-money verdict and its blockers
     QPushButton *m_trainButton = nullptr;   // refit the outcome model on demand
+    QLabel *m_reasonLabel = nullptr;        // net per exit rule, worst first
     QLabel *m_modelLabel = nullptr;         // the learned model and the experience log
     QLabel *m_storeLabel = nullptr;         // where the books live
     QComboBox *m_aiModeBox = nullptr;       // off / confirm / lead (REQ-F-030)

@@ -2635,17 +2635,19 @@ void EtoroClient::closePositionReal(const QString &positionId)
     const QString path = QStringLiteral("/v1/trading/execution%1/market-close-orders/positions/%2")
                              .arg(accountSegment(), positionId);
     QNetworkReply *reply = apiPost(path, body);
-    handleReply(reply, [this, positionId](bool ok, qint32 status, const QJsonDocument & /*doc*/,
+    handleReply(reply, [this, positionId](bool ok, qint32 status, const QJsonDocument &doc,
                                           const QByteArray &raw, const QString &netError) {
         if (ok) {
             emit positionClosed(true, QStringLiteral("Position %1 closed.").arg(positionId));
             refreshPortfolioReal();
             refreshBalanceReal();
         } else {
+            // The BROKER's reason first: "position already closed" is what the reader
+            // needs, and Qt's own "server replied: <phrase>" is what they used to get,
+            // because a transport string is always present on an HTTP error.
             emit positionClosed(false, QStringLiteral("Close failed (HTTP %1): %2")
                                            .arg(status)
-                                           .arg(netError.isEmpty() ? QString::fromUtf8(raw.left(300))
-                                                                   : netError));
+                                           .arg(rejectionReason(doc, raw, netError)));
         }
     });
 }

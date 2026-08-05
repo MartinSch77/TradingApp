@@ -207,10 +207,30 @@ coco_run_one() {
     rm -f "$dir/$name.csexe"
     (cd "$dir" && QT_QPA_PLATFORM=offscreen "./$name" >/dev/null 2>&1) || true
     if [ ! -f "$dir/$name.csexe" ]; then
+        # Two of the twenty-four (tst_indicators, tst_models) do this consistently, and
+        # the cause is NOT yet identified: the Coco runtime IS linked into them (82
+        # symbols incl. __coveragescanner_filename), their .csmes is the usual ~2 MB,
+        # they pass, and neither a COVERAGESCANNER_ARGS --cs-exec nor a command-line
+        # one produces a report. Reported rather than hidden — and the functions they
+        # cover are exercised by other suites in the same merge, so the numbers below
+        # are a floor, not a fiction.
         echo "note: $name produced no execution report — skipped in the merge"
         return 0
     fi
     "$COCO_DIR/bin/cmcsexeimport" -m "$dir/$name.csmes" -e "$dir/$name.csexe" -t "$name"
+}
+
+# cmreport writes ONE output file per invocation: asking for --html and --csv-excel
+# together fails with "Multiple output files defined" and produces neither. Measured on
+# 7.2.0 against a licensed run — so each report gets its own call.
+coco_report() {
+    local csmes="$1" title="$2"
+    shift 2
+    local spec
+    for spec in "$@"; do
+        "$COCO_DIR/bin/cmreport" -m "$csmes" --title="$title" "$spec" ||
+            echo "note: cmreport rejected $spec on this version — the other reports still exist"
+    done
 }
 
 # Every coverage level the merged database can answer, on the standard output.
@@ -307,11 +327,10 @@ run_coco_components() {
     # validated on the first licensed run: --html takes a FILE, --csv-excel is the CSV
     # switch (there is no plain --csv), and --junit lets the per-test attribution reach
     # Qt Test Center alongside the unit suite's own JUnit XML.
-    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" \
-        --title="TradingApp — component call coverage, per test case" \
-        --html="$OUT/index.html" \
-        --csv-excel="$OUT/functions.csv" \
-        --junit="$ROOT/test-results/coco-components.xml"
+    coco_report "$OUT/merged.csmes" "TradingApp — component call coverage, per test case" \
+        "--html=$OUT/index.html" \
+        "--csv-excel=$OUT/functions.csv" \
+        "--junit=$ROOT/test-results/coco-components.xml"
     echo "component call coverage over $ran component tests"
     coco_stat_levels "$OUT/merged.csmes"
     echo "HTML: $OUT/index.html   (per-test attribution: open $OUT/merged.csmes in coveragebrowser and group by test case)"
@@ -349,10 +368,9 @@ run_coco() {
     "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD"/tests/tst_*.csmes
     # --html takes a FILE name, not a directory (validated against cmreport --help on
     # the first licensed run — passing a directory silently produced nothing).
-    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" \
-        --title="TradingApp — statement/decision/condition + MC/DC" \
-        --html="$OUT/index.html" \
-        --csv-excel="$OUT/functions.csv"
+    coco_report "$OUT/merged.csmes" "TradingApp — statement/decision/condition + MC/DC" \
+        "--html=$OUT/index.html" \
+        "--csv-excel=$OUT/functions.csv"
     coco_stat_levels "$OUT/merged.csmes"
     echo "HTML: $OUT/index.html   (open $OUT/merged.csmes in coveragebrowser for MC/DC drill-down)"
 }

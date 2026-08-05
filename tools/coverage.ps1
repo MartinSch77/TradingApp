@@ -360,7 +360,9 @@ function Invoke-CocoCoverage {
         '--select=.*' "--html=$out\index.html" --coverage-mcdc `
         '--title=TradingApp structural coverage incl. MC/DC (Squish Coco)'
     if ($LASTEXITCODE -ne 0) { Write-Warning "cmreport (HTML) exited $LASTEXITCODE"; return $false }
-    # CSV alongside it, so the stage leaves a machine-readable summary too.
+    # CSV alongside it, so the stage leaves a machine-readable summary too — as a
+    # SECOND call, because cmreport writes one output file per invocation and
+    # rejects --html and --csv-excel together ("Multiple output files defined").
     & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
         '--select=.*' "--csv-excel=$out\summary.csv" --coverage-mcdc *> $null
 

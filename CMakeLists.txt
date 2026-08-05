@@ -13,7 +13,7 @@ if(POLICY CMP0156)
 endif()
 
 project(TradingApp
-    VERSION 1.0.1
+    VERSION 1.0.2
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 
@@ -98,6 +98,10 @@ endif()
 qt_add_library(trading_domain STATIC
     src/domain/Models.cpp
     src/domain/Models.h
+    src/domain/Money.cpp
+    src/domain/Money.h
+    src/domain/OrderRequestValidator.cpp
+    src/domain/OrderRequestValidator.h
     src/domain/InstrumentCatalog.cpp
     src/domain/InstrumentCatalog.h
     src/domain/Indicators.cpp
@@ -129,6 +133,8 @@ target_link_libraries(trading_domain PUBLIC Qt6::Core)
 qt_add_library(trading_services STATIC
     src/services/AiAdvisor.cpp
     src/services/AiAdvisor.h
+    src/services/OrderGateway.cpp
+    src/services/OrderGateway.h
     src/services/Config.cpp
     src/services/Config.h
     src/services/EconomicCalendar.cpp

@@ -329,6 +329,36 @@ For each read the app shall report the direction it supports, the number behind 
 The count of agreeing reads shall be shown per instrument alongside the app's other signals, shall be given to the model as evidence in those words, and shall gate the bot: an index position shall not be opened while fewer than a configured number of the MEASURED reads agree with its side. That threshold shall be configurable, shall be satisfiable (never more than the number of reads actually available), and shall be able to be switched off — with the reads still shown and still given to the model, because a read nobody acts on is still information a reader is owed.
 <<<
 
+[REQUIREMENT]
+UID: REQ-N-008
+VERIFICATION: T
+TITLE: Money shall be counted, not approximated
+STATEMENT: >>>
+Every amount that can move real money — a stake, a stop-loss or take-profit amount, a fee, a per-order or per-day cap, a booked result — shall be represented as an INTEGER NUMBER OF MINOR UNITS of a named currency rather than as an unrestricted floating-point number. The reason is not elegance: 0.1 is not representable in binary, a sum of a hundred such amounts drifts, and a comparison against a cap can then answer "just under" for an amount that is actually over. An amount whose least significant digit is a rounding artefact must never be the thing a broker is asked to trade.
+
+The type shall make the lossy step EXPLICIT and singular: conversion from a measured double (a rate, a percentage of equity, a volatility-derived stake) shall be a named operation that states its rounding, and everything downstream shall then be exact integer arithmetic. Amounts of different currencies shall not silently combine — the app deals in EUR display and a USD account currency, and an addition that ignores that difference is a defect the compiler currently cannot see. An operation on mixed currencies shall therefore yield an amount that reports itself INVALID rather than a plausible wrong number, and an invalid amount shall never be sent anywhere.
+
+Rounding shall be defined rather than inherited: conversion shall round half away from zero, and scaling an amount by a fraction shall do the same, so a stake computed as a fraction of equity is reproducible across platforms and across runs. The type shall be a value type, comparable and printable, cheap enough to be used everywhere the money words appear, and its arithmetic shall be tested for the cases that actually break naive money code: repeated accumulation, a cap comparison at the boundary, negative amounts (a credit is money too), and the mixed-currency refusal.
+<<<
+
+[REQUIREMENT]
+UID: REQ-N-009
+VERIFICATION: T/I
+TITLE: The live-order path shall be validated, armed, swappable and recorded
+STATEMENT: >>>
+The double-press gate of REQ-N-005 keeps a human in the loop for one action. It does not, on its own, make the request that leaves the machine CORRECT, nor does it leave a record of what was sent. Four things shall therefore stand between a decision and a real order, and each shall be a separate, separately testable piece.
+
+First, VALIDATION. Every money-moving request shall pass a pure validator before it can be sent, and the validator shall refuse rather than repair: non-finite or non-positive amounts, an amount that is not an integral number of minor units, a leverage the instrument does not offer (the ladder, not a range), an unknown or unresolved instrument id, a units count above the instrument's own per-order maximum, a stop-loss or take-profit on the wrong side of the entry, a trigger rate on the wrong side for the order's direction, and an order currency that is not the ACCOUNT's currency shall each be a named refusal. Each refusal shall carry a STABLE machine-readable code alongside its human sentence, because a refusal that can only be read by a person cannot be counted, and a count is what tells a maintainer which check is actually firing.
+
+Second, ARMING. Live execution shall require an explicit, visible, time-bounded ARMED state that the user enters deliberately and that nothing the app computes can enter on its behalf. The armed state shall carry the caps under which it was granted — a maximum per order and a maximum per day, both as REQ-N-008 amounts — and shall expire on its own so that an armed session cannot outlive the attention that granted it. It shall additionally provide a KILL SWITCH: one action that disarms immediately, is STICKY (it stays tripped until explicitly cleared, so a panic action cannot be undone by the next timer tick), and is honoured by every path that could send an order. While not armed, or while tripped, an order request shall be refused with the reason, and the refusal shall be indistinguishable in effect from having no credentials at all.
+
+Third, a SEAM. Order placement shall go through an interface rather than directly to the broker client, and at least two implementations shall exist: the real one, and a fake that records exactly what it was asked to do and answers with a configured outcome. Without that seam the order path can only be tested against a live account, which means it is not tested. The fake shall be what the automated suite uses, and the choice of implementation shall never depend on a build flag that could differ between the tested and the shipped binary.
+
+Fourth, an AUDIT RECORD. Every attempt — accepted, refused by validation, refused by the arming state, or rejected by the broker — shall be appended to a durable record carrying the request's complete fingerprint (instrument, side, amount, leverage, stop/target, order and account currency), the time the decision was made, the time it was sent, the request id used, and the broker's own answer verbatim where there was one. The record shall be append-only and shall survive a restart, because the question it answers ("what exactly did this machine send, and what came back") is asked after something has gone wrong, when memory and log scrollback are both gone.
+
+Wiring these four to a real account remains a separate, deliberate act: this requirement specifies the machinery and its guarantees, and REQ-N-005 continues to govern the human confirmation at the moment of sending.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

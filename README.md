@@ -7,7 +7,8 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
-[![sonarcloud issues](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=violations)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
+[![sonarcloud bugs](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=bugs)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
+[![sonarcloud code smells](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![coverity](https://scan.coverity.com/projects/33200/badge.svg)](https://scan.coverity.com/projects/TradingApp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -440,6 +441,41 @@ var:
 The app will never place a real-money order unless you both provide credentials
 *and* explicitly set `mode` to `real`.
 
+#### The machinery behind a real order (REQ-N-008, REQ-N-009)
+
+The double-press keeps a human in the loop for one action. It does not make the
+request *correct*, and it leaves no record. Four separate pieces do that, built
+and tested before anything is wired to them:
+
+- **[`Money`](src/domain/Money.h)** — every amount that can move real money is an
+  integer number of minor units plus its currency, with **one** named lossy
+  conversion (`fromDouble`, rounding half away from zero) and exact arithmetic
+  after it. Mixing currencies yields an amount that reports itself **invalid**
+  rather than a plausible wrong number, and comparison across currencies is
+  *unordered*, so no cap check can pass by accident.
+- **[`OrderRequestValidator`](src/domain/OrderRequestValidator.h)** — a pure check
+  that **refuses rather than repairs**: an amount that is not the validated stake,
+  a leverage off the instrument's ladder, an order currency that is not the
+  account's (eToro accepts that one and rejects it at execution), a units count
+  over the per-order cap, a stop bigger than the money at risk, a limit trigger on
+  the wrong side that would fill at once. Every refusal carries a stable code
+  beside its sentence, because a reason only a human can read cannot be counted.
+- **[`LiveArm`](src/services/OrderGateway.h)** — an explicit, **time-bounded**
+  armed state carrying the per-order and per-day caps it was granted under, plus a
+  **sticky kill switch**: one action disarms immediately, outranks every other
+  refusal, and stays tripped until it is explicitly cleared, so a panic action
+  cannot be undone by the next timer tick.
+- **`IOrderGateway` + `FakeOrderGateway` + `OrderAudit`** — the seam that makes the
+  send testable at all (the fake records exactly what it was asked to do), and an
+  append-only JSON-Lines record of **every** attempt — sent, refused by validation,
+  refused by the arming state, rejected by the broker — with the order's
+  fingerprint, both timestamps, the request id and the broker's verbatim answer.
+
+`guardedSend()` is the single composed entry point, because the three guarantees
+are only guarantees when none of them can be skipped individually. Wiring this to
+a live account is still a separate, deliberate act under REQ-N-005 — the machinery
+exists so that act does not have to be written under time pressure.
+
 ## eToro endpoints used
 
 All requests send the documented `x-api-key`, `x-user-key`, and per-request
@@ -534,7 +570,7 @@ independently unit-testable and shared by every view that shows a signal.
 
 ## SonarCloud is informational, not a gate
 
-The badge above links SonarCloud's issue count, not its quality gate. That is
+The badges above show SonarCloud's own measures, not its quality gate. That is
 deliberate: Sonar's default gate fails on *hotspot* categories that need a human
 "safe" verdict on their dashboard — a pseudorandom generator used for reproducible
 model training, plain HTTP to a model server on `localhost`, unpinned action
@@ -543,6 +579,18 @@ the ones in `build_all.sh`: the test suite, requirements traceability, the metri
 ratchet, eight analyzers at zero findings, clone detection, the sanitizers and
 Axivion's MISRA C++ 2023. SonarCloud runs alongside them as a second opinion, and
 its findings are read rather than obeyed.
+
+Two notes on the badges themselves. There is no "issues" badge any more: Sonar
+retired `metric=violations`, and the badge endpoint answers a JSON error for it
+rather than an image — which is why that badge rendered as a broken-image icon
+until it was replaced by the two measures above. And what the dashboard currently
+counts is worth stating plainly rather than hiding behind a green picture: **0
+bugs**, 891 code smells and 113 findings Sonar files as vulnerabilities, of which
+the large majority (74) are GitHub Actions hardening rules about workflow
+permissions and unpinned action versions, 24 are taint warnings in the Python
+tooling and 3 are the reproducible-RNG rule in the simulation feed. None is a
+finding about the trading path; they are on the backlog as hygiene, not as
+blockers.
 
 ## QA helper
 

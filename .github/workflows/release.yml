@@ -343,6 +343,16 @@ jobs:
           # A finished release, explicitly: a pre-release shows as an orange badge and
           # is not what "latest release" should point at.
           gh release edit "$tag" --prerelease=false --draft=false --latest
-          gh release upload "$tag" downloads/* --clobber
+          # FILES only, and only at the top level: the quality-report artifact also
+          # carries analysis-results/, test-results/ and docs/ as directories (evidence
+          # for the PDF), and `gh release upload` fails the whole step on the first
+          # directory it is handed ("read downloads/analysis-results: is a directory").
+          mapfile -t assets < <(find downloads -maxdepth 1 -type f | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no assets were produced — refusing to publish an empty release" >&2
+            exit 1
+          fi
+          gh release upload "$tag" "${assets[@]}" --clobber
           echo "### Assets attached to $tag" >> "$GITHUB_STEP_SUMMARY"
-          ls downloads | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "${assets[@]}" | xargs -n1 basename | sed 's/^/- /' \
+            >> "$GITHUB_STEP_SUMMARY"

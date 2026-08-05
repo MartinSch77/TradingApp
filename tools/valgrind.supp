@@ -16,3 +16,21 @@
    fun:pthread_create@@GLIBC_2.34
    fun:_ZN7QThread5startENS_8PriorityE
 }
+
+# Qt 6.11's QProcess polls a child with waitid(P_PIDFD, fd, nullptr, …) — a NULL
+# infop, which the kernel accepts when the caller only wants the wait semantics and
+# not the siginfo. Valgrind's syscall wrapper does not model that case and reports
+# "Syscall param waitid(infop) points to unaddressable byte(s) / Address 0x0".
+#
+# Measured: the stack is syscall -> libQt6Core -> libQt6Core -> tst_botnet.cpp:335,
+# i.e. the ONE test that starts a QProcess (TS-NET-004 runs the Python trainer and
+# reads its model back). No project code passes that pointer, and the address is a
+# deliberate 0 rather than a dangling one. Without this the whole sanitize stage
+# fails on a Qt implementation detail.
+{
+   qt-qprocess-waitid-null-infop
+   Memcheck:Param
+   waitid(infop)
+   fun:syscall
+   obj:*libQt6Core.so*
+}

@@ -28,6 +28,7 @@ endfunction()
 
 # --- unit tests (domain layer only) ----------------------------------------
 tradingapp_add_test(tst_models tst_models.cpp)
+tradingapp_add_test(tst_money tst_money.cpp)
 tradingapp_add_test(tst_indicators tst_indicators.cpp)
 tradingapp_add_test(tst_forecasting tst_forecasting.cpp)
 tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)
@@ -52,6 +53,7 @@ tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 
 # --- integration tests (services layer) ------------------------------------
 tradingapp_add_test(tst_config tst_config.cpp)
+tradingapp_add_test(tst_ordergateway tst_ordergateway.cpp)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
 tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)

@@ -347,7 +347,13 @@ jobs:
           # carries analysis-results/, test-results/ and docs/ as directories (evidence
           # for the PDF), and `gh release upload` fails the whole step on the first
           # directory it is handed ("read downloads/analysis-results: is a directory").
-          mapfile -t assets < <(find downloads -maxdepth 1 -type f | sort)
+          # Top-level files, PLUS the quality PDF wherever it landed: the report job's
+          # artifact keeps its own internal paths, so the PDF arrives at
+          # downloads/downloads/*.pdf and a plain -maxdepth 1 walks straight past it
+          # (v1.0.2 published without it for exactly that reason). Directories are
+          # still excluded — `gh release upload` fails the whole step on the first one.
+          mapfile -t assets < <({ find downloads -maxdepth 1 -type f
+                                  find downloads -mindepth 2 -type f -name '*.pdf'; } | sort -u)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "no assets were produced — refusing to publish an empty release" >&2
             exit 1

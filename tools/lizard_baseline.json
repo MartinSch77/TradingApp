@@ -1,70 +1,64 @@
 {
-  "src/domain/DecisionEngine.cpp::trading::buildDecisionEvidence": {
-    "ccn": 17
-  },
-  "src/domain/DecisionEngine.cpp::trading::computeDecisionRows": {
-    "ccn": 19
-  },
-  "src/domain/Forecasting.cpp::trading::monteCarlo": {
-    "ccn": 23
-  },
-  "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
-    "ccn": 17
-  },
-  "src/services/EtoroClient.cpp::EtoroClient::onOrderSubmitReply": {
-    "params": 7
-  },
-  "src/services/SimulationEngine.cpp::SimulationEngine::tick": {
-    "ccn": 18
-  },
-  "src/ui/MainWindow.cpp::MainWindow::MainWindow": {
-    "nloc": 112
-  },
-  "src/ui/MainWindow.cpp::MainWindow::checkCloseProposals": {
-    "ccn": 25
-  },
-  "src/ui/MainWindow.cpp::MainWindow::onPortfolio": {
-    "ccn": 19
-  },
-  "src/ui/MainWindow.cpp::MainWindow::onPositionSlTpEdited": {
-    "ccn": 20
-  },
-  "src/ui/MainWindow.cpp::MainWindow::openDecision": {
-    "nloc": 114
-  },
-  "src/ui/MainWindow.cpp::MainWindow::rebuildClosedTradesTable": {
-    "ccn": 21,
-    "nloc": 103
-  },
-  "src/ui/MainWindow.cpp::MainWindow::rebuildDecision": {
-    "ccn": 24,
-    "nloc": 106
-  },
-  "src/ui/MainWindow.cpp::MainWindow::rebuildEventsView": {
-    "ccn": 20
-  },
-  "src/ui/MainWindow.cpp::MainWindow::rebuildRecommendations": {
-    "ccn": 36,
-    "nloc": 118
-  },
-  "src/ui/MainWindow.cpp::MainWindow::renderMonteCarlo": {
-    "ccn": 18
-  },
-  "src/ui/MainWindow.cpp::MainWindow::renderTradePlanResult": {
-    "ccn": 30,
-    "nloc": 160
-  },
-  "src/ui/PositionsModel.cpp::PositionsModel::data": {
-    "ccn": 20
-  },
-  "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
-    "ccn": 18
-  },
-  "src/ui/PriceChart.cpp::PriceChart::makeScatter": {
-    "params": 6
-  },
-  "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
-    "ccn": 20,
-    "nloc": 101
-  }
+ "src/domain/DecisionEngine.cpp::trading::computeDecisionRows": {
+  "ccn": 19
+ },
+ "src/domain/Forecasting.cpp::trading::monteCarlo": {
+  "ccn": 23
+ },
+ "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
+  "ccn": 17
+ },
+ "src/services/EtoroClient.cpp::EtoroClient::onOrderSubmitReply": {
+  "params": 7
+ },
+ "src/services/SimulationEngine.cpp::SimulationEngine::tick": {
+  "ccn": 18
+ },
+ "src/ui/MainWindow.cpp::MainWindow::MainWindow": {
+  "nloc": 112
+ },
+ "src/ui/MainWindow.cpp::MainWindow::checkCloseProposals": {
+  "ccn": 25
+ },
+ "src/ui/MainWindow.cpp::MainWindow::onPortfolio": {
+  "ccn": 19
+ },
+ "src/ui/MainWindow.cpp::MainWindow::onPositionSlTpEdited": {
+  "ccn": 20
+ },
+ "src/ui/MainWindow.cpp::MainWindow::openDecision": {
+  "nloc": 114
+ },
+ "src/ui/MainWindow.cpp::MainWindow::rebuildClosedTradesTable": {
+  "ccn": 21,
+  "nloc": 103
+ },
+ "src/ui/MainWindow.cpp::MainWindow::rebuildDecision": {
+  "ccn": 24,
+  "nloc": 106
+ },
+ "src/ui/MainWindow.cpp::MainWindow::rebuildEventsView": {
+  "ccn": 20
+ },
+ "src/ui/MainWindow.cpp::MainWindow::rebuildRecommendations": {
+  "ccn": 36,
+  "nloc": 118
+ },
+ "src/ui/MainWindow.cpp::MainWindow::renderMonteCarlo": {
+  "ccn": 18
+ },
+ "src/ui/MainWindow.cpp::MainWindow::renderTradePlanResult": {
+  "ccn": 30,
+  "nloc": 160
+ },
+ "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
+  "ccn": 18
+ },
+ "src/ui/PriceChart.cpp::PriceChart::makeScatter": {
+  "params": 6
+ },
+ "src/ui/ScreenerDialog.cpp::ScreenerDialog::updateRows": {
+  "ccn": 20,
+  "nloc": 101
+ }
 }

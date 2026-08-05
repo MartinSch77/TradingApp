@@ -54,6 +54,12 @@ public:
     // far) for every tradable instrument with a mapped Yahoo ticker; results
     // arrive per instrument via intradayCloses. Feeds the decision composite.
     void fetchIntradaySeries();
+    // The REFERENCE series that are not tradable instruments but say what the index
+    // instruments are doing: the two volatility indices (^VIX, ^VXN), the US 10-year
+    // yield (^TNX) and the Nasdaq heavyweights whose participation is the closest
+    // stand-in for breadth this app can fetch (REQ-F-035). Results arrive per ticker
+    // via referenceSeries.
+    void fetchReferenceSeries();
 
 signals:
     // CBOE VIX ("fear index") level and its change vs. its multi-month average, in percent.
@@ -67,6 +73,9 @@ signals:
     void instrumentRatingsUpdated(const QHash<QString, WebRating> &ratingBySymbol);
     // Recent news headlines for one tradable instrument (newest first).
     void instrumentNewsUpdated(const QString &symbol, const QList<NewsHeadline> &headlines);
+    // One reference ticker's 1-minute session closes, keyed by its Yahoo ticker
+    // ("^VXN", "^TNX", "MSFT", …) rather than by an app instrument.
+    void referenceSeries(const QString &ticker, const QList<double> &closes);
     // CNN Fear & Greed index — what the trading crowd is doing right now:
     // 0 (extreme fear) .. 100 (extreme greed), with CNN's own rating word.
     void fearGreedUpdated(double score, const QString &rating);

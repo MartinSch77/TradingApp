@@ -5,6 +5,7 @@
 
 #include <QJsonArray>
 #include <QMap>
+#include <QTimeZone>
 #include <QStringList>
 #include <QJsonValue>
 
@@ -153,6 +154,126 @@ QString dayGateWord(DayGate gate)
 
 namespace {
 
+// Can this instrument be traded at all right now — market, quote, direction?
+// Empty code = yes.
+EntryVerdict tradabilityVerdict(const CandidateInput &in)
+{
+    EntryVerdict out;
+    if (!in.marketOpen) {
+        out.why = QStringLiteral("market closed");
+        out.code = QStringLiteral("market-closed");
+    } else if (!in.quoteLive) {
+        out.why = QStringLiteral("no live quote");
+        out.code = QStringLiteral("no-live-quote");
+    } else if (in.dir == 0) {
+        out.why = QStringLiteral("no directional call");
+        out.code = QStringLiteral("no-signal");
+    }
+    return out;
+}
+
+// How much more a candidate must bring to trade inside a loud window. 1.0 in a
+// normal one — and never less, whatever the configuration says.
+double volatileWindowFactor(SessionPhase phase, const BotConfig &cfg)
+{
+    return (phase == SessionPhase::Normal) ? 1.0 : std::max(1.0, cfg.volatileWindowFactor);
+}
+
+// Never INTO a fresh break of the session's opening range: the session has just told
+// everyone which way it is going (REQ-F-022). Empty code = nothing in the way.
+EntryVerdict rangeBreakVerdict(const CandidateInput &in, const BotConfig &cfg)
+{
+    EntryVerdict out;
+    if (cfg.respectOpeningRange && (in.rangeBreakDir != 0) && (in.dir != 0)
+        && (in.rangeBreakDir != in.dir)) {
+        out.why = QStringLiteral("the session broke its opening range %1 — not trading into it")
+                      .arg((in.rangeBreakDir > 0) ? QStringLiteral("UP")
+                                                  : QStringLiteral("DOWN"));
+        out.code = QStringLiteral("against-range-break");
+    }
+    return out;
+}
+
+// The rules about WHEN, rather than what: the raised conviction bar of a
+// loud session window, the per-instrument cooldown after a close, and the pace
+// limit on the book as a whole (REQ-F-034). Empty code = nothing in the way.
+// The two rules about the CLOCK: a window that is sat out entirely, and the raised
+// conviction bar of one that is merely loud (REQ-F-034).
+EntryVerdict windowVerdict(const CandidateInput &in, const BotConfig &cfg, SessionPhase phase,
+                           double windowFactor)
+{
+    EntryVerdict out;
+    // Sat out rather than sized down, because in both of these the first move
+    // regularly reverses in full.
+    const bool sitOut = ((phase == SessionPhase::OpeningChaos) && cfg.avoidOpeningChaos)
+                        || ((phase == SessionPhase::PolicyWindow) && cfg.avoidPolicyWindow);
+    if (sitOut) {
+        out.why = QStringLiteral("the %1 is sat out — its first move reverses too often to trade")
+                      .arg(sessionPhaseWord(phase));
+        out.code = QStringLiteral("volatile-window");
+        return out;
+    }
+    if (in.confidence < (cfg.minConfidence * windowFactor)) {
+        out.why = (phase == SessionPhase::Normal)
+                      ? QStringLiteral("confidence %1 below the %2 floor")
+                            .arg(in.confidence, 0, 'f', 0)
+                            .arg(cfg.minConfidence, 0, 'f', 0)
+                      : QStringLiteral("confidence %1 below the %2 floor the %3 asks for")
+                            .arg(in.confidence, 0, 'f', 0)
+                            .arg(cfg.minConfidence * windowFactor, 0, 'f', 0)
+                            .arg(sessionPhaseWord(phase));
+        out.code = (phase == SessionPhase::Normal) ? QStringLiteral("confidence")
+                                                   : QStringLiteral("volatile-window");
+    }
+    return out;
+}
+
+// The rules about HOW OFTEN, and the structure rule that goes with them: the
+// per-instrument cooldown, the book-wide pace limit, a fresh opposite range break,
+// and how many independent reads agree (REQ-F-034, REQ-F-035).
+EntryVerdict paceVerdict(const CandidateInput &in, const BotConfig &cfg, SessionPhase phase,
+                         double windowFactor)
+{
+    if (const EntryVerdict window = windowVerdict(in, cfg, phase, windowFactor);
+        !window.code.isEmpty()) {
+        return window;
+    }
+    EntryVerdict out;
+    // An instrument whose position just closed is left alone for a while: every round
+    // trip pays two half-spreads, so re-entering at once converts an edge into fees.
+    if (in.lastClosedAt.isValid() && in.now.isValid() && (cfg.reentryCooldownMinutes > 0)) {
+        const qint64 sinceClose = in.lastClosedAt.secsTo(in.now) / 60;
+        if ((sinceClose >= 0) && (sinceClose < cfg.reentryCooldownMinutes)) {
+            out.why = QStringLiteral("closed here %1 min ago — waiting out the %2 min cooldown "
+                                     "rather than paying the spread again")
+                          .arg(sinceClose)
+                          .arg(cfg.reentryCooldownMinutes);
+            out.code = QStringLiteral("cooldown");
+            return out;
+        }
+    }
+    if ((cfg.maxOpensPerHour > 0) && (in.opensLastHour >= cfg.maxOpensPerHour)) {
+        out.why = QStringLiteral("%1 positions opened in the last hour — that is the pace limit")
+                      .arg(in.opensLastHour);
+        out.code = QStringLiteral("pace-limit");
+        return out;
+    }
+    if (const EntryVerdict range = rangeBreakVerdict(in, cfg); !range.code.isEmpty()) {
+        return range;
+    }
+    // …and enough independent reads have to agree. Only MEASURED reads count: a
+    // requirement satisfied by absent feeds would be a requirement in name only.
+    if ((cfg.minAgreeingReads > 0) && (in.measuredReads > 0)
+        && (in.agreeingReads < std::min(cfg.minAgreeingReads, in.measuredReads))) {
+        out.why = QStringLiteral("only %1 of %2 independent reads agree (needs %3)")
+                      .arg(in.agreeingReads)
+                      .arg(in.measuredReads)
+                      .arg(std::min(cfg.minAgreeingReads, in.measuredReads));
+        out.code = QStringLiteral("no-confluence");
+    }
+    return out;
+}
+
 // May the bot add to an instrument it is already in? Adding is allowed (REQ-F-032)
 // but only on the model's own initiative and only up to the per-instrument caps —
 // stacking on the composite alone would just buy the same opinion three times.
@@ -237,6 +358,147 @@ QString dayGateCode(DayGate gate)
 
 } // namespace
 
+QString sessionPhaseWord(SessionPhase phase)
+{
+    switch (phase) {
+    case SessionPhase::OpeningChaos:
+        return QStringLiteral("first quarter hour");
+    case SessionPhase::OpeningBurst:
+        return QStringLiteral("opening burst");
+    case SessionPhase::DataWindow:
+        return QStringLiteral("macro-data window");
+    case SessionPhase::PolicyWindow:
+        return QStringLiteral("central-bank window");
+    case SessionPhase::PowerHour:
+        return QStringLiteral("power hour");
+    case SessionPhase::ClosingBurst:
+        return QStringLiteral("closing burst");
+    case SessionPhase::Normal:
+        break;
+    }
+    return QStringLiteral("normal");
+}
+
+namespace {
+
+// The exchange whose clock an instrument keeps, from the catalog's calendar
+// regions. A symbol nobody catalogued is treated as European — the app's own
+// account currency and the user's day.
+QTimeZone exchangeZone(const QString &symbol)
+{
+    const InstrumentSpec *spec = instrumentSpec(symbol);
+    const QString regions = (spec != nullptr) ? spec->calendarRegions : QString();
+    if (regions.contains(QStringLiteral("HK")) || regions.contains(QStringLiteral("CN"))) {
+        return QTimeZone("Asia/Hong_Kong");
+    }
+    if (regions.startsWith(QStringLiteral("US")) || regions.contains(QStringLiteral("US"))) {
+        return QTimeZone("America/New_York");
+    }
+    return QTimeZone("Europe/Berlin");
+}
+
+// Minutes since midnight, in that exchange's own local time — which is what makes
+// summer time somebody else's problem.
+qint32 localMinutes(const QDateTime &now, const QTimeZone &zone)
+{
+    const QTime local = now.toTimeZone(zone).time();
+    return static_cast<qint32>((local.hour() * 60) + local.minute());
+}
+
+bool within(qint32 minutes, qint32 fromHour, qint32 fromMinute, qint32 lengthMinutes)
+{
+    const qint32 start = (fromHour * 60) + fromMinute;
+    return (minutes >= start) && (minutes < (start + lengthMinutes));
+}
+
+// Where the local session's own open puts us: its first quarter hour, the readable
+// rest of that hour, or neither. Xetra opens at 09:00, New York and Hong Kong at
+// 09:30 — the same hour, half an hour apart.
+SessionPhase openPhase(const QDateTime &now, const QTimeZone &zone)
+{
+    const bool halfPast = (zone.id() == QByteArrayLiteral("America/New_York"))
+                          || (zone.id() == QByteArrayLiteral("Asia/Hong_Kong"));
+    const qint32 local = localMinutes(now, zone);
+    const qint32 openMinute = halfPast ? 30 : 0;
+    if (within(local, 9, openMinute, 15)) {
+        return SessionPhase::OpeningChaos;
+    }
+    if (within(local, 9, openMinute + 15, 45)) {
+        return SessionPhase::OpeningBurst;
+    }
+    return SessionPhase::Normal;
+}
+
+// The scheduled events the whole market waits for, on the clock they are published
+// in: the central bank at 14:00 New York with its press conference at 14:30 (20:00
+// and 20:30 in Berlin for most of the year), the American macro slots at 08:30 and
+// 10:00 New York, and the European releases at 08:00 Berlin.
+SessionPhase releasePhase(const QDateTime &now)
+{
+    const qint32 ny = localMinutes(now, QTimeZone("America/New_York"));
+    if (within(ny, 14, 0, 45)) {
+        return SessionPhase::PolicyWindow;
+    }
+    if (within(ny, 8, 30, 20) || within(ny, 10, 0, 20)) {
+        return SessionPhase::DataWindow;
+    }
+    if (within(localMinutes(now, QTimeZone("Europe/Berlin")), 8, 0, 15)) {
+        return SessionPhase::DataWindow;
+    }
+    return SessionPhase::Normal;
+}
+
+// The run into a close: the last hour of the American session with its final half
+// hour the loudest, and the local close of a non-US exchange (Xetra 17:30, HKEX
+// 16:00).
+SessionPhase closePhase(const QDateTime &now, const QTimeZone &zone)
+{
+    const qint32 ny = localMinutes(now, QTimeZone("America/New_York"));
+    if (within(ny, 15, 30, 30)) {
+        return SessionPhase::ClosingBurst;
+    }
+    if (within(ny, 15, 0, 30)) {
+        return SessionPhase::PowerHour;
+    }
+    const bool usClock = (zone.id() == QByteArrayLiteral("America/New_York"));
+    const bool hkClock = (zone.id() == QByteArrayLiteral("Asia/Hong_Kong"));
+    if (!usClock
+        && within(localMinutes(now, zone), hkClock ? 15 : 17, hkClock ? 30 : 0, 30)) {
+        return SessionPhase::ClosingBurst;
+    }
+    return SessionPhase::Normal;
+}
+
+} // namespace
+
+SessionPhase sessionPhaseFor(const QString &symbol, const QDateTime &now)
+{
+    if (!now.isValid()) {
+        return SessionPhase::Normal;
+    }
+    const QTimeZone zone = exchangeZone(symbol);
+    if (now.toTimeZone(zone).date().dayOfWeek() > kFriday) {
+        return SessionPhase::Normal;   // no session to be at the edge of
+    }
+    // Every window is expressed in the clock it belongs to — the local exchange for
+    // the session edges, New York for the American releases and the Fed — so the few
+    // weeks when Europe and the US change their clocks on different days need no
+    // maintenance at all. That divergence is precisely what a fixed offset gets wrong.
+    if (const SessionPhase open = openPhase(now, zone); open != SessionPhase::Normal) {
+        // …except that a SCHEDULED release inside the opening hour is the more
+        // specific fact about the moment, so it is asked about first.
+        const SessionPhase release = releasePhase(now);
+        if ((open == SessionPhase::OpeningChaos) || (release == SessionPhase::Normal)) {
+            return open;
+        }
+        return release;
+    }
+    if (const SessionPhase release = releasePhase(now); release != SessionPhase::Normal) {
+        return release;
+    }
+    return closePhase(now, zone);
+}
+
 QString paperHoldEvidence(const QList<OpenPositionBrief> &open)
 {
     if (open.isEmpty()) {
@@ -260,37 +522,98 @@ QString paperHoldEvidence(const QList<OpenPositionBrief> &open)
     return out;
 }
 
+namespace {
+
+// Why a change of mind may not be acted on yet, or empty when it may. Split out so
+// paperAiHold reads as the decision it is rather than as a list of brakes.
+QString exitBrake(double confidence, double heldMinutes, const BotConfig &cfg)
+{
+    if (heldMinutes < static_cast<double>(cfg.minHoldMinutes)) {
+        return QStringLiteral(" — held only %1 of %2 min, so not yet acted on")
+            .arg(heldMinutes, 0, 'f', 0)
+            .arg(cfg.minHoldMinutes);
+    }
+    if (confidence < cfg.aiExitMinConfidence) {
+        return QStringLiteral(" — but only with %1%% conviction, under the %2%% an exit has to "
+                              "pay for")
+            .arg(confidence, 0, 'f', 0)
+            .arg(cfg.aiExitMinConfidence, 0, 'f', 0);
+    }
+    return {};
+}
+
+// The model's own words appended to what it decided, when it gave any.
+QString holdReason(const AiProposal &p, const QString &head)
+{
+    return p.rationale.isEmpty() ? head : (head + QStringLiteral(": ") + p.rationale);
+}
+
+// A contrary answer, and whether it may be acted on. The opinion is reported either
+// way — the window shows what the model thinks even while the trade is too young to
+// act on it.
+HoldVerdict contraryVerdict(const AiProposal &p, double heldMinutes, const BotConfig &cfg)
+{
+    HoldVerdict out;
+    out.opinion = HoldOpinion::Close;
+    out.code = p.exitNow ? QStringLiteral("ai-close") : QStringLiteral("ai-reversed");
+    out.why = holdReason(p, p.exitNow
+                                ? QStringLiteral("the model asks to close it")
+                                : QStringLiteral("the model now wants the other side"));
+    const QString brake = exitBrake(p.confidence, heldMinutes, cfg);
+    if (!brake.isEmpty()) {
+        out.code = QStringLiteral("ai-too-soon");
+        out.why += brake;
+        return out;
+    }
+    out.close = true;
+    return out;
+}
+
+} // namespace
+
+QString holdOpinionWord(HoldOpinion opinion)
+{
+    switch (opinion) {
+    case HoldOpinion::Hold:
+        return QStringLiteral("hold");
+    case HoldOpinion::Close:
+        return QStringLiteral("close");
+    case HoldOpinion::NoOpinion:
+        break;
+    }
+    return QStringLiteral("—");
+}
+
 HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &proposals,
-                        BotAiMode mode)
+                        BotAiMode mode, const QDateTime &now, const BotConfig &cfg)
 {
     HoldVerdict out;
     if (mode == BotAiMode::Off) {
         return out;   // nobody was asked; the composite's own rules govern
     }
+    // How long it has been open, for the brakes below. An unknown age counts as old
+    // enough — the alternative would be a position nothing can ever close.
+    const double heldMinutes = (trade.openTime.isValid() && now.isValid())
+                                   ? (static_cast<double>(trade.openTime.secsTo(now)) / 60.0)
+                                   : static_cast<double>(cfg.minHoldMinutes);
     const qint32 side = trade.isBuy ? 1 : -1;
     for (const AiProposal &p : proposals) {
         if (!p.ok || (p.resolvedSymbol != trade.symbol)) {
             continue;
         }
-        if (p.exitNow) {
-            out.close = true;
-            out.code = QStringLiteral("ai-close");
-            out.why = QStringLiteral("the model asks to close it%1")
-                          .arg(p.rationale.isEmpty() ? QString()
-                                                     : QStringLiteral(": ") + p.rationale);
-            return out;
+        const bool contrary = p.exitNow || ((p.dir != 0) && (p.dir != side));
+        if (contrary) {
+            return contraryVerdict(p, heldMinutes, cfg);
         }
-        if ((p.dir != 0) && (p.dir != side)) {
-            out.close = true;
-            out.code = QStringLiteral("ai-reversed");
-            out.why = QStringLiteral("the model now wants the other side%1")
-                          .arg(p.rationale.isEmpty() ? QString()
-                                                     : QStringLiteral(": ") + p.rationale);
-            return out;
-        }
+        // Named, and on this position's side (or an explicit HOLD): a KEEP with the
+        // model behind it, which is a different thing from not having been asked.
+        out.opinion = HoldOpinion::Hold;
+        out.code = QStringLiteral("ai-keep");
+        out.why = holdReason(p, (p.dir == 0)
+                                    ? QStringLiteral("the model says hold")
+                                    : QStringLiteral("the model still wants this side"));
     }
-    // Named picks that agree, or no opinion at all: both keep the position. Absence
-    // of an answer must never close a trade — see the header.
+    // Absence of an answer keeps the position AND stays NoOpinion — see the header.
     return out;
 }
 
@@ -613,9 +936,30 @@ EntrySignal buildEntrySignal(const CandidateInput &in, const BotConfig &cfg)
 
     sig.volPct = volatilityPct(in.closes, std::min(kVolBars, in.closes.size() - 1));
     const double slFrac = proposedSlFraction(sig.volPct, cfg.horizonHours);
-    const qint32 byRisk =
-        recommendLeverage(slFrac, cfg.riskBudgetFraction, in.maxLeverage, in.leverageSteps);
-    sig.leverage = std::max(1, std::min(cfg.leverageCap, byRisk));
+    // Every ceiling is applied BEFORE the ladder fold, never after: the broker offers
+    // discrete steps, so clamping a folded value to a cap can land on a leverage that
+    // does not exist (Gold.24-7 offers 1/2/5/20 — an x8 "cap" produced x8, which no
+    // instrument sells). recommendLeverage folds to the largest OFFERED step within
+    // the cap, so the answer is always a step the instrument really has.
+    const qint32 groupCap = groupLeverageCap(correlationGroup(in.symbol));
+    qint32 cap = cfg.leverageCap;
+    if (groupCap > 0) {
+        cap = std::min(cap, groupCap);
+    }
+    if (in.maxLeverage > 0) {
+        cap = std::min(cap, in.maxLeverage);
+    }
+    // The instrument's own ladder: what the caller supplied, else the catalog's steps
+    // for that symbol (the bot scans every instrument, and only the one on screen
+    // publishes its live ladder), else recommendLeverage's own default.
+    QList<qint32> steps = in.leverageSteps;
+    if (steps.isEmpty()) {
+        const InstrumentSpec *spec = instrumentSpec(in.symbol);
+        if (spec != nullptr) {
+            steps = spec->simLeverage;
+        }
+    }
+    sig.leverage = std::max(1, recommendLeverage(slFrac, cfg.riskBudgetFraction, cap, steps));
 
     const double tpFrac = slFrac * kRewardRisk;
     sig.slRate = sig.isBuy ? (sig.fillRate * (1.0 - slFrac)) : (sig.fillRate * (1.0 + slFrac));
@@ -676,6 +1020,23 @@ QString correlationGroup(const QString &symbol)
         return metal ? QStringLiteral("metals") : QStringLiteral("commodity");
     }
     return QStringLiteral("group:") + spec->group;
+}
+
+qint32 groupLeverageCap(const QString &group)
+{
+    if (group == QStringLiteral("fx")) {
+        return 5;    // a daily range of a few tenths of a percent
+    }
+    if (group == QStringLiteral("equity-index")) {
+        return 10;
+    }
+    if (group == QStringLiteral("metals")) {
+        return 8;
+    }
+    if (group == QStringLiteral("commodity")) {
+        return 5;    // oil and softs gap on inventory numbers
+    }
+    return 5;        // an instrument nobody classified gets the careful ceiling
 }
 
 StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double riskPerStake,
@@ -755,27 +1116,14 @@ EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
     // Then a chain of single-condition gates: each refusal names exactly one
     // reason, which is what the log line has to state (and it keeps every decision
     // inside the MC/DC condition limit).
-    if (!in.marketOpen) {
-        verdict.why = QStringLiteral("market closed");
-        verdict.code = QStringLiteral("market-closed");
-        return verdict;
+    if (const EntryVerdict tradable = tradabilityVerdict(in); !tradable.code.isEmpty()) {
+        return tradable;
     }
-    if (!in.quoteLive) {
-        verdict.why = QStringLiteral("no live quote");
-        verdict.code = QStringLiteral("no-live-quote");
-        return verdict;
-    }
-    if (in.dir == 0) {
-        verdict.why = QStringLiteral("no directional call");
-        verdict.code = QStringLiteral("no-signal");
-        return verdict;
-    }
-    if (in.confidence < cfg.minConfidence) {
-        verdict.why = QStringLiteral("confidence %1 below the %2 floor")
-                          .arg(in.confidence, 0, 'f', 0)
-                          .arg(cfg.minConfidence, 0, 'f', 0);
-        verdict.code = QStringLiteral("confidence");
-        return verdict;
+    const SessionPhase phase = sessionPhaseFor(in.symbol, in.now);
+    const double windowFactor = volatileWindowFactor(phase, cfg);
+    if (const EntryVerdict paced = paceVerdict(in, cfg, phase, windowFactor);
+        !paced.code.isEmpty()) {
+        return paced;
     }
     if (const EntryVerdict stacking = stackingVerdict(in, book, cfg); !stacking.code.isEmpty()) {
         return stacking;
@@ -810,7 +1158,15 @@ EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
         verdict.why = roomRefusalWhy(room, book, cfg, in.symbol);
         return verdict;
     }
-    const double stake = room.stake;
+    // Size down in a loud window: the same stop is a wider bet when the range of
+    // the next ten minutes is three times the usual.
+    const double stake = room.stake / windowFactor;
+    if (stake < cfg.minStake) {
+        verdict.why = QStringLiteral("the %1 leaves too little size to be worth its costs")
+                          .arg(sessionPhaseWord(phase));
+        verdict.code = QStringLiteral("volatile-window");
+        return verdict;
+    }
     // Worth taking AFTER costs? The move to the target has to be a multiple of the
     // round trip; otherwise the trade is a coin flip whose winning side pays the
     // spread and the rollover (REQ-F-032).
@@ -1016,12 +1372,24 @@ CloseReason dynamicExit(const PaperTrade &trade, const ExitContext &ctx, const B
 {
     const qint32 side = trade.isBuy ? 1 : -1;
     const double net = trade.netPnl();
+    // Every rule here is DISCRETIONARY, so every one of them waits out the minimum
+    // holding time. Closing a position minutes after opening it pays two half-
+    // spreads for a price that has not had time to do anything.
+    if (trade.openTime.isValid() && ctx.now.isValid()) {
+        const double heldMinutes = static_cast<double>(trade.openTime.secsTo(ctx.now)) / 60.0;
+        if (heldMinutes < static_cast<double>(cfg.minHoldMinutes)) {
+            return CloseReason::None;
+        }
+    }
     // Faded: the composite still points the trade's way (or nowhere) but with a
     // fraction of the conviction that opened it, and the position is not paying.
     // A profitable position is left alone — the give-back rule governs that one.
+    // Compared against the COMPOSITE's conviction at entry, never against the
+    // model's: in lead mode the two live on different scales, and mixing them made
+    // every model-led trade look faded the instant it opened.
     const bool stillMine = (ctx.dirNow == side) || (ctx.dirNow == 0);
-    if (stillMine && (trade.entryConfidence > 0.0) && (ctx.confNow >= 0.0) && (net <= 0.0)
-        && (ctx.confNow < (trade.entryConfidence * cfg.signalFadeFraction))) {
+    if (stillMine && (trade.entryCompositeConf > 0.0) && (ctx.confNow >= 0.0) && (net <= 0.0)
+        && (ctx.confNow < (trade.entryCompositeConf * cfg.signalFadeFraction))) {
         return CloseReason::SignalFade;
     }
     // Given back: it was up by something that mattered and has since surrendered
@@ -1325,6 +1693,14 @@ void PaperBook::setFeatures(qint64 id, const EntryFeatures &features)
     }
 }
 
+void PaperBook::setEntryCompositeConf(qint64 id, double confidence)
+{
+    const qsizetype idx = indexOf(id);
+    if (idx >= 0) {
+        m_open[idx].entryCompositeConf = confidence;
+    }
+}
+
 void PaperBook::mark(qint64 id, double closeRate, bool live, const QDateTime &at)
 {
     const qsizetype idx = indexOf(id);
@@ -1438,6 +1814,7 @@ QJsonObject PaperBook::toJson() const
         o.insert(QStringLiteral("openTime"), timeStr(t.openTime));
         o.insert(QStringLiteral("feesChargedTo"), timeStr(t.feesChargedTo));
         o.insert(QStringLiteral("entryConfidence"), t.entryConfidence);
+        o.insert(QStringLiteral("entryCompositeConf"), t.entryCompositeConf);
         o.insert(QStringLiteral("entryBasis"), t.entryBasis);
         o.insert(QStringLiteral("features"), featuresToJson(t.features));
         openArr.append(o);
@@ -1506,6 +1883,7 @@ bool PaperBook::fromJson(const QJsonObject &obj)
         t.openTime = jsonTime(o, "openTime");
         t.feesChargedTo = jsonTime(o, "feesChargedTo");
         t.entryConfidence = jsonNum(o, "entryConfidence");
+        t.entryCompositeConf = jsonNum(o, "entryCompositeConf");
         t.entryBasis = jsonStr(o, "entryBasis");
         t.features = featuresFromJson(o.value(QStringLiteral("features")).toObject());
         restoredOpen.append(t);

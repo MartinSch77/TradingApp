@@ -1,0 +1,75 @@
+#ifndef TRADINGAPP_DOMAIN_INDEXCONFLUENCE_H
+#define TRADINGAPP_DOMAIN_INDEXCONFLUENCE_H
+
+#include <QHash>
+#include <QList>
+#include <QString>
+#include <QStringList>
+
+// What the index instruments are really doing, from the reference series the app can
+// actually fetch (REQ-F-035).
+//
+// The premise, which is worth stating because it contradicts how most indicator
+// panels are built: RSI, MACD, stochastic and a stack of moving averages are all
+// derived from the same closes, so adding them does not add evidence. What adds
+// evidence is AGREEMENT BETWEEN INDEPENDENT THINGS — price structure, the futures
+// that lead the cash market, expected volatility, the yield that moves growth
+// shares, and whether the index's biggest constituents are actually participating.
+// This module computes those reads and counts how many of them agree on a side.
+//
+// Two rules keep it honest:
+//
+//  * A read that could not be computed is UNKNOWN, and unknown never counts as
+//    agreement. A confluence of "four conditions met" must mean four measured
+//    conditions, not four absent feeds.
+//  * Nothing here is breadth in the professional sense. Real breadth needs the
+//    advance/decline line, up-volume and the share of constituents above VWAP —
+//    per-constituent data this app does not fetch. Heavyweight participation is the
+//    stand-in, and it is named as one wherever it is shown.
+namespace trading {
+
+// The Yahoo tickers the reference sweep fetches, in one list: ^VIX, ^VXN, ^TNX and
+// the eight companies that make up most of the Nasdaq-100 by weight.
+[[nodiscard]] QStringList referenceTickers();
+// The heavyweight subset of that list.
+[[nodiscard]] QStringList nasdaqHeavyweights();
+
+// One read, and whether it was measurable at all.
+struct Read {
+    bool known = false;
+    // +1 supports a long, −1 supports a short, 0 measured but neutral.
+    qint32 dir = 0;
+    QString detail;   // the number behind it, for the tooltip and the prompt
+};
+
+// Everything the reference series say, for one index instrument.
+struct IndexReads {
+    Read futuresLead;      // Nasdaq future vs S&P future this session
+    Read volatility;       // the instrument's own volatility index, rising or falling
+    Read yields;           // the US 10-year, rising (headwind) or falling (tailwind)
+    Read participation;    // how many heavyweights are up on the session
+    Read structure;        // where price sits against its own opening range
+};
+
+// `series` is keyed by reference ticker (as fetched) plus the app's own instrument
+// series for the structure read. `symbol` selects which volatility index applies:
+// NSDQ100 is judged by ^VXN, everything else by ^VIX.
+[[nodiscard]] IndexReads indexReads(const QString &symbol,
+                                    const QHash<QString, QList<double>> &referenceSeries,
+                                    const QList<double> &ownSeries);
+
+// How many reads agree with `dir`, how many contradict it, and how many could not be
+// measured — plus a one-line summary naming each. `met >= 4` is the bar a
+// professional dashboard would ask for; whether the bot enforces it is configuration.
+struct Confluence {
+    qint32 met = 0;
+    qint32 against = 0;
+    qint32 unknown = 0;
+    QStringList reasons;   // "futures lead agrees (+0.42%)", "yields disagree (+1.8%)", …
+    [[nodiscard]] qint32 measured() const { return met + against; }
+};
+[[nodiscard]] Confluence confluenceFor(const IndexReads &reads, qint32 dir);
+
+} // namespace trading
+
+#endif // TRADINGAPP_DOMAIN_INDEXCONFLUENCE_H

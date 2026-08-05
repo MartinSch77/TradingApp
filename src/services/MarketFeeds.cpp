@@ -1,6 +1,7 @@
 #include "services/MarketFeeds.h"
 
 #include "domain/DecisionEngine.h"
+#include "domain/IndexConfluence.h"
 #include "domain/InstrumentCatalog.h"
 #include "services/JsonHttp.h"
 
@@ -455,6 +456,36 @@ void MarketFeeds::fetchIntradaySeries()
                 yahooCloses(yahooChartResult(doc), /*positiveOnly=*/false);
             if (!closes.isEmpty()) {
                 emit intradayCloses(symbol, closes);
+            }
+        });
+    }
+}
+
+void MarketFeeds::fetchReferenceSeries()
+{
+    // The same chart endpoint the instrument sweep uses, over tickers that are not
+    // instruments: expected volatility, the yield that moves growth shares, and the
+    // eight companies that ARE most of the Nasdaq-100 (REQ-F-035). Ten requests, and
+    // each one that fails simply leaves its read absent rather than guessed.
+    for (const QString &ticker : trading::referenceTickers()) {
+        QNetworkRequest req(QUrl(feedUrl(
+            QStringLiteral("https://query1.finance.yahoo.com"),
+            QStringLiteral("/v8/finance/chart/%1?interval=1m&range=1d")
+                .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
+        JsonHttp::setBrowserHeaders(req);
+        QNetworkReply *reply = m_nam->get(req);
+        m_http->handleReply(reply, [this, ticker](bool ok, qint32 /*status*/,
+                                                  const QJsonDocument &doc,
+                                                  const QByteArray & /*raw*/,
+                                                  const QString &netError) {
+            if (!ok || !doc.isObject()) {
+                reportFeedError(QStringLiteral("Reference series"), netError);
+                return;
+            }
+            const QList<double> closes =
+                yahooCloses(yahooChartResult(doc), /*positiveOnly=*/false);
+            if (!closes.isEmpty()) {
+                emit referenceSeries(ticker, closes);
             }
         });
     }

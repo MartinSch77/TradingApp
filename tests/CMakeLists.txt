@@ -34,8 +34,13 @@ tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)
 tradingapp_add_test(tst_decisionengine tst_decisionengine.cpp)
 tradingapp_add_test(tst_tradeplan tst_tradeplan.cpp)
 tradingapp_add_test(tst_tradescript tst_tradescript.cpp)
+# TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
+# users copy has to keep matching the parser that reads it.
+target_compile_definitions(tst_tradescript PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 tradingapp_add_test(tst_papertrader tst_papertrader.cpp)
 tradingapp_add_test(tst_botnet tst_botnet.cpp)
+tradingapp_add_test(tst_indexconfluence tst_indexconfluence.cpp)
 # The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
 # back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
 # and only an end-to-end round trip can show that they do.

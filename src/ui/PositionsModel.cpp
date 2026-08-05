@@ -307,6 +307,18 @@ bool PositionsModel::allPnlLive() const
     return std::ranges::all_of(m_plIsLive, [](bool live) { return live; });
 }
 
+void PositionsModel::setAiOpinions(const QHash<QString, trading::HoldVerdict> &bySymbol)
+{
+    m_aiBySymbol = bySymbol;
+    if (m_positions.isEmpty()) {
+        return;
+    }
+    // One column, every row: no allocation per cell and no reset, so open SL/TP
+    // editors and the mark checkboxes survive an incoming opinion (REQ-N-006).
+    emit dataChanged(index(0, ColAi), index(static_cast<qint32>(m_positions.size()) - 1, ColAi),
+                     {Qt::DisplayRole, Qt::ForegroundRole, Qt::ToolTipRole});
+}
+
 QStringList PositionsModel::markedIds() const
 {
     QStringList ids;
@@ -326,6 +338,78 @@ qint32 PositionsModel::rowCount(const QModelIndex &parent) const
 qint32 PositionsModel::columnCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : ColCount;
+}
+
+QVariant PositionsModel::foregroundFor(const Position &p, qint32 col, qint32 row) const
+{
+    switch (col) {
+    case ColSide:
+        return p.isBuy ? kGreen : kRed;
+    case ColPl:
+        return pnlColor(row);
+    case ColAi:
+        return aiColour(p.symbol);
+    case ColCloseCost:
+        return kGrey;
+    default:
+        break;
+    }
+    return {};
+}
+
+QVariant PositionsModel::tooltipFor(const Position &p, qint32 col, qint32 row) const
+{
+    switch (col) {
+    case ColPl:
+        return pnlTooltip(p, row);
+    case ColAmount:
+        return QStringLiteral("$%1 invested — USD account currency, as the eToro app shows it; "
+                              "the column converts it at the live EUR/USD rate.")
+            .arg(QLocale().toString(p.amount, 'f', 2));
+    case ColAi:
+        return aiTooltip(p.symbol);
+    case ColCloseCost:
+        return QStringLiteral(
+            "Estimated cost to close this trade at the current price — eToro attributes half "
+            "the bid/ask spread to the exit, i.e. roughly spread/2 × units, matching its close "
+            "dialog. eToro's P/L already reflects this (a long is valued at the bid, a short at "
+            "the ask).");
+    case ColSl:
+    case ColTp:
+        return slTpTooltip(p, col, row);
+    default:
+        break;
+    }
+    return {};
+}
+
+QVariant PositionsModel::aiColour(const QString &symbol) const
+{
+    switch (m_aiBySymbol.value(symbol).opinion) {
+    case trading::HoldOpinion::Close:
+        return kRed;
+    case trading::HoldOpinion::Hold:
+        return kGreen;
+    case trading::HoldOpinion::NoOpinion:
+        break;
+    }
+    return {};
+}
+
+QString PositionsModel::aiTooltip(const QString &symbol) const
+{
+    // The model's own words about THIS position when it gave any, else what the
+    // column means — including that it never closes anything by itself.
+    const trading::HoldVerdict verdict = m_aiBySymbol.value(symbol);
+    if (!verdict.why.isEmpty()) {
+        return verdict.why;
+    }
+    return QStringLiteral(
+        "What the local model (Ollama) last said about KEEPING this position: hold, close, or "
+        "\"—\" when it has not mentioned this instrument. Silence never closes anything, and a "
+        "verdict the bot may not act on yet (a position younger than the minimum holding time, "
+        "or a reversal it is not convinced about) is still shown here. This is advice about a "
+        "REAL position — nothing here closes it; that stays your decision.");
 }
 
 QString PositionsModel::displayText(const Position &p, qint32 column, qint32 row) const
@@ -376,7 +460,11 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
     const qint32 col = index.column();
     switch (role) {
     case Qt::DisplayRole:
-        return displayText(p, col, index.row());
+        // The AI cell is a LOOKUP of what the model last said, so it is answered here
+        // rather than inside the text formatter — this runs for every visible cell on
+        // every re-price (REQ-N-006).
+        return (col == ColAi) ? trading::holdOpinionWord(m_aiBySymbol.value(p.symbol).opinion)
+                              : displayText(p, col, index.row());
     case Qt::EditRole: {
         // Editors open on the plain amount, without the trailing-stop marker.
         QString text = displayText(p, col, index.row());
@@ -391,37 +479,9 @@ QVariant PositionsModel::data(const QModelIndex &index, qint32 role) const
         }
         return {};
     case Qt::ForegroundRole:
-        if (col == ColSide) {
-            return p.isBuy ? kGreen : kRed;
-        }
-        if (col == ColPl) {
-            return pnlColor(index.row());
-        }
-        if (col == ColCloseCost) {
-            return kGrey;
-        }
-        return {};
+        return foregroundFor(p, col, index.row());
     case Qt::ToolTipRole:
-        if (col == ColPl) {
-            return pnlTooltip(p, index.row());
-        }
-        if (col == ColAmount) {
-            return QStringLiteral(
-                       "$%1 invested — USD account currency, as the eToro app shows it; "
-                       "the column converts it at the live EUR/USD rate.")
-                .arg(QLocale().toString(p.amount, 'f', 2));
-        }
-        if (col == ColCloseCost) {
-            return QStringLiteral(
-                "Estimated cost to close this trade at the current price — eToro attributes "
-                "half the bid/ask spread to the exit, i.e. roughly spread/2 × units, matching "
-                "its close dialog. eToro's P/L already reflects this (a long is valued at the "
-                "bid, a short at the ask).");
-        }
-        if ((col == ColSl) || (col == ColTp)) {
-            return slTpTooltip(p, col, index.row());
-        }
-        return {};
+        return tooltipFor(p, col, index.row());
     default:
         return {};
     }
@@ -485,6 +545,7 @@ QVariant PositionsModel::headerData(qint32 section, Qt::Orientation orientation,
     case ColCloseCost: return QStringLiteral("Close (%1)").arg(m_ccy);
     case ColSl: return QStringLiteral("SL (%1)").arg(m_ccy);
     case ColTp: return QStringLiteral("TP (%1)").arg(m_ccy);
+    case ColAi: return QStringLiteral("AI");
     default: return {};
     }
 }

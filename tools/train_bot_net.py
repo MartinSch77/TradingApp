@@ -71,6 +71,36 @@ def default_log() -> Path:
     return base / "botsim-experience.jsonl"
 
 
+def allowed_roots(extra: list[Path] | None = None) -> list[Path]:
+    """Where this tool may read and write.
+
+    The experience log lives beside the app's own configuration and a developer may
+    keep a copy in the working tree; nothing else is any business of a training
+    script. Validating the resolved path against an explicit allowlist — rather than
+    opening whatever argv contains — is what keeps a mistyped or hostile `--log` from
+    reaching the rest of the file system. `--allow-root` widens the list on purpose
+    and in the open, which is how a scratch directory gets used without turning the
+    check into a formality.
+    """
+    roots = [default_log().parent.resolve(), Path.cwd().resolve()]
+    roots += [p.expanduser().resolve() for p in (extra or [])]
+    return roots
+
+
+def checked_path(path: Path, *, must_exist: bool, extra_roots: list[Path] | None = None) -> Path:
+    """`path` resolved and confined to allowed_roots(), or SystemExit."""
+    resolved = path.expanduser().resolve()
+    roots = allowed_roots(extra_roots)
+    if not any(resolved == root or root in resolved.parents for root in roots):
+        raise SystemExit(
+            f"refusing to touch {resolved}: outside {', '.join(str(r) for r in roots)}")
+    if must_exist and not resolved.is_file():
+        raise SystemExit(f"{resolved} is not a readable file")
+    if not must_exist and not resolved.parent.is_dir():
+        raise SystemExit(f"{resolved.parent} does not exist")
+    return resolved
+
+
 def load(path: Path) -> tuple[list[list[float]], list[float], list[str]]:
     """Rows, labels and problems found. One malformed line never kills the run."""
     rows: list[list[float]] = []
@@ -192,20 +222,28 @@ def main() -> int:
     ap.add_argument("--l2", type=float, default=1e-4, help="weight decay")
     ap.add_argument("--seed", type=int, default=20260805, help="fixed: runs are reproducible")
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES)
+    ap.add_argument("--allow-root", type=Path, action="append", default=[],
+                    metavar="DIR",
+                    help="additionally permit reading/writing under DIR (repeatable); by "
+                         "default only the app's config directory and the working tree are")
     args = ap.parse_args()
 
-    out_path = args.out or (args.log.parent / "botnet.json")
-    if not args.log.exists():
+    # Both paths come from the command line, so both are resolved and confined before
+    # anything is opened — see checked_path().
+    if not args.log.expanduser().exists():
         print(f"no experience log at {args.log}")
         print("Run the bot simulation first — it appends one line per closed trade.")
         return 3  # 'skipped', the same convention the build stages use
+    log_path = checked_path(args.log, must_exist=True, extra_roots=args.allow_root)
+    out_path = checked_path(args.out or (log_path.parent / "botnet.json"), must_exist=False,
+                            extra_roots=args.allow_root)
 
-    rows, labels, problems = load(args.log)
+    rows, labels, problems = load(log_path)
     for problem in problems[:5]:
         print(f"skipped {problem}")
     if len(problems) > 5:
         print(f"…and {len(problems) - 5} more unusable lines")
-    print(f"{len(rows)} usable examples from {args.log}")
+    print(f"{len(rows)} usable examples from {log_path}")
     if len(rows) < args.min_samples:
         print(f"too few to train on (need {args.min_samples}); letting the bot keep collecting")
         return 3

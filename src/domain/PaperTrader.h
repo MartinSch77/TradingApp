@@ -161,7 +161,43 @@ struct BotConfig {
     // closed while it is still a winner. Only above giveBackMinNet, so noise on a
     // few euros of profit does not churn the book.
     double giveBackFraction = 0.5;
-    double giveBackMinNet = 30.0;      // an opposite call this strong closes the trade
+    double giveBackMinNet = 30.0;
+    // Churn control (REQ-F-034). Every round trip pays two half-spreads and, held
+    // overnight, rent — so trading the same instrument again and again converts an
+    // edge into fees. After a position in an instrument closes, that instrument is
+    // left alone for this long.
+    qint32 reentryCooldownMinutes = 45;
+    // A position may not be closed by OPINION — the model changing its mind, a faded
+    // signal, a give-back — before it has had this long to work. Measured cause of a
+    // losing hour: five EURUSD round trips in sixty minutes, gross +1.64 EUR against
+    // 19.38 EUR of spread. A stop or a target still closes instantly, because those
+    // are prices; this bounds only the discretionary exits.
+    qint32 minHoldMinutes = 30;
+    // …and a reversal from the model has to be CONVINCED to be worth two half-
+    // spreads. A 1.5 B model is not consistent between two calls five minutes apart.
+    double aiExitMinConfidence = 60.0;
+    // …and the whole book opens at most this many new positions per hour, so a
+    // single excited scan cannot become a trading spree.
+    qint32 maxOpensPerHour = 6;
+    // What a candidate must bring EXTRA to trade in a loud session window: the
+    // confidence floor is multiplied by this, and the stake divided by it. 1.0
+    // switches the special treatment off.
+    double volatileWindowFactor = 1.6;
+    // Refuse an entry that fights a fresh opening-range break. Off = the break is
+    // still shown and still given to the model, it just stops nothing.
+    bool respectOpeningRange = true;
+    // Sit out the two windows where the first move regularly reverses in full: the
+    // quarter hour after the open and the central-bank slot. Both are measured on the
+    // exchange's own clock, so the weeks when Europe and the US shift their clocks on
+    // different days need no maintenance.
+    bool avoidOpeningChaos = true;
+    bool avoidPolicyWindow = true;
+    // How many INDEPENDENT reads must agree with the side before an index position is
+    // opened (REQ-F-035), counted only over reads that could actually be measured.
+    // 0 switches the requirement off; the reads are still shown and still given to
+    // the model. Deliberately below the five available: demanding all of them means
+    // never trading, and demanding none means the reads were decoration.
+    qint32 minAgreeingReads = 3;      // an opposite call this strong closes the trade
     double minEquityFraction = 0.25;   // stop OPENING below this × start equity (ruin guard)
     // The DAY rules — the only honest form of "make 350 a day". A fixed daily
     // profit cannot be guaranteed by any strategy; what a rule CAN do is stop the
@@ -182,7 +218,10 @@ struct BotConfig {
     // How an AI advisor's proposal is used (REQ-F-030). Off by default: turning a
     // local model into the decision maker is the user's explicit choice, never a
     // silent change of what the simulation measures.
-    BotAiMode aiMode = BotAiMode::Off;
+    // Lead by default: the local model picks, and the risk rules bound what it
+    // picked (REQ-F-030). A book saved earlier keeps whatever mode it was left in —
+    // a running experiment must not change what it measures on an upgrade.
+    BotAiMode aiMode = BotAiMode::Lead;
 
     [[nodiscard]] bool operator==(const BotConfig &other) const = default;
 };
@@ -222,6 +261,41 @@ struct HarvestOption {
 [[nodiscard]] qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
                                       const BotConfig &cfg);
 
+// ---------------------------------------------------------------------------
+// When it is worth trading at all (REQ-F-034)
+// ---------------------------------------------------------------------------
+
+// Where "now" sits in the instrument's own trading day. The three loud phases are
+// where the day's range is usually made: the opening auction and the first minutes
+// after it, the macro-data slots (US releases land at 14:30 and 16:00 Berlin time,
+// which is also when a European book gets moved by American numbers), and the last
+// half hour before the local close. They are an opportunity and a hazard in the
+// same breath — a stop that is fine at midday is noise at 09:00 — so the bot does
+// not sit them out, it demands more of a candidate that wants to trade in them.
+enum class SessionPhase : qint8 {
+    Normal,
+    // The first quarter hour after the local open. Fast, wide-spread and prone to
+    // reversing completely — the phase to sit out rather than to trade smaller. It is
+    // also what forms the range whose break is the actual entry signal.
+    OpeningChaos,
+    // The rest of the first hour: the opening move is readable now, and a break of
+    // the range formed in the chaos is the signal worth having.
+    OpeningBurst,
+    DataWindow,     // a macro release the whole market watches (14:30 / 16:00 Berlin)
+    // A central-bank decision and the press conference that follows it: the one
+    // window where the first move regularly reverses in full.
+    PolicyWindow,
+    // The last hour before the US close — position squaring, volume back up.
+    PowerHour,
+    ClosingBurst,   // the last minutes before the local close
+};
+[[nodiscard]] QString sessionPhaseWord(SessionPhase phase);
+
+// The phase for one instrument at one instant. `now` may be in any time zone; the
+// instrument's own exchange time is what decides, so summer time is handled by the
+// zone database rather than by an offset someone has to remember to update.
+[[nodiscard]] SessionPhase sessionPhaseFor(const QString &symbol, const QDateTime &now);
+
 // One open position, as the model is shown it.
 struct OpenPositionBrief {
     QString symbol;
@@ -240,10 +314,21 @@ struct OpenPositionBrief {
 // instrument, or an explicit CLOSE. Silence is not a verdict: a local model
 // regularly answers about two instruments out of twenty-six, and reading that as
 // "close everything else" would liquidate the book on a slow answer.
+// What the model currently thinks about a position it was shown. NoOpinion is a
+// first-class answer, not a missing one: a small model regularly names two of the
+// twenty-six instruments in front of it, and "it did not mention this trade" must
+// never read as either recommendation.
+enum class HoldOpinion : qint8 { NoOpinion, Hold, Close };
+[[nodiscard]] QString holdOpinionWord(HoldOpinion opinion);
+
 struct HoldVerdict {
+    HoldOpinion opinion = HoldOpinion::NoOpinion;
+    // Whether that opinion may be ACTED on yet. A "close" the bot is not allowed to
+    // act on is still shown — the window reports what the model thinks, and the
+    // minimum holding time is a separate fact about the trade, not a censor.
     bool close = false;
     QString why;
-    QString code;   // "" | "ai-reversed" | "ai-close"
+    QString code;            // "" | "ai-reversed" | "ai-close" | "ai-keep" | "ai-too-soon"
 };
 [[nodiscard]] DayGate paperDayGate(const BotDay &day, const QDateTime &now, const BotConfig &cfg);
 
@@ -337,6 +422,11 @@ struct PaperTrade {
     double feesPaid = 0.0;      // rollover charged so far, EUR
     qint32 nightsCharged = 0;   // nights already billed (weekend counts triple)
     double markRate = 0.0;      // last mark (0 = not yet marked → openRate is used)
+    // The COMPOSITE's conviction when the trade was opened, kept separate from
+    // entryConfidence (which in lead mode is the MODEL's number, on the model's own
+    // scale). The fade rule compares composite with composite — comparing the two
+    // scales made every model-led trade look faded the moment it opened.
+    double entryCompositeConf = 0.0;
     // The best net result this position has shown, EUR. Updated on every mark and
     // persisted: the give-back exit is about what a trade WAS worth, so forgetting
     // it across a restart would silently switch that rule off.
@@ -456,6 +546,19 @@ struct CandidateInput {
     InstrumentFees fees;
     bool feesKnown = false;
     double eurPerUsd = 0.0;
+    // When this instrument's last position closed, and how many positions the whole
+    // book has opened in the past hour — the two inputs of the churn rules.
+    QDateTime lastClosedAt;
+    qint32 opensLastHour = 0;
+    // Where the price sits against the session's opening range: +1 broken upward,
+    // −1 downward, 0 inside it or unknown. Trading INTO a fresh break against you is
+    // the classic way to be run over, so the gate refuses it (REQ-F-022).
+    qint32 rangeBreakDir = 0;
+    // How many independent reference reads agree with this candidate's side, and how
+    // many were measurable at all (REQ-F-035). Both 0 = nothing to judge, which the
+    // gate treats as "no objection" rather than as disagreement.
+    qint32 agreeingReads = 0;
+    qint32 measuredReads = 0;
     // The model named THIS instrument in its current answer. Only then may the bot
     // add to a position it already holds (REQ-F-032): stacking on the composite
     // alone would turn one opinion into three copies of the same trade.
@@ -556,6 +659,12 @@ struct EntryVerdict {
 // reading: it never lets an unrecognised name inflate an existing bucket.
 [[nodiscard]] QString correlationGroup(const QString &symbol);
 
+// The leverage ceiling for a correlation bucket, on top of every other cap. FX is
+// the tight one on purpose: EUR/USD moves a few tenths of a percent in a day, so a
+// x30 position with a stop inside that range is a coin toss with a spread attached
+// — and the local model asks for x30 happily. 0 = no bucket-specific ceiling.
+[[nodiscard]] qint32 groupLeverageCap(const QString &group);
+
 struct StakeRoom {
     double stake = 0.0;
     // "" when the target stake fit, else the binding limit:
@@ -597,7 +706,8 @@ struct EntryEconomics {
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &proposals,
-                                      BotAiMode mode);
+                                      BotAiMode mode, const QDateTime &now,
+                                      const BotConfig &cfg);
 
 
 // The live read an open position is judged against between scans (the exit-side
@@ -758,6 +868,9 @@ public:
     // open() so the pure sizing path stays free of the learning machinery — and so
     // a build without it simply records nothing (REQ-F-033).
     void setFeatures(qint64 id, const EntryFeatures &features);
+    // The composite's conviction at entry — separate from the number that decided
+    // the trade, which in lead mode is the model's own.
+    void setEntryCompositeConf(qint64 id, double confidence);
 
     // Re-mark one position from its instrument's current close rate (bid for a
     // long, ask for a short). Unknown ids are ignored.

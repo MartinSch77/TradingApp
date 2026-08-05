@@ -223,6 +223,64 @@ private slots:
         QVERIFY(!rowFor(computeDecisionRows(blank), QStringLiteral("UP")).haveRating);
     }
 
+    //! @tstid TS-DEC-008 @design DES-DOM-DEC
+    // @relation(REQ-F-022, scope=function)
+    void TS_DEC_008_theSessionsOwnStructureIsReadBeforeAnyOscillator()
+    {
+        // The opening range: the first 30 minutes set a high and a low, and where the
+        // price sits against them is the read professionals take first.
+        QList<double> session;
+        for (int i = 0; i < 30; ++i) {
+            session << (100.0 + (i % 5));            // opens between 100 and 104
+        }
+        const OpeningRange inside = openingRange(session + QList<double>{102.0, 102.5, 103.0});
+        QVERIFY(inside.valid);
+        QCOMPARE(inside.low, 100.0);
+        QCOMPARE(inside.high, 104.0);
+        QCOMPARE(inside.bars, qsizetype{30});
+        QCOMPARE(inside.breakDir, 0);                // still inside it
+        QCOMPARE(inside.breakPct, 0.0);
+
+        // A break upward, measured as a share of the range's OWN width (4.0 here), so
+        // a probe and a decisive break are not the same number.
+        const OpeningRange up = openingRange(session + QList<double>{104.5, 105.0, 106.0});
+        QCOMPARE(up.breakDir, 1);
+        QVERIFY(qAbs(up.breakPct - 50.0) < 1e-9);    // 2.0 beyond a 4.0-wide range
+        const OpeningRange down = openingRange(session + QList<double>{99.0, 98.0, 98.0});
+        QCOMPARE(down.breakDir, -1);
+        QVERIFY(qAbs(down.breakPct - 50.0) < 1e-9);
+
+        // Too little session, and a flat opening, both answer "no read" rather than
+        // inventing a range.
+        QVERIFY(!openingRange(QList<double>(10, 100.0)).valid);
+        QVERIFY(!openingRange(QList<double>(40, 100.0)).valid);
+        QVERIFY(!openingRange({}).valid);
+        QVERIFY(!openingRange(session + QList<double>{102.0}, 0).valid);
+
+        // Relative strength: the session return of one series minus the other, which
+        // is how "is technology leading the broad market" gets answered from the two
+        // futures series the app already fetches.
+        const QList<double> nasdaq{100.0, 101.0, 102.0};      // +2.0%
+        const QList<double> sp{100.0, 100.5, 101.0};          // +1.0%
+        QVERIFY(qAbs(relativeStrength(nasdaq, sp) - 1.0) < 1e-9);
+        QVERIFY(qAbs(relativeStrength(sp, nasdaq) + 1.0) < 1e-9);
+        QCOMPARE(relativeStrength(nasdaq, {}), 0.0);          // no read, not a claim
+        QCOMPARE(relativeStrength({}, sp), 0.0);
+        QCOMPARE(relativeStrength({100.0}, {100.0}), 0.0);
+
+        // Both reads reach the model: the prompt states the range and the leadership.
+        MarketSnapshot m;
+        m.screenerRows << row(QStringLiteral("UP"), trend(120, 1.004, 1.001));
+        static_cast<void>(m.intradayBySymbol.insert(QStringLiteral("UP"),
+                                                    session + QList<double>{106.0, 106.0, 106.0}));
+        static_cast<void>(m.intradayBySymbol.insert(QStringLiteral("NSDQ100.24-7"), nasdaq));
+        static_cast<void>(m.intradayBySymbol.insert(QStringLiteral("SP.24-7"), sp));
+        const QString evidence = buildDecisionEvidence(computeDecisionRows(m), m);
+        QVERIFY(evidence.contains(QStringLiteral("opening range")));
+        QVERIFY(evidence.contains(QStringLiteral("Nasdaq future vs S&P future")));
+        QVERIFY(evidence.contains(QStringLiteral("leading")));
+    }
+
     //! @tstid TS-DEC-006 @design DES-DOM-DEC
     // @relation(REQ-F-022, scope=function)
     void TS_DEC_006_yahooIntradaySource()

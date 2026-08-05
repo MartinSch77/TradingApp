@@ -28,6 +28,9 @@ struct MarketSnapshot {
     // Independent Yahoo Finance intraday series (1-minute closes, session so
     // far) per instrument — an additional source for the composite.
     QHash<QString, QList<double>> intradayBySymbol;
+    // The reference series that are not instruments: ^VIX, ^VXN, ^TNX and the Nasdaq
+    // heavyweights (REQ-F-035), keyed by Yahoo ticker.
+    QHash<QString, QList<double>> referenceSeries;
 };
 
 // One aggregated row per instrument, combining every source into a weighted
@@ -75,6 +78,44 @@ struct NewsRead {
 // returns 0 otherwise (and for flat series).
 [[nodiscard]] double intradayTilt(const QList<double> &closes);
 
+// ---------------------------------------------------------------------------
+// Session structure (REQ-F-022)
+// ---------------------------------------------------------------------------
+//
+// Two reads that professionals watch before any oscillator, computed from the
+// 1-minute session series the app already fetches — no new feed, no new key:
+//
+//  * the OPENING RANGE. The first half hour of a session sets a high and a low
+//    that the rest of the day trades around; a break of it with the session
+//    behind it is the classic intraday continuation signal, and a trade taken
+//    AGAINST a fresh break is the classic way to be run over.
+//  * RELATIVE STRENGTH between two instruments. The Nasdaq future leading or
+//    lagging the S&P future says whether a move is broad or is technology
+//    alone, which is the cheapest available stand-in for market breadth here:
+//    real breadth needs per-constituent data this app does not fetch.
+struct OpeningRange {
+    bool valid = false;
+    double high = 0.0;
+    double low = 0.0;
+    qsizetype bars = 0;    // how many of the session's minutes formed the range
+    // +1 = the latest price is above the range, −1 = below, 0 = still inside it.
+    qint32 breakDir = 0;
+    // How far beyond the range, as a percentage of the range's own width. A big
+    // number is a decisive break; a fraction is a probe.
+    double breakPct = 0.0;
+};
+
+// `minutes` is the length of the opening window in BARS of the series (the app's
+// intraday series is one bar per minute). Needs at least the window plus a few
+// bars after it, or the answer is "not valid" rather than a guess.
+[[nodiscard]] OpeningRange openingRange(const QList<double> &closes, qsizetype minutes = 30);
+
+// Session return of `leader` minus that of `benchmark`, in percentage points:
+// positive = the leader is outperforming. Both series must cover the same session;
+// an empty or single-point series yields 0 (no read), never a fabricated one.
+[[nodiscard]] double relativeStrength(const QList<double> &leader,
+                                      const QList<double> &benchmark);
+
 // Market regime from the VIX plus the calendar: the risk-on/off tilt and
 // whether a high-impact event is imminent (within six hours).
 struct RegimeRead {
@@ -88,8 +129,16 @@ struct RegimeRead {
 
 // The plain-text evidence prompt handed to the AI advisor: the candidates, their
 // per-source reads and the market context, plus the answer contract.
+//
+// `maxCandidates` bounds how many instruments the model is SHOWN, and therefore how
+// many it can possibly say anything about — an instrument missing from the prompt
+// cannot be given an opinion, however much the reader expects one. The decision
+// window asks for a handful (it wants the best pick); the bot asks for many more,
+// because its window reports the model's read per instrument and "no opinion" has
+// to mean "it looked and passed", not "it was never shown this one".
 [[nodiscard]] QString buildDecisionEvidence(const QList<DecisionRow> &rows,
-                                            const MarketSnapshot &m);
+                                            const MarketSnapshot &m,
+                                            qsizetype maxCandidates = 6);
 
 // TradingView's rating buckets for a recommendation score in [-1, 1]. One
 // shared bucket table: the ranked table, the signals panel and the feed label

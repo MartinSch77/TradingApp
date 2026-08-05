@@ -2,6 +2,7 @@
 
 #include "domain/PositionMath.h"   // priceDecimals + the quote-freshness bound
 #include "services/EtoroClient.h"
+#include "domain/IndexConfluence.h"
 #include "services/OllamaAdvisor.h"
 
 #include <QComboBox>
@@ -51,6 +52,11 @@ constexpr auto kStoreFile = "botsim.json";
 // enough that a running experiment keeps learning, high enough that the fit is not
 // repeated for a single new example (REQ-F-033).
 constexpr qint64 kRetrainEvery = 25;
+// How many instruments the local model is SHOWN per scan. Above the decision
+// window's handful, because the bot reports the model's read per instrument and an
+// instrument it never saw cannot have one — and bounded, because a small model
+// answers a long prompt worse than a short one (REQ-F-034).
+constexpr qsizetype kAskedCandidates = 14;
 
 QString money(double value)
 {
@@ -452,6 +458,7 @@ void BotSimRunner::closeTrade(const PaperTrade &trade, CloseReason reason)
     if (done.id == 0) {
         return;
     }
+    static_cast<void>(m_holdOpinions.remove(done.id));
     recordExperience(done);
     // Retrain on a cadence rather than on every close: the model only moves once
     // there are new trades in it, and a retrain per trade would be noise.
@@ -523,7 +530,17 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
     const bool wantAi = (m_book.config().aiMode != trading::BotAiMode::Off)
                         && (m_ai != nullptr) && m_ai->isConfigured();
     if (wantAi) {
-        m_evidence = trading::buildDecisionEvidence(rows, snap) + holdEvidence();
+        // Every instrument with a directional call, up to the answer cap: the bot's
+        // window reports the model's read per instrument, so it must be shown them
+        // (REQ-F-034). The decision window keeps its own shorter list.
+        m_evidence = trading::buildDecisionEvidence(rows, snap, kAskedCandidates)
+                     + holdEvidence();
+        m_askedSymbols.clear();
+        for (const trading::DecisionRow &row : rows) {
+            if ((row.dir != 0) && (m_askedSymbols.size() < kAskedCandidates)) {
+                m_askedSymbols.append(row.symbol);
+            }
+        }
         requestProposal();
         emit changed();
         return;
@@ -540,7 +557,12 @@ trading::CloseReason BotSimRunner::aiExitFor(const PaperTrade &trade)
         return CloseReason::None;
     }
     const trading::HoldVerdict hold =
-        trading::paperAiHold(trade, m_proposals, m_book.config().aiMode);
+        trading::paperAiHold(trade, m_proposals, m_book.config().aiMode,
+                             QDateTime::currentDateTime(), m_book.config());
+    // Recorded for EVERY open position on every pass, not just the ones being
+    // closed: the window shows hold / close / no-opinion per trade, and "the model
+    // did not mention this one" has to be visible as its own answer.
+    m_holdOpinions.insert(trade.id, hold);
     if (!hold.close) {
         return CloseReason::None;
     }
@@ -575,6 +597,18 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     in.now = now;   // the daily target / loss limit judge TODAY
     // Adding to a position the bot already holds needs the model's own initiative.
     in.aiBacked = (gate.pick >= 0);
+    // The churn inputs (REQ-F-034): when this instrument last closed a position,
+    // and how many the whole book has opened in the past hour.
+    in.lastClosedAt = lastCloseFor(row.symbol);
+    // The session's own structure, from the 1-minute series the scan already carries.
+    in.rangeBreakDir = trading::openingRange(closes).breakDir;
+    // How many independent reference reads agree with this side (REQ-F-035).
+    const trading::Confluence score =
+        trading::confluenceFor(trading::indexReads(row.symbol, m_referenceSeries, closes),
+                              gate.dir);
+    in.agreeingReads = score.met;
+    in.measuredReads = score.measured();
+    in.opensLastHour = opensInLastHour(now);
     in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol);
     in.quoteLive = sides.ok && in.marketOpen;
     // What the fee table says holding it will cost — the entry prices the round
@@ -583,6 +617,36 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     in.feesKnown = in.fees.isValid();
     in.eurPerUsd = m_eurPerUsd;
     return in;
+}
+
+QDateTime BotSimRunner::lastCloseFor(const QString &symbol) const
+{
+    // The record is append-ordered, so the last matching close is the newest one.
+    const QList<PaperClosedTrade> &closed = m_book.closedTrades();
+    const auto hit = std::find_if(closed.crbegin(), closed.crend(),
+                                  [&symbol](const PaperClosedTrade &c) {
+                                      return c.symbol == symbol;
+                                  });
+    return (hit != closed.crend()) ? hit->closeTime : QDateTime{};
+}
+
+qint32 BotSimRunner::opensInLastHour(const QDateTime &now) const
+{
+    // Counted over BOTH books: a position opened and already closed within the hour
+    // still spent its spread, which is exactly what the pace limit is about.
+    const auto withinTheHour = [&now](const QDateTime &opened) {
+        return opened.isValid() && (opened.secsTo(now) < 3600);
+    };
+    const auto open = m_book.openTrades();
+    const auto closed = m_book.closedTrades();
+    const qsizetype count =
+        std::count_if(open.cbegin(), open.cend(),
+                      [&withinTheHour](const PaperTrade &t) { return withinTheHour(t.openTime); })
+        + std::count_if(closed.cbegin(), closed.cend(),
+                        [&withinTheHour](const PaperClosedTrade &c) {
+                            return withinTheHour(c.openTime);
+                        });
+    return static_cast<qint32>(count);
 }
 
 QString BotSimRunner::applyNetGate(const QString &symbol,
@@ -832,6 +896,8 @@ void BotSimRunner::onProposals(const QList<AiDecision> &picks, const QString &er
                  false);
     }
 
+    emit proposalsUpdated(m_proposals);
+
     // Apply it to the NEWEST scan's candidates as long as the reasoning is still
     // fresh; the entry gate re-checks the live quote, spread and market state for
     // whichever instrument it names, so newer rows are an improvement, not a risk.
@@ -989,6 +1055,10 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
         return skip(QStringLiteral("instrument-unresolved"));
     }
     m_book.setFeatures(openedId, features);
+    // The COMPOSITE's conviction, whatever decided the trade: the fade rule compares
+    // like with like (REQ-F-032).
+    m_book.setEntryCompositeConf(openedId, row.confidence);
+    emit tradeOpened(sig.symbol);
     emit log(QStringLiteral("SIM OPEN %1 %2 %3 @ %4 x%5 — SL %6 / TP %7, spread cost %8 — %9")
                  .arg(sig.symbol)
                  .arg(sig.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
@@ -1215,7 +1285,7 @@ void BotSimDialog::buildTables(QVBoxLayout *layout)
                                  QStringLiteral("Entry"), QStringLiteral("Now"),
                                  QStringLiteral("Stop"), QStringLiteral("Target"),
                                  QStringLiteral("Costs"), QStringLiteral("P/L"),
-                                 QStringLiteral("Opened / why")});
+                                 QStringLiteral("AI"), QStringLiteral("Opened / why")});
     openLayout->addWidget(m_openTable);
     layout->addWidget(openBox, 2);
 
@@ -1226,7 +1296,7 @@ void BotSimDialog::buildTables(QVBoxLayout *layout)
                                    QStringLiteral("Invested"), QStringLiteral("Lev"),
                                    QStringLiteral("Entry"), QStringLiteral("Exit"),
                                    QStringLiteral("Held (h)"), QStringLiteral("Costs"),
-                                   QStringLiteral("Net P/L"), QStringLiteral("Closed because")});
+                                   QStringLiteral("Net P/L"), QStringLiteral("Closed when / because")});
     closedLayout->addWidget(m_closedTable);
     layout->addWidget(closedBox, 2);
 
@@ -1388,7 +1458,23 @@ void BotSimDialog::rebuildOpenTable()
                                       .arg(t.nightsCharged),
                                   true));
         m_openTable->setItem(row, 9, cell(money(t.netPnl()), true, t.netPnl(), true));
-        m_openTable->setItem(row, 10,
+        // What the model says about KEEPING this one, refreshed every review pass:
+        // hold, close, or "—" for a position it has not mentioned (REQ-F-032).
+        const trading::HoldVerdict hold = m_runner->holdOpinion(t.id);
+        QTableWidgetItem *flag = cell(trading::holdOpinionWord(hold.opinion));
+        flag->setTextAlignment(Qt::AlignCenter);
+        if (hold.opinion == trading::HoldOpinion::Close) {
+            flag->setForeground(QColor(0xC0, 0x39, 0x2B));
+        } else if (hold.opinion == trading::HoldOpinion::Hold) {
+            flag->setForeground(QColor(0x1B, 0x8A, 0x3A));
+        }
+        flag->setToolTip(hold.why.isEmpty()
+                             ? QStringLiteral("The model has not been asked about this position "
+                                              "yet, or did not mention it in its last answer. "
+                                              "Silence never closes a trade.")
+                             : hold.why);
+        m_openTable->setItem(row, 10, flag);
+        m_openTable->setItem(row, 11,
                              cell(QStringLiteral("%1 — %2")
                                       .arg(t.openTime.toString(QStringLiteral("MM-dd HH:mm")),
                                            t.entryBasis)));
@@ -1414,7 +1500,15 @@ void BotSimDialog::rebuildClosedTable()
                                             true));
         m_closedTable->setItem(row, 7, cell(plain(c.totalCost()), true));
         m_closedTable->setItem(row, 8, cell(money(c.netPnl), true, c.netPnl, true));
-        m_closedTable->setItem(row, 9, cell(trading::closeReasonWord(c.reason)));
+        // WHEN it closed belongs next to WHY: reading a record of exits without
+        // their times says nothing about whether the rules fired when they should.
+        m_closedTable->setItem(
+            row, 9,
+            cell(c.closeTime.isValid()
+                     ? QStringLiteral("%1 — %2")
+                           .arg(c.closeTime.toString(QStringLiteral("MM-dd HH:mm")),
+                                trading::closeReasonWord(c.reason))
+                     : trading::closeReasonWord(c.reason)));
     }
 }
 

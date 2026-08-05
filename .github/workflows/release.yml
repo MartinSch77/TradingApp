@@ -242,12 +242,61 @@ jobs:
             downloads/*.apk
             downloads/*.apk.sha256
 
+  quality-report:
+    name: Quality report (PDF)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Qt (with Charts)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.1"
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install the tools the report summarises
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cppcheck clang-tidy clang-tools libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+          python3 -m pip install --upgrade cmake ninja lizard reportlab strictdoc
+
+      # Everything the report has evidence for, in the order it reads it: the build,
+      # the suite, the traceability matrix, then the analyzers. `--skip axivion`
+      # because Axivion Suite is licensed and x86-64-host-only — the report marks
+      # that section as "not run here" rather than inventing it (see below).
+      - name: Build, test, trace, analyse
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./build_all.sh build test trace analysis coverage
+
+      - name: Render the PDF
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          python3 tools/make_report.py
+          ls -l downloads/*.pdf
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: quality-report
+          path: |
+            downloads/*.pdf
+            docs/traceability.html
+
   publish:
     name: Attach to the release
     # Tag pushes only: a manual run stops after the build jobs, so the
     # packaging can be tested without publishing anything.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [appimage, appimage-arm64, windows-zip, android-apk]
+    needs: [appimage, appimage-arm64, windows-zip, android-apk, quality-report]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -267,6 +316,12 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --title "eToro Trader $tag" \
-              --generate-notes
+              --generate-notes \
+              --latest
           fi
+          # A finished release, explicitly: a pre-release shows as an orange badge and
+          # is not what "latest release" should point at.
+          gh release edit "$tag" --prerelease=false --draft=false --latest
           gh release upload "$tag" downloads/* --clobber
+          echo "### Assets attached to $tag" >> "$GITHUB_STEP_SUMMARY"
+          ls downloads | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"

@@ -2,6 +2,7 @@
 #define TRADINGAPP_UI_POSITIONSMODEL_H
 
 #include "domain/Models.h"
+#include "domain/PaperTrader.h"
 
 #include <QAbstractTableModel>
 #include <QColor>
@@ -23,7 +24,11 @@ class PositionsModel : public QAbstractTableModel
 public:
     enum Column {
         ColMark = 0, ColInstrument, ColSide, ColAmount, ColLev, ColOpen,
-        ColUnits, ColPl, ColCloseCost, ColSl, ColTp, ColCount
+        ColUnits, ColPl, ColCloseCost, ColSl, ColTp,
+        // What the local model says about KEEPING this position (REQ-F-034):
+        // hold / close / "—" when it has said nothing about the instrument.
+        ColAi,
+        ColCount
     };
 
     explicit PositionsModel(QObject *parent = nullptr);
@@ -60,6 +65,12 @@ public:
     void beginCellEdit(qint32 row, qint32 column);
     void endCellEdit();
 
+    // The local model's verdict per SYMBOL, as the bot's review pass produced it.
+    // Stored by symbol rather than by position id so a re-poll that renumbers rows
+    // keeps the reads, and looked up (not computed) in data() — the hot path stays
+    // allocation-free (REQ-N-006).
+    void setAiOpinions(const QHash<QString, trading::HoldVerdict> &bySymbol);
+
     [[nodiscard]] QStringList markedIds() const;
 
     // Totals for the panel's summary line, already in the DISPLAY currency (the model
@@ -88,6 +99,15 @@ signals:
     void slTpEdited(qint32 row, qint32 column, const QString &text);
 
 private:
+    // The AI column's colour and tooltip, so data() stays a role switch rather than
+    // a place where three columns' formatting accumulates.
+    // One switch per role, so data() stays a role switch and each column's
+    // formatting lives in one place.
+    [[nodiscard]] QVariant foregroundFor(const Position &p, qint32 col, qint32 row) const;
+    [[nodiscard]] QVariant tooltipFor(const Position &p, qint32 col, qint32 row) const;
+    [[nodiscard]] QVariant aiColour(const QString &symbol) const;
+    [[nodiscard]] QString aiTooltip(const QString &symbol) const;
+
     [[nodiscard]] double toDisplay(double usd) const { return usd * m_eurPerUsd; }
     [[nodiscard]] QString displayText(const Position &p, qint32 column, qint32 row) const;
     // The P/L to show for a row: the live mark when there is one, else eToro's last
@@ -116,7 +136,8 @@ private:
     // Rate each trade would close at right now (0 = no current quote), for the SL/TP
     // tooltips' "…from the current rate" clause.
     QList<double> m_markRate;
-    QSet<QString> m_marked;   // checked position ids (survive snapshot resets)
+    QSet<QString> m_marked;
+    QHash<QString, trading::HoldVerdict> m_aiBySymbol;   // the model's read per symbol
     QString m_ccy;
     double m_eurPerUsd = 1.0;
     qint32 m_editRow = -1;    // cell with an open editor (-1 = none); see beginCellEdit

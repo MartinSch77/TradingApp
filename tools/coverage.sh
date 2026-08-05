@@ -13,6 +13,15 @@
 #   tools/coverage.sh coco    — Squish Coco (Qt Group, $COCO_DIR): csg++
 #                               instrumented build incl. MC/DC
 #                               → coverage/coco/index.html
+#   tools/coverage.sh coco-components
+#                             — the same instrumented libraries, but exercised by
+#                               the COMPONENT/INTEGRATION tests only, reported per
+#                               test case: which functions of each integrated
+#                               component those tests actually reach ("call
+#                               coverage" in the everyday sense — Coco's own name
+#                               for it is function coverage, and the per-test
+#                               attribution comes from cmcsexeimport -t)
+#                               → coverage/coco-components/index.html
 #
 # Notes on the free MC/DC path (mode mcdc):
 #  * clang-18 cannot instrument MC/DC for decisions with more than 6
@@ -118,6 +127,86 @@ run_mcdc() {
     echo "HTML: $OUT/index.html   (MC/DC column in summary.txt and per-file views)"
 }
 
+# The tests that drive a COMPONENT through its real seams rather than a pure
+# function: the broker client and the feeds against the in-process mock HTTP
+# server, the advisors against a mocked endpoint, the simulated broker, the
+# learning loop against the real trainer, and configuration against real files.
+# Marked type "I" in docs/test_spec.md — this list is that column, in one place.
+component_tests() {
+    printf '%s\n' tst_etoroclient tst_marketfeeds tst_jsonhttp tst_simulationengine \
+        tst_aiadvisor tst_ollamaadvisor tst_botnet tst_config tst_economiccalendar \
+        tst_positionsmodel tst_tradescript
+}
+
+# Shared by both Coco modes: configure and build an instrumented tree.
+#   $1 = build dir, $2 = extra --cs flags
+coco_build() {
+    local build="$1"
+    local csflags="$2"
+    # Coco's front end parses up to C++20, so THIS build tree alone drops from 23 —
+    # exactly as the Windows counterpart does (CMakeLists only defaults the standard
+    # when it is not already defined). Without it the instrumenting compiler fails on
+    # C++23 constructs before any measurement can happen.
+    cmake -S "$ROOT" -B "$build" -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DCMAKE_CXX_COMPILER="$COCO_DIR/bin/csg++" \
+        -DCMAKE_CXX_FLAGS="$csflags"
+    cmake --build "$build" -j"$JOBS"
+}
+
+# Run one instrumented test and import its execution report UNDER ITS OWN NAME:
+# the -t name is what lets cmreport attribute coverage per test case, which is the
+# whole point of the component report.
+coco_run_one() {
+    local exe="$1"
+    rm -f "$exe.csexe"
+    QT_QPA_PLATFORM=offscreen "$exe" >/dev/null 2>&1 || true
+    "$COCO_DIR/bin/cmcsexeimport" -m "$exe.csmes" -e "$exe.csexe" -t "$(basename "$exe")"
+}
+
+run_coco_components() {
+    # Which functions of the integrated components (domain + services, built as the
+    # static libraries the app links) the COMPONENT tests reach, per test.
+    #
+    # NOTE, as for run_coco: written from the Coco manual and never run against a
+    # live licence here. The switches to confirm on the first licensed run are the
+    # cmreport ones below; everything else is shared with the plain coco mode.
+    if ! coco_usable; then
+        echo "SKIPPED: Squish Coco not usable — $COCO_DIR/bin/csg++ missing or license invalid"
+        echo "         (check: $COCO_DIR/bin/cocolic --check). License-bound; ./setup.sh cannot install it."
+        exit 3
+    fi
+    local BUILD="$ROOT/build-cov-coco-components"
+    # The COMPONENTS are instrumented; the test code itself is not, so a function
+    # only counts as reached when the component executed it.
+    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc --cs-exclude-path=$ROOT/tests"
+    coco_build "$BUILD" "$CSFLAGS"
+    local OUT="$ROOT/coverage/coco-components"
+    mkdir -p "$OUT"
+    rm -f "$OUT"/merged.csmes
+    local name exe ran=0
+    for name in $(component_tests); do
+        exe="$BUILD/tests/$name"
+        [ -x "$exe" ] || { echo "no such component test: $name (skipped)"; continue; }
+        coco_run_one "$exe"
+        ran=$((ran + 1))
+    done
+    if [ "$ran" -eq 0 ]; then
+        echo "no component tests were built — nothing to measure" >&2
+        exit 1
+    fi
+    "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD"/tests/tst_*.csmes
+    # Function-level HTML plus a CSV that can be diffed between runs. --csv is the
+    # switch most likely to differ by Coco version; the HTML report carries the
+    # function table either way.
+    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --html="$OUT"
+    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --csv="$OUT/functions.csv" || \
+        echo "note: cmreport --csv not accepted by this version — the HTML report still has the function table"
+    echo "component call coverage over $ran component tests"
+    echo "HTML: $OUT/index.html   (per-test attribution: open $OUT/merged.csmes in coveragebrowser and group by test case)"
+}
+
 run_coco() {
     # Squish Coco measures statement/decision/condition and true MC/DC and
     # feeds CocoAI test-case suggestions. NOTE: written per the Coco manual
@@ -135,11 +224,7 @@ run_coco() {
     # are excluded from instrumentation to match the gcov/mcdc report scope.
     local CSFLAGS="--cs-on --cs-mcdc --cs-mcc"
     CSFLAGS+=" --cs-exclude-path=$ROOT/tests --cs-exclude-path=$ROOT/src/ui"
-    cmake -S "$ROOT" -B "$BUILD" -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_CXX_COMPILER="$COCO_DIR/bin/csg++" \
-        -DCMAKE_CXX_FLAGS="$CSFLAGS"
-    cmake --build "$BUILD" -j"$JOBS"
+    coco_build "$BUILD" "$CSFLAGS"
     local OUT="$ROOT/coverage/coco"
     mkdir -p "$OUT"
     rm -f "$OUT"/merged.csmes
@@ -149,10 +234,7 @@ run_coco() {
     for exe in "$BUILD"/tests/tst_*; do
         [ -f "$exe" ] && [ -x "$exe" ] || continue
         case "$exe" in *.csmes | *.csexe) continue ;; esac
-        rm -f "$exe.csexe"
-        "$exe" >/dev/null
-        "$COCO_DIR/bin/cmcsexeimport" -m "$exe.csmes" -e "$exe.csexe" \
-            -t "$(basename "$exe")"
+        coco_run_one "$exe"
     done
     "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD"/tests/tst_*.csmes
     "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --html="$OUT"
@@ -163,6 +245,7 @@ case "$MODE" in
 gcov) run_gcov ;;
 mcdc) run_mcdc ;;
 coco) run_coco ;;
+coco-components) run_coco_components ;;
 auto)
     if coco_usable; then
         echo "auto: Squish Coco found at $COCO_DIR with a valid license — measuring with Coco"

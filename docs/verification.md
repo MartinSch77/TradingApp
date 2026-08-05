@@ -35,6 +35,13 @@ suspect-link review on item changes) is the one reason to reconsider.
 
 ## Structural coverage — line, branch, MC/DC
 
+    tools/coverage.sh coco-components   # Coco again, but only the COMPONENT tests,
+                                        # reported per test case: which functions of
+                                        # each integrated component (domain +
+                                        # services, as the app links them) those
+                                        # tests actually reach. Coco calls this
+                                        # function coverage; per-test attribution
+                                        # comes from cmcsexeimport -t
     tools/coverage.sh        # auto: Squish Coco when installed AND licensed,
                              # otherwise both free modes below
     tools/coverage.sh gcov   # GCC --coverage → lcov/genhtml, line + branch

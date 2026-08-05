@@ -22,6 +22,10 @@ CandidateInput goodCandidate()
     in.instrumentId = 27;
     in.dir = 1;
     in.confidence = 40.0;
+    // A deliberately QUIET moment: 13:00 Berlin / 07:00 New York on a Tuesday is
+    // not an open, a close or a macro-data slot, so the session rules of REQ-F-034
+    // leave the geometry and the size alone unless a test asks for otherwise.
+    in.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
     in.bid = 5000.0;
     in.ask = 5001.0;
     in.spreadPct = 0.02;
@@ -897,6 +901,295 @@ private slots:
         QCOMPARE(paperLiveReadiness(flat, gate).blockers.size(), 1);
     }
 
+    //! @tstid TS-PAPER-025 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    void TS_PAPER_025_churnIsWhatLosesTheMoneyAndTheRulesSayNo()
+    {
+        // Measured, not imagined: six closes in one hour, median holding time 5.2
+        // minutes, gross +1.64 EUR against 19.38 EUR of spread. Every rule below
+        // exists because of that hour.
+        const BotConfig cfg;
+        QVERIFY(cfg.minHoldMinutes > 0);
+        QVERIFY(cfg.aiExitMinConfidence >= 50.0);
+
+        PaperTrade fresh = tradeAt(5000.0, true);
+        fresh.symbol = QStringLiteral("SPX500");
+        fresh.entryCompositeConf = 60.0;
+        fresh.markRate = 4990.0;                       // a little under water
+        const QDateTime opened = fresh.openTime;
+
+        AiProposal reversal;
+        reversal.ok = true;
+        reversal.resolvedSymbol = QStringLiteral("SPX500");
+        reversal.dir = -1;                             // the model turned around
+        reversal.confidence = 90.0;
+
+        // Five minutes in — exactly the case that bled the book — the model's change
+        // of mind is SHOWN but not acted on.
+        const HoldVerdict tooSoon =
+            paperAiHold(fresh, {reversal}, BotAiMode::Lead, opened.addSecs(qint64{60} * 5), cfg);
+        QCOMPARE(tooSoon.opinion, HoldOpinion::Close);  // the flag still says close
+        QVERIFY(!tooSoon.close);                        // …but nothing closes
+        QCOMPARE(tooSoon.code, QStringLiteral("ai-too-soon"));
+        QVERIFY(tooSoon.why.contains(QStringLiteral("held only")));
+
+        // After the minimum holding time, the same answer does close it.
+        const HoldVerdict allowed =
+            paperAiHold(fresh, {reversal}, BotAiMode::Lead,
+                        opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 1)), cfg);
+        QVERIFY(allowed.close);
+        QCOMPARE(allowed.code, QStringLiteral("ai-reversed"));
+
+        // A HESITANT reversal never closes anything, however old the trade: acting on
+        // it costs two half-spreads, and a small model's 30%-confidence turn is not
+        // worth them.
+        AiProposal unsure = reversal;
+        unsure.confidence = cfg.aiExitMinConfidence - 10.0;
+        const HoldVerdict hesitant =
+            paperAiHold(fresh, {unsure}, BotAiMode::Lead,
+                        opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 60)), cfg);
+        QCOMPARE(hesitant.opinion, HoldOpinion::Close);
+        QVERIFY(!hesitant.close);
+        QCOMPARE(hesitant.code, QStringLiteral("ai-too-soon"));
+        QVERIFY(hesitant.why.contains(QStringLiteral("conviction")));
+
+        // The dynamic exits wait out the same clock — a signal cannot "fade" in the
+        // first minute of a trade.
+        const ExitContext early = exitAt(4990.0, 1, 5.0, opened.addSecs(60));
+        QCOMPARE(paperCloseDecision(fresh, early, cfg), CloseReason::None);
+        const ExitContext late = exitAt(4990.0, 1, 5.0,
+                                        opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 1)));
+        QCOMPARE(paperCloseDecision(fresh, late, cfg), CloseReason::SignalFade);
+        // …but a STOP still closes instantly, because that is a price and not an
+        // opinion.
+        PaperTrade stopped = fresh;
+        stopped.slRate = 4995.0;
+        QCOMPARE(paperCloseDecision(stopped, early, cfg), CloseReason::StopLoss);
+
+        // A model-led trade must not look faded the moment it opens. In lead mode
+        // entryConfidence is the MODEL's number (95 on its own scale) while the
+        // composite reads ~20 — comparing those two closed every AI trade at once.
+        PaperTrade modelLed = fresh;
+        modelLed.entryConfidence = 95.0;               // the model's conviction
+        modelLed.entryCompositeConf = 20.0;            // …the composite's, at the same moment
+        const ExitContext steady = exitAt(4990.0, 1, 20.0,
+                                          opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 1)));
+        QCOMPARE(paperCloseDecision(modelLed, steady, cfg), CloseReason::None);
+
+        // Whatever the caps say, the answer is always a leverage the INSTRUMENT
+        // ACTUALLY OFFERS: Gold.24-7 sells 1/2/5/20, so an x8 bucket ceiling must
+        // fold DOWN to x5 rather than invent an x8 nobody can trade.
+        CandidateInput gold = goodCandidate();
+        gold.symbol = QStringLiteral("Gold.24-7");
+        gold.bid = 4183.0;
+        gold.ask = 4184.0;
+        gold.spreadPct = 0.02;
+        gold.closes = QList<double>(120, 4183.0);
+        for (qsizetype i = 0; i < gold.closes.size(); ++i) {
+            gold.closes[i] = 4183.0 + (2.0 * static_cast<double>(i % 5));
+        }
+        const EntrySignal goldSig = buildEntrySignal(gold, cfg);
+        QVERIFY(goldSig.valid);
+        const QList<qint32> goldSteps = {1, 2, 5, 20};
+        QVERIFY2(goldSteps.contains(goldSig.leverage),
+                 qPrintable(QStringLiteral("Gold.24-7 levered x%1, which it does not offer")
+                                .arg(goldSig.leverage)));
+        QVERIFY(goldSig.leverage <= groupLeverageCap(QStringLiteral("metals")));
+
+        // And forex is levered more carefully than an index, because a few tenths of
+        // a percent is EUR/USD's whole day — the model asked for x30.
+        QCOMPARE(groupLeverageCap(QStringLiteral("fx")), 5);
+        QVERIFY(groupLeverageCap(QStringLiteral("fx"))
+                < groupLeverageCap(QStringLiteral("equity-index")));
+        CandidateInput fx = goodCandidate();
+        fx.symbol = QStringLiteral("EURUSD");
+        fx.bid = 1.0900;
+        fx.ask = 1.0902;
+        fx.spreadPct = 0.02;
+        fx.closes = QList<double>(120, 1.09);
+        for (qsizetype i = 0; i < fx.closes.size(); ++i) {
+            fx.closes[i] = 1.09 + (0.0002 * static_cast<double>(i % 7));
+        }
+        const EntrySignal fxSig = buildEntrySignal(fx, cfg);
+        QVERIFY(fxSig.valid);
+        QVERIFY2(fxSig.leverage <= groupLeverageCap(QStringLiteral("fx")),
+                 qPrintable(QStringLiteral("FX levered x%1").arg(fxSig.leverage)));
+        const QList<qint32> fxSteps = {1, 2, 5, 10, 20, 30};
+        QVERIFY(fxSteps.contains(fxSig.leverage));   // …and on EURUSD's own ladder
+        const CandidateInput index = goodCandidate();
+        QVERIFY(buildEntrySignal(index, cfg).leverage
+                <= groupLeverageCap(QStringLiteral("equity-index")));
+    }
+
+    //! @tstid TS-PAPER-024 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    void TS_PAPER_024_whenItTradesMattersAsMuchAsWhat()
+    {
+        // The loud windows of the trading day, on the instrument's OWN clock. August
+        // is summer time in both zones, which is precisely why the classifier asks
+        // the zone database instead of adding a fixed offset.
+        const auto berlin = [](int hour, int minute) {
+            return QDateTime(QDate(2026, 8, 4), QTime(hour, minute),
+                             QTimeZone("Europe/Berlin"));
+        };
+        // The first QUARTER HOUR after an open is its own phase: fast, wide-spread,
+        // and the phase that forms the range whose break is the actual signal.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(9, 5)),
+                 SessionPhase::OpeningChaos);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(15, 35)),
+                 SessionPhase::OpeningChaos);
+        // …and the rest of that first hour is the readable part.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(9, 40)),
+                 SessionPhase::OpeningBurst);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(16, 25)),
+                 SessionPhase::OpeningBurst);
+        // …and a scheduled release inside that hour is the more specific fact: 16:00
+        // Berlin is 10:00 in New York, when ISM and friends print.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(16, 5)),
+                 SessionPhase::DataWindow);
+        // The central bank: the statement at 20:00 Berlin (14:00 New York) and the
+        // press conference half an hour later, the one window whose first move
+        // regularly reverses in full.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(20, 5)),
+                 SessionPhase::PolicyWindow);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(20, 35)),
+                 SessionPhase::PolicyWindow);
+        // The power hour, 21:00-21:30 Berlin, and then the close itself.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(21, 15)),
+                 SessionPhase::PowerHour);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(21, 45)),
+                 SessionPhase::ClosingBurst);
+        // The US macro slots, which a German book feels at 14:30 and 16:00.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(14, 32)),
+                 SessionPhase::DataWindow);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("EURUSD"), berlin(16, 5)),
+                 SessionPhase::DataWindow);
+        // 17:00-17:30, the run into the German close.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(17, 20)),
+                 SessionPhase::ClosingBurst);
+        // …and the American lunch hours are quiet, which is a real answer too.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("SPX500"), berlin(18, 30)),
+                 SessionPhase::Normal);
+        // …and the quiet middle of the day is quiet.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), berlin(13, 0)),
+                 SessionPhase::Normal);
+        // A weekend has no session to be at the edge of, and an invalid instant
+        // cannot be judged at all.
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"),
+                                 QDateTime(QDate(2026, 8, 8), QTime(9, 5),
+                                           QTimeZone("Europe/Berlin"))),
+                 SessionPhase::Normal);
+        QCOMPARE(sessionPhaseFor(QStringLiteral("GER40"), QDateTime()), SessionPhase::Normal);
+        QVERIFY(!sessionPhaseWord(SessionPhase::OpeningBurst).isEmpty());
+        QCOMPARE(sessionPhaseWord(SessionPhase::Normal), QStringLiteral("normal"));
+    }
+
+    //! @tstid TS-PAPER-026 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, REQ-F-035, scope=function)
+    void TS_PAPER_026_loudWindowsChurnAndConfluenceAllGateTheEntry()
+    {
+        const auto berlin = [](int hour, int minute) {
+            return QDateTime(QDate(2026, 8, 4), QTime(hour, minute),
+                             QTimeZone("Europe/Berlin"));
+        };
+        const BotConfig cfg;
+        CandidateInput quiet = goodCandidate();
+        quiet.symbol = QStringLiteral("GER40");
+        quiet.now = berlin(13, 0);
+        const EntrySignal sig = buildEntrySignal(quiet, cfg);
+        const EntryVerdict calm = paperEntryVerdict(quiet, sig, freshBook(), cfg);
+        QVERIFY2(calm.take, qPrintable(calm.why));
+
+        // A loud window is a chance AND a risk: the same candidate needs more
+        // conviction to enter one, and gets less size when it does.
+        QVERIFY(cfg.volatileWindowFactor > 1.0);
+        CandidateInput loud = quiet;
+        loud.now = berlin(9, 40);                       // the readable part of the open
+        const EntryVerdict opening = paperEntryVerdict(loud, sig, freshBook(), cfg);
+        QVERIFY2(opening.take, qPrintable(opening.why));   // 40 clears 12 x 1.6
+        QVERIFY2(opening.stake < calm.stake,
+                 "a volatile window has to be traded smaller, not the same");
+        QVERIFY(qAbs(opening.stake - (calm.stake / cfg.volatileWindowFactor)) < 1e-9);
+
+        // …and a candidate that only just cleared the normal floor is refused there,
+        // by name, instead of being taken into the noise.
+        CandidateInput thin = loud;
+        thin.confidence = cfg.minConfidence + 1.0;
+        const EntryVerdict refused = paperEntryVerdict(thin, buildEntrySignal(thin, cfg),
+                                                       freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("volatile-window"));
+        QVERIFY(refused.why.contains(QStringLiteral("opening burst")));
+
+        // The two windows that are sat out entirely rather than traded smaller: the
+        // first quarter hour, and the central-bank slot.
+        CandidateInput chaos = quiet;
+        chaos.now = berlin(9, 5);
+        const EntryVerdict inChaos = paperEntryVerdict(chaos, sig, freshBook(), cfg);
+        QVERIFY(!inChaos.take);
+        QCOMPARE(inChaos.code, QStringLiteral("volatile-window"));
+        QVERIFY(inChaos.why.contains(QStringLiteral("first quarter hour")));
+        CandidateInput fed = quiet;
+        fed.now = berlin(20, 10);
+        const EntryVerdict inFed = paperEntryVerdict(fed, sig, freshBook(), cfg);
+        QVERIFY(!inFed.take);
+        QCOMPARE(inFed.code, QStringLiteral("volatile-window"));
+        QVERIFY(inFed.why.contains(QStringLiteral("central-bank")));
+        // Both are switchable, and switching them off leaves the elevated bar rather
+        // than removing every guard.
+        BotConfig trades = cfg;
+        trades.avoidOpeningChaos = false;
+        trades.avoidPolicyWindow = false;
+        QVERIFY(paperEntryVerdict(chaos, sig, freshBook(), trades).take);
+        QVERIFY(paperEntryVerdict(fed, sig, freshBook(), trades).take);
+        // The same candidate at a quiet hour is fine — the floor itself did not move.
+        CandidateInput thinQuiet = thin;
+        thinQuiet.now = berlin(13, 0);
+        QVERIFY(paperEntryVerdict(thinQuiet, buildEntrySignal(thinQuiet, cfg), freshBook(), cfg)
+                    .take);
+
+        // Churn control. An instrument whose position just closed is left alone: two
+        // half-spreads per round trip is what turns an edge into fees.
+        CandidateInput again = quiet;
+        again.lastClosedAt = again.now.addSecs(-qint64{60} * 10);   // ten minutes ago
+        const EntryVerdict cooling = paperEntryVerdict(again, sig, freshBook(), cfg);
+        QVERIFY(!cooling.take);
+        QCOMPARE(cooling.code, QStringLiteral("cooldown"));
+        QVERIFY(cooling.why.contains(QStringLiteral("10 min")));
+        again.lastClosedAt = again.now.addSecs(-qint64{60} * (cfg.reentryCooldownMinutes + 1));
+        QVERIFY(paperEntryVerdict(again, sig, freshBook(), cfg).take);   // cooled off
+        BotConfig noCooldown = cfg;
+        noCooldown.reentryCooldownMinutes = 0;                 // switched off
+        again.lastClosedAt = again.now.addSecs(-60);
+        QVERIFY(paperEntryVerdict(again, sig, freshBook(), noCooldown).take);
+
+        // Never INTO a fresh opposite break of the session's opening range: the
+        // session has just told everyone which way it is going.
+        CandidateInput fighting = quiet;
+        fighting.dir = 1;
+        fighting.rangeBreakDir = -1;                   // it broke DOWN
+        const EntryVerdict against = paperEntryVerdict(fighting, sig, freshBook(), cfg);
+        QVERIFY(!against.take);
+        QCOMPARE(against.code, QStringLiteral("against-range-break"));
+        QVERIFY(against.why.contains(QStringLiteral("DOWN")));
+        fighting.rangeBreakDir = 1;                    // …with the break, not into it
+        QVERIFY(paperEntryVerdict(fighting, sig, freshBook(), cfg).take);
+        BotConfig ignoreRange = cfg;
+        ignoreRange.respectOpeningRange = false;
+        fighting.rangeBreakDir = -1;
+        QVERIFY(paperEntryVerdict(fighting, sig, freshBook(), ignoreRange).take);
+
+        // …and the book as a whole has a pace limit, so one excited scan cannot
+        // become a spree.
+        CandidateInput busy = quiet;
+        busy.opensLastHour = cfg.maxOpensPerHour;
+        const EntryVerdict paced = paperEntryVerdict(busy, sig, freshBook(), cfg);
+        QVERIFY(!paced.take);
+        QCOMPARE(paced.code, QStringLiteral("pace-limit"));
+        busy.opensLastHour = cfg.maxOpensPerHour - 1;
+        QVERIFY(paperEntryVerdict(busy, sig, freshBook(), cfg).take);
+    }
+
     //! @tstid TS-PAPER-020 @design DES-DOM-PAPER
     // @relation(REQ-F-032, scope=function)
     void TS_PAPER_020_addingToAPositionNeedsTheModelAndItsOwnCaps()
@@ -968,13 +1261,17 @@ private slots:
     // @relation(REQ-F-032, scope=function)
     void TS_PAPER_021_theModelCanAskToBeLetOutButSilenceNeverCloses()
     {
+        const BotConfig cfg;
         PaperTrade longTrade = tradeAt(5000.0, true);
         longTrade.symbol = QStringLiteral("SPX500");
+        // Old enough that the minimum holding time is not what is being tested here.
+        const QDateTime later = longTrade.openTime.addSecs(qint64{60} * (cfg.minHoldMinutes + 5));
 
         AiProposal agree;
         agree.ok = true;
         agree.resolvedSymbol = QStringLiteral("SPX500");
         agree.dir = 1;
+        agree.confidence = cfg.aiExitMinConfidence + 10.0;   // convinced enough to act on
         AiProposal reverse = agree;
         reverse.dir = -1;
         reverse.rationale = QStringLiteral("momentum has turned");
@@ -987,31 +1284,48 @@ private slots:
         AiProposal hold = agree;
         hold.dir = 0;
 
-        // Silence — the common case with a small model — always keeps the position.
-        QVERIFY(!paperAiHold(longTrade, {}, BotAiMode::Confirm).close);
-        QVERIFY(!paperAiHold(longTrade, {elsewhere}, BotAiMode::Confirm).close);
-        // An explicit HOLD is "no action", not "get out".
-        QVERIFY(!paperAiHold(longTrade, {hold}, BotAiMode::Confirm).close);
-        // Agreement keeps it too.
-        QVERIFY(!paperAiHold(longTrade, {agree}, BotAiMode::Lead).close);
+        // Silence — the common case with a small model — always keeps the position,
+        // and says NO OPINION rather than recommending anything: the window shows
+        // that state, so it must be distinguishable from an actual "hold".
+        const HoldVerdict quiet = paperAiHold(longTrade, {}, BotAiMode::Confirm, later, cfg);
+        QVERIFY(!quiet.close);
+        QCOMPARE(quiet.opinion, HoldOpinion::NoOpinion);
+        QCOMPARE(holdOpinionWord(quiet.opinion), QStringLiteral("—"));
+        QCOMPARE(paperAiHold(longTrade, {elsewhere}, BotAiMode::Confirm, later, cfg).opinion,
+                 HoldOpinion::NoOpinion);
+        // An explicit HOLD is "no action" — but it IS an opinion about this trade.
+        const HoldVerdict held = paperAiHold(longTrade, {hold}, BotAiMode::Confirm, later, cfg);
+        QVERIFY(!held.close);
+        QCOMPARE(held.opinion, HoldOpinion::Hold);
+        QCOMPARE(held.code, QStringLiteral("ai-keep"));
+        QCOMPARE(holdOpinionWord(held.opinion), QStringLiteral("hold"));
+        // Agreement on the side keeps it too, and says so.
+        const HoldVerdict agreed = paperAiHold(longTrade, {agree}, BotAiMode::Lead, later, cfg);
+        QVERIFY(!agreed.close);
+        QCOMPARE(agreed.opinion, HoldOpinion::Hold);
 
         // The other side, or an explicit CLOSE, closes it — with a countable code.
-        const HoldVerdict reversed = paperAiHold(longTrade, {reverse}, BotAiMode::Confirm);
+        const HoldVerdict reversed = paperAiHold(longTrade, {reverse}, BotAiMode::Confirm, later, cfg);
         QVERIFY(reversed.close);
+        QCOMPARE(reversed.opinion, HoldOpinion::Close);
+        QCOMPARE(holdOpinionWord(reversed.opinion), QStringLiteral("close"));
         QCOMPARE(reversed.code, QStringLiteral("ai-reversed"));
         QVERIFY(reversed.why.contains(QStringLiteral("momentum has turned")));
-        const HoldVerdict asked = paperAiHold(longTrade, {closeIt}, BotAiMode::Lead);
+        const HoldVerdict asked = paperAiHold(longTrade, {closeIt}, BotAiMode::Lead, later, cfg);
         QVERIFY(asked.close);
         QCOMPARE(asked.code, QStringLiteral("ai-close"));
 
         // A SHORT is the mirror image: a BUY pick is the contrary opinion.
         PaperTrade shortTrade = tradeAt(5000.0, false);
         shortTrade.symbol = QStringLiteral("SPX500");
-        QVERIFY(paperAiHold(shortTrade, {agree}, BotAiMode::Confirm).close);
-        QVERIFY(!paperAiHold(shortTrade, {reverse}, BotAiMode::Confirm).close);
+        QVERIFY(paperAiHold(shortTrade, {agree}, BotAiMode::Confirm, later, cfg).close);
+        QVERIFY(!paperAiHold(shortTrade, {reverse}, BotAiMode::Confirm, later, cfg).close);
 
-        // With the model switched off nobody was asked, so nothing it "said" counts.
-        QVERIFY(!paperAiHold(longTrade, {reverse, closeIt}, BotAiMode::Off).close);
+        // With the model switched off nobody was asked, so nothing it "said" counts —
+        // and the flag stays empty rather than claiming a recommendation.
+        const HoldVerdict silent = paperAiHold(longTrade, {reverse, closeIt}, BotAiMode::Off, later, cfg);
+        QVERIFY(!silent.close);
+        QCOMPARE(silent.opinion, HoldOpinion::NoOpinion);
 
         // The open book is put in front of the model, or there is nothing to answer.
         QVERIFY(paperHoldEvidence({}).isEmpty());
@@ -1061,6 +1375,9 @@ private slots:
         // the reason to be in the trade is gone, so it goes.
         PaperTrade faded = tradeAt(5000.0, true);
         faded.entryConfidence = 60.0;
+        // The COMPOSITE's number is what the fade rule reads — in lead mode
+        // entryConfidence is the model's, on its own scale.
+        faded.entryCompositeConf = 60.0;
         faded.markRate = 4990.0;                 // slightly under water
         // Still nominally its way, but with a third of the conviction that opened it.
         ExitContext ctx = exitAt(4990.0, 1, 20.0, QDateTime(QDate(2026, 8, 5), QTime(12, 0), QTimeZone::UTC));
@@ -1078,6 +1395,7 @@ private slots:
         // goes too.
         PaperTrade gaveBack = tradeAt(5000.0, true);
         gaveBack.entryConfidence = 60.0;
+        gaveBack.entryCompositeConf = 60.0;
         gaveBack.markRate = 5010.0;              // 15 000 notional x 0.2% = +30 EUR
         gaveBack.peakNet = 100.0;                // …down from 100: most of it is gone
         const ExitContext back =
@@ -1312,7 +1630,7 @@ private slots:
         const BotConfig cfg;
         CandidateInput down = goodCandidate();
         down.dir = -1;                       // the composite says SELL
-        down.now = QDateTime(QDate(2026, 8, 4), QTime(14, 0), QTimeZone::UTC);
+        down.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
         const EntrySignal sell = buildEntrySignal(down, cfg);
         QVERIFY(sell.valid);
         QVERIFY(!sell.isBuy);

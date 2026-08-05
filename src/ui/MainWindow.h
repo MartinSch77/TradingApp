@@ -4,6 +4,8 @@
 #include "domain/DecisionEngine.h"
 #include "domain/Forecasting.h"
 #include "domain/Models.h"
+#include "domain/IndexConfluence.h"
+#include "domain/PaperTrader.h"
 #include "domain/TradePlan.h"
 #include <QDateTime>
 #include <QFont>
@@ -39,6 +41,7 @@ QT_FORWARD_DECLARE_CLASS(QGroupBox)
 QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
 QT_FORWARD_DECLARE_CLASS(QLabel)
 QT_FORWARD_DECLARE_CLASS(QListWidget)
+QT_FORWARD_DECLARE_CLASS(QMessageBox)
 QT_FORWARD_DECLARE_CLASS(QPlainTextEdit)
 QT_FORWARD_DECLARE_CLASS(QPushButton)
 QT_FORWARD_DECLARE_CLASS(QTableWidget)
@@ -101,6 +104,17 @@ private slots:
     // closed simulated trades and the bot's decision log. The runner keeps its
     // books with the window closed, so an experiment can run for days.
     void openBotSim();
+    // "Trading-Bot opened a trade" — raised from the runner's signal, so it shows
+    // whether or not the bot window is open.
+    void onBotTradeOpened(const QString &symbol);
+    // The local model's picks, shown as a SOURCE in the signals panel and the
+    // decision window (REQ-F-034) — separately from what the bot does with them.
+    void onLocalModelProposals(const QList<trading::AiProposal> &picks);
+    void updateLocalModelSignal();
+    // The local model's hold/close read, pushed into the REAL open-trades table as
+    // advice (REQ-F-034).
+    void pushAiOpinionsToPositions();
+    [[nodiscard]] trading::AiProposal localPickFor(const QString &symbol) const;
 
 private:
     // Construct + gate the two autonomous runners — the trade script (REQ-F-028)
@@ -118,6 +132,10 @@ private slots:
     // that feed the recommendation reasoning shown on hover.
     void onInstrumentRatings(const QHash<QString, WebRating> &ratingBySymbol);
     void onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines);
+    // One reference ticker's session series (^VIX, ^VXN, ^TNX, a heavyweight).
+    void connectInstrumentFeeds();
+    void onReferenceSeries(const QString &ticker, const QList<double> &closes);
+    void updateConfluenceSignal();
 
     // Decision window: a separate window listing each source's independent read and a
     // final AI+algorithmic conclusion on which instrument to trade, and how, now.
@@ -241,6 +259,7 @@ private:
     void buildSignalsWindow(const QString &sym);
     // The labelled rows of the signals panel, each with its explanatory mouse-over.
     void buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm);
+    void buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigForm);
     // The AI decision-support panel, sharing the floating signals window.
     void buildAiPanel(QVBoxLayout *signalsWinLayout);
     // "Open trades" panel: positions view, totals, close-proposal banner, Close button.
@@ -364,6 +383,14 @@ private:
     // normal case and costs nothing.
     OllamaAdvisor *m_ollama = nullptr;
     BotSimRunner *m_botRunner = nullptr;
+    // The one open "Trading-Bot opened a trade" notice, if any. At most one at a
+    // time: a single scan can open a dozen trades. A plain pointer cleared from the
+    // box's own destroyed() signal — QPointer would do the same, but its
+    // QWeakPointer internals defeat the static analyzer, which then reports a
+    // use-after-free inside Qt's header on every TU that includes this one.
+    QMessageBox *m_botTradeNotice = nullptr;
+    QList<trading::AiProposal> m_localPicks;   // the local model's latest answer
+    QStringList m_localAsked;                  // …and what it was shown to answer about
     BotSimDialog *m_botDialog = nullptr;
     QPushButton *m_botButton = nullptr;
     QList<ScreenerRow> m_screenerRows;  // latest scan results, unsorted (arrival order)
@@ -464,7 +491,9 @@ private:
     QLabel *m_sigRegime = nullptr;  // VIX + calendar market regime (risk-on/off)
     QLabel *m_sigNews = nullptr;    // news sentiment for the current instrument
     QLabel *m_sigWeb = nullptr;  // real-time TradingView technical rating
-    QLabel *m_sigCrowd = nullptr;     // crowd sentiment (CNN Fear & Greed)
+    QLabel *m_sigCrowd = nullptr;
+    QLabel *m_sigLocalAi = nullptr;   // the local model's read on this instrument
+    QLabel *m_sigConfluence = nullptr;  // how many independent reads agree
     QLabel *m_sigWebQuote = nullptr;  // Yahoo reference quote vs the eToro rate
     QLabel *m_sigRegression = nullptr;
     QLabel *m_sigKnn = nullptr;
@@ -509,6 +538,7 @@ private:
     QHash<QString, WebRating> m_ratingBySymbol;         // latest web rating per instrument
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
     QHash<QString, QList<double>> m_intradayBySymbol;   // Yahoo 1-min session closes
+    QHash<QString, QList<double>> m_referenceSeries;    // ^VIX / ^VXN / ^TNX / heavyweights
 
     // Decision window (separate, lazily built like the screener dialog).
     QPushButton *m_decisionButton = nullptr;   // opens the window, in the header

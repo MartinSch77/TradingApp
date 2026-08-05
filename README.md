@@ -35,9 +35,32 @@ It provides:
 - a table of **open trades** with live P/L, editable SL/TP and marked-close;
 - a **decision window**: multi-source composite call per instrument (technical
   ensemble, TradingView, news, VIX regime, Fear & Greed, Yahoo intraday,
-  optional Claude synthesis) plus a costed **trade plan**;
+  optional Claude synthesis, the **session's own structure** — where price sits against
+  the first half hour's range, and whether the Nasdaq future is leading or lagging the
+  S&P future, both from series the app already fetches — **plus the local model's own
+  per-instrument read**) and a
+  costed **trade plan**; the same local-model row appears in the signals panel, where
+  "no opinion on this instrument" is told apart from "not configured";
 - **closed-trades history** (7–13 weeks) with cost accounting, a macro-economic
   **event calendar** with activity proposals, and an activity log;
+- **independent reads and their agreement** (REQ-F-035): the futures that lead the
+  cash market (Nasdaq vs S&P), expected volatility by its *direction* (^VXN for the
+  Nasdaq, ^VIX otherwise), the US 10-year yield, how many of the eight Nasdaq
+  heavyweights are participating, and the opening range — five reads that do **not**
+  come from the same price series, so their agreement is actual evidence, unlike a
+  stack of oscillators over one set of closes. Each says whether it could be
+  **measured at all**, and an unmeasured read *never* counts as agreement. The count
+  is shown per instrument, given to the model in those words, and gates the bot
+  (`no-confluence`). Heavyweight participation is labelled a **stand-in** for market
+  breadth everywhere it appears — real breadth needs per-constituent data this app
+  does not fetch;
+- **scripted trading**: a plain-text file of conditional orders, executed as
+  broker-side limit orders while the script is explicitly armed (REQ-F-028).
+  [`examples/trade_script_reference.txt`](examples/trade_script_reference.txt) shows
+  every keyword the format has on lines that **cannot fill** — the buys wait far
+  below and the sells far above anything their instrument trades at — so it is safe
+  to load, arm and copy from. A test parses that very file, so the example cannot
+  drift away from the parser;
 - a **trading-bot simulation**: the same composite decision traded across **all**
   instruments with **simulated money** (50 000 € to start) on live prices, with the
   real cost model charged — spread on both sides, overnight rollover with the
@@ -56,7 +79,8 @@ It provides:
   separately, so an edge that only exists in a rising market cannot hide inside a
   total. It logs one summary line per scan so
   "nothing happened" is never silent, resumes
-  where it left off after a restart, and **never places an order at eToro**
+  where it left off after a restart, announces every position it opens with a notice
+  you acknowledge (non-modal, one at a time), and **never places an order at eToro**
   (REQ-F-029);
 - **daily discipline and an evidence gate before real money** (REQ-F-031): a daily
   result target (350 € by default) that is a *stopping rule*, not a promise — when
@@ -79,11 +103,29 @@ It provides:
   both sides at once, and under a per-instrument risk cap tighter than the bucket
   one), it shows the model **what it already holds** and closes a position when the
   answer comes back with the other side or an explicit CLOSE — while *silence* never
-  closes anything — and it exits on the trade's own **dynamics**: a signal that has
+  closes anything, and each open position carries the model's current conclusion
+  (**hold** / **close** / **—** for one it has not mentioned) — and it exits on the trade's own **dynamics**: a signal that has
   faded while the position is not paying, or a winner that has handed back most of
   its best result. Costs are part of the **entry** decision too: the move to the
   target must be worth a multiple of the full round trip (both half-spreads plus the
   rollover to the horizon), or the trade is refused as `cost-vs-edge`;
+- **frequency and timing discipline** (REQ-F-034), added after a measured hour in
+  which the simulation closed six trades with a median holding time of **5.2 minutes**
+  for +1.64 € of gross profit and **19.38 € of costs** — the churn lost that money,
+  not the strategy. An instrument that just closed is left alone for 45 minutes, the
+  book opens at most 6 positions per hour, and **no position is closed by opinion**
+  (a model changing its mind, a faded signal, a surrendered gain) within its first 30
+  minutes — while a stop or target still closes instantly, because those are prices.
+  A model reversal must also be *convinced* (≥ 60%) to be worth the two half-spreads
+  it costs to act on. The loud windows of the trading day — the opening minutes on the
+  instrument's own exchange clock, the 14:30 and 16:00 macro slots, the run into the
+  German 17:30 close, the power hour — demand more conviction and are traded in smaller
+  size, while the **first quarter hour** after an open and the **central-bank window**
+  (20:00/20:30 Berlin) are sat out entirely because their first move reverses too often;
+  every window is measured in its own time zone, so the weeks when Europe and the US
+  shift clocks on different days need no maintenance. And
+  leverage is capped per correlation bucket with **forex tightest** (x5: a few tenths
+  of a percent is a currency pair's whole day);
 - the bot **learns from its own record** (REQ-F-033): every closed trade is appended
   to an experience log — the features that were true at entry, and what the trade
   actually kept after costs — and a small neural network is fitted to it **inside the
@@ -304,6 +346,10 @@ Caveats specific to Android:
 | Linux (x86-64) | `TradingApp-<version>-x86_64.AppImage` | `chmod +x` it and run — one file, no install, Qt bundled |
 | Linux (ARM64, incl. Raspberry Pi 4/5) | `TradingApp-<version>-aarch64.AppImage` | same — needs a 64-bit OS with glibc ≥ 2.39: Raspberry Pi OS **Trixie** or Ubuntu 24.04 for Pi (Qt's own aarch64 binaries require 2.38, see [docs/platforms.md](docs/platforms.md)) |
 | Windows (x64) | `TradingApp-<version>-windows-x64.zip` | unzip anywhere and run `TradingApp.exe` — every DLL is inside, no Qt and no MSVC redistributable needed |
+| Android (arm64-v8a) | `TradingApp-<version>-arm64-v8a.apk` | `adb install` it, or copy it to the phone and open it (allow installs from unknown sources). Built and signed by [`tools/build_android.sh`](tools/build_android.sh) |
+| macOS | *build from source* | `cmake --preset default && cmake --build build` with Qt 6.11 — the CI job `build-macos` keeps it working; no notarised `.dmg` is published (that needs an Apple Developer identity) |
+| iOS / iPhone | *build from source, Xcode* | `~/Qt/<ver>/ios/bin/qt-cmake -S . -B build-ios -GXcode`, then sign with your own team in Xcode and deploy ([docs/platforms.md](docs/platforms.md)). **No `.ipa` is published**: Apple only installs signed builds, signing needs a paid Apple Developer identity, and that identity cannot live in a public CI. The layout is also desktop-first — treat iOS as "it compiles and runs", not as a phone UI |
+| every release | `TradingApp-quality-report.pdf` | the whole quality run in one PDF: requirements traceability, test results, all eight analyzers, code metrics, clone detection, coverage and the sanitizers |
 
 All are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
 each with a `.sha256` next to it. Build them yourself into `downloads/`:
@@ -311,9 +357,21 @@ each with a `.sha256` next to it. Build them yourself into `downloads/`:
 ```bash
 tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-<arch>.AppImage
                                    #           (arch = the host's: x86_64 or aarch64)
+tools/build_android.sh --release   # Android -> downloads/TradingApp-<version>-arm64-v8a.apk
+python3 tools/make_report.py       # the PDF -> downloads/TradingApp-quality-report.pdf
 ```
 ```powershell
 .\tools\package_portable.ps1       # Windows -> downloads\TradingApp-<version>-windows-x64.zip
+```
+
+The PDF the release pipeline attaches marks the **Axivion** section "not run": the
+Suite is licence-bound and x86-64-host-only, so no public runner can produce it. To
+publish a report that includes it, run the full pipeline on a machine that has the
+Suite and attach that PDF over the CI one:
+
+```bash
+./build_all.sh                     # all stages, Axivion included, then the report
+gh release upload v<version> downloads/TradingApp-quality-report.pdf --clobber
 ```
 
 `downloads/` is git-ignored — the artifacts belong to a release, not to the

@@ -30,13 +30,23 @@ QJsonObject modelWithOneUnit(double weight, double bias, qint32 samples, double 
         stddev.append(1.0);
         row.append((i == 0) ? weight : 0.0);
     }
+    // Built by append rather than by brace-init: `QJsonArray{row}` is ambiguous
+    // between the initializer-list and the copy constructor when the single element
+    // is itself a QJsonArray, and MSVC resolves it the other way from GCC — which
+    // silently produced a FLAT weight array and a model this build rejects.
+    QJsonArray hiddenRow;
+    hiddenRow.append(row);
+    QJsonArray biases;
+    biases.append(0.0);
+    QJsonArray outputWeights;
+    outputWeights.append(1.0);
     QJsonObject net;
     net.insert(QStringLiteral("features"), features);
     net.insert(QStringLiteral("mean"), mean);
     net.insert(QStringLiteral("stddev"), stddev);
-    net.insert(QStringLiteral("w1"), QJsonArray{row});
-    net.insert(QStringLiteral("b1"), QJsonArray{0.0});
-    net.insert(QStringLiteral("w2"), QJsonArray{1.0});
+    net.insert(QStringLiteral("w1"), hiddenRow);
+    net.insert(QStringLiteral("b1"), biases);
+    net.insert(QStringLiteral("w2"), outputWeights);
     net.insert(QStringLiteral("b2"), bias);
     net.insert(QStringLiteral("samples"), samples);
     net.insert(QStringLiteral("valAuc"), auc);
@@ -87,14 +97,19 @@ private slots:
 
         // Weights that do not line up with the feature list are refused by shape.
         QJsonObject broken = modelWithOneUnit(1.0, 0.0, 500, 0.7);
-        broken.insert(QStringLiteral("b1"), QJsonArray{0.0, 0.0});   // two biases, one unit
+        QJsonArray twoBiases;
+        twoBiases.append(0.0);
+        twoBiases.append(0.0);
+        broken.insert(QStringLiteral("b1"), twoBiases);               // two biases, one unit
         const BotNet mismatched = botNetFromJson(broken);
         QVERIFY(!mismatched.ok);
         QVERIFY(mismatched.error.contains(QStringLiteral("line up")));
 
         // A model trained on OTHER features is answering a different question.
         QJsonObject renamed = modelWithOneUnit(1.0, 0.0, 500, 0.7);
-        renamed.insert(QStringLiteral("features"), QJsonArray{QStringLiteral("vibes")});
+        QJsonArray otherFeatures;
+        otherFeatures.append(QStringLiteral("vibes"));
+        renamed.insert(QStringLiteral("features"), otherFeatures);
         const BotNet foreign = botNetFromJson(renamed);
         QVERIFY(!foreign.ok);
         QVERIFY(foreign.error.contains(QStringLiteral("other features")));
@@ -320,6 +335,10 @@ private slots:
         trainer.start(QStringLiteral("python3"),
                       {repoRoot() + QStringLiteral("/tools/train_bot_net.py"),
                        QStringLiteral("--log"), logPath, QStringLiteral("--out"), modelPath,
+                       // The trainer confines itself to the app's config directory and
+                       // the working tree; a test's scratch directory is neither, and
+                       // widening the allowlist explicitly is the supported way in.
+                       QStringLiteral("--allow-root"), dir.path(),
                        QStringLiteral("--epochs"), QStringLiteral("60")});
         if (!trainer.waitForStarted(5000)) {
             QSKIP("python3 is not available on this host");
@@ -361,7 +380,8 @@ private slots:
         flatRun.start(QStringLiteral("python3"),
                       {repoRoot() + QStringLiteral("/tools/train_bot_net.py"),
                        QStringLiteral("--log"), flatPath, QStringLiteral("--out"),
-                       dir.filePath(QStringLiteral("flat.json"))});
+                       dir.filePath(QStringLiteral("flat.json")),
+                       QStringLiteral("--allow-root"), dir.path()});
         QVERIFY(flatRun.waitForFinished(60000));
         QCOMPARE(flatRun.exitCode(), 3);        // the project's "skipped" code
         QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("flat.json"))));

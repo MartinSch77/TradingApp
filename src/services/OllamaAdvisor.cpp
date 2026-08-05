@@ -21,7 +21,7 @@ namespace {
 const char *const kSystemPrompt =
     "You are a trading decision assistant. From the evidence, list EVERY instrument "
     "worth trading right now, best first — as many or as few as the evidence "
-    "supports, at most 10. Answer ONLY with a JSON object {\"picks\": [ ... ]} where "
+    "supports, at most 16. Answer ONLY with a JSON object {\"picks\": [ ... ]} where "
     "each pick has the keys symbol (string, exactly as spelled in the evidence), "
     "action (\"BUY\", \"SELL\", \"HOLD\" or \"CLOSE\" for a position you hold and want "
     "out of), confidence (number 0-100), leverage "
@@ -31,7 +31,7 @@ const char *const kSystemPrompt =
 // Upper bound on how many picks are taken from one answer: enough that the risk
 // budget, not the protocol, decides how many trades happen, while a runaway
 // generation cannot flood the books.
-constexpr qsizetype kMaxPicks = 10;
+constexpr qsizetype kMaxPicks = 16;
 
 // A local model can take a long time to answer on CPU, and being aborted
 // mid-generation looks exactly like a broken feature. The probe is the opposite:

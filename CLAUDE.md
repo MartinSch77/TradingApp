@@ -108,6 +108,45 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   trade count — don't reintroduce a queue limit. Every scan logs one summary line
   (candidates, opened, risk vs budget, refusals per `code`); those codes on
   `EntryVerdict`/`AiGate` are what make it countable, so keep them stable.
+- The bot's DEFAULT decision source is the local model in LEAD mode
+  (`BotConfig::aiMode`), bounded by every risk rule; a book saved earlier keeps the
+  mode it was left in, because an upgrade must not change what a running experiment
+  measures. Opening a position raises a NON-MODAL notice, at most one on screen
+  (`MainWindow::onBotTradeOpened`) — a modal box would stop the marking/exit timers,
+  and one scan can open a dozen trades.
+- Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
+  `domain/IndexConfluence`): futures leadership, volatility DIRECTION (^VXN for
+  Nasdaq, ^VIX otherwise), the US 10-year yield, heavyweight participation and the
+  opening range. `MarketFeeds::fetchReferenceSeries` fetches the eleven tickers.
+  Two invariants: an unmeasurable read is UNKNOWN and NEVER counts as agreement
+  (a "4 of 5" built from absent feeds is a lie), and heavyweight participation is
+  labelled a STAND-IN for breadth — real breadth needs per-constituent data this app
+  does not fetch. The bot refuses below `minAgreeingReads` (3) MEASURED agreements
+  (`no-confluence`), and the threshold is clamped to what is actually available.
+- Session STRUCTURE is read before any oscillator (REQ-F-022, `openingRange` +
+  `relativeStrength` in DecisionEngine): both come from the 1-minute series the app
+  already fetches for every catalog instrument — including ES=F and NQ=F via
+  SP.24-7 / NSDQ100.24-7 — so they cost no new feed. They go into the evidence prompt,
+  and the bot refuses to open INTO a fresh opposite break (`against-range-break`).
+  True market breadth (advance/decline, up-volume, constituents above VWAP) is NOT
+  available here: it needs per-constituent data the app does not fetch, and the
+  Nasdaq-vs-S&P read is the honest stand-in — don't let a comment claim otherwise.
+- Churn, not strategy, is what lost money in the first measured hour (6 closes, median
+  hold 5.2 min, gross +1.64 EUR against 19.38 EUR of costs). REQ-F-034 answers it and
+  the numbers are load-bearing: `reentryCooldownMinutes` (45), `maxOpensPerHour` (6),
+  `minHoldMinutes` (30, applies to AiExit/SignalFade/GiveBack but NEVER to stops,
+  targets or the carry rules), `aiExitMinConfidence` (60 — a 1.5B model is not
+  consistent between two calls). A blocked opinion is still REPORTED (`ai-too-soon`,
+  and the window's AI column still shows "close"), because hiding it would make the
+  bot look broken. `sessionPhaseFor` reads the instrument's OWN exchange clock for the session edges and
+  the NEW YORK clock for US releases and the Fed (never a fixed offset: Europe and the
+  US shift their clocks on different days, which is exactly what an offset gets wrong).
+  `OpeningChaos` (first 15 min) and `PolicyWindow` (14:00-14:45 NY = the statement plus
+  the press conference) are SAT OUT, not sized down; a scheduled release outranks the
+  "rest of the opening hour", and `groupLeverageCap` bounds leverage per bucket
+  with fx tightest (x5). One scale bug to never reintroduce: in lead mode
+  `entryConfidence` is the MODEL's number while `confNow` is the COMPOSITE's — the
+  fade rule must read `entryCompositeConf`, or every model-led trade closes on open.
 - The bot MANAGES positions (REQ-F-032): stacking in one instrument is allowed only
   when the model names it again (`aiBacked`), never against an existing side
   (`opposite-open`), and under `maxPositionsPerSymbol` + `maxSymbolRiskFraction`

@@ -118,6 +118,8 @@ qt_add_library(trading_domain STATIC
     src/domain/TradeScript.h
     src/domain/BotNet.cpp
     src/domain/BotNet.h
+    src/domain/IndexConfluence.cpp
+    src/domain/IndexConfluence.h
     src/domain/PaperTrader.cpp
     src/domain/PaperTrader.h
 )

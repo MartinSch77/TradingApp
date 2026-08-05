@@ -154,6 +154,54 @@ private slots:
         QVERIFY(!scriptEntryExpired(e, QDateTime::currentDateTime()));
     }
 
+    //! @tstid TS-SCRIPT-008 @design DES-DOM-SCRIPT
+    // @relation(REQ-F-028, scope=function)
+    void TS_SCRIPT_008_theShippedReferenceScriptParsesAndCannotFill()
+    {
+        // examples/trade_script_reference.txt is the file users copy. If the format
+        // moves and the example does not, everyone starts from something broken —
+        // so the shipped example is parsed here, by the real parser.
+        QFile file(QStringLiteral(TRADINGAPP_SOURCE_DIR "/examples/trade_script_reference.txt"));
+        QVERIFY2(file.open(QIODevice::ReadOnly | QIODevice::Text),
+                 "the reference script is missing from the repository");
+        const ScriptParseResult parsed = parseTradeScript(QString::fromUtf8(file.readAll()));
+        QVERIFY2(parsed.ok, qPrintable(parsed.errors.join(u"; ")));
+        QVERIFY(parsed.entries.size() >= 7);
+
+        // Every keyword the format has appears in it, or it is not a reference.
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return e.requireSignals; }));
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return e.trailing; }));
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return e.from.isValid(); }));
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return e.to.isValid(); }));
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return !e.isBuy; }));
+        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
+                            [](const ScriptEntry &e) { return e.leverage > 1; }));
+
+        // And every line is UNREACHABLE by construction: a buy waits far below any
+        // price its instrument has traded at, a sell far above one. Loading — or
+        // even arming — the example must never cost anybody money.
+        for (const ScriptEntry &e : parsed.entries) {
+            QVERIFY(e.amount > 0.0);                 // AMOUNT is required
+            QVERIFY(e.trigger > 0.0);
+            if (e.isBuy) {
+                QVERIFY2(e.trigger <= 1000.0,
+                         qPrintable(QStringLiteral("line %1 could actually fill: %2")
+                                        .arg(e.lineNumber)
+                                        .arg(e.sourceLine)));
+            } else {
+                QVERIFY2(e.trigger >= 99999.0,
+                         qPrintable(QStringLiteral("line %1 could actually fill: %2")
+                                        .arg(e.lineNumber)
+                                        .arg(e.sourceLine)));
+            }
+        }
+    }
+
     //! @tstid TS-SCRIPT-007 @design DES-DOM-SCRIPT
     // @relation(REQ-F-028, scope=function)
     void TS_SCRIPT_007_signalsFlagNeedsBothSourcesAndConfiguredAi()

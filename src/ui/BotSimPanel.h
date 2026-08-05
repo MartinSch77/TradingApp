@@ -59,6 +59,11 @@ public:
     // Refit the outcome model from the experience log, off the GUI thread. Also runs
     // itself every kRetrainEvery closed trades (REQ-F-033).
     void trainFromExperience();
+    // The reference series the confluence read is computed from (REQ-F-035).
+    void setReferenceSeries(const QHash<QString, QList<double>> &series)
+    {
+        m_referenceSeries = series;
+    }
     // The daily target / loss limit from configuration (REQ-F-031). Logged, because
     // changing what a day must earn changes what the record means.
     void applyDailyRules(double target, double lossLimit);
@@ -67,6 +72,10 @@ public:
     // none yet). The model may name as many instruments as it thinks worthwhile —
     // the risk budget, not this list, limits how many become trades.
     [[nodiscard]] const QList<trading::AiProposal> &lastProposals() const & { return m_proposals; }
+    // The instruments the model was SHOWN in the last request. An instrument that is
+    // not in here could not have had an opinion, which is a different answer from
+    // having looked at it and passed.
+    [[nodiscard]] const QStringList &lastAskedSymbols() const & { return m_askedSymbols; }
     // One-line state of the local model service ("qwen2.5:1.5b ready at …",
     // "not reachable …"), refreshed by the probe. Empty = never checked.
     [[nodiscard]] QString aiStatus() const { return m_aiStatus; }
@@ -81,6 +90,11 @@ public:
     [[nodiscard]] trading::LiveReadiness liveReadiness() const;
     [[nodiscard]] trading::BotDay today() const { return m_book.day(); }
     [[nodiscard]] const trading::BotNet &net() const & { return m_net; }
+    // What the model last said about one open position (hold / close / no opinion).
+    [[nodiscard]] trading::HoldVerdict holdOpinion(qint64 tradeId) const
+    {
+        return m_holdOpinions.value(tradeId);
+    }
     [[nodiscard]] trading::BotNetMode netMode() const { return m_netMode; }
     // Where the books are persisted (shown in the window, so the file behind a
     // multi-day experiment is never a mystery). One location per installation,
@@ -103,6 +117,13 @@ public:
 
 signals:
     void log(const QString &message, bool isError);
+    // A simulated position was just opened. The window is not always open, so the
+    // notice is raised by whoever owns the runner rather than from here.
+    void tradeOpened(const QString &symbol);
+    // The local model's latest picks, for the views that show it as a SOURCE
+    // (the signals panel and the decision window, REQ-F-034) rather than as the
+    // bot's decision.
+    void proposalsUpdated(const QList<trading::AiProposal> &picks);
     void changed();  // books moved (or the AI state did) — refresh the window
 
 private:
@@ -118,6 +139,10 @@ private:
                                                        const trading::AiGate &gate,
                                                        const QList<double> &closes,
                                                        const QDateTime &now) const;
+    // When this instrument last closed a position, and how many positions the book
+    // opened in the past hour — the churn inputs of REQ-F-034.
+    [[nodiscard]] QDateTime lastCloseFor(const QString &symbol) const;
+    [[nodiscard]] qint32 opensInLastHour(const QDateTime &now) const;
     // The learned model's say on one candidate: "" to proceed, else the refusal
     // code. Annotates the basis line when it scored but allowed.
     [[nodiscard]] QString applyNetGate(const QString &symbol,
@@ -200,7 +225,13 @@ private:
     // (The entry itself is re-validated against live quotes, spread and market
     // state at the moment it opens, so a fresh proposal on newer rows is sound.)
     QList<trading::AiProposal> m_proposals;
+    QStringList m_askedSymbols;             // what the last prompt actually listed
+    // The reference series (^VIX / ^VXN / ^TNX / heavyweights) the confluence read
+    // needs, handed over by the window that fetches them.
+    QHash<QString, QList<double>> m_referenceSeries;
     QFutureWatcher<trading::TrainResult> m_training;
+    // The model's latest verdict per open trade, refreshed on every review pass.
+    QHash<qint64, trading::HoldVerdict> m_holdOpinions;
     trading::BotNet m_net;                  // what the record has taught it so far
     trading::BotNetMode m_netMode = trading::BotNetMode::Off;
     qint64 m_experienceCount = 0;           // training examples written this session

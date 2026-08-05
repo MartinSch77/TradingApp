@@ -1,0 +1,67 @@
+# TradingApp — trade-script REFERENCE (REQ-F-028)
+#
+# Every keyword the format has, on lines that CANNOT FILL. Each buy waits for a
+# price far below anything the instrument has ever traded at, and each sell for
+# one far above it, so the file is safe to load and even to arm: the orders rest
+# at the broker and are cancelled again when you disarm.
+#
+# It exists to be copied. Change the trigger to a real level, keep the rest.
+#
+#   <instrument>; BUY @ <trigger>   enters at that rate or LOWER
+#   <instrument>; SELL @ <trigger>  enters at that rate or HIGHER
+#
+# Everything after those two fields is optional, keyworded, and may come in any
+# order — except AMOUNT, which is required:
+#
+#   FROM <yyyy-MM-dd [HH:mm]>  do not place before this time (default: at once)
+#   TO   <yyyy-MM-dd [HH:mm]>  cancel if still resting at this time (default: never)
+#   SIGNALS                    place only while the technical ensemble AND the AI
+#                              advisor both favour this side; cancel if either flips
+#   AMOUNT <stake>             money to commit, in the account currency (REQUIRED)
+#   SL <amount>                stop-loss, as an amount of loss (0 / absent = none)
+#   TP <amount>                take-profit, as an amount of profit
+#   TRAILING                   the stop-loss follows the price (needs SL)
+#   LEV <n>                    leverage; a value the instrument does not offer is
+#                              snapped to the next LOWER one, and the swap is logged
+#
+# `#` starts a comment, blank lines are ignored, and loading is ALL-OR-NOTHING:
+# one unparsable line rejects the whole file, with its number and content.
+#
+# Loading places nothing. Execution starts only when you ARM the loaded script,
+# which is the second half of the two-step commitment that replaces the manual
+# double-press. While it is loaded but DISARMED the panel still evaluates every
+# line against live data and logs what it WOULD place — rehearse a script there
+# before trusting it with money.
+
+# --- The simplest line there is: instrument, side, trigger, stake ------------
+# SPX500 has never been near 100. This can rest forever.
+SPX500; BUY @ 100.00; AMOUNT 250
+
+# --- With a stop-loss and a take-profit, both as AMOUNTS of money ------------
+# Risk 25 EUR to make 75 — the geometry the plan window would call 1:3.
+NSDQ100; BUY @ 500.00; AMOUNT 300; SL 25; TP 75
+
+# --- A trailing stop, and leverage ------------------------------------------
+# TRAILING needs SL: the stop keeps its distance as the price moves your way.
+# LEV 7 is not an offered step anywhere; the app snaps it to the next lower one
+# the instrument really has (5 on most) and logs that it did.
+GER40; BUY @ 1000.00; AMOUNT 400; SL 40; TP 120; TRAILING; LEV 7
+
+# --- The short side: SELL fills at the trigger or HIGHER ---------------------
+# Gold at 99 999 would be a different planet, so this one rests too.
+Gold.24-7; SELL @ 99999.00; AMOUNT 200; SL 30; TP 90
+
+# --- A time window: place no earlier than FROM, cancel at TO -----------------
+# Both dates are far in the future, which is a second reason this never trades.
+# A time may be omitted — midnight is assumed.
+EURUSD; BUY @ 0.0100; AMOUNT 500; FROM 2099-01-02 08:00; TO 2099-01-02 22:00; SL 50; TP 150
+
+# --- SIGNALS: only while the evidence agrees ---------------------------------
+# The order is placed only while BOTH the technical ensemble and the AI advisor
+# favour a BUY here, and is cancelled again if either turns. With no AI advisor
+# configured there is no recommendation, so a SIGNALS line never places at all —
+# the panel says so rather than trading on half the evidence.
+OIL.24-7; BUY @ 1.00; AMOUNT 250; SIGNALS; SL 20; TP 60; LEV 2
+
+# --- Everything at once, for copying -----------------------------------------
+USDOLLAR; SELL @ 99999.00; AMOUNT 350; FROM 2099-06-01; TO 2099-12-31 23:59; SIGNALS; SL 35; TP 105; TRAILING; LEV 3

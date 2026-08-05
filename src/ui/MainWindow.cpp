@@ -298,10 +298,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
         connect(m_client, &EtoroClient::screenerProgress, this, &MainWindow::onScreenerProgress));
     static_cast<void>(
         connect(m_client, &EtoroClient::screenerFinished, this, &MainWindow::onScreenerFinished));
-    static_cast<void>(connect(m_feeds, &MarketFeeds::instrumentRatingsUpdated, this,
-                              &MainWindow::onInstrumentRatings));
-    static_cast<void>(
-        connect(m_feeds, &MarketFeeds::instrumentNewsUpdated, this, &MainWindow::onInstrumentNews));
+    connectInstrumentFeeds();
     static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCloses, this,
                               [this](const QString &symbol, const QList<double> &closes) {
                                   static_cast<void>(m_intradayBySymbol.insert(symbol, closes));
@@ -396,6 +393,12 @@ void MainWindow::setupRunners()
     m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
                                  m_client->config().botDailyLossLimit);
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
+    static_cast<void>(connect(m_botRunner, &BotSimRunner::tradeOpened, this,
+                              &MainWindow::onBotTradeOpened));
+    // The local model is a SOURCE like any other, not just the bot's brain: its
+    // picks show up in the signals panel and in the decision window (REQ-F-034).
+    static_cast<void>(connect(m_botRunner, &BotSimRunner::proposalsUpdated, this,
+                              &MainWindow::onLocalModelProposals));
     // Unattended experiments (and the headless QA run): TRADINGAPP_BOT_ARM=1 arms
     // the simulation at startup, so a machine left running — a Raspberry Pi, say —
     // collects days of paper results without anyone clicking anything. Safe by
@@ -1461,6 +1464,8 @@ void MainWindow::buildSignalsWindow(const QString &sym)
     m_sigNews = new QLabel(QStringLiteral("—"), sigBox);
     m_sigWeb = new QLabel(QStringLiteral("…"), sigBox);
     m_sigCrowd = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigLocalAi = new QLabel(QStringLiteral("…"), sigBox);
+    m_sigConfluence = new QLabel(QStringLiteral("…"), sigBox);
     m_sigWebQuote = new QLabel(QStringLiteral("…"), sigBox);
     m_sigRegression = new QLabel(QStringLiteral("—"), sigBox);
     m_sigKnn = new QLabel(QStringLiteral("—"), sigBox);
@@ -1533,6 +1538,20 @@ void MainWindow::buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
                                 "feed), scored by keyword tone from negative to positive. The same "
                                 "news source used in the Decision window; n/a until the news scan "
                                 "has run (or for instruments with no web ticker)."));
+    buildStatisticalSignalRows(sigBox, sigForm);
+}
+
+// The statistical and per-instrument reads, split out of buildSignalRows purely so
+// neither function is a hundred lines of table rows.
+void MainWindow::buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
+{
+    auto addSignalRow = [sigBox, sigForm](const QString &caption, QLabel *value,
+                                          const QString &tip) {
+        auto *cap = new QLabel(caption, sigBox);
+        cap->setToolTip(tip);
+        value->setToolTip(tip);
+        sigForm->addRow(cap, value);
+    };
     addSignalRow(QStringLiteral("Regression (30):"), m_sigRegression,
                  QStringLiteral("Least-squares trend line over the last 30 bars: slope in %/bar "
                                 "(direction & steepness) and R² (0–1) for how well price fits the "
@@ -1556,6 +1575,27 @@ void MainWindow::buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
                                 "(1-hour timeframe): an aggregate of ~26 indicators shown as Strong "
                                 "Sell … Strong Buy. Fetched live from the internet; shows n/a for "
                                 "eToro's proprietary baskets with no TradingView equivalent."));
+    addSignalRow(QStringLiteral("Confluence (independent):"), m_sigConfluence,
+                 QStringLiteral("How many INDEPENDENT reads agree with the current call — the "
+                                "futures that lead the cash market (Nasdaq vs S&P), expected "
+                                "volatility (^VXN for the Nasdaq, ^VIX otherwise, read by its "
+                                "direction rather than its level), the US 10-year yield (rising "
+                                "yields press on growth shares), how many of the eight Nasdaq "
+                                "heavyweights are up, and where price sits against its own "
+                                "opening range. Agreement between independent things is evidence; "
+                                "another oscillator over the same closes is not. A read that "
+                                "cannot be computed counts as UNMEASURED, never as agreement. "
+                                "Heavyweight participation is a stand-in for market breadth, "
+                                "which needs per-constituent data this app does not fetch."));
+    addSignalRow(QStringLiteral("Local model (Ollama):"), m_sigLocalAi,
+                 QStringLiteral("What the LOCAL large language model (Ollama, running on this "
+                                "machine — no key, nothing leaves it) says about THIS instrument: "
+                                "its side, its confidence and its own one-line reasoning. It is "
+                                "asked once per all-instruments scan over the same evidence the "
+                                "decision window uses, and it answers only about the instruments "
+                                "it considers worth trading — \"no opinion\" is a real answer and "
+                                "means it did not name this one. The bot may act on it (see the Bot "
+                                "sim window); here it is shown as one source among the others."));
     addSignalRow(QStringLiteral("Crowd (Fear/Greed):"), m_sigCrowd,
                  QStringLiteral("CNN's Fear & Greed index — what the trading crowd is doing right "
                                 "now, aggregated from put/call ratios, breadth, momentum and more: "
@@ -2423,6 +2463,8 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
     }
     m_positionsModel->setDisplay(m_ccy, m_eurPerUsd);  // keep the FX rate fresh
     m_positionsModel->setPositions(pinned);
+    // A new snapshot may have brought positions the model has already judged.
+    pushAiOpinionsToPositions();
     // Mark the rows from the quote book right away: a row the poll has just added would
     // otherwise render as "no current quote" until the next tick.
     updateOpenTradePnl();
@@ -3080,6 +3122,10 @@ void MainWindow::renderAdviceRow(SignalsContext &ctx)
 
 void MainWindow::updateSignals()
 {
+    // The local model's row is refreshed here too, so it says what it knows from the
+    // first tick — "no opinion yet" is information, "…" is not.
+    updateLocalModelSignal();
+    updateConfluenceSignal();
     // Keep the estimated opening (spread) cost in step with the live quote and the
     // current amount/leverage — this slot is wired to all three. Done before the
     // early return below so the cost still shows while the signal series fills.
@@ -3919,6 +3965,170 @@ void MainWindow::openScript()
     m_scriptDialog->activateWindow();
 }
 
+void MainWindow::onLocalModelProposals(const QList<trading::AiProposal> &picks)
+{
+    m_localPicks = picks;
+    // …and WHICH instruments were in front of it. Without that, "no opinion" cannot
+    // be told apart from "never shown this one", and the second is not the model
+    // being unhelpful — it is the prompt not having room (REQ-F-034).
+    m_localAsked = (m_botRunner != nullptr) ? m_botRunner->lastAskedSymbols() : QStringList{};
+    pushAiOpinionsToPositions();
+    updateLocalModelSignal();
+    rebuildDecision();   // the sources table carries the same read per instrument
+}
+
+// The local model's read on ONE instrument, or a null proposal when it said nothing
+// about it. Its picks are a ranked list, so the first match is its best word on it.
+trading::AiProposal MainWindow::localPickFor(const QString &symbol) const
+{
+    const auto hit = std::find_if(m_localPicks.cbegin(), m_localPicks.cend(),
+                                  [&symbol](const trading::AiProposal &p) {
+                                      return p.ok
+                                             && (p.resolvedSymbol.compare(symbol,
+                                                                          Qt::CaseInsensitive)
+                                                 == 0);
+                                  });
+    return (hit != m_localPicks.cend()) ? *hit : trading::AiProposal{};
+}
+
+void MainWindow::pushAiOpinionsToPositions()
+{
+    // The same read the bot uses on its own book, applied to the REAL open trades as
+    // ADVICE (REQ-F-034): the hold/close column in the main window. Nothing here
+    // closes a real position — that stays a human action behind the double-press
+    // gate of REQ-N-005.
+    if (m_positionsModel == nullptr) {
+        return;
+    }
+    QHash<QString, trading::HoldVerdict> bySymbol;
+    bySymbol.reserve(m_shownPositions.size());
+    for (const Position &p : m_shownPositions) {
+        if (bySymbol.contains(p.symbol)) {
+            continue;
+        }
+        // Judged exactly as the simulated book's positions are, including the brakes
+        // that stop a fresh position being talked out of by a model that changed its
+        // mind five minutes in.
+        trading::PaperTrade probe;
+        probe.symbol = p.symbol;
+        probe.isBuy = p.isBuy;
+        probe.openTime = p.openTime;
+        static_cast<void>(bySymbol.insert(
+            p.symbol,
+            trading::paperAiHold(probe, m_localPicks, trading::BotAiMode::Lead,
+                                 QDateTime::currentDateTime(), trading::BotConfig{})));
+    }
+    m_positionsModel->setAiOpinions(bySymbol);
+}
+
+void MainWindow::updateConfluenceSignal()
+{
+    if (m_sigConfluence == nullptr) {
+        return;
+    }
+    m_sigConfluence->setTextFormat(Qt::RichText);
+    const QString symbol = m_client->config().symbol;
+    const trading::IndexReads reads =
+        trading::indexReads(symbol, m_referenceSeries, m_intradayBySymbol.value(symbol));
+    // Scored for the side the app's own composite currently leans to, so the number
+    // answers "does the evidence agree with the call" rather than "is it bullish".
+    const qint32 dir = (m_lastSignalDir != 0) ? m_lastSignalDir : 1;
+    const trading::Confluence score = trading::confluenceFor(reads, dir);
+    if (score.measured() == 0) {
+        m_sigConfluence->setText(QStringLiteral("<span style='color:%1'>no reference reads yet"
+                                               "</span>")
+                                     .arg(trading::ui::greyHex()));
+        m_sigConfluence->setToolTip(QStringLiteral("Waiting for the reference series (^VIX, ^VXN, "
+                                                  "^TNX and the Nasdaq heavyweights)."));
+        return;
+    }
+    const QString colour = (score.met >= 4) ? QStringLiteral("#25b563")
+                                            : ((score.against > score.met)
+                                                   ? QStringLiteral("#e35555")
+                                                   : QStringLiteral("#e0b000"));
+    m_sigConfluence->setText(
+        QStringLiteral("<span style='color:%1'>%2 of %3 agree with %4</span>"
+                       "<span style='color:%5'> · %6 unmeasured</span>")
+            .arg(colour)
+            .arg(score.met)
+            .arg(score.measured())
+            .arg((dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL"), trading::ui::greyHex())
+            .arg(score.unknown));
+    m_sigConfluence->setToolTip(score.reasons.join(u"\n"));
+}
+
+void MainWindow::updateLocalModelSignal()
+{
+    if (m_sigLocalAi == nullptr) {
+        return;
+    }
+    m_sigLocalAi->setTextFormat(Qt::RichText);
+    const QString grey = trading::ui::greyHex();
+    if ((m_ollama == nullptr) || !m_ollama->isConfigured()) {
+        m_sigLocalAi->setText(QStringLiteral("<span style='color:%1'>not configured — set "
+                                            "ollamaModel</span>")
+                                  .arg(grey));
+        return;
+    }
+    const QString symbol = m_client->config().symbol;
+    const trading::AiProposal pick = localPickFor(symbol);
+    if (!pick.ok) {
+        const bool asked = m_localAsked.contains(symbol, Qt::CaseInsensitive);
+        m_sigLocalAi->setText(
+            QStringLiteral("<span style='color:%1'>%2</span>")
+                .arg(grey,
+                     m_localAsked.isEmpty()
+                         ? QStringLiteral("waiting for the first answer (%1)")
+                               .arg(m_ollama->model())
+                         : (asked ? QStringLiteral("looked at it and passed — it named %1 "
+                                                   "instead")
+                                        .arg(m_localPicks.isEmpty()
+                                                 ? QStringLiteral("nothing")
+                                                 : m_localPicks.constFirst().resolvedSymbol)
+                                  : QStringLiteral("not among the %1 instruments it was shown "
+                                                   "this scan (they are ranked by composite)")
+                                        .arg(m_localAsked.size()))));
+        return;
+    }
+    const QString word = pick.exitNow
+                             ? QStringLiteral("CLOSE")
+                             : ((pick.dir > 0) ? QStringLiteral("BUY")
+                                               : ((pick.dir < 0) ? QStringLiteral("SELL")
+                                                                 : QStringLiteral("HOLD")));
+    const QString colour = (pick.dir > 0) ? QStringLiteral("#25b563")
+                                          : ((pick.dir < 0) ? QStringLiteral("#e35555")
+                                                            : QStringLiteral("#e0b000"));
+    m_sigLocalAi->setText(QStringLiteral("<span style='color:%1'>%2 (conf %3)</span>"
+                                        "<span style='color:%4'> — %5</span>")
+                              .arg(colour, word)
+                              .arg(qRound(pick.confidence))
+                              .arg(grey, pick.rationale.isEmpty()
+                                             ? m_ollama->model()
+                                             : pick.rationale.toHtmlEscaped()));
+}
+
+void MainWindow::onBotTradeOpened(const QString & /*symbol*/)
+{
+    // A notice the user has to acknowledge, so an unattended bot cannot open
+    // positions unnoticed. Two properties keep it from becoming the opposite of
+    // useful: it is NOT modal (a modal box would stop the timers that mark the
+    // book and evaluate exits, so the bot would freeze until someone clicked), and
+    // only ever ONE is on screen — a single scan can open a dozen trades, and a
+    // dozen stacked dialogs is not a notification, it is a lockout.
+    if (m_botTradeNotice != nullptr) {
+        return;
+    }
+    auto *box = new QMessageBox(QMessageBox::Information, QStringLiteral("Trading-Bot"),
+                                QStringLiteral("Trading-Bot opened a trade"),
+                                QMessageBox::Ok, this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setModal(false);
+    static_cast<void>(connect(box, &QObject::destroyed, this,
+                              [this]() { m_botTradeNotice = nullptr; }));
+    m_botTradeNotice = box;
+    box->show();
+}
+
 void MainWindow::openBotSim()
 {
     if (m_botDialog == nullptr) {
@@ -4035,6 +4245,9 @@ void MainWindow::startRecommendationScan()
     m_feeds->fetchInstrumentRatings();
     m_feeds->fetchInstrumentNews();
     m_feeds->fetchIntradaySeries();
+    // …and the reference series that say what the indices are doing: expected
+    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-035).
+    m_feeds->fetchReferenceSeries();
 }
 
 void MainWindow::onInstrumentRatings(const QHash<QString, WebRating> &ratingBySymbol)
@@ -4042,6 +4255,30 @@ void MainWindow::onInstrumentRatings(const QHash<QString, WebRating> &ratingBySy
     m_ratingBySymbol = ratingBySymbol;
     rebuildRecommendations();
     rebuildDecision();
+}
+
+// The three all-instruments feeds: web ratings, news, and the reference series the
+// index reads are computed from (REQ-F-035).
+void MainWindow::connectInstrumentFeeds()
+{
+    static_cast<void>(connect(m_feeds, &MarketFeeds::instrumentRatingsUpdated, this,
+                              &MainWindow::onInstrumentRatings));
+    static_cast<void>(connect(m_feeds, &MarketFeeds::instrumentNewsUpdated, this,
+                              &MainWindow::onInstrumentNews));
+    static_cast<void>(connect(m_feeds, &MarketFeeds::referenceSeries, this,
+                              &MainWindow::onReferenceSeries));
+}
+
+void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &closes)
+{
+    static_cast<void>(m_referenceSeries.insert(ticker, closes));
+    if (m_botRunner != nullptr) {
+        m_botRunner->setReferenceSeries(m_referenceSeries);
+    }
+    // The index reads change what the signals row and the decision sources say, and
+    // what the bot is told; none of them are worth a full rebuild per ticker, so the
+    // cheap displays refresh and the rest picks it up on the next scan.
+    updateConfluenceSignal();
 }
 
 void MainWindow::onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines)
@@ -4340,6 +4577,41 @@ SourceRowSpec aiSourceRow(const AiDecision &ai, bool configured)
                        : QStringLiteral("set anthropicApiKey to enable")};
 }
 
+// The local model's row: the same shape as the cloud advisor's, but per instrument
+// and with "no opinion" told apart from "not configured" — a model that answered
+// about other instruments has said something about this one by omission, and that
+// is not the same as never having been asked.
+SourceRowSpec localAiSourceRow(const trading::AiProposal &pick, bool configured,
+                               const QString &model, bool wasShown, qsizetype shownCount)
+{
+    if (!configured) {
+        return {QStringLiteral("Local model (Ollama)"), QStringLiteral("n/a"),
+                trading::ui::kGrey, QString(), QStringLiteral("set ollamaModel to enable")};
+    }
+    if (!pick.ok) {
+        // Two different silences, and conflating them is what makes the feature look
+        // broken: it can only speak about instruments the prompt listed.
+        const QString note =
+            (shownCount == 0)
+                ? QStringLiteral("waiting for the first answer (%1)").arg(model)
+                : (wasShown ? QStringLiteral("shown this instrument and did not pick it")
+                            : QStringLiteral("not among the %1 instruments shown this scan")
+                                  .arg(shownCount));
+        return {QStringLiteral("Local model (Ollama)"), QStringLiteral("—"), trading::ui::kGrey,
+                QString(), note};
+    }
+    const bool actionable = (pick.dir != 0) && !pick.exitNow;
+    const QString word = pick.exitNow
+                             ? QStringLiteral("CLOSE")
+                             : ((pick.dir > 0) ? QStringLiteral("BUY")
+                                               : ((pick.dir < 0) ? QStringLiteral("SELL")
+                                                                 : QStringLiteral("HOLD")));
+    return {QStringLiteral("Local model (Ollama)"), word,
+            actionable ? callColour(pick.dir) : trading::ui::kGrey,
+            QStringLiteral("%1%").arg(qRound(pick.confidence)),
+            pick.rationale.isEmpty() ? model : pick.rationale};
+}
+
 // While no focus row exists yet, the six source rows render as neutral
 // placeholders ("scanning…" while the screener has produced nothing at all).
 QList<SourceRowSpec> placeholderSourceRows(bool scanning)
@@ -4367,6 +4639,7 @@ trading::MarketSnapshot MainWindow::marketSnapshot() const
     m.screenerRows = m_screenerRows;
     m.ratingBySymbol = m_ratingBySymbol;
     m.newsBySymbol = m_newsBySymbol;
+    m.referenceSeries = m_referenceSeries;
     m.vixValid = m_vixValid;
     m.vix = m_vix;
     m.vixChangePct = m_vixChangePct;
@@ -4387,6 +4660,9 @@ void MainWindow::startDecisionScan()
     m_feeds->fetchInstrumentRatings();
     m_feeds->fetchInstrumentNews();
     m_feeds->fetchIntradaySeries();
+    // …and the reference series that say what the indices are doing: expected
+    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-035).
+    m_feeds->fetchReferenceSeries();
 }
 
 void MainWindow::openDecision()
@@ -4443,7 +4719,9 @@ void MainWindow::openDecision()
         m_decisionSources->setSelectionMode(QAbstractItemView::NoSelection);
         m_decisionSources->verticalHeader()->setVisible(false);
         m_decisionSources->horizontalHeader()->setStretchLastSection(true);
-        m_decisionSources->setMaximumHeight(240);  // seven source rows
+        // Eight source rows now (the six market reads plus BOTH advisors), and they
+        // are the point of this window: room to read them without scrolling.
+        m_decisionSources->setMinimumHeight(270);
         lay->addWidget(m_decisionSources);
 
         lay->addWidget(new QLabel(QStringLiteral("All instruments, ranked by composite:"),
@@ -4688,6 +4966,13 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                                    yahooSourceRow(*focus)}
             : placeholderSourceRows(m_screenerRows.isEmpty());
     specs.append(aiSourceRow(m_aiDecision, m_aiAdvisor->isConfigured()));
+    // The local model, per instrument: it is asked about all of them, so unlike the
+    // cloud advisor it can speak about whichever row has focus (REQ-F-034).
+    specs.append(localAiSourceRow(localPickFor(focusSymbol),
+                                  (m_ollama != nullptr) && m_ollama->isConfigured(),
+                                  (m_ollama != nullptr) ? m_ollama->model() : QString(),
+                                  m_localAsked.contains(focusSymbol, Qt::CaseInsensitive),
+                                  m_localAsked.size()));
 
     auto make = [](const QString &t) {
         auto *it = new QTableWidgetItem(t);

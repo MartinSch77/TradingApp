@@ -307,7 +307,10 @@ private slots:
         QVERIFY(none.empty());
         QVERIFY(none.error.contains(QStringLiteral("named no tradable pick")));
 
-        // A runaway generation cannot flood the books: at most 10 picks are taken.
+        // A runaway generation cannot flood the books: the answer is capped. The cap
+        // is 16 because the bot now shows the model 14 instruments and asks for a
+        // verdict on each — an instrument left out of the answer is one nobody can
+        // read an opinion from (REQ-F-034).
         QString flood = QStringLiteral(R"json({"picks":[)json");
         for (int i = 0; i < 25; ++i) {
             flood += QStringLiteral(R"json({"symbol":"SYM%1","action":"BUY","confidence":50},)json")
@@ -315,7 +318,7 @@ private slots:
         }
         flood.chop(1);
         flood += QStringLiteral("]}");
-        QCOMPARE(answerFromText(flood).picks.size(), 10);
+        QCOMPARE(answerFromText(flood).picks.size(), 16);
 
         // The rationale key models really get wrong ("rationality") still reads.
         QCOMPARE(firstPickOf(QStringLiteral(

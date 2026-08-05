@@ -1033,10 +1033,10 @@ qint32 groupLeverageCap(const QString &group)
     if (group == QStringLiteral("metals")) {
         return 8;
     }
-    if (group == QStringLiteral("commodity")) {
-        return 5;    // oil and softs gap on inventory numbers
-    }
-    return 5;        // an instrument nobody classified gets the careful ceiling
+    // "commodity" (oil and softs, which gap on inventory numbers) and an
+    // unclassified symbol both land on the careful ceiling, so they share the
+    // branch rather than repeating the same number twice.
+    return 5;
 }
 
 StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double riskPerStake,
@@ -1745,9 +1745,11 @@ PaperClosedTrade PaperBook::close(qint64 id, double closeRate, double spreadPct,
         return done;
     }
     const PaperTrade t = m_open.at(idx);
-    const double exit = (closeRate > 0.0) ? closeRate : t.effectiveRate();
+    // Not "exit": a local shadowing ::exit reads as a call to it in tooling, and it
+    // is the closing RATE.
+    const double exitRate = (closeRate > 0.0) ? closeRate : t.effectiveRate();
     const double closeCost = paperHalfSpreadCost(t.stake, t.leverage, spreadPct);
-    const double gross = paperGrossPnl(t.stake, t.leverage, t.openRate, exit, t.isBuy);
+    const double gross = paperGrossPnl(t.stake, t.leverage, t.openRate, exitRate, t.isBuy);
 
     done.id = t.id;
     done.symbol = t.symbol;
@@ -1755,7 +1757,7 @@ PaperClosedTrade PaperBook::close(qint64 id, double closeRate, double spreadPct,
     done.stake = t.stake;
     done.leverage = t.leverage;
     done.openRate = t.openRate;
-    done.closeRate = exit;
+    done.closeRate = exitRate;
     done.openTime = t.openTime;
     done.closeTime = now;
     done.grossPnl = gross;

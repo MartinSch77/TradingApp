@@ -70,6 +70,15 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - The lizard metrics gate is a ratchet, not a threshold: over-limit functions are
   recorded in `tools/lizard_baseline.json` with their numbers. New debt, a
   worsened number, or a stale entry all fail the stage. Regenerate deliberately.
+- cppcheck's free MISRA addon is MISRA **C** 2012 and this code is C++23: measured
+  527 findings of which 514 are the mismatch (404 `misra-config` on Q_OBJECT-style
+  macros, 110 rule-12.3 hits on template argument lists). It is therefore
+  informational only — `tools/misra_cppcheck.sh` — and MUST NOT be added to the
+  gate; MISRA C++ 2023 here is Axivion's job. The other three addons were measured on the REAL compile database (a bare file
+  list makes them bail out early and look clean — do not repeat that mistake):
+  `misc-implicitlyVirtual` 16 (wants `virtual` on an `override`), `threadsafety`
+  19 (getenv in `Config::load`, which runs before any thread exists), `findcasts`
+  7 (a cast inventory). All informational, all in `tools/misra_cppcheck.sh`.
 - PMD CPD (≥ 100 tokens) is the only clone gate — the Axivion configuration here
   is MISRA-only. Fix clones by extracting a helper; do not baseline them.
 - Downloadable builds: `tools/package_appimage.sh` (linuxdeploy; needs

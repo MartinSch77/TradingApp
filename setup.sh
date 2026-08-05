@@ -124,7 +124,7 @@ android_install() {
         echo "-- command-line tools"
         mkdir -p "$ANDROID_SDK_DIR/cmdline-tools"
         local zip="$ANDROID_SDK_DIR/cmdline-tools/cmdline-tools.zip"
-        curl -sSL -o "$zip" "$ANDROID_CMDLINE_ZIP"
+        curl --proto '=https' --tlsv1.2 -sSL -o "$zip" "$ANDROID_CMDLINE_ZIP"
         unzip -q -o "$zip" -d "$ANDROID_SDK_DIR/cmdline-tools"
         rm -f "$zip"
         # The zip unpacks as cmdline-tools/; sdkmanager insists on being under
@@ -208,7 +208,7 @@ ollama_install() {
         mkdir -p "$OLLAMA_DIR"
         tarball="$OLLAMA_DIR/ollama.tar.zst"
         echo "-- downloading ollama $OLLAMA_VERSION ($arch, ~1.4 GB)"
-        curl -sSL -o "$tarball" \
+        curl --proto '=https' --tlsv1.2 -sSL -o "$tarball" \
             "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-$arch.tar.zst" ||
             { echo "download failed" >&2; return 1; }
         tar --use-compress-program=unzstd -xf "$tarball" -C "$OLLAMA_DIR" || return 1

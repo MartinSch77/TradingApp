@@ -48,6 +48,19 @@ echo "== cppcheck ($(cppcheck --version)) =="
 # their written rationale, and the pipe template that feeds the Axivion
 # dashboard import. --checkers-report records which of cppcheck's ~590 checkers
 # were actually active — evidence that the run was as strict as claimed.
+# cppcheck's free ADDONS are deliberately not part of this gate. Measured over the
+# real compile database (not a bare file list, which makes them bail out early and
+# look clean):
+#   misc-implicitlyVirtual      16  wants `virtual` repeated on an override that
+#                                   already says `override` — the opposite of what
+#                                   modern C++ and this codebase do
+#   threadsafety-unsafe-call    19  getenv via QProcessEnvironment in Config::load,
+#                                   which runs once at start-up before any thread
+#                                   exists — a real property in the wrong context
+#   findcasts-cast               7  an INVENTORY of casts at "information" severity;
+#                                   not a defect list by design
+# The MISRA addon is a category of its own — see tools/misra_cppcheck.sh, which runs
+# all of these on demand with the numbers next to them.
 # The test sources are analysed too; only the build tree is excluded (-i), which
 # is where the moc/autogen output lives.
 cppcheck --project="$ROOT/$BUILD_DIR/compile_commands.json" \

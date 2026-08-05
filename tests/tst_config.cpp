@@ -132,6 +132,60 @@ private slots:
         QCOMPARE(fromEnv.botDailyLossLimit, 250.0);      // the file value stands
     }
 
+    //! @tstid TS-CFG-006 @design DES-SVC-CFG
+    // @relation(REQ-F-018, scope=function)
+    void TS_CFG_006_numbersAndAnExplicitConfigPathAreHonouredOrRefused()
+    {
+        const QTemporaryDir dir;
+        QVERIFY(QDir::setCurrent(dir.path()));
+        writeFile(dir.filePath(QStringLiteral("config.json")),
+                  R"({"defaultLeverage":7,"pollIntervalMs":2500})");
+        const Config fromFile = Config::load();
+        QCOMPARE(fromFile.defaultLeverage, 7.0);
+        QCOMPARE(fromFile.pollIntervalMs, 2500);
+
+        // Env wins — but only with a sane value: a poll faster than 500 ms or a
+        // leverage below 1 is refused rather than applied, because both would
+        // quietly change how the app trades.
+        qputenv("ETORO_POLL_MS", "1500");
+        qputenv("ETORO_LEVERAGE", "3.5");
+        const Config good = Config::load();
+        QCOMPARE(good.pollIntervalMs, 1500);
+        QCOMPARE(good.defaultLeverage, 3.5);
+        qputenv("ETORO_POLL_MS", "10");            // would hammer the API
+        qputenv("ETORO_LEVERAGE", "0.2");          // not a leverage at all
+        const Config refused = Config::load();
+        QCOMPARE(refused.pollIntervalMs, 2500);    // the file value stands
+        QCOMPARE(refused.defaultLeverage, 7.0);
+        qputenv("ETORO_POLL_MS", "not a number");
+        qputenv("ETORO_LEVERAGE", "neither");
+        const Config junk = Config::load();
+        QCOMPARE(junk.pollIntervalMs, 2500);
+        QCOMPARE(junk.defaultLeverage, 7.0);
+        qunsetenv("ETORO_POLL_MS");
+        qunsetenv("ETORO_LEVERAGE");
+
+        // $ETORO_CONFIG names the config file itself, and the secrets file is
+        // looked up BESIDE it — so a config kept outside the working directory
+        // still finds its own key file.
+        const QTemporaryDir elsewhere;
+        writeFile(elsewhere.filePath(QStringLiteral("other.json")),
+                  R"({"mode":"real","symbol":"GER40"})");
+        writeFile(elsewhere.filePath(QStringLiteral("apiKeyEtoro.json")),
+                  R"({"apiKey":"beside-key","userKey":"beside-user"})");
+        qputenv("ETORO_CONFIG", elsewhere.filePath(QStringLiteral("other.json")).toUtf8());
+        const Config pointed = Config::load();
+        QCOMPARE(pointed.symbol, QStringLiteral("GER40"));
+        QCOMPARE(pointed.apiKey, QStringLiteral("beside-key"));
+        QCOMPARE(pointed.userKey, QStringLiteral("beside-user"));
+
+        // An unreadable or malformed file is skipped, not fatal: the app must still
+        // start on its defaults rather than die on a stray character.
+        writeFile(elsewhere.filePath(QStringLiteral("other.json")), "{ this is not json");
+        const Config broken = Config::load();
+        QVERIFY(!broken.symbol.isEmpty());   // the built-in default survived
+    }
+
     //! @tstid TS-CFG-004 @design DES-SVC-CFG
     // @relation(REQ-F-017, scope=function)
     void TS_CFG_004_liveRequiresCredentialsAndRealMode()

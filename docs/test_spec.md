@@ -62,6 +62,7 @@ event loop / local mock HTTP server).
 | TS-DEC-003 | U | `marketRegime`: risk-off for VIX ≥ 25, risk-on for VIX < 16; imminent high-impact event sets the event-risk flag. |
 | TS-DEC-004 | U | `computeDecisionRows` renormalises weights over available sources, applies the crowd tilt when Fear & Greed is valid, and sorts by confidence descending. |
 | TS-DEC-005 | U | `buildDecisionEvidence` names the crowd reading and the actionable candidates. |
+| TS-DEC-007 | U | The evidence prompt — the actual interface to both advisors — carries every source it claims to: the VIX regime in all three wordings, the crowd read, the multi-timeframe rating (NaN timeframes left out of the consensus, an all-NaN rating contributing nothing), the news score and the headline text, the leverage cap and both directions; an empty candidate list says HOLD instead of presenting nothing as a choice; and the rating wording table is pinned bucket by bucket. |
 | TS-DEC-006 | U | `intradayTilt` reads the session position (rising > 0.5, falling < −0.5, flat/short = 0) and a bullish Yahoo intraday series lifts the composite (REQ-F-022). |
 
 ## Trade planner (tests/tst_tradeplan.cpp, DES-DOM-PLAN, REQ-F-010/-011/-012)
@@ -131,6 +132,13 @@ than against the implementation.
 | TS-NET-005 | U | The app trains itself with no second runtime: 300 separable examples produce a model with a held-out AUC above 0.9 that learns the separation and, having earned both trust thresholds, refuses a bad setup; two runs over one record agree exactly; the model round-trips through the file format; a record that is too small or one-sided yields NO weights and a stated reason; and one experience line becomes one example — or nothing, never a half-read one. |
 | TS-NET-004 | I | The Python trainer and this build agree on the model they exchange: `tools/train_bot_net.py` really runs over an app-shaped experience log, its output loads here with the same column order, it separates the two kinds of trade it was shown, and a record with nothing to learn from exits 3 ("skipped") without writing a model. |
 
+## Shared data types (tests/tst_models.cpp, DES-DOM-MODELS, REQ-F-026)
+
+| ID | Type | What it pins |
+|----|------|--------------|
+| TS-MODEL-001 | U | A resting order's equality reacts to EVERY field a broker poll can bring back changed (id, instrument, symbol, side, trigger, amount, leverage, SL, TP, trailing, status, timestamp) — a stale order shown as current is the failure this prevents. |
+| TS-MODEL-002 | U | Every shared type survives a QVariant round trip, i.e. is a registered metatype: without that, a queued signal carrying it fails at runtime in a slot that simply never fires. |
+
 ## Local-LLM advisor (tests/tst_ollamaadvisor.cpp, DES-SVC-OLLAMA, REQ-F-030)
 
 Against an in-process mock of Ollama's HTTP API — no test needs a running daemon.
@@ -174,6 +182,7 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 |----|---|------|
 | TS-EVT-001 | U | `parseNum` extracts leading numbers from feed strings ("0.3%", "-0.2%", "215K"). |
 | TS-EVT-002 | U | `guessImpact` returns a non-empty text and a direction in {−1, 0, +1} keyed to the event type. |
+| TS-EVT-004 | U | Every event family the explainer claims to cover answers with its own plain-language text (rates, inflation, unemployment, jobs, GDP, retail sales, PMI/ISM, confidence) and an unknown release says so while naming the instrument; and the side each family implies follows the same forecast-versus-previous comparison — hotter inflation bearish, cooling inflation bullish, rising unemployment bearish, stronger sales bullish, an unchanged forecast no side, an uncovered family a swing warning rather than an invented direction. |
 | TS-EVT-003 | U | `proposeActivity` (REQ-F-023): high-impact hot CPI → SELL after the print; medium-impact stronger PMI → BUY before the release; missing forecast/previous → STAY OUT with a reason. |
 
 ## Configuration (tests/tst_config.cpp, DES-SVC-CFG, REQ-F-017/-018, REQ-N-004) — integration
@@ -184,6 +193,7 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-CFG-002 | I | `config.json` (non-secret) and a sibling `apiKeyEtoro.json` (secrets) layer correctly: keys come only from the secrets file. |
 | TS-CFG-003 | I | Environment variables override both files. |
 | TS-CFG-005 | U | The bot's daily rules are configuration, not code: the documented 350/350 defaults hold with no files, `botDailyTarget`/`botDailyLossLimit` in `config.json` replace them, `TRADINGAPP_BOT_TARGET=0` switches a rule off (0 is a real value here), and a negative override is refused so a typo cannot widen what may be lost. |
+| TS-CFG-006 | U | Numeric settings and an explicit config path: leverage and poll interval come from the file, a sane env value replaces them, and an unsafe one (poll under 500 ms, leverage under 1) or an unparsable one is refused so the file value stands; `$ETORO_CONFIG` names the config file itself with the secrets file looked up BESIDE it; and a malformed file is skipped rather than fatal. |
 | TS-CFG-004 | I | `isLive` requires credentials AND mode "real"; mode labels match. |
 
 ## Simulation engine (tests/tst_simulationengine.cpp, DES-SVC-SIM, REQ-F-017/-027) — integration
@@ -193,6 +203,7 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-SIM-001 | I | `prepare`+`emitSnapshot` publish history, price, cash and leverage options; `tick` moves the price. |
 | TS-SIM-002 | I | `openPosition` reduces cash and publishes the position with SL/TP rates set from the amounts. |
 | TS-SIM-003 | I | An adverse price path triggers the stop-loss auto-close, frees the margin and records a closed trade in the monthly summary. |
+| TS-SIM-006 | I | The simulated broker's remaining money paths: a take-profit closes in profit and books cash the other way from a stop-out; a trailing stop follows the price in the trade's favour and never once moves against it over 400 ticks; adjusting a live position rewrites both barriers and the trail distance; an unknown position id is answered ("not found") rather than ignored on both modify and close; and an order larger than the account is refused with its numbers instead of silently sized down. |
 | TS-SIM-004 | I | A limit order rests without booking a position or margin, a second one can be cancelled individually, and the remaining one turns into a position (opened at or beyond its trigger, carrying its stop-loss) once the walk touches the trigger rate. |
 | TS-SIM-005 | I | Adjusting a resting order changes only trigger/SL/TP (size, leverage and side carry over) and renumbers it, mirroring the real cancel-and-re-place; an unknown order id changes nothing and reports a failure. |
 

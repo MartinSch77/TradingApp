@@ -117,6 +117,104 @@ private slots:
         QCOMPARE(pnl.trades, 1);                 // the auto-closed trade is logged
     }
 
+    //! @tstid TS-SIM-006 @design DES-SVC-SIM
+    // @relation(REQ-F-017, scope=function)
+    void TS_SIM_006_trailingStopsRatchetAndTakeProfitsRealiseAGain()
+    {
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(4321U);
+        sim.emitSnapshot();
+
+        // A take-profit that the walk must reach: the position closes in PROFIT,
+        // which is the mirror of the stop-loss path and books cash the other way.
+        OrderRequest win;
+        win.isBuy = true;
+        win.amount = 1000.0;
+        win.leverage = 10.0;
+        win.takeProfitAmount = 1.0;
+        sim.openPosition(win);
+        QSignalSpy closed(&sim, &SimulationEngine::positionClosed);
+        QSignalSpy cash(&sim, &SimulationEngine::cashUpdated);
+        for (qint32 i = 0; (i < 5000) && closed.isEmpty(); ++i) {
+            sim.tick();
+        }
+        QVERIFY2(!closed.isEmpty(), "take-profit never triggered in 5000 ticks");
+        QVERIFY(closed.last().at(0).toBool());
+        QVERIFY(cash.last().at(0).toDouble() > 100000.0);   // a gain was realised
+
+        // A trailing stop follows the price in the trade's favour and NEVER moves
+        // against it — which is the whole property that distinguishes it from a
+        // fixed stop, and the one a refactor is most likely to invert.
+        SimulationEngine trail;
+        static_cast<void>(trail.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        trail.seedRng(99U);
+        trail.emitSnapshot();
+        QSignalSpy portfolio(&trail, &SimulationEngine::portfolioUpdated);
+        OrderRequest req;
+        req.isBuy = true;
+        req.amount = 500.0;
+        req.leverage = 2.0;
+        req.stopLossAmount = 200.0;      // far away, so the walk cannot hit it at once
+        req.trailingStop = true;
+        trail.openPosition(req);
+        QVERIFY(!portfolio.isEmpty());
+        double highWater = -1.0;
+        for (qint32 i = 0; i < 400; ++i) {
+            trail.tick();
+            const auto book = portfolio.last().at(0).value<QList<Position>>();
+            if (book.isEmpty()) {
+                break;                   // stopped out: still never moved backwards
+            }
+            const double stop = book.constFirst().stopLossRate;
+            QVERIFY(stop > 0.0);
+            QVERIFY2(stop >= highWater - 1e-9, "a trailing stop moved against the position");
+            highWater = std::max(highWater, stop);
+        }
+        QVERIFY(highWater > 0.0);
+
+        // Adjusting a live position rewrites both barriers, and asking about one
+        // that is not there is answered rather than ignored.
+        SimulationEngine edit;
+        static_cast<void>(edit.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        edit.emitSnapshot();
+        OrderRequest plain;
+        plain.isBuy = true;
+        plain.amount = 500.0;
+        plain.leverage = 1.0;
+        edit.openPosition(plain);
+        QSignalSpy book(&edit, &SimulationEngine::portfolioUpdated);
+        const double open = edit.lastPrice();
+        edit.modifyPosition(QStringLiteral("1"), open * 0.9, open * 1.2, true);
+        QVERIFY(!book.isEmpty());
+        const Position after = book.last().at(0).value<QList<Position>>().constFirst();
+        QVERIFY(qAbs(after.stopLossRate - (open * 0.9)) < 1e-6);
+        QVERIFY(qAbs(after.takeProfitRate - (open * 1.2)) < 1e-6);
+        QVERIFY(after.trailingStop);
+        QVERIFY(qAbs(after.trailDistance - qAbs(open - (open * 0.9))) < 1e-6);
+
+        QSignalSpy log(&edit, &SimulationEngine::log);
+        edit.modifyPosition(QStringLiteral("does-not-exist"), 1.0, 2.0, false);
+        QVERIFY(!log.isEmpty());
+        QVERIFY(log.last().at(0).toString().contains(QStringLiteral("not found")));
+        QSignalSpy gone(&edit, &SimulationEngine::positionClosed);
+        edit.closePosition(QStringLiteral("does-not-exist"));
+        QVERIFY(!gone.isEmpty());
+        QVERIFY(!gone.last().at(0).toBool());
+
+        // …and an order larger than the simulated account is refused with its
+        // numbers, not silently sized down.
+        QSignalSpy result(&edit, &SimulationEngine::orderResult);
+        OrderRequest huge;
+        huge.isBuy = true;
+        huge.amount = 1e9;
+        huge.leverage = 1.0;
+        edit.openPosition(huge);
+        QVERIFY(!result.isEmpty());
+        QVERIFY(!result.last().at(0).toBool());
+        QVERIFY(result.last().at(1).toString().contains(QStringLiteral("Insufficient")));
+    }
+
     //! @tstid TS-SIM-004 @design DES-SVC-SIM
     // @relation(REQ-F-027, scope=function)
     void TS_SIM_004_limitOrderRestsUntilTriggeredAndCanBeCancelled()

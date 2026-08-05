@@ -155,6 +155,74 @@ private slots:
         QVERIFY(evidence.contains(QStringLiteral("UP")));
     }
 
+    //! @tstid TS-DEC-007 @design DES-DOM-DEC
+    // @relation(REQ-F-008, REQ-F-009, REQ-F-030, scope=function)
+    void TS_DEC_007_theEvidencePromptCarriesEverySourceItClaimsTo()
+    {
+        // The prompt IS the interface to the models (cloud and local alike), so what
+        // it does and does not say about a candidate is behaviour, not formatting.
+        MarketSnapshot m;
+        m.vixValid = true;
+        m.vix = 31.0;                       // risk-off
+        m.fgValid = true;
+        m.fearGreed = 9.0;                  // fear
+        m.screenerRows << row(QStringLiteral("UP"), trend(120, 1.004, 1.001))
+                       << row(QStringLiteral("DOWN"), trend(120, 0.996, 1.001));
+        WebRating rating;
+        rating.m15 = 0.8;
+        rating.h1 = 0.6;
+        rating.d1 = std::nan("");           // a missing timeframe is simply left out
+        QVERIFY(rating.valid());
+        QVERIFY(std::abs(rating.consensus() - 0.7) < 1e-9);
+        static_cast<void>(m.ratingBySymbol.insert(QStringLiteral("UP"), rating));
+        NewsHeadline head;
+        head.title = QStringLiteral("Rally broadens as inflation cools");
+        static_cast<void>(m.newsBySymbol.insert(QStringLiteral("UP"), {head}));
+
+        const QList<DecisionRow> rows = computeDecisionRows(m);
+        const DecisionRow up = rowFor(rows, QStringLiteral("UP"));
+        QVERIFY(up.haveRating);
+        QVERIFY(std::abs(up.rating - 0.7) < 1e-9);
+        QVERIFY(up.haveNews);
+
+        const QString evidence = buildDecisionEvidence(rows, m);
+        QVERIFY(evidence.contains(QStringLiteral("risk-off")));      // the VIX regime
+        QVERIFY(evidence.contains(QStringLiteral("fear")));          // the crowd
+        QVERIFY(evidence.contains(QStringLiteral("TV rating")));     // the web rating
+        QVERIFY(evidence.contains(QStringLiteral("News")));          // the sentiment read
+        QVERIFY(evidence.contains(head.title));                      // the headline itself
+        QVERIFY(evidence.contains(QStringLiteral("maxLev")));
+        QVERIFY(evidence.contains(QStringLiteral("BUY")));
+        QVERIFY(evidence.contains(QStringLiteral("SELL")));          // both sides are offered
+
+        // The other regimes word themselves differently, and a market with nothing
+        // to say says exactly that instead of presenting an empty list as choice.
+        m.vix = 12.0;
+        QVERIFY(buildDecisionEvidence(rows, m).contains(QStringLiteral("risk-on")));
+        m.vix = 20.0;
+        QVERIFY(buildDecisionEvidence(rows, m).contains(QStringLiteral("neutral")));
+        m.fearGreed = 88.0;
+        QVERIFY(buildDecisionEvidence(rows, m).contains(QStringLiteral("greed")));
+        QVERIFY(buildDecisionEvidence({}, m).contains(QStringLiteral("HOLD")));
+
+        // The rating wording is one shared table — the ranked list, the signals panel
+        // and the prompt must read a score identically.
+        QCOMPARE(webRatingWord(0.9), QStringLiteral("Strong Buy"));
+        QCOMPARE(webRatingWord(0.2), QStringLiteral("Buy"));
+        QCOMPARE(webRatingWord(0.0), QStringLiteral("Neutral"));
+        QCOMPARE(webRatingWord(-0.2), QStringLiteral("Sell"));
+        QCOMPARE(webRatingWord(-0.9), QStringLiteral("Strong Sell"));
+
+        // A rating with no timeframe at all contributes nothing rather than a NaN.
+        const WebRating empty;
+        QVERIFY(!empty.valid());
+        QVERIFY(std::isnan(empty.consensus()));
+        MarketSnapshot blank = m;
+        blank.ratingBySymbol.clear();
+        static_cast<void>(blank.ratingBySymbol.insert(QStringLiteral("UP"), empty));
+        QVERIFY(!rowFor(computeDecisionRows(blank), QStringLiteral("UP")).haveRating);
+    }
+
     //! @tstid TS-DEC-006 @design DES-DOM-DEC
     // @relation(REQ-F-022, scope=function)
     void TS_DEC_006_yahooIntradaySource()

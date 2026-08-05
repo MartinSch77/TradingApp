@@ -27,6 +27,7 @@ function(tradingapp_add_test name)
 endfunction()
 
 # --- unit tests (domain layer only) ----------------------------------------
+tradingapp_add_test(tst_models tst_models.cpp)
 tradingapp_add_test(tst_indicators tst_indicators.cpp)
 tradingapp_add_test(tst_forecasting tst_forecasting.cpp)
 tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)

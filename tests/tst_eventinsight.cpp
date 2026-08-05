@@ -38,6 +38,64 @@ private slots:
         QVERIFY(!about.isEmpty());
     }
 
+    //! @tstid TS-EVT-004 @design DES-DOM-EVT
+    // @relation(REQ-F-023, scope=function)
+    void TS_EVT_004_everyEventFamilyExplainsItselfAndPicksASide()
+    {
+        // The plain-language explainer is what a reader sees INSTEAD of a title they
+        // may not know ("PPI m/m"), so every family it claims to cover has to answer
+        // with its own text rather than the generic fallback.
+        const auto about = [](const QString &title) {
+            EconomicEvent e;
+            e.title = title;
+            return eventAbout(e, QStringLiteral("SPX500"));
+        };
+        QVERIFY(about(QStringLiteral("FOMC Rate Decision")).contains(QStringLiteral("rates")));
+        QVERIFY(about(QStringLiteral("Core PPI y/y")).contains(QStringLiteral("inflation")));
+        QVERIFY(about(QStringLiteral("Unemployment Rate")).contains(QStringLiteral("jobless")));
+        QVERIFY(about(QStringLiteral("Nonfarm Payrolls")).contains(QStringLiteral("Jobs")));
+        QVERIFY(about(QStringLiteral("GDP q/q")).contains(QStringLiteral("Gross Domestic")));
+        QVERIFY(about(QStringLiteral("Retail Sales m/m")).contains(QStringLiteral("consumers")));
+        QVERIFY(about(QStringLiteral("ISM Services PMI")).contains(QStringLiteral("50")));
+        QVERIFY(about(QStringLiteral("Consumer Confidence")).contains(QStringLiteral("optimistic")));
+        // …and an unknown release says so honestly, naming the instrument it may move.
+        const QString unknown = about(QStringLiteral("Wholesale Inventories"));
+        QVERIFY(unknown.contains(QStringLiteral("SPX500")));
+        QVERIFY(unknown.contains(QStringLiteral("surprise")));
+
+        // The direction each family implies, from the same forecast-versus-previous
+        // comparison: hotter inflation is bearish, more unemployment is bearish,
+        // stronger growth is bullish — and an unchanged forecast has no side at all.
+        const auto sideOf = [](const QString &title, const QString &forecast,
+                               const QString &previous) {
+            EconomicEvent e;
+            e.title = title;
+            e.impact = QStringLiteral("High");
+            e.forecast = forecast;
+            e.previous = previous;
+            e.when = QDateTime::currentDateTime().addSecs(3600);
+            return proposeActivity(e);
+        };
+        QCOMPARE(sideOf(QStringLiteral("Unemployment Rate"), QStringLiteral("4.5%"),
+                        QStringLiteral("4.1%")).dir, -1);
+        QCOMPARE(sideOf(QStringLiteral("Unemployment Rate"), QStringLiteral("3.8%"),
+                        QStringLiteral("4.1%")).dir, 1);
+        QCOMPARE(sideOf(QStringLiteral("Retail Sales m/m"), QStringLiteral("1.2%"),
+                        QStringLiteral("0.4%")).dir, 1);
+        QCOMPARE(sideOf(QStringLiteral("CPI m/m"), QStringLiteral("0.2%"),
+                        QStringLiteral("0.5%")).dir, 1);      // cooling inflation: risk-on
+        const EventProposal steady = sideOf(QStringLiteral("CPI m/m"), QStringLiteral("0.3%"),
+                                            QStringLiteral("0.3%"));
+        QCOMPARE(steady.dir, 0);
+        QVERIFY(steady.rationale.contains(QStringLiteral("steady")));
+        // A family the direction rules do not cover still warns about the swings
+        // rather than inventing a side.
+        const EventProposal odd = sideOf(QStringLiteral("Wholesale Inventories"),
+                                         QStringLiteral("0.9%"), QStringLiteral("0.1%"));
+        QCOMPARE(odd.dir, 0);
+        QVERIFY(odd.rationale.contains(QStringLiteral("swings")));
+    }
+
     //! @tstid TS-EVT-003 @design DES-DOM-EVT
     // @relation(REQ-F-023, scope=function)
     void TS_EVT_003_activityProposal()

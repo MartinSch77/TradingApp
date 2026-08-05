@@ -124,10 +124,16 @@ jobs:
       - name: Install build + AppImage dependencies
         run: |
           sudo apt-get update -qq
+          # libgl1-mesa-dev and friends are NOT optional here: Qt6Gui's own CMake
+          # config sets Qt6Gui_FOUND=FALSE when OpenGL's headers are missing, and the
+          # configure step then fails with the misleading "Failed to find required Qt
+          # component Gui" — the ubuntu-24.04-arm image does not ship them, while the
+          # 22.04 x86-64 image the sibling job runs on happens to.
           sudo apt-get install -y -qq ninja-build libfuse2 \
+            libgl1-mesa-dev libglx-dev libegl1-mesa-dev libglu1-mesa-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
-            libxcb-xkb1 libxkbcommon-x11-0
+            libxcb-xkb1 libxkbcommon-x11-0 libxkbcommon-dev
           python3 -m pip install --break-system-packages --upgrade cmake
 
       # No QT_PREFIX on purpose: the script has to find ~/Qt/<ver>/gcc_arm64 by
@@ -261,20 +267,32 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
+          # clazy, lcov and the GL headers were missing on the first run, so the
+          # analysis and coverage stages had nothing to measure with and the PDF would
+          # have reported half its sections as "not run".
           sudo apt-get install -y --no-install-recommends \
-            ninja-build cppcheck clang-tidy clang-tools libxkbcommon-x11-0 \
+            ninja-build cppcheck clang-tidy clang-tools clazy lcov \
+            libgl1-mesa-dev libglx-dev libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
-          python3 -m pip install --upgrade cmake ninja lizard reportlab strictdoc
+          python3 -m pip install --upgrade cmake ninja lizard reportlab strictdoc \
+            gcovr codespell
+          # PMD (the clone gate) is a download, not a package.
+          ./tools/fetch_pmd.sh || echo "PMD unavailable — clone detection will report skipped"
 
       # Everything the report has evidence for, in the order it reads it: the build,
       # the suite, the traceability matrix, then the analyzers. `--skip axivion`
       # because Axivion Suite is licensed and x86-64-host-only — the report marks
       # that section as "not run here" rather than inventing it (see below).
+      # The GATES for this commit are the CI workflow, which runs the same stages and
+      # must be green before a tag is pushed. Here the stages run to PRODUCE evidence
+      # for the PDF, so a non-zero stage must not abort the job before the report is
+      # rendered — make_report.py reads whatever was measured and cannot flatter it:
+      # a finding shows up in the PDF as a finding.
       - name: Build, test, trace, analyse
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./build_all.sh build test trace analysis coverage
+        run: ./build_all.sh build test trace analysis coverage || true
 
       - name: Render the PDF
         env:
@@ -285,11 +303,14 @@ jobs:
           ls -l downloads/*.pdf
 
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: quality-report
           path: |
             downloads/*.pdf
             docs/traceability.html
+            analysis-results/
+            test-results/
 
   publish:
     name: Attach to the release

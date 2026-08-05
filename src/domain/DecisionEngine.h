@@ -28,8 +28,8 @@ struct MarketSnapshot {
     // Independent Yahoo Finance intraday series (1-minute closes, session so
     // far) per instrument — an additional source for the composite.
     QHash<QString, QList<double>> intradayBySymbol;
-    // The reference series that are not instruments: ^VIX, ^VXN, ^TNX and the Nasdaq
-    // heavyweights (REQ-F-035), keyed by Yahoo ticker.
+    // The reference series that are not instruments: ^VIX, ^VXN, ^TNX and the top-ten
+    // constituents of the Nasdaq-100 and the S&P 500 (REQ-F-035), keyed by Yahoo ticker.
     QHash<QString, QList<double>> referenceSeries;
 };
 

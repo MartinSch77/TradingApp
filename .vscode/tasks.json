@@ -1,0 +1,122 @@
+{
+    // SHARED task definitions — the pipeline's entry points, so a contributor never has
+    // to remember which script does what. Each task names the .sh and its .ps1
+    // counterpart, because both platforms are verified and must stay in lockstep.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "detail": "./build_all.sh build — configure + compile with warnings as errors",
+            "type": "shell",
+            "command": "./build_all.sh build",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\build_all.ps1 build"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "test",
+            "detail": "tools/run_tests.sh build — the suite with JUnit output in test-results/",
+            "type": "shell",
+            "command": "tools/run_tests.sh build",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\tools\\run_tests.ps1 build"
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "trace",
+            "detail": "python3 tools/trace_report.py — REQ/DES/TS traceability; fails on hard gaps",
+            "type": "shell",
+            "command": "python3 tools/trace_report.py",
+            "windows": {
+                "command": "python tools\\trace_report.py"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "static analysis",
+            "detail": "tools/static_analysis.sh build — cppcheck, clang-tidy, CSA, clazy, fanalyzer, lizard, CPD, codespell",
+            "type": "shell",
+            "command": "tools/static_analysis.sh build",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\tools\\static_analysis.ps1 build"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "coverage",
+            "detail": "tools/coverage.sh auto — gcov/llvm-cov, plus MC/DC and Coco when available",
+            "type": "shell",
+            "command": "tools/coverage.sh auto",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\tools\\coverage.ps1 auto"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "objectName check",
+            "detail": "tools/check_object_names.py — every addressable widget keeps a stable name (REQ-N-007)",
+            "type": "shell",
+            "command": "python3 tools/check_object_names.py --fix-hint",
+            "windows": {
+                "command": "python tools\\check_object_names.py --fix-hint"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Squish GUI suite",
+            "detail": "tools/squish_run.sh — forced SIMULATION; exits 3 (skipped) without a licence",
+            "type": "shell",
+            "command": "tools/squish_run.sh build",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\tools\\squish_run.ps1 build"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "quality report (PDF)",
+            "detail": "tools/make_report.py — the whole run in one PDF under downloads/",
+            "type": "shell",
+            "command": "python3 tools/make_report.py",
+            "windows": {
+                "command": "python tools\\make_report.py"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Axivion analysis",
+            "detail": "axivion/start_analysis.sh — MISRA C++ 2023; ONE run at a time (flock), x86-64 only",
+            "type": "shell",
+            "command": "axivion/start_analysis.sh",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\axivion\\start_analysis.ps1"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "everything (build_all)",
+            "detail": "./build_all.sh — every stage including Axivion and the report",
+            "type": "shell",
+            "command": "./build_all.sh",
+            "windows": {
+                "command": "pwsh -NoProfile -File .\\build_all.ps1"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        }
+    ]
+}

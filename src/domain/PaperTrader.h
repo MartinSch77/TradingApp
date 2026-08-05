@@ -865,7 +865,7 @@ struct LiveReadiness {
 class PaperBook
 {
 public:
-    explicit PaperBook(BotConfig cfg = {});
+    explicit PaperBook(const BotConfig &cfg = {});
 
     // Back to the starting capital, no positions, no history.
     void reset();

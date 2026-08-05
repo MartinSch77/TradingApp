@@ -10,14 +10,42 @@ namespace trading {
 
 namespace {
 
-// The eight names that carry most of the Nasdaq-100's weight. A fixed list is
-// deliberate: it documents what the participation read covers, and it changes on the
-// order of years rather than of scans.
-QStringList heavyweightNames()
+// The ten names that carry most of the Nasdaq-100's weight, and the ten that carry
+// most of the S&P 500's. Two lists rather than one shared list, because the tail is
+// where the two indices actually differ: Netflix and Costco move the Nasdaq and
+// barely register in the S&P's weighting, while Berkshire and JPMorgan move the S&P
+// and are not in the Nasdaq-100 at all. Reading the wrong tail is reading a
+// different index.
+//
+// Fixed lists are deliberate: they document exactly what the participation read
+// covers, and index weightings change on the order of years, not of scans. The eight
+// shared names at the top are shared because both indices really are carried by the
+// same megacaps — that overlap is the reason a heavyweight read says something about
+// both at once.
+QStringList nasdaqHeavyweightNames()
 {
-    return {QStringLiteral("MSFT"), QStringLiteral("NVDA"), QStringLiteral("AAPL"),
-            QStringLiteral("AMZN"), QStringLiteral("GOOGL"), QStringLiteral("META"),
-            QStringLiteral("AVGO"), QStringLiteral("TSLA")};
+    return {QStringLiteral("NVDA"),  QStringLiteral("MSFT"), QStringLiteral("AAPL"),
+            QStringLiteral("AMZN"),  QStringLiteral("AVGO"), QStringLiteral("META"),
+            QStringLiteral("GOOGL"), QStringLiteral("TSLA"), QStringLiteral("NFLX"),
+            QStringLiteral("COST")};
+}
+
+QStringList spHeavyweightNames()
+{
+    // BRK-B is the Yahoo spelling of Berkshire Hathaway class B (BRK.B elsewhere).
+    return {QStringLiteral("NVDA"),  QStringLiteral("MSFT"), QStringLiteral("AAPL"),
+            QStringLiteral("AMZN"),  QStringLiteral("META"), QStringLiteral("AVGO"),
+            QStringLiteral("GOOGL"), QStringLiteral("TSLA"), QStringLiteral("BRK-B"),
+            QStringLiteral("JPM")};
+}
+
+// Which list applies to a symbol. A Nasdaq instrument is read by the Nasdaq-100
+// heavyweights; everything else — the S&P instruments, and any other symbol that
+// borrows the broad-market read — by the S&P 500's.
+bool isNasdaqSymbol(const QString &symbol)
+{
+    return symbol.startsWith(QStringLiteral("NSDQ"), Qt::CaseInsensitive)
+        || symbol.startsWith(QStringLiteral("NQ"), Qt::CaseInsensitive);
 }
 
 // The two futures the cash indices follow, as this app's own instrument symbols
@@ -122,17 +150,26 @@ Read yieldRead(const QHash<QString, QList<double>> &series)
 // sense — that needs per-constituent data this app does not fetch — but it answers
 // the question breadth is asked for: is the index carried by everything, or by one
 // or two names?
-Read participationRead(const QHash<QString, QList<double>> &series)
+Read participationRead(const QString &symbol, const QHash<QString, QList<double>> &series)
 {
     Read out;
-    const QPair<qint32, qint32> up = upCount(series, heavyweightNames());
-    if (up.second < 4) {
-        return out;   // fewer than half the names read is not a participation read
+    const QStringList names = indexHeavyweights(symbol);
+    const QPair<qint32, qint32> up = upCount(series, names);
+    // Fewer than half the names readable is not a participation read — with two of ten
+    // fetched, "both up" says nothing about whether the index is being carried.
+    if (up.second < static_cast<qint32>(names.size() / 2)) {
+        return out;
     }
     out.known = true;
     const double share = static_cast<double>(up.first) / static_cast<double>(up.second);
+    // Scale-free thresholds: roughly two thirds up is broad participation, roughly two
+    // thirds down is broad distribution, anything between is a split field.
     out.dir = (share >= 0.625) ? 1 : ((share <= 0.375) ? -1 : 0);
-    out.detail = QStringLiteral("%1 of %2 heavyweights up").arg(up.first).arg(up.second);
+    out.detail = QStringLiteral("%1 of %2 %3 heavyweights up")
+                     .arg(up.first)
+                     .arg(up.second)
+                     .arg(isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100")
+                                                 : QStringLiteral("S&P 500"));
     return out;
 }
 
@@ -160,13 +197,29 @@ Read structureRead(const QList<double> &ownSeries)
 
 QStringList nasdaqHeavyweights()
 {
-    return heavyweightNames();
+    return nasdaqHeavyweightNames();
+}
+
+QStringList spHeavyweights()
+{
+    return spHeavyweightNames();
+}
+
+QStringList indexHeavyweights(const QString &symbol)
+{
+    return isNasdaqSymbol(symbol) ? nasdaqHeavyweightNames() : spHeavyweightNames();
 }
 
 QStringList referenceTickers()
 {
     QStringList out{QStringLiteral("^VIX"), QStringLiteral("^VXN"), QStringLiteral("^TNX")};
-    out += nasdaqHeavyweights();
+    // The union of both heavyweight lists, in a stable order and without duplicates:
+    // the sweep fetches every name once, and each index's read picks its own subset.
+    for (const QString &name : nasdaqHeavyweightNames() + spHeavyweightNames()) {
+        if (!out.contains(name)) {
+            out.append(name);
+        }
+    }
     return out;
 }
 
@@ -177,7 +230,7 @@ IndexReads indexReads(const QString &symbol, const QHash<QString, QList<double>>
     out.futuresLead = futuresLeadRead(referenceSeries);
     out.volatility = volatilityRead(symbol, referenceSeries);
     out.yields = yieldRead(referenceSeries);
-    out.participation = participationRead(referenceSeries);
+    out.participation = participationRead(symbol, referenceSeries);
     out.structure = structureRead(ownSeries);
     return out;
 }

@@ -364,6 +364,23 @@ function Invoke-CocoCoverage {
     & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
         '--select=.*' "--csv-excel=$out\summary.csv" --coverage-mcdc *> $null
 
+    # Every level the merged database can answer, on the console. `--stat` is the
+    # switch that prints a number (`--text=` writes a 0-byte file whatever sections
+    # it is given — measured on 7.2.0), and the four levels are the reason Coco is
+    # here: gcov reports lines, and a covered line can still hide an untested
+    # condition combination.
+    foreach ($level in @(
+            @{ Name = 'statement'; Switch = '--coverage-statement-block' },
+            @{ Name = 'decision'; Switch = '--coverage-decision' },
+            @{ Name = 'condition'; Switch = '--coverage-condition' },
+            @{ Name = 'mcdc'; Switch = '--coverage-mcdc' })) {
+        $stat = & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
+            '--select=.*' $level.Switch --stat 2>$null
+        $value = ($stat -join '').Trim()
+        if (-not $value) { $value = 'unavailable' }
+        Write-Host ('  {0,-10} {1}' -f $level.Name, $value)
+    }
+
     Write-Host "imported $imported execution reports"
     Write-Host "HTML: $out\index.html   (open merged.csmes in coveragebrowser for MC/DC drill-down)"
     return $true

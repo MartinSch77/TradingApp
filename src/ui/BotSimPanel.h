@@ -226,7 +226,7 @@ private:
     // state at the moment it opens, so a fresh proposal on newer rows is sound.)
     QList<trading::AiProposal> m_proposals;
     QStringList m_askedSymbols;             // what the last prompt actually listed
-    // The reference series (^VIX / ^VXN / ^TNX / heavyweights) the confluence read
+    // The reference series (^VIX / ^VXN / ^TNX / per-index heavyweights) the confluence read
     // needs, handed over by the window that fetches them.
     QHash<QString, QList<double>> m_referenceSeries;
     QFutureWatcher<trading::TrainResult> m_training;

@@ -465,8 +465,10 @@ void MarketFeeds::fetchReferenceSeries()
 {
     // The same chart endpoint the instrument sweep uses, over tickers that are not
     // instruments: expected volatility, the yield that moves growth shares, and the
-    // eight companies that ARE most of the Nasdaq-100 (REQ-F-035). Ten requests, and
-    // each one that fails simply leaves its read absent rather than guessed.
+    // companies that ARE most of the Nasdaq-100 and the S&P 500 (REQ-F-035). Fifteen
+    // requests — the union of the two top-ten lists, which overlap in eight megacaps,
+    // so nothing is fetched twice — and each one that fails simply leaves its read
+    // absent rather than guessed.
     for (const QString &ticker : trading::referenceTickers()) {
         QNetworkRequest req(QUrl(feedUrl(
             QStringLiteral("https://query1.finance.yahoo.com"),

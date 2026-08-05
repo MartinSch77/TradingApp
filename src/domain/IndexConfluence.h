@@ -29,10 +29,17 @@
 namespace trading {
 
 // The Yahoo tickers the reference sweep fetches, in one list: ^VIX, ^VXN, ^TNX and
-// the eight companies that make up most of the Nasdaq-100 by weight.
+// the union of the two heavyweight lists below (15 tickers — the lists share eight
+// megacaps, which is itself why a heavyweight read says something about both indices).
 [[nodiscard]] QStringList referenceTickers();
-// The heavyweight subset of that list.
+// The ten names that carry most of each index by weight. Separate lists on purpose:
+// the indices agree at the top and differ in the tail (NFLX/COST move the Nasdaq,
+// BRK-B/JPM move the S&P), so reading the wrong tail reads a different index.
 [[nodiscard]] QStringList nasdaqHeavyweights();
+[[nodiscard]] QStringList spHeavyweights();
+// The list that applies to `symbol`: the Nasdaq's for an NSDQ/NQ instrument, the
+// S&P's for everything else (any other symbol borrows the broad-market read).
+[[nodiscard]] QStringList indexHeavyweights(const QString &symbol);
 
 // One read, and whether it was measurable at all.
 struct Read {
@@ -47,13 +54,14 @@ struct IndexReads {
     Read futuresLead;      // Nasdaq future vs S&P future this session
     Read volatility;       // the instrument's own volatility index, rising or falling
     Read yields;           // the US 10-year, rising (headwind) or falling (tailwind)
-    Read participation;    // how many heavyweights are up on the session
+    Read participation;    // how many of THAT index's heavyweights are up on the session
     Read structure;        // where price sits against its own opening range
 };
 
 // `series` is keyed by reference ticker (as fetched) plus the app's own instrument
-// series for the structure read. `symbol` selects which volatility index applies:
-// NSDQ100 is judged by ^VXN, everything else by ^VIX.
+// series for the structure read. `symbol` selects both index-specific reads: NSDQ100
+// is judged by ^VXN and the Nasdaq-100 heavyweights, everything else by ^VIX and the
+// S&P 500's.
 [[nodiscard]] IndexReads indexReads(const QString &symbol,
                                     const QHash<QString, QList<double>> &referenceSeries,
                                     const QList<double> &ownSeries);

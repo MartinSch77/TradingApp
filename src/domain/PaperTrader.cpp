@@ -1601,7 +1601,7 @@ LiveReadiness paperLiveReadiness(const PaperPerformance &perf, const LiveGateCon
     return out;
 }
 
-PaperBook::PaperBook(BotConfig cfg)
+PaperBook::PaperBook(const BotConfig &cfg)
     : m_cfg(cfg)
     , m_cash(cfg.startEquity)
 {

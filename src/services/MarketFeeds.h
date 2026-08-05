@@ -56,9 +56,10 @@ public:
     void fetchIntradaySeries();
     // The REFERENCE series that are not tradable instruments but say what the index
     // instruments are doing: the two volatility indices (^VIX, ^VXN), the US 10-year
-    // yield (^TNX) and the Nasdaq heavyweights whose participation is the closest
-    // stand-in for breadth this app can fetch (REQ-F-035). Results arrive per ticker
-    // via referenceSeries.
+    // yield (^TNX) and the top-ten constituents of BOTH indices, whose participation is
+    // the closest stand-in for breadth this app can fetch (REQ-F-035). The two lists
+    // share eight megacaps, so the union is 15 tickers, and each index's read picks its
+    // own ten. Results arrive per ticker via referenceSeries.
     void fetchReferenceSeries();
 
 signals:

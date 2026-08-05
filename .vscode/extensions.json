@@ -1,0 +1,17 @@
+{
+    // What this repository's toolchain actually needs in the editor. Nothing here is
+    // required to build — every stage runs from the scripts in tools/.
+    "recommendations": [
+        "ms-vscode.cpptools-extension-pack",
+        "ms-python.python",
+        "ms-vscode.powershell",
+        "redhat.vscode-yaml",
+        "streetsidesoftware.code-spell-checker",
+        "axivion.axivion-suite"
+    ],
+    "unwantedRecommendations": [
+        // clangd and cpptools fight over the same compile database, and clangd would
+        // run its own clang-tidy configuration next to the gated one.
+        "llvm-vs-code-extensions.vscode-clangd"
+    ]
+}

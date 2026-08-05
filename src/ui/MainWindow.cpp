@@ -1637,8 +1637,11 @@ void MainWindow::buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigF
                                 "futures that lead the cash market (Nasdaq vs S&P), expected "
                                 "volatility (^VXN for the Nasdaq, ^VIX otherwise, read by its "
                                 "direction rather than its level), the US 10-year yield (rising "
-                                "yields press on growth shares), how many of the eight Nasdaq "
-                                "heavyweights are up, and where price sits against its own "
+                                "yields press on growth shares), how many of the ten heavyweights "
+                                "of THIS index are up (the Nasdaq-100's top ten for a Nasdaq "
+                                "instrument, the S&P 500's otherwise — they share eight megacaps "
+                                "and differ exactly in the tail that separates the two indices), "
+                                "and where price sits against its own "
                                 "opening range. Agreement between independent things is evidence; "
                                 "another oscillator over the same closes is not. A read that "
                                 "cannot be computed counts as UNMEASURED, never as agreement. "
@@ -4123,7 +4126,8 @@ void MainWindow::updateConfluenceSignal()
                                                "</span>")
                                      .arg(trading::ui::greyHex()));
         m_sigConfluence->setToolTip(QStringLiteral("Waiting for the reference series (^VIX, ^VXN, "
-                                                  "^TNX and the Nasdaq heavyweights)."));
+                                                  "^TNX and the index's top-ten "
+                                                  "constituents)."));
         return;
     }
     const QString colour = (score.met >= 4) ? QStringLiteral("#25b563")

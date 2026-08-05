@@ -188,14 +188,46 @@ coco_build() {
     cmake --build "$build" -j"$JOBS"
 }
 
-# Run one instrumented test and import its execution report UNDER ITS OWN NAME:
-# the -t name is what lets cmreport attribute coverage per test case, which is the
-# whole point of the component report.
+# Run one instrumented test and import its execution report UNDER ITS OWN NAME: the
+# -t name is what lets cmreport attribute coverage per test case, which is the whole
+# point of the component report.
+#
+# VALIDATED on the first licensed run (2026-08-05, Coco Full Commercial): an
+# instrumented binary writes <name>.csexe into its WORKING DIRECTORY, not next to the
+# executable — the version of this function that assumed otherwise failed with
+# "Cannot open CSExe file tst_aiadvisor.csexe for reading". Running each test from its
+# own directory puts the report where the .csmes is and keeps the repository root
+# clean.
 coco_run_one() {
     local exe="$1"
-    rm -f "$exe.csexe"
-    QT_QPA_PLATFORM=offscreen "$exe" >/dev/null 2>&1 || true
-    "$COCO_DIR/bin/cmcsexeimport" -m "$exe.csmes" -e "$exe.csexe" -t "$(basename "$exe")"
+    local dir
+    dir="$(dirname "$exe")"
+    local name
+    name="$(basename "$exe")"
+    rm -f "$dir/$name.csexe"
+    (cd "$dir" && QT_QPA_PLATFORM=offscreen "./$name" >/dev/null 2>&1) || true
+    if [ ! -f "$dir/$name.csexe" ]; then
+        echo "note: $name produced no execution report — skipped in the merge"
+        return 0
+    fi
+    "$COCO_DIR/bin/cmcsexeimport" -m "$dir/$name.csmes" -e "$dir/$name.csexe" -t "$name"
+}
+
+# Every coverage level the merged database can answer, on the standard output.
+#
+# `--stat` is how cmreport prints a number to the console; `--text=` writes a 0-byte
+# file no matter which --section values it is given (measured on 7.2.0), so it is not
+# used. The four levels are the reason Coco is in this pipeline at all: gcov reports
+# lines, and a line-covered decision can still have untested condition combinations.
+coco_stat_levels() {
+    local csmes="$1"
+    local label value
+    for label in statement:--coverage-statement-block decision:--coverage-decision \
+                 condition:--coverage-condition mcdc:--coverage-mcdc; do
+        value="$("$COCO_DIR/bin/cmreport" -m "$csmes" "${label#*:}" --stat 2>/dev/null |
+                 tr -d ' \n')"
+        printf '  %-10s %s\n' "${label%%:*}" "${value:-unavailable}"
+    done
 }
 
 # CocoAI turns an existing coverage database into suggestions for the tests that
@@ -271,21 +303,25 @@ run_coco_components() {
         exit 1
     fi
     "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD"/tests/tst_*.csmes
-    # Function-level HTML plus a CSV that can be diffed between runs. --csv is the
-    # switch most likely to differ by Coco version; the HTML report carries the
-    # function table either way.
-    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --html="$OUT"
-    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --csv="$OUT/functions.csv" || \
-        echo "note: cmreport --csv not accepted by this version — the HTML report still has the function table"
+    # Function-level HTML plus a CSV that can be diffed between runs. Switches
+    # validated on the first licensed run: --html takes a FILE, --csv-excel is the CSV
+    # switch (there is no plain --csv), and --junit lets the per-test attribution reach
+    # Qt Test Center alongside the unit suite's own JUnit XML.
+    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" \
+        --title="TradingApp — component call coverage, per test case" \
+        --html="$OUT/index.html" \
+        --csv-excel="$OUT/functions.csv" \
+        --junit="$ROOT/test-results/coco-components.xml"
     echo "component call coverage over $ran component tests"
+    coco_stat_levels "$OUT/merged.csmes"
     echo "HTML: $OUT/index.html   (per-test attribution: open $OUT/merged.csmes in coveragebrowser and group by test case)"
 }
 
 run_coco() {
-    # Squish Coco measures statement/decision/condition and true MC/DC and
-    # feeds CocoAI test-case suggestions. NOTE: written per the Coco manual
-    # but not yet runnable here (license expired at the time of writing) —
-    # validate the cmcsexeimport/cmreport switches on the first licensed run.
+    # Squish Coco measures statement/decision/condition and true MC/DC and feeds
+    # CocoAI test-case suggestions. Every switch below has been run against a licensed
+    # Coco (7.2.0, Full Commercial) — see coco_run_one and coco_stat_levels for the two
+    # things the manual does not say out loud.
     if ! coco_usable; then
         # Exit 3 = "stage skipped" (see build_all.sh). Coco is license-bound and
         # ./setup.sh cannot install it, so its absence must not fail the run.
@@ -311,7 +347,13 @@ run_coco() {
         coco_run_one "$exe"
     done
     "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD"/tests/tst_*.csmes
-    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" --html="$OUT"
+    # --html takes a FILE name, not a directory (validated against cmreport --help on
+    # the first licensed run — passing a directory silently produced nothing).
+    "$COCO_DIR/bin/cmreport" -m "$OUT/merged.csmes" \
+        --title="TradingApp — statement/decision/condition + MC/DC" \
+        --html="$OUT/index.html" \
+        --csv-excel="$OUT/functions.csv"
+    coco_stat_levels "$OUT/merged.csmes"
     echo "HTML: $OUT/index.html   (open $OUT/merged.csmes in coveragebrowser for MC/DC drill-down)"
 }
 

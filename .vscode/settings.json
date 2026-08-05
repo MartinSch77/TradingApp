@@ -1,0 +1,65 @@
+{
+    // SHARED workspace settings — committed, and deliberately free of anything
+    // machine-specific (this repository forbids absolute paths in committed files).
+    // Personal settings belong in your USER settings, which VS Code merges on top of
+    // this file; everything else under .vscode/ is git-ignored for that reason.
+    "files.encoding": "utf8",
+    "files.eol": "\n",
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true,
+    "files.associations": {
+        "*.sdoc": "yaml",
+        "*.supp": "properties",
+        "CMakeLists.txt": "cmake"
+    },
+    // PowerShell counterparts must keep their UTF-8 BOM and CRLF endings, or
+    // PowerShell 5.1 reads them as ANSI and nothing parses (docs/windows.md).
+    // .gitattributes enforces it in git; these two keep the editor from undoing it.
+    "[powershell]": {
+        "files.encoding": "utf8bom",
+        "files.eol": "\r\n"
+    },
+    "C_Cpp.default.cppStandard": "c++23",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    // clang-tidy runs as its own pipeline stage with the repository .clang-tidy; a
+    // second, differently-configured copy inside the editor only produces findings
+    // the gate does not have.
+    "C_Cpp.codeAnalysis.clangTidy.enabled": false,
+    "editor.formatOnSave": false,
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.rulers": [
+            100
+        ]
+    },
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureOnOpen": false,
+    "cmake.configureArgs": [
+        "-DTRADINGAPP_WARNINGS_AS_ERRORS=ON"
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/tools"
+    ],
+    // Local Axivion analysis for this project, and the mapping that ties a dashboard
+    // finding back to this checkout. Mappings for OTHER projects are per-machine —
+    // keep those in your user settings.
+    "axivion.localBuild": {
+        "TradingApp": {
+            "command": "${workspaceFolder}/axivion/start_analysis.sh"
+        }
+    },
+    "axivion.pathMappings": [
+        {
+            "analysisProject": "TradingApp",
+            "localPath": "${workspaceFolder}",
+            "analysisPath": ""
+        }
+    ],
+    "search.exclude": {
+        "**/build*/**": true,
+        "**/downloads/**": true,
+        "**/analysis-results/**": true,
+        "**/coverage/**": true,
+        "**/.axivion/**": true
+    }
+}

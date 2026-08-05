@@ -21,8 +21,13 @@ __pycache__/
 # aqtinstall writes this next to the working directory when setup installs Qt.
 aqtinstall.log
 
-# Editor / OS
-.vscode/
+# Editor / OS — the four SHARED VS Code files are committed, everything else in
+# .vscode/ is personal (window layout, per-machine paths, extension state).
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 .idea/
 *.swp
 .DS_Store

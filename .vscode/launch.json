@@ -1,0 +1,100 @@
+{
+    // SHARED debug configurations. They assume a Debug build in build/ (task "build").
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "TradingApp (simulation)",
+            "detail": "The app with TRADINGAPP_FORCE_SIMULATION=1 — no credentials, no order path, whatever apiKeyEtoro.json says. Use this one unless you are deliberately debugging a live path.",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/TradingApp",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "TRADINGAPP_FORCE_SIMULATION",
+                    "value": "1"
+                },
+                {
+                    "name": "QT_LOGGING_RULES",
+                    "value": "*.debug=true;qt.*.debug=false"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "pretty-print containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build"
+        },
+        {
+            "name": "TradingApp (as configured)",
+            "detail": "The app with this machine's real configuration. LIVE if apiKeyEtoro.json holds real:write keys — the double-press gate still applies, but do not step through an order path by accident.",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/TradingApp",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "pretty-print containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build"
+        },
+        {
+            "name": "one test (prompt for name)",
+            "detail": "Runs build/tests/tst_<name> under the debugger, offscreen like the suite does.",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/tests/tst_${input:testName}",
+            "args": [],
+            "cwd": "${workspaceFolder}/build/tests",
+            "environment": [
+                {
+                    "name": "QT_QPA_PLATFORM",
+                    "value": "offscreen"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "pretty-print containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build"
+        },
+        {
+            "name": "TradingApp — Windows (MSVC)",
+            "detail": "Same as the simulation configuration, for the MSVC build tree.",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/TradingApp.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "TRADINGAPP_FORCE_SIMULATION",
+                    "value": "1"
+                }
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testName",
+            "type": "promptString",
+            "description": "test name without the tst_ prefix (papertrader, botnet, indexconfluence, …)",
+            "default": "papertrader"
+        }
+    ]
+}

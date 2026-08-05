@@ -132,7 +132,8 @@ private slots:
     // that feed the recommendation reasoning shown on hover.
     void onInstrumentRatings(const QHash<QString, WebRating> &ratingBySymbol);
     void onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines);
-    // One reference ticker's session series (^VIX, ^VXN, ^TNX, a heavyweight).
+    // One reference ticker's session series (^VIX, ^VXN, ^TNX, or a heavyweight of
+    // either index).
     void connectInstrumentFeeds();
     void buildDecisionSourcesTable(QVBoxLayout *lay);
     void onReferenceSeries(const QString &ticker, const QList<double> &closes);
@@ -539,7 +540,7 @@ private:
     QHash<QString, WebRating> m_ratingBySymbol;         // latest web rating per instrument
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
     QHash<QString, QList<double>> m_intradayBySymbol;   // Yahoo 1-min session closes
-    QHash<QString, QList<double>> m_referenceSeries;    // ^VIX / ^VXN / ^TNX / heavyweights
+    QHash<QString, QList<double>> m_referenceSeries;    // ^VIX / ^VXN / ^TNX / heavyweights (both indices)
 
     // Decision window (separate, lazily built like the screener dialog).
     QPushButton *m_decisionButton = nullptr;   // opens the window, in the header

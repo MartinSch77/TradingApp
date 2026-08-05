@@ -1,5 +1,6 @@
 #include "domain/IndexConfluence.h"
 
+#include <QSet>
 #include <QTest>
 
 using namespace trading;
@@ -24,7 +25,7 @@ QList<double> sessionWith(double changePct, double start = 100.0)
 }
 
 // Every reference series present and pointing the same way: falling volatility,
-// falling yields, technology leading, all heavyweights up.
+// falling yields, technology leading, every heavyweight of BOTH indices up.
 QHash<QString, QList<double>> bullishReferences()
 {
     QHash<QString, QList<double>> out;
@@ -33,8 +34,10 @@ QHash<QString, QList<double>> bullishReferences()
     static_cast<void>(out.insert(QStringLiteral("^VIX"), sessionWith(-3.0, 16.0)));
     static_cast<void>(out.insert(QStringLiteral("^VXN"), sessionWith(-4.0, 20.0)));
     static_cast<void>(out.insert(QStringLiteral("^TNX"), sessionWith(-1.5, 42.0)));
-    for (const QString &name : nasdaqHeavyweights()) {
-        static_cast<void>(out.insert(name, sessionWith(1.2)));
+    for (const QString &name : referenceTickers()) {
+        if (!name.startsWith(QLatin1Char('^'))) {
+            static_cast<void>(out.insert(name, sessionWith(1.2)));
+        }
     }
     return out;
 }
@@ -51,16 +54,33 @@ private slots:
     void TS_CONF_001_theReferenceListIsWhatItClaimsToCover()
     {
         // The list IS the documentation of what the participation read covers, so it
-        // is worth pinning: the two volatility indices, the yield, and eight names.
+        // is worth pinning: the two volatility indices, the yield, and TEN heavyweights
+        // per index.
         const QStringList tickers = referenceTickers();
         QVERIFY(tickers.contains(QStringLiteral("^VIX")));
         QVERIFY(tickers.contains(QStringLiteral("^VXN")));
         QVERIFY(tickers.contains(QStringLiteral("^TNX")));
-        QCOMPARE(nasdaqHeavyweights().size(), 8);
-        for (const QString &name : nasdaqHeavyweights()) {
+        QCOMPARE(nasdaqHeavyweights().size(), 10);
+        QCOMPARE(spHeavyweights().size(), 10);
+        for (const QString &name : nasdaqHeavyweights() + spHeavyweights()) {
             QVERIFY2(tickers.contains(name), qPrintable(name));
         }
-        QCOMPARE(tickers.size(), 11);
+        // The two lists agree at the top and differ in the tail — which is the whole
+        // reason there are two of them. Netflix and Costco carry the Nasdaq; Berkshire
+        // and JPMorgan carry the S&P and are not in the Nasdaq-100 at all.
+        QVERIFY(nasdaqHeavyweights().contains(QStringLiteral("NFLX")));
+        QVERIFY(!spHeavyweights().contains(QStringLiteral("NFLX")));
+        QVERIFY(spHeavyweights().contains(QStringLiteral("JPM")));
+        QVERIFY(!nasdaqHeavyweights().contains(QStringLiteral("JPM")));
+        // A symbol picks its own list: NSDQ100 the Nasdaq's, everything else the S&P's.
+        QCOMPARE(indexHeavyweights(QStringLiteral("NSDQ100")), nasdaqHeavyweights());
+        QCOMPARE(indexHeavyweights(QStringLiteral("NSDQ100.24-7")), nasdaqHeavyweights());
+        QCOMPARE(indexHeavyweights(QStringLiteral("SPX500")), spHeavyweights());
+        QCOMPARE(indexHeavyweights(QStringLiteral("GOLD")), spHeavyweights());
+        // Three references plus the union of the lists, each ticker fetched ONCE: the
+        // eight shared megacaps must not be fetched twice (3 + 8 + 2 + 2).
+        QCOMPARE(tickers.size(), 15);
+        QCOMPARE(QSet<QString>(tickers.cbegin(), tickers.cend()).size(), tickers.size());
     }
 
     //! @tstid TS-CONF-002 @design DES-DOM-CONFLUENCE
@@ -93,17 +113,34 @@ private slots:
         QCOMPARE(indexReads(QStringLiteral("NSDQ100"), risingYield, sessionWith(0.8)).yields.dir,
                  -1);
 
-        // Participation: eight of eight up is support, none up is the opposite, and a
-        // split field is measured but neutral.
+        // Participation: ten of ten up is support, none up is the opposite, and a
+        // split field is measured but neutral. The read names WHICH index's ten it
+        // counted, because "7 of 10 up" means different things for the two lists.
         QVERIFY(reads.participation.known);
         QCOMPARE(reads.participation.dir, 1);
-        QVERIFY(reads.participation.detail.contains(QStringLiteral("8 of 8")));
+        QVERIFY(reads.participation.detail.contains(QStringLiteral("10 of 10")));
+        QVERIFY(reads.participation.detail.contains(QStringLiteral("Nasdaq-100")));
+        QVERIFY(indexReads(QStringLiteral("SPX500"), refs, sessionWith(0.8))
+                    .participation.detail.contains(QStringLiteral("S&P 500")));
         QHash<QString, QList<double>> mixed = refs;
         const QStringList heavies = nasdaqHeavyweights();
         for (qsizetype i = 0; i < heavies.size(); ++i) {
             static_cast<void>(mixed.insert(heavies.at(i), sessionWith((i % 2 == 0) ? 1.0 : -1.0)));
         }
         QCOMPARE(indexReads(QStringLiteral("NSDQ100"), mixed, sessionWith(0.8)).participation.dir,
+                 0);
+        // And the point of two lists: ONE set of series, two honest answers, because the
+        // tails differ. Two shared megacaps down plus the S&P's own tail down leaves the
+        // Nasdaq's ten broadly up (8 of 10) and the S&P's a split field (6 of 10).
+        QHash<QString, QList<double>> tails = refs;
+        const QStringList downNames{QStringLiteral("META"), QStringLiteral("TSLA"),
+                                    QStringLiteral("BRK-B"), QStringLiteral("JPM")};
+        for (const QString &down : downNames) {
+            static_cast<void>(tails.insert(down, sessionWith(-1.0)));
+        }
+        QCOMPARE(indexReads(QStringLiteral("NSDQ100"), tails, sessionWith(0.8)).participation.dir,
+                 1);
+        QCOMPARE(indexReads(QStringLiteral("SPX500"), tails, sessionWith(0.8)).participation.dir,
                  0);
 
         // Structure: where price sits against its own opening range.

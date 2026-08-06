@@ -437,6 +437,70 @@ private slots:
         const OllamaAdvisor bare(QStringLiteral("127.0.0.1:11434/"), QStringLiteral("m"));
         QCOMPARE(bare.host(), QStringLiteral("http://127.0.0.1:11434"));
     }
+    //! @tstid TS-OLLAMA-008 @design DES-SVC-OLLAMA
+    // @relation(REQ-F-030, scope=function)
+    void TS_OLLAMA_008_theProbeAndTheHostAcceptWhatARealSetupLooksLike()
+    {
+        // Two things decide whether this feature works on someone else's machine: the
+        // host string a user already has in their environment, and what the probe says
+        // when the answer is not what it hoped for. A wrong diagnosis here sends
+        // someone to fix the wrong thing.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/api/tags"))) {
+                // An unnamed entry among the real ones: dropped, not offered as a
+                // model called "".
+                return MockHttpServer::Response{
+                    200,
+                    R"({"models":[{"name":"qwen2.5:1.5b"},{"name":""},{"name":"llama3.2:latest"}]})",
+                    {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        {
+            OllamaAdvisor advisor(server.baseUrl(), QStringLiteral("qwen2.5:1.5b"));
+            QSignalSpy availability(&advisor, &OllamaAdvisor::availability);
+            advisor.checkAvailability();
+            QVERIFY(availability.wait(kWaitMs));
+            QVERIFY(availability.last().at(0).toBool());
+            const QStringList models = availability.last().at(2).toStringList();
+            QVERIFY(models.contains(QStringLiteral("qwen2.5:1.5b")));
+            QVERIFY(!models.contains(QString()));
+        }
+
+        // A daemon that answers but does not have the model: a DIFFERENT message from
+        // a daemon that is not there, because the remedy differs (pull vs serve).
+        {
+            OllamaAdvisor advisor(server.baseUrl(), QStringLiteral("nosuchmodel"));
+            QSignalSpy availability(&advisor, &OllamaAdvisor::availability);
+            advisor.checkAvailability();
+            QVERIFY(availability.wait(kWaitMs));
+            QVERIFY(!availability.last().at(0).toBool());
+            QVERIFY(availability.last().at(1).toString().contains(QStringLiteral("nosuchmodel")));
+        }
+        {
+            OllamaAdvisor advisor(QStringLiteral("http://127.0.0.1:1"),
+                                  QStringLiteral("qwen2.5:1.5b"));
+            QSignalSpy availability(&advisor, &OllamaAdvisor::availability);
+            advisor.checkAvailability();
+            QVERIFY(availability.wait(kWaitMs));
+            QVERIFY(!availability.last().at(0).toBool());
+            QVERIFY(availability.last().at(1).toString().contains(QStringLiteral("serve")));
+        }
+
+        // The host as Ollama's own OLLAMA_HOST is conventionally written — no scheme,
+        // and a trailing slash — must be accepted rather than turned into a bad URL.
+        {
+            const QUrl base(server.baseUrl());
+            const QString bare = QStringLiteral("%1:%2/").arg(base.host()).arg(base.port());
+            OllamaAdvisor advisor(bare, QStringLiteral("qwen2.5:1.5b"));
+            QSignalSpy availability(&advisor, &OllamaAdvisor::availability);
+            advisor.checkAvailability();
+            QVERIFY(availability.wait(kWaitMs));
+            QVERIFY(availability.last().at(0).toBool());
+        }
+    }
 };
 
 QTEST_MAIN(TestOllamaAdvisor)

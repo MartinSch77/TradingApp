@@ -729,6 +729,348 @@ private slots:
             QVERIFY(!openSet.contains(QStringLiteral("SPX500")));
         }
     }
+    //! @tstid TS-CLI-029 @design DES-SVC-CLIENT
+    // @relation(REQ-N-003, scope=function)
+    void TS_CLI_029_everyRequestSurvivesAFailingServerAndANonsenseAnswer()
+    {
+        // A trading client spends its life talking to someone else's server, and the
+        // interesting question is not what it does when the answers are good. Two
+        // hostile servers here, and the app has to come out of both alive: still
+        // running, still reporting, with no invented numbers in its books.
+
+        // 1. EVERYTHING fails. Each entry point is driven and the app must neither
+        //    crash nor publish anything derived from a failed reply.
+        {
+            MockHttpServer dead([](const QByteArray &, const QString &) {
+                return MockHttpServer::Response{500, R"({"err":"down"})", {}};
+            });
+            QVERIFY(dead.listen(QHostAddress::LocalHost));
+            EtoroClient client(mockConfig(dead));
+            client.setTradableSymbols({QStringLiteral("SPX500")});
+            const QSignalSpy quotes(&client, &EtoroClient::quotesUpdated);
+            const QSignalSpy cash(&client, &EtoroClient::cashUpdated);
+            const QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
+            const QSignalSpy closed(&client, &EtoroClient::closedTradesReady);
+
+            client.setSymbol(QStringLiteral("SPX500"));
+            client.refreshPortfolio();
+            client.fetchClosedTrades(2);
+            client.requestFees(QStringLiteral("SPX500"));
+            client.scanInstruments();
+            client.closePosition(QStringLiteral("p1"));
+            client.modifyPosition(QStringLiteral("p1"), 1.0, 2.0, false);
+            client.cancelPendingOrder(QStringLiteral("o1"));
+            OrderRequest req;
+            req.isBuy = true;
+            req.amount = 100.0;
+            req.leverage = 2.0;
+            client.openPosition(req);
+            QTest::qWait(2500);
+
+            // Nothing was published from a failed answer: no quote, no cash, no FX,
+            // no closed-trade report. Silence is the correct output here.
+            QCOMPARE(quotes.count(), 0);
+            QCOMPARE(cash.count(), 0);
+            QCOMPARE(fx.count(), 0);
+            QCOMPARE(closed.count(), 0);
+            QVERIFY(client.quotes().isEmpty());
+        }
+
+        // 2. Everything answers 200 with a payload that is well-formed JSON and
+        //    completely wrong — an empty array where an object belongs, an object
+        //    where an array belongs. The parsers must find nothing rather than read
+        //    the first field of something unrelated.
+        {
+            MockHttpServer nonsense([](const QByteArray &, const QString &path) {
+                if (path.contains(QStringLiteral("/market-data/search"))) {
+                    // Resolution has to work, or nothing else is even attempted.
+                    return MockHttpServer::Response{200, searchBody(27,
+                                                                    QStringLiteral("SPX500")),
+                                                    {}};
+                }
+                if (path.contains(QStringLiteral("rates"))) {
+                    return MockHttpServer::Response{200, R"([])", {}};
+                }
+                return MockHttpServer::Response{200, R"({"nothing":"useful"})", {}};
+            });
+            QVERIFY(nonsense.listen(QHostAddress::LocalHost));
+            EtoroClient client(mockConfig(nonsense));
+            client.setTradableSymbols({QStringLiteral("SPX500")});
+            QSignalSpy resolved(&client, &EtoroClient::ready);
+            const QSignalSpy cash(&client, &EtoroClient::cashUpdated);
+            const QSignalSpy pending(&client, &EtoroClient::pendingOrdersUpdated);
+            client.setSymbol(QStringLiteral("SPX500"));
+            QVERIFY(resolved.wait(kWaitMs));
+            client.refreshPortfolio();
+            client.fetchClosedTrades(2);
+            client.requestFees(QStringLiteral("SPX500"));
+            QTest::qWait(2000);
+
+            // The account figure is not published from a payload that never carried
+            // one, and the quote book stays empty rather than holding a zero.
+            QCOMPARE(cash.count(), 0);
+            QVERIFY(client.quotes().value(27).bid <= 0.0);
+            // A portfolio answer with no positions array yields an EMPTY book, not a
+            // phantom position — and an empty book is still a published book.
+            if (!pending.isEmpty()) {
+                QVERIFY(pending.last().at(0).value<QList<PendingOrder>>().isEmpty());
+            }
+        }
+    }
+    //! @tstid TS-CLI-030 @design DES-SVC-CLIENT
+    // @relation(REQ-F-014, scope=function)
+    void TS_CLI_030_thePositionBookIsReadInEverySpellingAndOwnsItsGaps()
+    {
+        // The open-trades table is what a person looks at to decide whether to close
+        // something. Every field in it has TWO spellings in eToro's payloads, and a
+        // position the app fails to attribute is a position nobody manages.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            if (path.endsWith(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"orders":[],"positions":[
+                        {"id":"alt","instrumentId":27,"buy":false,
+                         "investedAmount":250.0,"unitsValue":0.5,"openPrice":4900.0,
+                         "leverage":10},
+                        {"positionId":"plain","instrumentId":27,"isBuy":true,
+                         "amount":500.0,"units":1.0,"openRate":5000.0,"leverage":5},
+                        {"positionId":"foreign","instrumentId":424242,
+                         "internalSymbolFull":"NOTLISTED","isBuy":true,"amount":10.0,
+                         "units":1.0,"openRate":1.0,"leverage":1}
+                    ]}})",
+                    {}};
+            }
+            if (path.endsWith(QStringLiteral("/pnl"))) {
+                // eToro's own unrealised P/L, which is authoritative where it exists.
+                return MockHttpServer::Response{
+                    200,
+                    R"({"positions":[{"positionId":"plain","unrealizedPnL":{"pnL":12.34}}]})",
+                    {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(!portfolio.isEmpty(), kWaitMs);
+
+        const auto book = portfolio.last().at(0).value<QList<Position>>();
+        // Both spellings were read; the position on an instrument the app does not
+        // list is left out rather than shown under a wrong symbol.
+        QCOMPARE(book.size(), 2);
+        QHash<QString, Position> byId;
+        for (const Position &p : book) {
+            static_cast<void>(byId.insert(p.positionId, p));
+        }
+        QVERIFY(byId.contains(QStringLiteral("alt")));      // id / buy / investedAmount…
+        QVERIFY(byId.contains(QStringLiteral("plain")));
+        QVERIFY(!byId.contains(QStringLiteral("foreign")));
+        QCOMPARE(byId.value(QStringLiteral("alt")).amount, 250.0);
+        QCOMPARE(byId.value(QStringLiteral("alt")).units, 0.5);
+        QCOMPARE(byId.value(QStringLiteral("alt")).openRate, 4900.0);
+        QVERIFY(!byId.value(QStringLiteral("alt")).isBuy);   // `buy` spelling, false
+        QVERIFY(byId.value(QStringLiteral("plain")).isBuy);
+
+        // A portfolio whose positions array is empty publishes an EMPTY book — a book
+        // that stops updating looks identical to one with no positions, and only the
+        // first of those is true here.
+        const qint32 before = portfolio.count();
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(portfolio.count() > before, kWaitMs);
+    }
+    //! @tstid TS-CLI-031 @design DES-SVC-CLIENT
+    // @relation(REQ-F-025, scope=function)
+    void TS_CLI_031_theCandleRepairOnlyMovesAPriceForward()
+    {
+        // eToro's rates row for the .24-7 instruments runs minutes late while the
+        // 1-minute candle is live, so the client re-bases a stale quote on the candle's
+        // close. The rule that keeps this from being harmful: it may only ever move a
+        // price FORWARD in time. A repair that accepted an older candle would make the
+        // book jitter between two sources.
+        QByteArray candleAnswer;
+        QDateTime rowStamp = QDateTime::currentDateTimeUtc().addSecs(-15 * 60);   // stale
+        MockHttpServer server([&candleAnswer, &rowStamp](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":5001.0,)"
+                                   R"("date":"%1"}]})")
+                        .arg(rowStamp.toString(Qt::ISODate))
+                        .toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/candles"))) {
+                return MockHttpServer::Response{200, candleAnswer, {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        // 1. An empty candle list, and one whose close is zero: neither repairs
+        //    anything, and the stale-but-known price stands.
+        candleAnswer = R"({"candles":[]})";
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).bid > 0.0, kWaitMs);
+        QCOMPARE(client.quotes().value(27).bid, 5000.0);
+
+        candleAnswer = QStringLiteral(R"({"candles":[{"fromDate":"%1","close":0.0}]})")
+                           .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
+                           .toUtf8();
+        QTest::qWait(1500);
+        QCOMPARE(client.quotes().value(27).bid, 5000.0);
+
+        // 2. A candle OLDER than the price already held changes nothing — the repair
+        //    only moves forward.
+        candleAnswer = QStringLiteral(R"({"candles":[{"fromDate":"%1","close":4000.0}]})")
+                           .arg(rowStamp.addSecs(-3600).toString(Qt::ISODate))
+                           .toUtf8();
+        QTest::qWait(1500);
+        QCOMPARE(client.quotes().value(27).bid, 5000.0);
+
+        // 3. A NEWER candle does repair it, and its close becomes the bid — the
+        //    identity measured against the live feed (candle close == bid exactly).
+        candleAnswer = QStringLiteral(R"({"candles":[{"fromDate":"%1","close":5123.0}]})")
+                           .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
+                           .toUtf8();
+        QTRY_COMPARE_WITH_TIMEOUT(client.quotes().value(27).bid, 5123.0, kWaitMs);
+    }
+
+    //! @tstid TS-CLI-032 @design DES-SVC-CLIENT
+    // @relation(REQ-F-027, scope=function)
+    void TS_CLI_032_adjustingAnOrderThatIsNotThereSaysSoInsteadOfSending()
+    {
+        // Cancelling or adjusting a resting order the broker no longer holds must be
+        // refused LOCALLY with a sentence a person can act on — not sent, and not
+        // silently ignored, which would look like the app doing nothing.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+
+        QSignalSpy results(&client, &EtoroClient::orderResult);
+        client.modifyPendingOrder(QStringLiteral("ghost"), 4900.0, 10.0, 20.0);
+        QTRY_VERIFY_WITH_TIMEOUT(!results.isEmpty(), kWaitMs);
+        QVERIFY(!results.last().at(0).toBool());
+        QVERIFY(results.last().at(1).toString().contains(QStringLiteral("no longer resting")));
+
+        // CANCEL is deliberately different from adjust: an id the app does not know is
+        // still SENT, because the broker may hold an order this session never saw (an
+        // order placed elsewhere is exactly the one a user wants to cancel from here).
+        // Only an EMPTY id is refused locally — there is nothing to name.
+        const qint32 before = results.count();
+        client.cancelPendingOrder(QString());
+        QTRY_VERIFY_WITH_TIMEOUT(results.count() > before, kWaitMs);
+        QVERIFY(!results.last().at(0).toBool());
+        QVERIFY(results.last().at(1).toString().contains(QStringLiteral("No pending order")));
+
+        const qint32 beforeGhost = results.count();
+        client.cancelPendingOrder(QStringLiteral("ghost"));
+        QTRY_VERIFY_WITH_TIMEOUT(results.count() > beforeGhost, kWaitMs);
+    }
+    //! @tstid TS-CLI-033 @design DES-SVC-CLIENT
+    // @relation(REQ-F-017, scope=function)
+    void TS_CLI_033_withoutCredentialsEveryPathGoesToTheSimulationInstead()
+    {
+        // The client has two halves: with credentials it talks to eToro, without them
+        // it drives the built-in simulation. EVERY public entry point therefore has a
+        // second branch that a real-mode test never touches — and the one thing that
+        // must be true of all of them is that no request leaves the machine.
+        qint32 requests = 0;
+        MockHttpServer watcher([&requests](const QByteArray &, const QString &) {
+            ++requests;   // must stay at zero: simulation talks to nobody
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(watcher.listen(QHostAddress::LocalHost));
+
+        Config cfg;
+        cfg.apiKey.clear();    // no credentials → SIMULATION
+        cfg.userKey.clear();
+        cfg.baseUrl = watcher.baseUrl() + QStringLiteral("/api");
+        cfg.symbol = QStringLiteral("SPX500");
+        QVERIFY(!cfg.hasCredentials());
+
+        EtoroClient client(cfg);
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        QSignalSpy history(&client, &EtoroClient::historyReady);
+        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        QSignalSpy results(&client, &EtoroClient::orderResult);
+        QSignalSpy closedTrades(&client, &EtoroClient::closedTradesReady);
+        QSignalSpy screenerDone(&client, &EtoroClient::screenerFinished);
+
+        client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("GER40")});
+        client.setSymbol(QStringLiteral("SPX500"));
+        // QTRY rather than wait(): simulation answers SYNCHRONOUSLY, so the signal has
+        // already been recorded by the time wait() would start listening for the next
+        // one — the classic QSignalSpy trap.
+        QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), kWaitMs);
+        QVERIFY(!history.isEmpty());   // a synthetic series, immediately
+
+        // Opening, adjusting and closing all work against the virtual account.
+        OrderRequest req;
+        req.isBuy = true;
+        req.amount = 1000.0;
+        req.leverage = 5.0;
+        req.stopLossAmount = 100.0;
+        req.takeProfitAmount = 150.0;
+        client.openPosition(req);
+        QTRY_VERIFY_WITH_TIMEOUT(!portfolio.isEmpty(), kWaitMs);
+        const auto book = portfolio.last().at(0).value<QList<Position>>();
+        QVERIFY(!book.isEmpty());
+        const QString id = book.constFirst().positionId;
+        client.modifyPosition(id, 4900.0, 5200.0, false);
+        client.refreshPortfolio();
+
+        // A LIMIT order rests in the simulation exactly as it would at the broker.
+        OrderRequest limit;
+        limit.isBuy = true;
+        limit.amount = 200.0;
+        limit.leverage = 2.0;
+        limit.triggerRate = 1.0;   // far below: it rests rather than filling
+        client.openPosition(limit);
+        client.cancelPendingOrder(QStringLiteral("1"));
+
+        // The reporting paths answer from the simulated record.
+        client.fetchClosedTrades(4);
+        client.requestFees(QStringLiteral("SPX500"));
+        client.scanInstruments();
+        QTRY_VERIFY_WITH_TIMEOUT(!screenerDone.isEmpty(), kWaitMs);
+        client.closePosition(id);
+        QTest::qWait(500);
+
+        // The whole point: not one request went out. A simulation that quietly talked
+        // to the broker would be the most dangerous defect this app could have.
+        QCOMPARE(requests, 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClientLive)

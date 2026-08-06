@@ -2180,6 +2180,188 @@ private slots:
         QVERIFY(groupLeverageCap(QStringLiteral("commodity")) > 0);
         QVERIFY(groupLeverageCap(QStringLiteral("something-else")) > 0);
     }
+    //! @tstid TS-PT-035 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    void TS_PT_035_everyRuleCanBeSwitchedOffAndSaysNothingWhenItIs()
+    {
+        // Each of the bot's brakes is a NUMBER, and every one of them can be set to
+        // zero to disable its rule. That is not decoration: an experiment that cannot
+        // isolate one rule cannot attribute a result to it. The off-position of each
+        // is exercised here, because a guard that silently keeps firing when disabled
+        // would quietly invalidate every such experiment.
+        BotConfig off;
+        off.maxOpensPerHour = 0;          // no pace limit
+        off.reentryCooldownMinutes = 0;   // no cooldown
+        off.minAgreeingReads = 0;         // no confluence requirement
+        off.maxGroupRiskFraction = 0.0;   // no per-bucket cap
+        off.maxSymbolRiskFraction = 0.0;  // no per-symbol cap
+        off.dailyProfitTarget = 0.0;
+        off.dailyLossLimit = 0.0;
+        off.minStake = 0.0;
+
+        const CandidateInput in = goodCandidate();
+        const EntrySignal sig = buildEntrySignal(in, off);
+        BookState book = freshBook();
+        book.day.date = in.now.date();
+        // A book that would trip every disabled rule: recent opens, a recent close in
+        // this very symbol, and a day already far past both limits.
+        book.day.realized = 100000.0;
+        book.day.opened = 99;
+        // The pace and cooldown facts live on the CANDIDATE, not on the book.
+        CandidateInput busy = in;
+        busy.opensLastHour = 99;
+        busy.lastClosedAt = in.now.addSecs(-60);
+        const EntryVerdict verdict = paperEntryVerdict(busy, buildEntrySignal(busy, off), book,
+                                                       off);
+        QVERIFY2(verdict.take, qPrintable(verdict.code + QStringLiteral(": ") + verdict.why));
+
+        // …and each rule switched back ON alone produces its own refusal code, so the
+        // codes in the scan summary can be attributed to a rule rather than guessed at.
+        struct Case {
+            const char *what;
+            BotConfig cfg;
+            const char *code;
+        };
+        BotConfig pace = off;
+        pace.maxOpensPerHour = 1;
+        BotConfig cooldown = off;
+        cooldown.reentryCooldownMinutes = 45;
+        BotConfig target = off;
+        target.dailyProfitTarget = 350.0;
+        BotConfig loss = off;
+        loss.dailyLossLimit = 350.0;
+        const QList<Case> cases{{"pace limit", pace, "pace-limit"},
+                                {"re-entry cooldown", cooldown, "cooldown"},
+                                {"daily target", target, "day-target"}};
+        for (const Case &c : cases) {
+            const EntryVerdict v =
+                paperEntryVerdict(busy, buildEntrySignal(busy, c.cfg), book, c.cfg);
+            QVERIFY2(!v.take, c.what);
+            QVERIFY2(!v.code.isEmpty(), c.what);
+            QCOMPARE(v.code, QString::fromLatin1(c.code));
+        }
+        // The loss limit needs a losing day rather than a winning one to fire.
+        BookState losing = book;
+        losing.day.realized = -100000.0;
+        const EntryVerdict lossVerdict =
+            paperEntryVerdict(busy, buildEntrySignal(busy, loss), losing, loss);
+        QVERIFY(!lossVerdict.take);
+        QCOMPARE(lossVerdict.code, QStringLiteral("day-loss"));
+
+        // A candidate with NO direction is refused whatever the rules say — there is
+        // nothing to trade, not merely nothing allowed.
+        CandidateInput flat = in;
+        flat.dir = 0;
+        flat.confidence = 0.0;
+        const EntryVerdict noDir =
+            paperEntryVerdict(flat, buildEntrySignal(flat, off), freshBook(), off);
+        QVERIFY(!noDir.take);
+        QVERIFY(!noDir.code.isEmpty());
+    }
+    //! @tstid TS-PT-036 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, scope=function)
+    void TS_PT_036_theBookRefusesEveryOperationOnATradeItDoesNotHold()
+    {
+        // The book is addressed by trade id from several places — the marking timer,
+        // the rollover accrual, the exit evaluation. An id it does not hold must be a
+        // no-op EVERYWHERE, because the alternative is writing to whichever trade
+        // happens to sit at that index.
+        BotConfig cfg;
+        PaperBook book(cfg);
+        const QDateTime now(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+
+        // Opening refuses what it cannot price: an invalid signal, no stake, no fill.
+        EntrySignal bad;
+        QCOMPARE(book.open(bad, 1000.0, now), 0);
+        EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        QVERIFY(good.valid);
+        QCOMPARE(book.open(good, 0.0, now), 0);
+        EntrySignal unpriced = good;
+        unpriced.fillRate = 0.0;
+        QCOMPARE(book.open(unpriced, 1000.0, now), 0);
+
+        // A real open returns a NON-ZERO id, and the day ledger counts it.
+        const qint64 id = book.open(good, 1000.0, now);
+        QVERIFY(id != 0);
+        QCOMPARE(book.state().openCount, 1);
+
+        // Every by-id operation on an id the book does not hold changes nothing.
+        const BookState before = book.state();
+        book.setFeatures(9999, EntryFeatures{});
+        book.setEntryCompositeConf(9999, 42.0);
+        book.mark(9999, 5100.0, true, now);
+        book.accrueRollover(9999, InstrumentFees{}, 1.0, now);
+        QCOMPARE(book.state().openCount, before.openCount);
+        QCOMPARE(book.state().equity, before.equity);
+        QCOMPARE(book.state().openRisk, before.openRisk);
+
+        // …and the same operations on the REAL id do change something.
+        book.setEntryCompositeConf(id, 42.0);
+        book.mark(id, good.fillRate * 1.01, true, now.addSecs(600));
+        QVERIFY(book.state().equity > 0.0);
+
+        // Marking at a non-positive rate is refused rather than booking a loss of
+        // everything, and rollover of zero nights charges nothing.
+        const BookState marked = book.state();
+        book.mark(id, 0.0, true, now.addSecs(700));
+        QCOMPARE(book.state().equity, marked.equity);
+        // POSITIVE per-unit fees are a CHARGE; negative ones are a credit paid to the
+        // holder (eToro's own convention, and the reason a credit never triggers the
+        // carry exit). Both directions are exercised below.
+        InstrumentFees fees;
+        fees.buyOvernight = 0.5;
+        fees.sellOvernight = 0.4;
+        fees.buyWeekend = 1.5;
+        fees.sellWeekend = 1.2;
+        // No night has passed yet, so nothing is charged…
+        book.accrueRollover(id, fees, 1.0, now.addSecs(800));
+        QCOMPARE(book.state().equity, marked.equity);
+        // …and a night that HAS passed costs money.
+        book.accrueRollover(id, fees, 1.0, now.addDays(1));
+        QVERIFY(book.state().equity < marked.equity);
+
+        // A CREDIT moves it the other way: being paid to hold is not a cost, which is
+        // exactly why the carry exit stays silent for one.
+        const BookState charged = book.state();
+        InstrumentFees credit;
+        credit.buyOvernight = -0.5;
+        credit.sellOvernight = -0.4;
+        credit.buyWeekend = -1.5;
+        credit.sellWeekend = -1.2;
+        book.accrueRollover(id, credit, 1.0, now.addDays(2));
+        QVERIFY(book.state().equity > charged.equity);
+
+        // Closing an id the book does not hold is a no-op; closing the real one at a
+        // non-positive rate is refused; closing it properly moves it to the record.
+        QCOMPARE(book.close(9999, 5100.0, 0.02, CloseReason::AiExit, now.addSecs(1000)).id, 0);
+        QCOMPARE(book.state().openCount, 1);
+        // Closing the real one WORKS, and a close rate of zero is not a refusal: it
+        // falls back to the position's last mark, because a forced close with no fresh
+        // price still has to close — leaving it open would be the worse failure.
+        const PaperClosedTrade record =
+            book.close(id, good.fillRate * 1.02, 0.02, CloseReason::TakeProfit,
+                       now.addSecs(3600));
+        QCOMPARE(record.id, id);
+        QCOMPARE(book.state().openCount, 0);
+
+        PaperBook forced(cfg);
+        const qint64 forcedId = forced.open(good, 1000.0, now);
+        forced.mark(forcedId, good.fillRate * 1.03, true, now.addSecs(60));
+        const PaperClosedTrade atLastMark =
+            forced.close(forcedId, 0.0, 0.02, CloseReason::AiExit, now.addSecs(120));
+        QCOMPARE(atLastMark.id, forcedId);
+        QCOMPARE(forced.state().openCount, 0);
+        QVERIFY(atLastMark.closeRate > 0.0);
+        QCOMPARE(book.closedTrades().size(), 1);
+        QCOMPARE(book.closedTrades().constFirst().reason, CloseReason::TakeProfit);
+        QVERIFY(book.closedTrades().constFirst().heldHours() > 0.0);
+
+        // An invalid clock at open time leaves the day ledger alone rather than
+        // rolling it to an unknown date.
+        PaperBook timeless(cfg);
+        QVERIFY(timeless.open(good, 500.0, QDateTime()) != 0);
+        QCOMPARE(timeless.state().openCount, 1);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPaperTrader)

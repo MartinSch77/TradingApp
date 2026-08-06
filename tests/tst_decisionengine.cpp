@@ -1,6 +1,7 @@
 // Unit tests for the multi-source decision engine (DES-DOM-DEC).
 
 #include "domain/DecisionEngine.h"
+#include "domain/IndexConfluence.h"
 
 #include <QtTest/QtTest>
 
@@ -370,6 +371,71 @@ private slots:
         const DecisionRow loud = computeDecisionRows(risky).constFirst();
         QCOMPARE(quiet.dir, loud.dir);
         QVERIFY(loud.confidence <= quiet.confidence);
+    }
+    //! @tstid TS-DEC-010 @design DES-DOM-DEC
+    // @relation(REQ-F-035, scope=function)
+    void TS_DEC_010_theEvidencePromptSaysWhatIsMissingRatherThanSkippingIt()
+    {
+        // The prompt is what a model reads before naming a trade, so what it OMITS
+        // matters as much as what it says. Each of these is a state the app really
+        // reaches, and each has to produce a prompt a reader can trust.
+        MarketSnapshot m;
+
+        // No candidates at all: a prompt that still says so rather than an empty
+        // string a model would answer at random.
+        const QString empty = buildDecisionEvidence({}, m);
+        QVERIFY(!empty.isEmpty());
+
+        // Rows with no direction are not candidates — the prompt says there are none
+        // rather than listing them as if they were tradable.
+        MarketSnapshot flatMarket;
+        flatMarket.screenerRows = {row(QStringLiteral("SPX500"), QList<double>(120, 100.0))};
+        const QList<DecisionRow> flatRows = computeDecisionRows(flatMarket);
+        const QString noPicks = buildDecisionEvidence(flatRows, flatMarket);
+        QVERIFY(!noPicks.isEmpty());
+
+        // With reference series absent, the confluence line is OMITTED rather than
+        // printed with zeros — a "0 of 0 agree" line reads as a measurement.
+        MarketSnapshot noRefs;
+        noRefs.screenerRows = {row(QStringLiteral("SPX500"), trend(120, 1.004, 1.001))};
+        const QList<DecisionRow> rows = computeDecisionRows(noRefs);
+        const QString withoutReads = buildDecisionEvidence(rows, noRefs);
+        QVERIFY(!withoutReads.contains(QStringLiteral("Independent reads")));
+
+        // …and with them present it IS printed, naming the count and the reasons.
+        MarketSnapshot withRefs = noRefs;
+        QList<double> series;
+        for (int i = 0; i < 40; ++i) {
+            series.append(100.0 + (0.2 * i));
+        }
+        for (const QString &ticker : trading::referenceTickers()) {
+            static_cast<void>(withRefs.referenceSeries.insert(ticker, series));
+        }
+        static_cast<void>(withRefs.intradayBySymbol.insert(QStringLiteral("SPX500"), series));
+        const QString withReads = buildDecisionEvidence(computeDecisionRows(withRefs), withRefs);
+        QVERIFY(withReads.contains(QStringLiteral("Independent reads")));
+        QVERIFY(withReads.contains(QStringLiteral("agree")));
+
+        // The candidate list is CAPPED, and asking for one candidate yields one.
+        MarketSnapshot many;
+        for (const QString &sym : {QStringLiteral("SPX500"), QStringLiteral("NSDQ100"),
+                                   QStringLiteral("GER40"), QStringLiteral("DJ30")}) {
+            many.screenerRows.append(row(sym, trend(120, 1.004, 1.001)));
+        }
+        const QList<DecisionRow> manyRows = computeDecisionRows(many);
+        const QString capped = buildDecisionEvidence(manyRows, many, 1);
+        const QString uncapped = buildDecisionEvidence(manyRows, many, 6);
+        QVERIFY(capped.size() < uncapped.size());
+
+        // Relative strength needs both series to be READABLE, not merely present. A
+        // series starting at a non-positive price is unreadable, and reporting the
+        // difference against a moving benchmark would be a lead measured from nothing
+        // — 0.0 is what the caller reads as "unknown".
+        QCOMPARE(relativeStrength({}, series), 0.0);
+        QCOMPARE(relativeStrength(series, {}), 0.0);
+        QCOMPARE(relativeStrength({0.0, 0.0}, series), 0.0);
+        QCOMPARE(relativeStrength(series, {0.0, 0.0}), 0.0);
+        QVERIFY(relativeStrength(series, QList<double>(40, 100.0)) > 0.0);
     }
 };
 

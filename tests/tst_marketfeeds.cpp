@@ -459,6 +459,69 @@ private slots:
         QTest::qWait(200);
         QCOMPARE(requestCount(server, QStringLiteral("scan")), before);
     }
+    //! @tstid TS-FEED-012 @design DES-SVC-FEEDS
+    // @relation(REQ-F-019, scope=function)
+    void TS_FEED_012_everyFeedDropsWhatItCannotUseAndKeepsTheRest()
+    {
+        // Each feed answers a differently-broken payload here, and the rule is the
+        // same in every case: the unusable part is dropped, the usable part still
+        // arrives. A feed that discards a whole batch because one row was null is how
+        // a screen goes blank for no visible reason.
+        MockHttpServer server([](const QByteArray &method, const QString &path) {
+            if ((method == "POST") && path.contains(QStringLiteral("/global/scan"))) {
+                // A bulk rating answer with three rows: one complete, one whose
+                // timeframes are all null (unusable), and one for a ticker nobody
+                // asked about (no symbol to attach it to).
+                return MockHttpServer::Response{
+                    200,
+                    R"({"data":[
+                        {"s":"SP:SPX","d":[0.3,0.4,0.5]},
+                        {"s":"NASDAQ:NDX","d":[null,null,null]},
+                        {"s":"NOBODY:ASKED","d":[0.9,0.9,0.9]}
+                    ]})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("fearandgreed"))) {
+                // A score of exactly 0 and exactly 100 are both LEGAL readings; the
+                // boundary is what a naive `> 0` check gets wrong.
+                return MockHttpServer::Response{
+                    200, R"({"fear_and_greed":{"score":0,"rating":"extreme fear"}})", {}};
+            }
+            if (path.contains(QStringLiteral("news")) || path.contains(QStringLiteral("rss"))) {
+                return MockHttpServer::Response{200, R"({"items":[]})", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        QSignalSpy ratings(&feeds, &MarketFeeds::instrumentRatingsUpdated);
+        const QSignalSpy fear(&feeds, &MarketFeeds::fearGreedUpdated);
+        feeds.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("NSDQ100")});
+        // Asked for explicitly rather than waiting for the poll timer: the bulk
+        // ratings call is not part of start()'s first tick.
+        feeds.fetchInstrumentRatings();
+        // Fear & Greed is on the poll cycle rather than a public call, so start() is
+        // what triggers it; a short interval keeps the test quick.
+        feeds.start(150);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!ratings.isEmpty(), kWaitMs);
+        const auto bySymbol = ratings.last().at(0).value<QHash<QString, WebRating>>();
+        // The complete row arrived, the all-null one did not, and the unrequested
+        // ticker attached to nothing.
+        QVERIFY(bySymbol.contains(QStringLiteral("SPX500")));
+        QVERIFY(!bySymbol.contains(QStringLiteral("NSDQ100")));
+        QCOMPARE(bySymbol.size(), 1);
+
+        // A Fear & Greed score of exactly 0 is a real reading — "extreme fear" — and
+        // must not be dropped as if it were missing.
+        QTRY_VERIFY_WITH_TIMEOUT(!fear.isEmpty(), kWaitMs);
+        QCOMPARE(fear.last().at(0).toDouble(), 0.0);
+        // The label is CNN's own word, passed through rather than re-derived — the app
+        // does not invent a wording for someone else's index.
+        QCOMPARE(fear.last().at(1).toString(), QStringLiteral("extreme fear"));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestMarketFeeds)

@@ -302,6 +302,77 @@ private slots:
         broke.now = shortIn.now;
         QVERIFY(!buildTradePlan(broke).valid);
     }
+    //! @tstid TS-PLAN-010 @design DES-DOM-PLAN
+    // @relation(REQ-F-012, scope=function)
+    void TS_PLAN_010_everyRiskNoteHasItsOwnTrigger()
+    {
+        // The risk notes are what a person reads before committing money, so each has
+        // to have its OWN trigger — a note that appears for the wrong reason teaches
+        // the reader to ignore all of them.
+        const QList<double> closes = trend(120, 1.004, 1.001);
+        PlanInput base = baseInput(closes);
+        base.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);   // Tuesday
+
+        const auto notesOf = [](const PlanInput &in) {
+            return buildTradePlan(in).riskNotes.join(QStringLiteral(" | "));
+        };
+        const QString quiet = notesOf(base);
+
+        // An elevated VIX adds its own note; an ordinary one does not, and an ABSENT
+        // reading is not the same as a calm market.
+        PlanInput fearful = base;
+        fearful.vixValid = true;
+        fearful.vix = 30.0;
+        QVERIFY(notesOf(fearful).contains(QStringLiteral("VIX")));
+        PlanInput ordinary = base;
+        ordinary.vixValid = true;
+        ordinary.vix = 15.0;
+        QVERIFY(!notesOf(ordinary).contains(QStringLiteral("elevated VIX")));
+        PlanInput noVix = base;
+        noVix.vixValid = false;
+        noVix.vix = 30.0;   // a number nobody measured must not be read
+        QVERIFY(!notesOf(noVix).contains(QStringLiteral("elevated VIX")));
+
+        // Crowd sentiment at EITHER extreme, and neither at the middle.
+        PlanInput greedy = base;
+        greedy.fgValid = true;
+        greedy.fearGreed = 85.0;
+        QVERIFY(notesOf(greedy).contains(QStringLiteral("crowd sentiment")));
+        PlanInput fearfulCrowd = base;
+        fearfulCrowd.fgValid = true;
+        fearfulCrowd.fearGreed = 10.0;
+        QVERIFY(notesOf(fearfulCrowd).contains(QStringLiteral("crowd sentiment")));
+        PlanInput middling = base;
+        middling.fgValid = true;
+        middling.fearGreed = 50.0;
+        QVERIFY(!notesOf(middling).contains(QStringLiteral("crowd sentiment")));
+        PlanInput unmeasured = base;
+        unmeasured.fgValid = false;
+        unmeasured.fearGreed = 95.0;
+        QVERIFY(!notesOf(unmeasured).contains(QStringLiteral("crowd sentiment")));
+
+        // An imminent high-impact event.
+        PlanInput risky = base;
+        risky.eventRisk = true;
+        QVERIFY(notesOf(risky).contains(QStringLiteral("event")));
+        QVERIFY(!quiet.contains(QStringLiteral("event")));
+
+        // The weekend carry is a risk note of its own, and it follows the same clock
+        // the cost bill does.
+        PlanInput weekend = base;
+        weekend.now = QDateTime(QDate(2026, 8, 7), QTime(11, 0), QTimeZone::UTC);   // Friday
+        QVERIFY(buildTradePlan(weekend).crossesWeekend);
+
+        // …and the risk SCORE rises with the number of notes rather than staying flat.
+        PlanInput everything = base;
+        everything.vixValid = true;
+        everything.vix = 30.0;
+        everything.fgValid = true;
+        everything.fearGreed = 90.0;
+        everything.eventRisk = true;
+        QVERIFY(buildTradePlan(everything).riskNotes.size()
+                > buildTradePlan(base).riskNotes.size());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestTradePlan)

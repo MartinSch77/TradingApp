@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <optional>
 
 namespace trading {
 
@@ -354,16 +355,24 @@ OpeningRange openingRange(const QList<double> &closes, qsizetype minutes)
 
 double relativeStrength(const QList<double> &leader, const QList<double> &benchmark)
 {
-    const auto sessionReturn = [](const QList<double> &series) {
+    // Both series have to be READABLE, not merely present. A series that starts at a
+    // non-positive price cannot yield a session return, and treating its return as
+    // 0.0 while the other side moved would report the difference as a real lead — a
+    // conclusion drawn from missing data. The caller (futuresLeadRead) reads exactly
+    // 0.0 as "unknown", which is the honest answer here and keeps the confluence rule
+    // true: an unmeasurable read never counts as agreement.
+    const auto sessionReturn = [](const QList<double> &series) -> std::optional<double> {
         if ((series.size() < 2) || (series.constFirst() <= 0.0)) {
-            return 0.0;
+            return std::nullopt;
         }
         return ((series.constLast() - series.constFirst()) / series.constFirst()) * 100.0;
     };
-    if ((leader.size() < 2) || (benchmark.size() < 2)) {
+    const std::optional<double> lead = sessionReturn(leader);
+    const std::optional<double> base = sessionReturn(benchmark);
+    if (!lead.has_value() || !base.has_value()) {
         return 0.0;   // no read rather than a one-sided one
     }
-    return sessionReturn(leader) - sessionReturn(benchmark);
+    return *lead - *base;
 }
 
 QString buildDecisionEvidence(const QList<DecisionRow> &rows, const MarketSnapshot &m,

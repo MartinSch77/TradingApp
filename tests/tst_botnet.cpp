@@ -461,6 +461,90 @@ private slots:
         QVERIFY(!botNetSummary(weak, BotNetMode::Off, gate).isEmpty());
         QVERIFY(!botNetSummary(BotNet{}, BotNetMode::Gate, gate).isEmpty());
     }
+    //! @tstid TS-NET-007 @design DES-DOM-BOTNET
+    // @relation(REQ-F-033, scope=function)
+    void TS_NET_007_theTrainerAndTheGateReportEveryDegenerateRecord()
+    {
+        // A learner's most dangerous state is not being wrong — it is being confident
+        // about a record that cannot support any conclusion. Each degenerate shape is
+        // driven here, and each has to be REFUSED with a reason rather than fitted.
+        TrainConfig cfg;
+        cfg.minSamples = 8;
+
+        const auto exampleOf = [](double confidence, bool win) {
+            TrainingExample e;
+            e.features.confidence = confidence;
+            e.features.volPct = 0.5;
+            e.features.stopPct = 1.0;
+            e.features.targetPct = 1.5;
+            e.features.leverage = 5;
+            e.features.dir = 1;
+            e.win = win;
+            return e;
+        };
+
+        // Too few examples: refused with a message naming the shortfall.
+        QList<TrainingExample> few;
+        for (int i = 0; i < 3; ++i) {
+            few.append(exampleOf(50.0 + i, i % 2 == 0));
+        }
+        const TrainResult tooFew = trainBotNet(few, cfg);
+        QVERIFY(!tooFew.ok);
+        QVERIFY(!tooFew.message.isEmpty());
+
+        // Only losses: nothing to separate, refused rather than fitted to a constant.
+        QList<TrainingExample> allLosses;
+        for (int i = 0; i < 40; ++i) {
+            allLosses.append(exampleOf(40.0 + i, false));
+        }
+        const TrainResult noWins = trainBotNet(allLosses, cfg);
+        QVERIFY(!noWins.ok);
+
+        // A record with both outcomes DOES train, and reports what it measured.
+        QList<TrainingExample> mixed;
+        for (int i = 0; i < 60; ++i) {
+            // A learnable signal: high confidence wins, low confidence loses.
+            const bool win = (i % 2) == 0;
+            mixed.append(exampleOf(win ? (70.0 + (i % 10)) : (20.0 + (i % 10)), win));
+        }
+        const TrainResult trained = trainBotNet(mixed, cfg);
+        QVERIFY2(trained.ok, qPrintable(trained.message));
+        QVERIFY(trained.net.ok);
+        QVERIFY(trained.net.samples > 0);
+        QVERIFY(!trained.net.features.isEmpty());
+        QCOMPARE(trained.net.w1.size(), trained.net.w2.size());
+        QVERIFY(!trained.message.isEmpty());
+
+        // The model round-trips through JSON without losing its shape…
+        const BotNet reloaded = botNetFromJson(botNetToJson(trained.net));
+        QVERIFY(reloaded.ok);
+        QCOMPARE(reloaded.features, trained.net.features);
+        QCOMPARE(reloaded.samples, trained.net.samples);
+        // …and scores the same inputs identically, which is what makes a saved model
+        // worth saving.
+        QHash<QString, double> inputs;
+        inputs.insert(QStringLiteral("confidence"), 80.0);
+        inputs.insert(QStringLiteral("volPct"), 0.5);
+        QVERIFY(qAbs(reloaded.score(inputs) - trained.net.score(inputs)) < 1e-9);
+        // An input the model never saw is ignored rather than shifting the answer:
+        // features are matched BY NAME.
+        QHash<QString, double> withStranger = inputs;
+        withStranger.insert(QStringLiteral("not-a-feature"), 999.0);
+        QVERIFY(qAbs(reloaded.score(withStranger) - reloaded.score(inputs)) < 1e-9);
+
+        // The gate: a trusted model in Gate mode may refuse, and says which score
+        // decided it; every mode has a word of its own.
+        NetGateConfig gate;
+        gate.minSamples = 1;
+        gate.minAuc = 0.0;
+        const NetVerdict scored =
+            paperNetGate(trained.net, EntryFeatures{}, BotNetMode::Gate, gate);
+        QVERIFY(scored.scored);
+        QVERIFY(!botNetModeWord(BotNetMode::Off).isEmpty());
+        QVERIFY(!botNetModeWord(BotNetMode::Advise).isEmpty());
+        QVERIFY(!botNetModeWord(BotNetMode::Gate).isEmpty());
+        QVERIFY(botNetModeWord(BotNetMode::Off) != botNetModeWord(BotNetMode::Gate));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBotNet)

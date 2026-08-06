@@ -1,4 +1,4 @@
-# eToro Trader (Qt)
+# eToro TradingApp
 
 [![build linux](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![build linux arm64](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux-arm64.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)

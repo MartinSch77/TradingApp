@@ -1071,6 +1071,293 @@ private slots:
         // to the broker would be the most dangerous defect this app could have.
         QCOMPARE(requests, 0);
     }
+    //! @tstid TS-CLI-034 @design DES-SVC-CLIENT
+    // @relation(REQ-F-001, scope=function)
+    void TS_CLI_034_everyEnvelopeShapeTheApiUsesIsUnwrapped()
+    {
+        // One helper unwraps every list this API returns, and it has to know four
+        // shapes because eToro really uses all of them: a bare array, the named key,
+        // a "data" array, and "data" wrapping the named key. A shape it cannot open
+        // is a feature that silently reports nothing — the worst kind of failure here,
+        // because everything still looks like it is working.
+        qint32 shape = 0;
+        MockHttpServer server([&shape](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                // The search list, in a different envelope per resolution attempt.
+                const QByteArray item =
+                    R"({"instrumentId":27,"internalSymbolFull":"SPX500",)"
+                    R"("displayname":"S&P 500","currentRate":5000.0})";
+                switch (shape) {
+                case 0:
+                    return MockHttpServer::Response{200, "[" + item + "]", {}};
+                case 1:
+                    return MockHttpServer::Response{200,
+                                                    R"({"results":[)" + item + "]}", {}};
+                case 2:
+                    return MockHttpServer::Response{200, R"({"data":[)" + item + "]}", {}};
+                default:
+                    return MockHttpServer::Response{
+                        200, R"({"data":{"items":[)" + item + "]}}", {}};
+                }
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        // Each shape resolves the instrument. A fresh client per shape, because a
+        // resolved id is remembered and would hide the next one.
+        for (shape = 0; shape < 4; ++shape) {
+            EtoroClient client(mockConfig(server));
+            QSignalSpy ready(&client, &EtoroClient::ready);
+            client.setSymbol(QStringLiteral("SPX500"));
+            QVERIFY2(ready.wait(kWaitMs), qPrintable(QStringLiteral("shape %1 did not resolve")
+                                                         .arg(shape)));
+            QCOMPARE(ready.last().at(0).value<Instrument>().instrumentId, 27);
+            QCOMPARE(ready.last().at(0).value<Instrument>().displayName,
+                     QStringLiteral("S&P 500"));
+        }
+
+        // An entry with no id is not an instrument, however complete the rest looks —
+        // every later request is keyed by that id.
+        MockHttpServer idless([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"items":[{"internalSymbolFull":"SPX500","displayname":"S&P 500"}]})",
+                    {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(idless.listen(QHostAddress::LocalHost));
+        EtoroClient client(mockConfig(idless));
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        QSignalSpy failed(&client, &EtoroClient::resolveFailed);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(failed.wait(kWaitMs));
+        QCOMPARE(ready.count(), 0);
+    }
+    //! @tstid TS-CLI-035 @design DES-SVC-CLIENT
+    // @relation(REQ-F-016, scope=function)
+    void TS_CLI_035_theQuoteBookAcceptsSingleRowsAndRejectsImpossibleSpreads()
+    {
+        // Rates answers arrive as a list, as a list of one, and — for a single
+        // instrument — sometimes as the bare object itself. All three have to land in
+        // the quote book, and a row whose ask is below its bid must NOT: an inverted
+        // spread would make every cost calculation negative.
+        QByteArray ratesAnswer;
+        QByteArray fxAnswer;
+        MockHttpServer server([&ratesAnswer, &fxAnswer](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                if (path.contains(QStringLiteral("instrumentIds=1"))) {
+                    return MockHttpServer::Response{200, fxAnswer, {}};
+                }
+                return MockHttpServer::Response{200, ratesAnswer, {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        // The FX rate as a BARE OBJECT rather than a list — the shape the endpoint
+        // uses when exactly one instrument is asked for.
+        fxAnswer = QStringLiteral(R"({"instrumentId":1,"bid":1.0800,"ask":1.0802,"date":"%1"})")
+                       .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
+                       .toUtf8();
+        ratesAnswer = ratesBody(27, 5000.0, 5001.0);
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(!fx.isEmpty(), kWaitMs);
+        QVERIFY(qAbs(fx.last().at(0).toDouble() - (1.0 / 1.0801)) < 1e-6);
+
+        // A quote arrived from the ordinary list shape.
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).bid > 0.0, kWaitMs);
+        const double good = client.quotes().value(27).bid;
+
+        // An INVERTED spread (ask below bid) is not a quote: the book keeps the last
+        // usable one rather than pricing a trade off an impossible market.
+        ratesAnswer = QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":4990.0,)"
+                                     R"("date":"%1"}]})")
+                          .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
+                          .toUtf8();
+        QTest::qWait(2000);
+        QCOMPARE(client.quotes().value(27).bid, good);
+
+        // A row for an instrument nobody asked about is ignored rather than stored
+        // under the wrong id.
+        ratesAnswer = QStringLiteral(R"({"rates":[{"instrumentId":999999,"bid":1.0,"ask":1.1,)"
+                                     R"("date":"%1"}]})")
+                          .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate))
+                          .toUtf8();
+        QTest::qWait(2000);
+        QCOMPARE(client.quotes().value(27).bid, good);
+        QVERIFY(client.quotes().value(999999).bid <= 0.0);
+    }
+    //! @tstid TS-CLI-036 @design DES-SVC-CLIENT
+    // @relation(REQ-F-002, scope=function)
+    void TS_CLI_036_aRejectionAlwaysSaysSomethingUseful()
+    {
+        // When an order is refused, the sentence the user sees is the only thing they
+        // can act on. eToro states its reason in five different shapes and sometimes
+        // in none at all, so every shape is driven here — and the fallback chain must
+        // never bottom out in an empty message.
+        QByteArray body;
+        qint32 status = 400;
+        MockHttpServer server([&body, &status](const QByteArray &method, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                // Numbers as STRINGS, and a timestamp with milliseconds: both are
+                // shapes the live feed really uses.
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":"5000.0",)"
+                                   R"("ask":"5001.0","date":"%1"}]})")
+                        .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+                        .toUtf8(),
+                    {}};
+            }
+            if ((method == "POST") && path.contains(QStringLiteral("/execution"))) {
+                return MockHttpServer::Response{status, body, {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        // The string-typed quote was read as a number, and the millisecond timestamp
+        // parsed — otherwise the order below could not be priced at all.
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).bid > 0.0, kWaitMs);
+        QCOMPARE(client.quotes().value(27).bid, 5000.0);
+
+        QSignalSpy results(&client, &EtoroClient::orderResult);
+        const auto rejectWith = [&body, &client, &results](const QByteArray &payload) {
+            body = payload;
+            const qint32 before = results.count();
+            OrderRequest req;
+            req.isBuy = true;
+            req.amount = 100.0;
+            req.leverage = 2.0;
+            client.openPosition(req);
+            QTest::qWait(600);
+            if (results.count() <= before) {
+                return QString();
+            }
+            return results.last().at(1).toString();
+        };
+
+        // 1. A validation-errors object with a field name and an array of messages —
+        //    the shape that matters most, because it names what to fix.
+        QString said = rejectWith(R"({"title":"One or more validation errors occurred.",
+                                      "errors":{"leverage":["x8 is not offered"]}})");
+        QVERIFY2(said.contains(QStringLiteral("leverage")), qPrintable(said));
+        QVERIFY(said.contains(QStringLiteral("x8 is not offered")));
+
+        // 2. …the same with a scalar instead of an array.
+        said = rejectWith(R"({"errors":{"amount":"below the minimum"}})");
+        QVERIFY2(said.contains(QStringLiteral("below the minimum")), qPrintable(said));
+
+        // 3. A plain detail/message, with no errors object.
+        said = rejectWith(R"({"detail":"insufficient funds"})");
+        QVERIFY2(said.contains(QStringLiteral("insufficient funds")), qPrintable(said));
+
+        // 4. Only a title.
+        said = rejectWith(R"({"title":"Bad Request"})");
+        QVERIFY2(said.contains(QStringLiteral("Bad Request")), qPrintable(said));
+
+        // 5. Not JSON at all — the raw body is the reason, because SOMETHING a person
+        //    can read beats a silent failure.
+        said = rejectWith(R"(<html><body>Gateway Timeout</body></html>)");
+        QVERIFY2(!said.isEmpty(), "a rejection must never be reported without a reason");
+    }
+    //! @tstid TS-CLI-037 @design DES-SVC-CLIENT
+    // @relation(REQ-F-001, scope=function)
+    void TS_CLI_037_theSearchPicksTheRightRowOutOfAMessyList()
+    {
+        // eToro's search returns near-matches, header/placeholder rows with a negative
+        // id, and sometimes does not echo the symbol at all. Picking the wrong row
+        // here means every later request — quotes, orders, fees — is for a different
+        // instrument, which is the worst possible kind of quiet error.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                if (path.contains(QStringLiteral("NOECHO"))) {
+                    // The documented case where the payload omits the symbol: the app
+                    // keeps the one it asked for rather than showing an empty name.
+                    return MockHttpServer::Response{
+                        200, R"({"items":[{"instrumentId":77,"currentRate":42.0}]})", {}};
+                }
+                if (path.contains(QStringLiteral("FALLBACK"))) {
+                    // No exact match at all: the first REAL row is used.
+                    return MockHttpServer::Response{
+                        200,
+                        R"({"items":[
+                            {"instrumentId":-100000,"internalSymbolFull":"HEADER"},
+                            {"instrumentId":31,"internalSymbolFull":"SOMETHINGELSE",
+                             "displayname":"Something Else","currentRate":10.0}
+                        ]})",
+                        {}};
+                }
+                // A placeholder row, a near-match, then the exact one LAST: the exact
+                // symbol has to win regardless of order.
+                return MockHttpServer::Response{
+                    200,
+                    R"({"items":[
+                        {"instrumentId":-100000,"internalSymbolFull":"SPX500.HEADER"},
+                        {"instrumentId":28,"internalSymbolFull":"SPX500.FUT",
+                         "displayname":"S&P 500 Futures","currentRate":4999.0},
+                        {"instrumentId":27,"internalSymbolFull":"SPX500",
+                         "displayname":"S&P 500","currentRate":5000.0}
+                    ]})",
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        {
+            EtoroClient client(mockConfig(server));
+            QSignalSpy ready(&client, &EtoroClient::ready);
+            client.setSymbol(QStringLiteral("SPX500"));
+            QVERIFY(ready.wait(kWaitMs));
+            const Instrument got = ready.last().at(0).value<Instrument>();
+            QCOMPARE(got.instrumentId, 27);          // the exact match, not the future
+            QCOMPARE(got.currentRate, 5000.0);       // …and its price seeded the book
+        }
+        {
+            EtoroClient client(mockConfig(server));
+            QSignalSpy ready(&client, &EtoroClient::ready);
+            client.setSymbol(QStringLiteral("FALLBACK"));
+            QVERIFY(ready.wait(kWaitMs));
+            // The placeholder row was skipped and the first real one used.
+            QCOMPARE(ready.last().at(0).value<Instrument>().instrumentId, 31);
+        }
+        {
+            EtoroClient client(mockConfig(server));
+            QSignalSpy ready(&client, &EtoroClient::ready);
+            client.setSymbol(QStringLiteral("NOECHO"));
+            QVERIFY(ready.wait(kWaitMs));
+            const Instrument got = ready.last().at(0).value<Instrument>();
+            QCOMPARE(got.instrumentId, 77);
+            QCOMPARE(got.symbol, QStringLiteral("NOECHO"));   // filled in by the app
+        }
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClientLive)

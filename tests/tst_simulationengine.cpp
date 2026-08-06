@@ -494,6 +494,66 @@ private slots:
             }
         }
     }
+    //! @tstid TS-SIM-010 @design DES-SVC-SIM
+    // @relation(REQ-F-027, scope=function)
+    void TS_SIM_010_theSimulationRefusesTheImpossibleAndKeepsItsBooks()
+    {
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(31337U);
+        sim.emitSnapshot();
+        QSignalSpy results(&sim, &SimulationEngine::orderResult);
+        QSignalSpy pending(&sim, &SimulationEngine::pendingOrdersUpdated);
+
+        // A resting order needs a trigger ABOVE zero — "adjust it to no price" is not
+        // an adjustment, and parking it at zero would make it fire on the next tick.
+        OrderRequest limit;
+        limit.isBuy = true;
+        limit.amount = 200.0;
+        limit.leverage = 2.0;
+        limit.triggerRate = sim.lastPrice() * 0.98;
+        sim.placePendingOrder(limit);
+        QVERIFY(!pending.isEmpty());
+        const auto resting = pending.last().at(0).value<QList<PendingOrder>>();
+        QVERIFY(!resting.isEmpty());
+        const QString id = resting.constFirst().orderId;
+        const qint32 before = results.count();
+        sim.modifyPendingOrder(id, 0.0, 0.0, 0.0);
+        QVERIFY(results.count() > before);
+        QVERIFY(!results.last().at(0).toBool());
+        // …and the order is still there, unchanged, rather than lost to the refusal.
+        QCOMPARE(pending.last().at(0).value<QList<PendingOrder>>().size(), resting.size());
+
+        // An instrument the catalog does not know still gets a plausible synthetic
+        // feed rather than a price of zero: the screener has to answer for every
+        // symbol it is asked about.
+        SimulationEngine other;
+        static_cast<void>(other.prepare(QStringLiteral("NOSUCHSYMBOL"),
+                                        QStringLiteral("usd"), true));
+        other.seedRng(4242U);
+        other.emitSnapshot();
+        QVERIFY(other.lastPrice() > 0.0);
+        QSignalSpy rows(&other, &SimulationEngine::screenerRow);
+        QSignalSpy finished(&other, &SimulationEngine::screenerFinished);
+        other.scanInstruments({QStringLiteral("NOSUCHSYMBOL"), QStringLiteral("SPX500")});
+        QTRY_VERIFY_WITH_TIMEOUT(!finished.isEmpty(), 15000);
+        QVERIFY(rows.count() >= 1);
+        for (qsizetype i = 0; i < rows.count(); ++i) {
+            const auto row = rows.at(i).at(0).value<ScreenerRow>();
+            QVERIFY(row.closes.isEmpty() || (row.closes.constLast() > 0.0));
+        }
+
+        // The monthly summary over an EMPTY record is a valid empty summary rather
+        // than a division by zero, and one closed trade makes it non-empty.
+        SimulationEngine fresh;
+        static_cast<void>(fresh.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        fresh.seedRng(7U);
+        fresh.emitSnapshot();
+        QSignalSpy monthly(&fresh, &SimulationEngine::monthlyPnlReady);
+        fresh.summarizeMonthly();
+        QTRY_VERIFY_WITH_TIMEOUT(!monthly.isEmpty(), 15000);
+        QCOMPARE(monthly.last().at(0).value<MonthlyPnl>().accountTrades, 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSimulationEngine)

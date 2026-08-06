@@ -522,6 +522,76 @@ private slots:
         // does not invent a wording for someone else's index.
         QCOMPARE(fear.last().at(1).toString(), QStringLiteral("extreme fear"));
     }
+    //! @tstid TS-FEED-013 @design DES-SVC-FEEDS
+    // @relation(REQ-F-009, scope=function)
+    void TS_FEED_013_everyFeedSurvivesAFailingServerAndANonObjectPayload()
+    {
+        // Public web feeds are the least reliable input this app has — no contract, no
+        // support, and they change without notice. The property that matters is not
+        // what they publish when they work but what the app does when they do not:
+        // nothing, quietly, keeping the last known reading.
+
+        // 1. Every feed fails.
+        {
+            MockHttpServer dead([](const QByteArray &, const QString &) {
+                return MockHttpServer::Response{503, R"({"err":"down"})", {}};
+            });
+            QVERIFY(dead.listen(QHostAddress::LocalHost));
+            MarketFeeds feeds;
+            feeds.setEndpointBaseForTesting(dead.baseUrl());
+            const QSignalSpy vix(&feeds, &MarketFeeds::vixUpdated);
+            const QSignalSpy fear(&feeds, &MarketFeeds::fearGreedUpdated);
+            const QSignalSpy external(&feeds, &MarketFeeds::externalSignalUpdated);
+            const QSignalSpy ratings(&feeds, &MarketFeeds::instrumentRatingsUpdated);
+            const QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
+            const QSignalSpy intraday(&feeds, &MarketFeeds::intradayCloses);
+            feeds.setTradableSymbols({QStringLiteral("SPX500")});
+            feeds.setCurrentSymbol(QStringLiteral("SPX500"));
+            feeds.fetchInstrumentRatings();
+            feeds.fetchReferenceSeries();
+            feeds.fetchIntradaySeries();
+            feeds.start(150);
+            QTest::qWait(1200);
+
+            // Not one reading was published from a failed answer.
+            QCOMPARE(vix.count(), 0);
+            QCOMPARE(fear.count(), 0);
+            QCOMPARE(ratings.count(), 0);
+            QCOMPARE(series.count(), 0);
+            QCOMPARE(intraday.count(), 0);
+            // The rating is the one exception, and it is deliberate: it reports
+            // "no rating available" so the panel can say so rather than showing a
+            // stale number as if it were current.
+            for (qsizetype i = 0; i < external.count(); ++i) {
+                QVERIFY(!external.at(i).at(0).toBool());
+            }
+        }
+
+        // 2. Every feed answers 200 with a bare ARRAY where an object belongs — the
+        //    single most common way one of these endpoints changes shape.
+        {
+            MockHttpServer wrong([](const QByteArray &, const QString &) {
+                return MockHttpServer::Response{200, R"([1,2,3])", {}};
+            });
+            QVERIFY(wrong.listen(QHostAddress::LocalHost));
+            MarketFeeds feeds;
+            feeds.setEndpointBaseForTesting(wrong.baseUrl());
+            const QSignalSpy vix(&feeds, &MarketFeeds::vixUpdated);
+            const QSignalSpy fear(&feeds, &MarketFeeds::fearGreedUpdated);
+            const QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
+            const QSignalSpy intraday(&feeds, &MarketFeeds::intradayCloses);
+            feeds.setTradableSymbols({QStringLiteral("SPX500")});
+            feeds.setCurrentSymbol(QStringLiteral("SPX500"));
+            feeds.fetchReferenceSeries();
+            feeds.fetchIntradaySeries();
+            feeds.start(150);
+            QTest::qWait(1200);
+            QCOMPARE(vix.count(), 0);
+            QCOMPARE(fear.count(), 0);
+            QCOMPARE(series.count(), 0);
+            QCOMPARE(intraday.count(), 0);
+        }
+    }
 };
 
 QTEST_GUILESS_MAIN(TestMarketFeeds)

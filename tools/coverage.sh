@@ -159,18 +159,10 @@ coco_excludes() {
 
 # Shared by both Coco modes: configure and build an instrumented tree.
 #   $1 = build dir, $2 = extra --cs flags
-coco_build() {
+# The configure step on its own, so the retry below can repeat it exactly.
+coco_configure() {
     local build="$1"
     local csflags="$2"
-    # Coco's front end parses up to C++20, so THIS build tree alone drops from 23 —
-    # exactly as the Windows counterpart does (CMakeLists only defaults the standard
-    # when it is not already defined). Without it the instrumenting compiler fails on
-    # C++23 constructs before any measurement can happen.
-    # Instrumented objects reference a per-TU coverage table that Coco's own
-    # librarian emits; this project links domain/services/ui as STATIC libraries, so
-    # archiving them with plain ar drops those tables and every test binary fails to
-    # link. The Windows path sets CMAKE_AR=cslib for exactly this reason — use Coco's
-    # wrapper here too when the installation ships one.
     local ar_arg=()
     local coco_ar
     for coco_ar in "$COCO_DIR/bin/csar" "$COCO_DIR/bin/cslib"; do
@@ -185,15 +177,35 @@ coco_build() {
         -DCMAKE_CXX_COMPILER="$COCO_DIR/bin/csg++" \
         "${ar_arg[@]}" \
         -DCMAKE_CXX_FLAGS="$csflags"
+}
+
+coco_build() {
+    local build="$1"
+    local csflags="$2"
+    # Coco's front end parses up to C++20, so THIS build tree alone drops from 23 —
+    # exactly as the Windows counterpart does (CMakeLists only defaults the standard
+    # when it is not already defined). Without it the instrumenting compiler fails on
+    # C++23 constructs before any measurement can happen.
+    # Instrumented objects reference a per-TU coverage table that Coco's own
+    # librarian emits; this project links domain/services/ui as STATIC libraries, so
+    # archiving them with plain ar drops those tables and every test binary fails to
+    # link. The Windows path sets CMAKE_AR=cslib for exactly this reason — use Coco's
+    # wrapper here too when the installation ships one.
+    coco_configure "$build" "$csflags"
     # csg++ MERGES instrumentation into an existing .csmes and refuses when the source
     # behind it changed ("Source file ... is different at line N", then the link fails
     # with error 255). That is a stale database, not a code problem — so a failed build
     # is retried ONCE with the databases removed, which is the documented remedy and
     # costs a re-instrumentation rather than a confusing red stage.
     if ! cmake --build "$build" -j"$JOBS"; then
-        echo "coco: build failed — clearing stale instrumentation databases and retrying once"
-        find "$build" -name '*.csmes' -delete 2>/dev/null || true
-        find "$build" -name '*.csexe' -delete 2>/dev/null || true
+        # The instrumentation state lives in BOTH the .csmes databases and the object
+        # files that reference their symbols, so removing only the databases leaves a
+        # tree that fails to LINK ("undefined reference to __cs_tb_…"). The remedy is
+        # the whole tree: expensive, but it only happens after a failure, and a
+        # confusing red stage costs more than a re-instrumentation.
+        echo "coco: build failed — wiping the instrumented tree and retrying once"
+        rm -rf "$build"
+        coco_configure "$build" "$csflags"
         cmake --build "$build" -j"$JOBS"
     fi
 }

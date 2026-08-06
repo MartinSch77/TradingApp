@@ -21,6 +21,8 @@
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
+#include <cmath>
+
 namespace {
 
 constexpr qint32 kWaitMs = 15000;
@@ -503,6 +505,229 @@ private slots:
         const double lastGood = client.quotes().value(27).bid;
         QTest::qWait(1500);
         QCOMPARE(client.quotes().value(27).bid, lastGood);
+    }
+    //! @tstid TS-CLI-026 @design DES-SVC-CLIENT
+    // @relation(REQ-F-027, scope=function)
+    void TS_CLI_026_theBrokersOwnOrdersAreReadInEveryFieldSpellingItUses()
+    {
+        // eToro's payloads are not consistent about capitalisation or field names —
+        // `orderID` and `orderId`, `rate` and `triggerRate` — and an order the app
+        // fails to read is an order nobody can cancel. Both spellings, both time
+        // formats, and an instrument the selector does not list (which must still be
+        // VISIBLE, as "#id", rather than silently dropped).
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            if (path.endsWith(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"positions":[],"orders":[
+                        {"orderID":"o1","instrumentID":27,"isBuy":true,"rate":4900.0,
+                         "amount":500.0,"leverage":10,"units":1.02,
+                         "stopLossRate":4800.0,"takeProfitRate":5100.0,
+                         "openDateTime":"2026-08-04T10:00:00.000Z"},
+                        {"orderId":"o2","instrumentId":9999,"isBuy":false,
+                         "triggerRate":123.0,"amount":200.0,"leverage":5,
+                         "isTslEnabled":true,"openDateTime":"2026-08-04T11:00:00Z"}
+                    ]}})",
+                    {}};
+            }
+            if (path.endsWith(QStringLiteral("/pnl"))) {
+                return MockHttpServer::Response{200, R"({"positions":[]})", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy pending(&client, &EtoroClient::pendingOrdersUpdated);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(!pending.isEmpty(), kWaitMs);
+
+        const auto orders = pending.last().at(0).value<QList<PendingOrder>>();
+        QCOMPARE(orders.size(), 2);
+        const PendingOrder first = orders.constFirst();
+        QCOMPARE(first.orderId, QStringLiteral("o1"));     // orderID spelling
+        QCOMPARE(first.instrumentId, 27);
+        QCOMPARE(first.triggerRate, 4900.0);               // `rate` spelling
+        QVERIFY(first.isBuy);
+        QVERIFY(first.submitted.isValid());                // ISO with milliseconds
+        // The SL/TP came as RATES and are shown as account-currency amounts.
+        QVERIFY(first.stopLossAmount > 0.0);
+        QVERIFY(first.takeProfitAmount > 0.0);
+
+        const PendingOrder second = orders.at(1);
+        QCOMPARE(second.orderId, QStringLiteral("o2"));    // orderId spelling
+        QCOMPARE(second.triggerRate, 123.0);               // triggerRate spelling
+        QVERIFY(!second.isBuy);
+        QVERIFY(second.trailingStop);
+        QVERIFY(second.submitted.isValid());               // ISO without milliseconds
+        // An instrument the selector does not know is still addressable.
+        QCOMPARE(second.symbol, QStringLiteral("#9999"));
+        // Units were absent, so the notional identity supplied them — the amounts are
+        // finite rather than a division by zero.
+        QVERIFY(std::isfinite(second.stopLossAmount));
+    }
+
+    //! @tstid TS-CLI-027 @design DES-SVC-CLIENT
+    // @relation(REQ-F-015, scope=function)
+    void TS_CLI_027_theHistoryWalkSurvivesWhatTheEndpointReallyReturns()
+    {
+        // The closed-trade walk pages until a page comes back short. Each page can
+        // arrive in a different shape, with timestamps in a different format, and a
+        // failed page must end the walk with what was collected rather than with
+        // nothing — a report that silently drops a month is worse than a short one.
+        qint32 page = 0;
+        MockHttpServer server([&page](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            }
+            // The real path is /v1/trading/info/trade/history — "trade", singular,
+            // and no "trades" anywhere in it.
+            if (path.contains(QStringLiteral("/trade/history"))) {
+                ++page;
+                if (page == 1) {
+                    // Nested under "data", epoch SECONDS, and one row missing its rate.
+                    return MockHttpServer::Response{
+                        200,
+                        R"({"data":[
+                            {"instrumentId":27,"isBuy":true,"leverage":10,"investment":500.0,
+                             "units":1.0,"openRate":5000.0,"closeRate":5100.0,"netProfit":10.0,
+                             "openTimestamp":1785849600,"closeTimestamp":1785936000,
+                             "positionId":11},
+                            {"instrumentId":27,"isBuy":false,"leverage":5,"investment":100.0,
+                             "units":0.2,"openRate":0.0,"closeRate":0.0,"netProfit":-1.0,
+                             "openTimestamp":1785849600,"closeTimestamp":1785936000,
+                             "positionId":12}
+                        ]})",
+                        {}};
+                }
+                if (page == 2) {
+                    // Epoch MILLISECONDS, bare array.
+                    return MockHttpServer::Response{
+                        200,
+                        R"([{"instrumentId":27,"isBuy":true,"leverage":2,"investment":50.0,
+                             "units":0.01,"openRate":5000.0,"closeRate":4950.0,
+                             "netProfit":-5.0,"openTimestamp":1785849600000,
+                             "closeTimestamp":1785936000000,"positionId":13}])",
+                        {}};
+                }
+                if (page == 3) {
+                    return MockHttpServer::Response{200, R"([])", {}};   // the walk ends
+                }
+                // A LATER walk hits a failing page (see the second half of the test).
+                return MockHttpServer::Response{503, R"({"err":"later"})", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy closed(&client, &EtoroClient::closedTradesReady);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+
+        QSignalSpy failures(&client, &EtoroClient::monthlyPnlFailed);
+        client.fetchClosedTrades(4);
+        QVERIFY(closed.wait(kWaitMs));
+        const auto trades = closed.last().at(0).value<QList<ClosedTrade>>();
+        QVERIFY2(trades.size() >= 3, qPrintable(QString::number(trades.size())));
+        // Both epoch formats were understood — seconds and milliseconds land in the
+        // same year rather than in 1970 or 58000.
+        for (const ClosedTrade &t : trades) {
+            QVERIFY(t.closeTime.isValid());
+            QCOMPARE(t.closeTime.date().year(), 2026);
+        }
+        // A row whose rates are missing is still counted in the account totals — the
+        // money moved even when the price fields did not arrive.
+        QVERIFY(!trades.isEmpty());
+
+        // Now the failing page: the walk REPORTS the failure rather than publishing a
+        // truncated history as if it were complete. A short report that looks whole is
+        // the worse of the two outcomes, so the app refuses to produce one.
+        const qint32 readyBefore = closed.count();
+        client.fetchClosedTrades(4);
+        QTRY_VERIFY_WITH_TIMEOUT(!failures.isEmpty(), kWaitMs);
+        QVERIFY(failures.last().at(0).toString().contains(QStringLiteral("503"))
+                || failures.last().at(0).toString().contains(QStringLiteral("failed")));
+        QCOMPARE(closed.count(), readyBefore);
+    }
+    //! @tstid TS-CLI-028 @design DES-SVC-CLIENT
+    // @relation(REQ-F-003, scope=function)
+    void TS_CLI_028_marketOpenAndTheFxLegAreInferredNotAssumed()
+    {
+        // There is no "is this market open" flag in the API — the client infers it from
+        // whether the quote's timestamp ADVANCES between polls. Getting that wrong in
+        // either direction is expensive: a false "closed" locks the buttons on a live
+        // market, a false "open" lets an order go to a venue that will not fill it.
+        QDateTime quoteStamp = QDateTime::currentDateTimeUtc();
+        QByteArray fxAnswer;
+        MockHttpServer server([&quoteStamp, &fxAnswer](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                if (path.contains(QStringLiteral("instrumentIds=1"))) {
+                    return MockHttpServer::Response{200, fxAnswer, {}};
+                }
+                // The bulk poll answers in the ALTERNATIVE field spelling (cvtBid /
+                // instrumentID), which the client has to read as well as the plain one.
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentID":27,"cvtBid":5000.0,)"
+                                   R"("cvtAsk":5001.0,"date":"%1"}]})")
+                        .arg(quoteStamp.toString(Qt::ISODate))
+                        .toUtf8(),
+                    {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        // 1. The FX leg: no usable numbers means the last rate STANDS rather than
+        //    becoming zero — every euro figure in the window depends on it.
+        fxAnswer = R"({"rates":[{"instrumentId":1}]})";
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+        client.refreshPortfolio();
+        QTest::qWait(800);
+        QCOMPARE(fx.count(), 0);   // nothing publishable arrived
+
+        // 2. …and the documented fallback: no bid/ask, but a lastExecution price.
+        fxAnswer = R"({"rates":[{"instrumentId":1,"lastExecution":1.10}]})";
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(!fx.isEmpty(), kWaitMs);
+        QVERIFY(qAbs(fx.last().at(0).toDouble() - (1.0 / 1.10)) < 1e-6);
+
+        // 3. The alternative quote spelling was understood by the bulk poll.
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).bid > 0.0, kWaitMs);
+        QCOMPARE(client.quotes().value(27).bid, 5000.0);
+
+        // 4. A timestamp that stops advancing is what "closed" looks like. The first
+        //    poll leans on the quote's AGE, later ones on whether it moved — so a
+        //    deliberately old, frozen stamp must end up as not-tradable.
+        QSignalSpy tradable(&client, &EtoroClient::tradeabilityUpdated);
+        quoteStamp = QDateTime::currentDateTimeUtc().addSecs(-4 * 3600);
+        QTest::qWait(2500);
+        if (!tradable.isEmpty()) {
+            const auto openSet = tradable.last().at(0).value<QSet<QString>>();
+            QVERIFY(!openSet.contains(QStringLiteral("SPX500")));
+        }
     }
 };
 

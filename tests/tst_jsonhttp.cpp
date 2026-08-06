@@ -114,6 +114,94 @@ private slots:
         QCOMPARE(out.status, 500);
         QCOMPARE(hits, 1);          // retries are for idempotent GETs only
     }
+    //! @tstid TS-HTTP-004 @design DES-SVC-HTTP
+    // @relation(REQ-N-003, scope=function)
+    void TS_HTTP_004_theRetryPolicyKnowsWhichFailuresAreWorthRepeating()
+    {
+        // WHICH status codes are retried, and how long the wait is, decide whether one
+        // rate-limited page kills a whole paged walk. Each rule is driven here rather
+        // than assumed.
+
+        // Every retryable server status, one at a time: the call succeeds on the
+        // second attempt in each case.
+        for (const qint32 status : {500, 502, 503, 504}) {
+            qint32 hits = 0;
+            MockHttpServer server([&hits, status](const QByteArray &, const QString &) {
+                ++hits;
+                if (hits == 1) {
+                    return MockHttpServer::Response{status, R"({"err":"transient"})", {}};
+                }
+                return MockHttpServer::Response{200, R"({"ok":true})", {}};
+            });
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            QNetworkAccessManager nam;
+            JsonHttp http(&nam);
+            const Outcome out = roundTrip(
+                nam, http, nam.get(QNetworkRequest(QUrl(server.baseUrl() + "/s"))), 2);
+            QVERIFY2(out.ok, qPrintable(QStringLiteral("status %1 should be retried")
+                                            .arg(status)));
+            QCOMPARE(hits, 2);
+        }
+
+        // A status that is NOT transient is reported at once — retrying a 404 or a
+        // 400 only delays the error the caller has to see.
+        for (const qint32 status : {400, 401, 403, 404}) {
+            qint32 hits = 0;
+            MockHttpServer server([&hits, status](const QByteArray &, const QString &) {
+                ++hits;
+                return MockHttpServer::Response{status, R"({"err":"no"})", {}};
+            });
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            QNetworkAccessManager nam;
+            JsonHttp http(&nam);
+            const Outcome out = roundTrip(
+                nam, http, nam.get(QNetworkRequest(QUrl(server.baseUrl() + "/n"))), 2);
+            QVERIFY(out.called);
+            QVERIFY(!out.ok);
+            QCOMPARE(out.status, status);
+            QCOMPARE(hits, 1);   // asked once, answered once
+        }
+
+        // The server's own delay is honoured wherever it puts it: Retry-After, and
+        // RateLimit-Reset when there is no Retry-After. Both are read as SECONDS.
+        for (const QByteArray &header : {QByteArray("Retry-After: 1"),
+                                         QByteArray("RateLimit-Reset: 1")}) {
+            qint32 hits = 0;
+            MockHttpServer server([&hits, header](const QByteArray &, const QString &) {
+                ++hits;
+                if (hits == 1) {
+                    return MockHttpServer::Response{429, R"({"err":"limit"})", {header}};
+                }
+                return MockHttpServer::Response{200, R"({"ok":true})", {}};
+            });
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            QNetworkAccessManager nam;
+            JsonHttp http(&nam);
+            const Outcome out = roundTrip(
+                nam, http, nam.get(QNetworkRequest(QUrl(server.baseUrl() + "/h"))), 2);
+            QVERIFY(out.ok);
+            QCOMPARE(hits, 2);
+        }
+
+        // With no retries left, a retryable status is delivered as the failure it is
+        // rather than retried forever.
+        {
+            qint32 hits = 0;
+            MockHttpServer server([&hits](const QByteArray &, const QString &) {
+                ++hits;
+                return MockHttpServer::Response{503, R"({"err":"down"})", {}};
+            });
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            QNetworkAccessManager nam;
+            JsonHttp http(&nam);
+            const Outcome out = roundTrip(
+                nam, http, nam.get(QNetworkRequest(QUrl(server.baseUrl() + "/d"))), 0);
+            QVERIFY(out.called);
+            QVERIFY(!out.ok);
+            QCOMPARE(out.status, 503);
+            QCOMPARE(hits, 1);
+        }
+    }
 };
 
 QTEST_GUILESS_MAIN(TestJsonHttp)

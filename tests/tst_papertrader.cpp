@@ -2095,6 +2095,91 @@ private slots:
         QCOMPARE(paperAiHold(shortTrade, {against}, BotAiMode::Lead, later, cfg).opinion,
                  HoldOpinion::Hold);
     }
+    //! @tstid TS-PT-033 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, scope=function)
+    void TS_PT_033_theArithmeticRefusesWhatItCannotCompute()
+    {
+        // The pure money arithmetic, at the edges where a naive implementation
+        // divides by zero or invents a number. Every one of these returns "nothing
+        // measured" rather than a plausible figure — the same rule the feeds follow.
+
+        // Gross P/L needs both rates; either missing is not a zero move.
+        QCOMPARE(paperGrossPnl(1000.0, 10, 0.0, 5000.0, true), 0.0);
+        QCOMPARE(paperGrossPnl(1000.0, 10, 5000.0, 0.0, true), 0.0);
+        QVERIFY(paperGrossPnl(1000.0, 10, 5000.0, 5050.0, true) > 0.0);
+        // …and the SHORT is the mirror, not a copy: the same move loses money.
+        QCOMPARE(paperGrossPnl(1000.0, 10, 5000.0, 5050.0, false),
+                 -paperGrossPnl(1000.0, 10, 5000.0, 5050.0, true));
+        // A leverage below 1 is treated as 1 rather than shrinking the position.
+        QCOMPARE(paperGrossPnl(1000.0, 0, 5000.0, 5050.0, true),
+                 paperGrossPnl(1000.0, 1, 5000.0, 5050.0, true));
+
+        // Rollover nights: an invalid or backwards interval is zero nights, never a
+        // negative charge.
+        const QDateTime monday(QDate(2026, 8, 3), QTime(15, 0), QTimeZone::UTC);
+        QCOMPARE(paperRolloverNights(QDateTime(), monday), 0);
+        QCOMPARE(paperRolloverNights(monday, QDateTime()), 0);
+        QCOMPARE(paperRolloverNights(monday, monday), 0);
+        QCOMPARE(paperRolloverNights(monday.addDays(1), monday), 0);
+        QCOMPARE(paperRolloverNights(monday, monday.addDays(1)), 1);
+
+        // A trade with no stop has no measurable risk-at-stop — which the risk budget
+        // must see as zero rather than as "safe".
+        PaperTrade open;
+        open.stake = 1000.0;
+        open.leverage = 10;
+        open.openRate = 5000.0;
+        open.slRate = 0.0;
+        QCOMPARE(open.riskAtStop(), 0.0);
+        open.slRate = 4900.0;
+        QVERIFY(open.riskAtStop() > 0.0);
+        open.openRate = 0.0;
+        QCOMPARE(open.riskAtStop(), 0.0);
+
+        // A closed trade with a missing timestamp has no holding time — the record
+        // shows it as unknown rather than as an instant round trip.
+        PaperClosedTrade closed;
+        QCOMPARE(closed.heldHours(), 0.0);
+        closed.openTime = monday;
+        QCOMPARE(closed.heldHours(), 0.0);
+        closed.closeTime = monday.addSecs(5400);
+        QCOMPARE(closed.heldHours(), 1.5);
+    }
+
+    //! @tstid TS-PT-034 @design DES-DOM-RISKGRP
+    // @relation(REQ-F-031, scope=function)
+    void TS_PT_034_everyCorrelationBucketIsReachableAndNamed()
+    {
+        // The buckets decide whether twelve positions are a diversified book or one
+        // bet twelve times, so each has to be reachable from a real catalog symbol —
+        // and a symbol the catalog does not know must get its OWN bucket rather than
+        // being lumped in with something it does not move with.
+        QCOMPARE(correlationGroup(QStringLiteral("SPX500")), QStringLiteral("equity-index"));
+        QCOMPARE(correlationGroup(QStringLiteral("NSDQ100")), QStringLiteral("equity-index"));
+        QCOMPARE(correlationGroup(QStringLiteral("EURUSD")), QStringLiteral("fx"));
+        // The documented exception: a dollar INDEX is fx, not an equity index.
+        QCOMPARE(correlationGroup(QStringLiteral("USDOLLAR")), QStringLiteral("fx"));
+        // The catalog's own spellings: Gold.24-7 and OIL.24-7, not "GOLD"/"OIL" — a
+        // symbol the catalog does not list gets its own bucket, which is exactly what
+        // the first version of this test tripped over.
+        QCOMPARE(correlationGroup(QStringLiteral("Gold.24-7")), QStringLiteral("metals"));
+        QCOMPARE(correlationGroup(QStringLiteral("OIL.24-7")), QStringLiteral("commodity"));
+        QCOMPARE(correlationGroup(QStringLiteral("RUBBER")), QStringLiteral("commodity"));
+        // Unknown symbols get their own bucket, named after themselves, so they can
+        // never share a risk pool with something they were never compared to.
+        const QString unknown = correlationGroup(QStringLiteral("NOSUCHTHING"));
+        QVERIFY(!unknown.isEmpty());
+        QVERIFY(unknown != QStringLiteral("equity-index"));
+        QVERIFY(unknown != correlationGroup(QStringLiteral("ALSONOTATHING")));
+
+        // The per-bucket leverage ceilings, each one reachable and FX the tightest —
+        // the rule that keeps a 1:30 forex pair from being sized like an index.
+        QVERIFY(groupLeverageCap(QStringLiteral("fx"))
+                <= groupLeverageCap(QStringLiteral("equity-index")));
+        QVERIFY(groupLeverageCap(QStringLiteral("metals")) > 0);
+        QVERIFY(groupLeverageCap(QStringLiteral("commodity")) > 0);
+        QVERIFY(groupLeverageCap(QStringLiteral("something-else")) > 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPaperTrader)

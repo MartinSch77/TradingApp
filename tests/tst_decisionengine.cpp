@@ -308,6 +308,69 @@ private slots:
         QVERIFY(with.value(0).yahoo > 0.5);
         QVERIFY(with.value(0).composite > without.value(0).composite);
     }
+    //! @tstid TS-DEC-009 @design DES-DOM-DEC
+    // @relation(REQ-F-008, scope=function)
+    void TS_DEC_009_theCompositeUsesWhatItHasAndSaysWhenItHasNothing()
+    {
+        // The rule the decision rests on: sources that are ABSENT are left out and the
+        // remaining weights are renormalised — never filled in with a zero, which
+        // would read as a neutral opinion nobody gave.
+        MarketSnapshot m;
+        m.screenerRows = {row(QStringLiteral("SPX500"), trend(120, 1.004, 1.001))};
+
+        // A row with no sources beyond price still produces a decision…
+        const QList<DecisionRow> bare = computeDecisionRows(m);
+        QCOMPARE(bare.size(), 1);
+        QVERIFY(bare.constFirst().haveTech);
+
+        // …a row that is NOT ok, or has no closes at all, is skipped entirely rather
+        // than decided on nothing.
+        ScreenerRow broken = row(QStringLiteral("GOLD"), trend(120, 1.002, 0.999));
+        broken.ok = false;
+        ScreenerRow empty = row(QStringLiteral("OIL"), {});
+        m.screenerRows = {broken, empty, row(QStringLiteral("SPX500"), trend(120, 1.004, 1.001))};
+        const QList<DecisionRow> filtered = computeDecisionRows(m);
+        QCOMPARE(filtered.size(), 1);
+        QCOMPARE(filtered.constFirst().symbol, QStringLiteral("SPX500"));
+
+        // A series too short for the ensemble leaves haveTech false — and the row is
+        // still produced, because the other sources may still say something.
+        m.screenerRows = {row(QStringLiteral("SPX500"), QList<double>(5, 100.0))};
+        const QList<DecisionRow> shortSeries = computeDecisionRows(m);
+        QCOMPARE(shortSeries.size(), 1);
+        QVERIFY(!shortSeries.constFirst().haveTech);
+
+        // The VIX regime has three bands and each one moves the composite its own way:
+        // calm supports risk, elevated presses on it, and panic presses harder.
+        const auto regimeOf = [](double vix) {
+            MarketSnapshot s;
+            s.vixValid = true;
+            s.vix = vix;
+            return marketRegime(s).tilt;
+        };
+        QVERIFY(regimeOf(12.0) > 0.0);      // calm
+        QCOMPARE(regimeOf(20.0), 0.0);      // ordinary band: no opinion
+        QVERIFY(regimeOf(28.0) < 0.0);      // elevated
+        QVERIFY(regimeOf(40.0) < regimeOf(28.0));   // panic presses harder
+        // No VIX at all is not a calm market: it is no reading.
+        MarketSnapshot noVix;
+        QCOMPARE(marketRegime(noVix).tilt, 0.0);
+
+        // Event risk trims conviction rather than flipping direction — a scheduled
+        // release makes a call less certain, not wrong.
+        MarketSnapshot calm;
+        calm.screenerRows = {row(QStringLiteral("SPX500"), trend(120, 1.004, 1.001))};
+        MarketSnapshot risky = calm;
+        EconomicEvent event;
+        event.title = QStringLiteral("CPI");
+        event.impact = QStringLiteral("High");
+        event.when = QDateTime::currentDateTimeUtc().addSecs(1800);
+        risky.events = {event};
+        const DecisionRow quiet = computeDecisionRows(calm).constFirst();
+        const DecisionRow loud = computeDecisionRows(risky).constFirst();
+        QCOMPARE(quiet.dir, loud.dir);
+        QVERIFY(loud.confidence <= quiet.confidence);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestDecisionEngine)

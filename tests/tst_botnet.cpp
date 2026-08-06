@@ -386,6 +386,81 @@ private slots:
         QCOMPARE(flatRun.exitCode(), 3);        // the project's "skipped" code
         QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("flat.json"))));
     }
+    //! @tstid TS-NET-006 @design DES-DOM-BOTNET
+    // @relation(REQ-F-033, scope=function)
+    void TS_NET_006_theModelRefusesEverythingItCannotTrust()
+    {
+        // A learned model that answers confidently on inputs it cannot read is worse
+        // than none, because the bot would act on it. Every refusal path, driven.
+
+        // 1. Training on nothing, and on data with only one class. An AUC needs both
+        //    a positive and a negative example; without them the honest answer is
+        //    0.5 — "no discrimination" — not a flattering 1.0.
+        const TrainConfig cfg;
+        QVERIFY(!trainBotNet({}, cfg).ok);
+        QList<TrainingExample> allWins;
+        for (int i = 0; i < 40; ++i) {
+            TrainingExample e;
+            e.features.confidence = 50.0 + i;
+            e.win = true;   // one class only: nothing to separate
+            allWins.append(e);
+        }
+        const TrainResult oneClass = trainBotNet(allWins, cfg);
+        QVERIFY(!oneClass.ok);
+        QVERIFY2(!oneClass.message.isEmpty(), "a refusal has to say why");
+
+        // 2. A model read back from JSON that is missing its shape is NOT a model.
+        QVERIFY(!botNetFromJson(QJsonObject{}).ok);
+        QVERIFY(!botNetFromJson(QJsonObject{{QStringLiteral("features"), QJsonArray{}}}).ok);
+        // …and one whose weight matrix does not match its feature list is refused
+        // rather than indexed out of bounds.
+        QJsonObject misshaped;
+        QJsonArray featureNames{QStringLiteral("a"), QStringLiteral("b")};
+        QJsonArray w1;
+        QJsonArray row;
+        row.append(0.1);   // one weight for two features
+        w1.append(row);
+        misshaped.insert(QStringLiteral("features"), featureNames);
+        misshaped.insert(QStringLiteral("w1"), w1);
+        misshaped.insert(QStringLiteral("samples"), 500);
+        QVERIFY(!botNetFromJson(misshaped).ok);
+
+        // 3. A model with no weights scores 0.0 — and the number is MEANINGLESS, which
+        //    is why the verdict carries `scored` separately. A caller that reads the
+        //    score without checking that flag is the bug this contract prevents; the
+        //    gate below is what every caller actually uses.
+        const BotNet empty;
+        QCOMPARE(empty.score({}), 0.0);
+        QCOMPARE(empty.score({{QStringLiteral("nonsense"), 1.0}}), 0.0);
+        const NetVerdict unusable =
+            paperNetGate(empty, EntryFeatures{}, BotNetMode::Gate, NetGateConfig{});
+        QVERIFY(!unusable.scored);
+        QVERIFY(unusable.allow);
+
+        // 4. An untrusted model NEVER refuses a trade — it only annotates. That is the
+        //    rule that keeps a half-learned network from stopping the experiment that
+        //    would teach it.
+        NetGateConfig gate;
+        gate.minSamples = 100;
+        gate.minAuc = 0.6;
+        BotNet weak;
+        weak.ok = true;
+        weak.samples = 10;      // below minSamples
+        weak.valAuc = 0.9;
+        const EntryFeatures entryFeatures;
+        const NetVerdict tooFew = paperNetGate(weak, entryFeatures, BotNetMode::Gate, gate);
+        QVERIFY(tooFew.allow);
+        weak.samples = 500;
+        weak.valAuc = 0.5;      // below minAuc
+        QVERIFY(paperNetGate(weak, entryFeatures, BotNetMode::Gate, gate).allow);
+        // …and in OFF mode even a trusted model does not refuse.
+        weak.valAuc = 0.95;
+        QVERIFY(paperNetGate(weak, entryFeatures, BotNetMode::Off, gate).allow);
+
+        // 5. The summary says which of those situations it is, in words.
+        QVERIFY(!botNetSummary(weak, BotNetMode::Off, gate).isEmpty());
+        QVERIFY(!botNetSummary(BotNet{}, BotNetMode::Gate, gate).isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBotNet)

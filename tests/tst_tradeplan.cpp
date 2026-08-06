@@ -223,6 +223,85 @@ private slots:
         QVERIFY(decided > 0.0);
         QVERIFY((shortPlan.pWin / decided) < shortPlan.breakeven);
     }
+    //! @tstid TS-PLAN-009 @design DES-DOM-PLAN
+    // @relation(REQ-F-012, scope=function)
+    void TS_PLAN_009_theShortSideTheWeekendAndTheUnmeasurableCases()
+    {
+        // Everything the existing plan tests establish for a LONG, on the SHORT side —
+        // where the fee leg, the win/lose probabilities and the verdict all switch
+        // which field they read, and a copy-paste error is invisible until money moves
+        // the wrong way.
+        const QList<double> falling = trend(120, 0.995, 0.999);
+        PlanInput shortIn = baseInput(falling);
+        shortIn.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);  // Tuesday
+        shortIn.feesKnown = true;
+        shortIn.fees.buyOvernight = -0.5;
+        shortIn.fees.sellOvernight = -0.2;   // the SHORT's rate, deliberately different
+        shortIn.fees.buyWeekend = -1.5;
+        shortIn.fees.sellWeekend = -0.6;
+        const TradePlan shortPlan = buildTradePlan(shortIn);
+        QVERIFY(shortPlan.dir < 0);
+        // The short's own rollover was used, not the long's.
+        QVERIFY(shortPlan.feePerNight < 0.0);
+        QVERIFY(qAbs(shortPlan.feePerNight) < qAbs(shortIn.fees.buyOvernight * 1e6));
+        QVERIFY(!shortPlan.verdict.isEmpty());
+
+        // A horizon that crosses a Friday night carries the TRIPLED weekend charge;
+        // one inside the working week does not. Both the Saturday and the Sunday start
+        // count, which is what a 24/7 instrument needs.
+        PlanInput weekend = shortIn;
+        weekend.now = QDateTime(QDate(2026, 8, 7), QTime(11, 0), QTimeZone::UTC);   // Friday
+        weekend.horizonHours = 24;
+        QVERIFY(buildTradePlan(weekend).crossesWeekend);
+        weekend.now = QDateTime(QDate(2026, 8, 8), QTime(11, 0), QTimeZone::UTC);   // Saturday
+        QVERIFY(buildTradePlan(weekend).crossesWeekend);
+        weekend.now = QDateTime(QDate(2026, 8, 9), QTime(11, 0), QTimeZone::UTC);   // Sunday
+        QVERIFY(buildTradePlan(weekend).crossesWeekend);
+        PlanInput midweek = shortIn;
+        midweek.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);   // Tuesday
+        midweek.horizonHours = 12;
+        QVERIFY(!buildTradePlan(midweek).crossesWeekend);
+        // An unknown clock cannot decide it either way — and says no rather than
+        // inventing a charge.
+        PlanInput noClock = shortIn;
+        noClock.now = QDateTime();
+        QVERIFY(!buildTradePlan(noClock).crossesWeekend);
+
+        // Fees NOT known: the bill is flagged partial rather than priced at zero,
+        // which is the same rule the bot's carry gate follows.
+        PlanInput noFees = shortIn;
+        noFees.feesKnown = false;
+        const TradePlan partial = buildTradePlan(noFees);
+        QCOMPARE(partial.feePerNight, 0.0);
+        QCOMPARE(partial.weekendFee, 0.0);
+        // …and fees that are "known" but empty are the same situation.
+        PlanInput emptyFees = shortIn;
+        emptyFees.fees = InstrumentFees{};
+        QCOMPARE(buildTradePlan(emptyFees).feePerNight, 0.0);
+
+        // Below the minimum history the plan is INVALID rather than a guess: no
+        // verdict, no probabilities, nothing a caller could mistake for advice. The
+        // volatility and ensemble reads need 31 bars, and a plan built from fewer
+        // would be a number with no measurement behind it.
+        PlanInput thin = baseInput(QList<double>(30, 100.0));
+        thin.now = shortIn.now;
+        const TradePlan thinPlan = buildTradePlan(thin);
+        QVERIFY(!thinPlan.valid);
+        QVERIFY(thinPlan.verdict.isEmpty());
+        QCOMPARE(thinPlan.pWin, 0.0);
+        QCOMPARE(thinPlan.pLose, 0.0);
+
+        // Enough bars but no price and no stake: the same refusal, for its own reason.
+        PlanInput priceless = baseInput(falling);
+        priceless.price = 0.0;
+        priceless.closes = QList<double>(40, 0.0);
+        priceless.now = shortIn.now;
+        QVERIFY(!buildTradePlan(priceless).valid);
+        PlanInput broke = baseInput(falling);
+        broke.invest = 0.0;
+        broke.now = shortIn.now;
+        QVERIFY(!buildTradePlan(broke).valid);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestTradePlan)

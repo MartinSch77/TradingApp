@@ -251,6 +251,65 @@ private slots:
         const Answer prose = answerFromText(QStringLiteral("I would probably buy the S&P today."));
         QVERIFY(prose.empty());
         QVERIFY(prose.error.contains(QStringLiteral("named no tradable pick")));
+
+        // EVERY confidence spelling a 1.5B model has been seen to use, including the
+        // ones that must NOT become a trade. The parse is the feature here: a
+        // mis-read confidence is a silent no-trade or, worse, a sized-up one.
+        const auto confidenceOf = [this](const QString &spelling) {
+            return firstPickOf(QStringLiteral(R"json({"symbol":"SPX500","action":"BUY",)json")
+                               + QStringLiteral(R"json("confidence":%1})json").arg(spelling))
+                .confidence;
+        };
+        QCOMPARE(confidenceOf(QStringLiteral("\"strong\"")), 75.0);
+        QCOMPARE(confidenceOf(QStringLiteral("\"MEDIUM\"")), 50.0);
+        QCOMPARE(confidenceOf(QStringLiteral("\"moderate conviction\"")), 50.0);
+        QCOMPARE(confidenceOf(QStringLiteral("\"low\"")), 25.0);
+        QCOMPARE(confidenceOf(QStringLiteral("\"weak\"")), 25.0);
+        QCOMPARE(confidenceOf(QStringLiteral("\"no idea\"")), 0.0);   // unreadable = not actionable
+        QCOMPARE(confidenceOf(QStringLiteral("\"0.8\"")), 80.0);      // numeric STRING, fraction
+        QCOMPARE(confidenceOf(QStringLiteral("\"70\"")), 70.0);       // numeric string, percent
+        QCOMPARE(confidenceOf(QStringLiteral("1.0")), 100.0);        // the fraction boundary
+        QCOMPARE(confidenceOf(QStringLiteral("55")), 55.0);
+        QCOMPARE(confidenceOf(QStringLiteral("0")), 0.0);            // zero stays zero
+        QCOMPARE(confidenceOf(QStringLiteral("-5")), -5.0);          // nonsense passes through
+                                                                     // to the floor, not fixed up
+
+        // …and the action words, including the CLOSE-before-SHORT ordering that keeps
+        // "close the short" from opening one.
+        const auto actionOf = [this](const QString &word) {
+            return firstPickOf(QStringLiteral(R"json({"symbol":"SPX500","action":"%1",)json")
+                                   .arg(word)
+                               + QStringLiteral(R"json("confidence":60})json"))
+                .action;
+        };
+        QCOMPARE(actionOf(QStringLiteral("go long")), QStringLiteral("BUY"));
+        QCOMPARE(actionOf(QStringLiteral("SHORT it")), QStringLiteral("SELL"));
+        QCOMPARE(actionOf(QStringLiteral("close the short")), QStringLiteral("CLOSE"));
+        QCOMPARE(actionOf(QStringLiteral("exit now")), QStringLiteral("CLOSE"));
+        QCOMPARE(actionOf(QStringLiteral("go flat")), QStringLiteral("CLOSE"));
+        QCOMPARE(actionOf(QStringLiteral("hold")), QStringLiteral("HOLD"));
+
+        // Shapes that carry no usable pick: an entry that is not an object, a keyed
+        // map whose key is the symbol, and a single object with no symbol at all.
+        QVERIFY(answerFromText(QStringLiteral(R"json({"picks":["SPX500","GOLD"]})json")).empty());
+        const Answer keyed = answerFromText(QStringLiteral(
+            R"json({"picks":{"GOLD":{"action":"BUY","confidence":70},)json"
+            R"json("NOTAPICK":"nonsense"}})json"));
+        QCOMPARE(keyed.picks.size(), 1);
+        QCOMPARE(keyed.picks.constFirst().symbol, QStringLiteral("GOLD"));
+        QVERIFY(answerFromText(QStringLiteral(R"json({"action":"BUY","confidence":70})json"))
+                    .empty());
+        // A symbol the catalog does not know still PARSES: the adapter's job is to read
+        // what the model said, and matching a name against the instruments actually on
+        // offer is the gate's (matchProposalSymbol, one unambiguous match or nothing).
+        // Dropping it here would hide a model that answers about the wrong market.
+        const Answer unknownSymbol =
+            answerFromText(QStringLiteral(R"json({"symbol":"NOSUCHTHING","action":"BUY"})json"));
+        QCOMPARE(unknownSymbol.picks.size(), 1);
+        QCOMPARE(unknownSymbol.picks.constFirst().symbol, QStringLiteral("NOSUCHTHING"));
+        // Prose with a stray brace but no complete object: still a reported failure.
+        QVERIFY(answerFromText(QStringLiteral("well { maybe buy")).empty());
+        QVERIFY(answerFromText(QString()).empty());
     }
 
     //! @tstid TS-OLLAMA-007 @design DES-SVC-OLLAMA

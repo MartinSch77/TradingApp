@@ -17,6 +17,7 @@
 #include "ui/ScreenerDialog.h"
 #include "services/OllamaAdvisor.h"
 #include "ui/BotSimPanel.h"
+#include "ui/HeavyweightsPanel.h"
 #include "ui/TradeScriptPanel.h"
 #include "ui/TradeGauge.h"
 
@@ -1185,6 +1186,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_decisionButton);
     header->addWidget(m_scriptButton);
     header->addWidget(m_botButton);
+    header->addWidget(m_heavyButton);
     header->addWidget(m_closedButton);
     header->addStretch();
     header->addLayout(priceCol);
@@ -1259,6 +1261,27 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "as broker-side limit orders."));
     static_cast<void>(
         connect(m_scriptButton, &QPushButton::clicked, this, &MainWindow::openScript));
+
+    // The index heavyweights (REQ-F-035): the ten biggest constituents of each index,
+    // as an EARLY read on where SPX500 and NSDQ100 may go. Its own window, because it
+    // is a market view rather than a per-instrument one — and it costs no new feed.
+    m_heavyButton = new QPushButton(QStringLiteral("Heavyweights…"), central);
+    m_heavyButton->setObjectName(QStringLiteral("heavyButton"));
+    m_heavyButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_heavyButton->setToolTip(QStringLiteral(
+        "The ten biggest constituents of the Nasdaq-100 and the S&P 500, with their "
+        "session moves side by side. An index is the weighted sum of its members, so a "
+        "field that is already moving together is an early read on the index — and one "
+        "name carrying the whole move is a reason to distrust it. A constituent whose "
+        "price could not be read is shown as unknown, never as 0.00 %."));
+    static_cast<void>(connect(m_heavyButton, &QPushButton::clicked, this, [this] {
+        if (m_heavyPanel == nullptr) {
+            m_heavyPanel = new trading::ui::HeavyweightsPanel(this);
+        }
+        m_heavyPanel->setReferenceSeries(m_referenceSeries);
+        m_heavyPanel->show();
+        m_heavyPanel->raise();
+    }));
 
     // Trading-bot simulation: paper money, live prices, no order ever placed.
     m_botButton = new QPushButton(QStringLiteral("Bot sim…"), central);
@@ -4385,6 +4408,11 @@ void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &c
     // what the bot is told; none of them are worth a full rebuild per ticker, so the
     // cheap displays refresh and the rest picks it up on the next scan.
     updateConfluenceSignal();
+    // The heavyweight window, when it is open: it exists to show these very series,
+    // so a stale one would be worse than none.
+    if ((m_heavyPanel != nullptr) && m_heavyPanel->isVisible()) {
+        m_heavyPanel->setReferenceSeries(m_referenceSeries);
+    }
 }
 
 void MainWindow::onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines)

@@ -17,6 +17,10 @@
 #include <QSize>
 #include <QStringList>
 
+namespace trading::ui {
+class HeavyweightsPanel;
+}
+
 class AiAdvisor;
 class BotSimDialog;
 class BotSimRunner;
@@ -395,6 +399,10 @@ private:
     QStringList m_localAsked;                  // …and what it was shown to answer about
     BotSimDialog *m_botDialog = nullptr;
     QPushButton *m_botButton = nullptr;
+    // The index-heavyweight early read (REQ-F-035): a window of its own, fed from
+    // the reference series the confluence reads already fetch.
+    QPushButton *m_heavyButton = nullptr;
+    trading::ui::HeavyweightsPanel *m_heavyPanel = nullptr;
     QList<ScreenerRow> m_screenerRows;  // latest scan results, unsorted (arrival order)
     QGroupBox *m_tradeBox = nullptr;       // "Trade <symbol>" panel
     QLabel *m_tradeHours = nullptr;        // approx. trading hours (local) under the title

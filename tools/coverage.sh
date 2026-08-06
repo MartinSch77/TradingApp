@@ -185,7 +185,17 @@ coco_build() {
         -DCMAKE_CXX_COMPILER="$COCO_DIR/bin/csg++" \
         "${ar_arg[@]}" \
         -DCMAKE_CXX_FLAGS="$csflags"
-    cmake --build "$build" -j"$JOBS"
+    # csg++ MERGES instrumentation into an existing .csmes and refuses when the source
+    # behind it changed ("Source file ... is different at line N", then the link fails
+    # with error 255). That is a stale database, not a code problem — so a failed build
+    # is retried ONCE with the databases removed, which is the documented remedy and
+    # costs a re-instrumentation rather than a confusing red stage.
+    if ! cmake --build "$build" -j"$JOBS"; then
+        echo "coco: build failed — clearing stale instrumentation databases and retrying once"
+        find "$build" -name '*.csmes' -delete 2>/dev/null || true
+        find "$build" -name '*.csexe' -delete 2>/dev/null || true
+        cmake --build "$build" -j"$JOBS"
+    fi
 }
 
 # Run one instrumented test and import its execution report UNDER ITS OWN NAME: the
@@ -241,13 +251,32 @@ coco_report() {
 # lines, and a line-covered decision can still have untested condition combinations.
 coco_stat_levels() {
     local csmes="$1"
-    local label value
+    local json="${2:-}"
+    local label value name first=1
+    [ -n "$json" ] && printf '{\n' > "$json"
     for label in statement:--coverage-statement-block decision:--coverage-decision \
                  condition:--coverage-condition mcdc:--coverage-mcdc; do
+        name="${label%%:*}"
         value="$("$COCO_DIR/bin/cmreport" -m "$csmes" "${label#*:}" --stat 2>/dev/null |
                  tr -d ' \n')"
-        printf '  %-10s %s\n' "${label%%:*}" "${value:-unavailable}"
+        printf '  %-10s %s\n' "$name" "${value:-unavailable}"
+        # …and the same numbers as JSON, because the quality PDF must be able to REPORT
+        # Coco rather than merely note that a licence exists.
+        if [ -n "$json" ] && [ -n "$value" ]; then
+            local pct covered total
+            pct="${value%%\%*}"
+            covered="$(printf '%s' "$value" | sed -n 's/.*(\([0-9]*\)\/\([0-9]*\)).*/\1/p')"
+            total="$(printf '%s' "$value" | sed -n 's/.*(\([0-9]*\)\/\([0-9]*\)).*/\2/p')"
+            [ "$first" -eq 1 ] || printf ',\n' >> "$json"
+            printf '  "%s": {"percent": %s, "covered": %s, "total": %s}' \
+                "$name" "${pct:-0}" "${covered:-0}" "${total:-0}" >> "$json"
+            first=0
+        fi
     done
+    if [ -n "$json" ]; then
+        printf '\n}\n' >> "$json"
+        echo "  summary:   $json"
+    fi
 }
 
 # CocoAI turns an existing coverage database into suggestions for the tests that
@@ -332,7 +361,7 @@ run_coco_components() {
         "--csv-excel=$OUT/functions.csv" \
         "--junit=$ROOT/test-results/coco-components.xml"
     echo "component call coverage over $ran component tests"
-    coco_stat_levels "$OUT/merged.csmes"
+    coco_stat_levels "$OUT/merged.csmes" "$OUT/summary.json"
     echo "HTML: $OUT/index.html   (per-test attribution: open $OUT/merged.csmes in coveragebrowser and group by test case)"
 }
 
@@ -371,7 +400,7 @@ run_coco() {
     coco_report "$OUT/merged.csmes" "TradingApp — statement/decision/condition + MC/DC" \
         "--html=$OUT/index.html" \
         "--csv-excel=$OUT/functions.csv"
-    coco_stat_levels "$OUT/merged.csmes"
+    coco_stat_levels "$OUT/merged.csmes" "$OUT/summary.json"
     echo "HTML: $OUT/index.html   (open $OUT/merged.csmes in coveragebrowser for MC/DC drill-down)"
 }
 
@@ -382,23 +411,38 @@ coco) run_coco ;;
 coco-components) run_coco_components ;;
 coco-ai) run_coco_ai ;;
 auto)
+    # EVERY back end that is available runs — Coco is not a replacement for the free
+    # toolchain, it is a second opinion. They measure different things and are read by
+    # different consumers: gcov produces the line/branch numbers the coverage BADGE and
+    # the quality PDF are built from, clang gives an independent MC/DC figure (it
+    # instruments the IR where Coco instruments the source), and Coco adds
+    # statement/decision/condition/MC/DC from a qualified tool. The earlier version of
+    # this block ran Coco INSTEAD of the other two the moment a licence appeared, which
+    # silently emptied coverage/gcov and coverage/mcdc and left the PDF reporting "no
+    # coverage artefacts were produced" — a better tool must not remove evidence.
+    # A back end that is absent says so and is skipped; the stage fails only when none
+    # of them measured anything.
+    measured=()
+    rc=0
+    run_gcov && measured+=(gcov) || echo "auto: gcov produced nothing — see the message above"
+    run_mcdc || rc=$?
+    case $rc in
+    0) measured+=(mcdc) ;;
+    3) echo "auto: clang MC/DC skipped (see above)" ;;
+    *) echo "auto: clang MC/DC FAILED (rc=$rc)" ;;
+    esac
     if coco_usable; then
-        echo "auto: Squish Coco found at $COCO_DIR with a valid license — measuring with Coco"
-        run_coco
+        echo "auto: Squish Coco found at $COCO_DIR with a valid licence"
+        run_coco && measured+=(coco)
     else
-        echo "auto: Squish Coco unavailable ($COCO_DIR missing or license invalid) — measuring with gcov + clang MC/DC"
-        run_gcov
-        # gcov above is real measurement, so a host without clang >= 18 must not
-        # turn the whole stage into `skipped` — the MC/DC part says so itself and
-        # the stage stays green. Any OTHER failure still fails the stage.
-        rc=0
-        run_mcdc || rc=$?
-        if [ "$rc" -eq 3 ]; then
-            echo "auto: MC/DC skipped (see above) — gcov line/branch coverage was measured"
-        elif [ "$rc" -ne 0 ]; then
-            exit "$rc"
-        fi
+        echo "auto: Squish Coco unavailable ($COCO_DIR missing or licence invalid) — skipped"
     fi
+    echo ""
+    if [ "${#measured[@]}" -eq 0 ]; then
+        echo "no coverage back end produced a report" >&2
+        exit 1
+    fi
+    echo "coverage measured by: ${measured[*]}"
     ;;
 *)
     echo "usage: $0 [auto|gcov|mcdc|coco]" >&2

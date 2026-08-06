@@ -169,6 +169,8 @@ qt_add_executable(TradingApp
     src/ui/ScreenerDialog.cpp
     src/ui/TradeScriptPanel.cpp
     src/ui/TradeScriptPanel.h
+    src/ui/HeavyweightsPanel.cpp
+    src/ui/HeavyweightsPanel.h
     src/ui/BotSimPanel.cpp
     src/ui/BotSimPanel.h
     src/ui/ScreenerDialog.h

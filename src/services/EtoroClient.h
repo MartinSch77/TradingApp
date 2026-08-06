@@ -73,6 +73,13 @@ public:
     // order, and an empty set restores the previous behaviour.
     void setExtraQuoteInstruments(const QSet<qint64> &instrumentIds);
 
+    // The per-unit rollover fees come from eToro's PUBLIC trade-config host, which is
+    // not the API base and therefore not covered by Config::baseUrl. Tests redirect it
+    // here — the same hook AiAdvisor, MarketFeeds and EconomicCalendar carry, and for
+    // the same reason: a fee path that can only be exercised against the real host is
+    // one that is never exercised.
+    void setTradeConfigBaseForTesting(const QString &base);
+
     // Live spread (percent of mid) for any listed symbol, from the most recent
     // bulk rates snapshot (the periodic tradeability refresh keeps it warm for
     // every resolved instrument). 0 while unknown.

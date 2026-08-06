@@ -66,6 +66,47 @@ struct IndexReads {
                                     const QHash<QString, QList<double>> &referenceSeries,
                                     const QList<double> &ownSeries);
 
+// One heavyweight constituent, as the early-warning view shows it (REQ-F-035): the
+// name, how far it has moved on the session, and whether that was measurable at all.
+// A name whose series is missing is UNKNOWN — the same rule the reads follow, because
+// "flat" and "not fetched" are different facts and only one of them is evidence.
+struct HeavyweightRow {
+    QString ticker;
+    bool known = false;
+    double changePct = 0.0;
+};
+
+// What the top-ten constituents of one index are doing, together: the rows, how many
+// were readable, how many are up, and the AVERAGE move of the readable ones.
+//
+// Why average rather than index-weighted: this app does not fetch index weights, and
+// a weighted number computed from invented weights would look more authoritative than
+// it is. The average of the ten biggest names is an honest stand-in and is labelled
+// as one — see the note on breadth above.
+struct HeavyweightPulse {
+    QString indexName;              // "Nasdaq-100" / "S&P 500"
+    QList<HeavyweightRow> rows;
+    qint32 measured = 0;
+    qint32 up = 0;
+    double averageChangePct = 0.0;
+    // The strongest and the weakest readable name — one name carrying an index is a
+    // different situation from ten moving together, and that is the whole point of
+    // watching the constituents rather than only the index.
+    QString leader;
+    double leaderChangePct = 0.0;
+    QString laggard;
+    double laggardChangePct = 0.0;
+
+    [[nodiscard]] bool isEmpty() const { return measured == 0; }
+    // A one-line summary in the words the window shows.
+    [[nodiscard]] QString headline() const;
+};
+
+// The pulse of the index `symbol` belongs to, from the reference series already
+// fetched for the confluence reads — no additional feed.
+[[nodiscard]] HeavyweightPulse heavyweightPulse(const QString &symbol,
+                                                const QHash<QString, QList<double>> &series);
+
 // How many reads agree with `dir`, how many contradict it, and how many could not be
 // measured — plus a one-line summary naming each. `met >= 4` is the bar a
 // professional dashboard would ask for; whether the bot enforces it is configuration.

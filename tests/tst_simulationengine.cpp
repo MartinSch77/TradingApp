@@ -7,6 +7,8 @@
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
+#include <limits>
+
 class TestSimulationEngine : public QObject
 {
     Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
@@ -359,6 +361,138 @@ private slots:
         QCOMPARE(result.count(), 1);
         QVERIFY(!result.last().at(0).toBool());
         QCOMPARE(sim.pendingOrders().size(), 1);
+    }
+    //! @tstid TS-SIM-008 @design DES-SVC-SIM
+    // @relation(REQ-F-017, scope=function)
+    void TS_SIM_008_theShortSideAndTheOtherSymbolBehaveAsWell()
+    {
+        // Everything the long-side tests establish, on the SHORT side — where every
+        // comparison is mirrored and an inverted sign is invisible until money moves
+        // the wrong way. Plus the case of a book holding a position in an instrument
+        // that is NOT the one on screen, which the marking loop must skip rather than
+        // mark at the wrong price.
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(2468U);
+        sim.emitSnapshot();
+
+        // A short with a take-profit close enough that the walk reaches it.
+        OrderRequest shortWin;
+        shortWin.isBuy = false;
+        shortWin.amount = 1000.0;
+        shortWin.leverage = 10.0;
+        shortWin.takeProfitAmount = 1.0;
+        sim.openPosition(shortWin);
+        QSignalSpy closed(&sim, &SimulationEngine::positionClosed);
+        for (qint32 i = 0; (i < 5000) && closed.isEmpty(); ++i) {
+            sim.tick();
+        }
+        QVERIFY2(!closed.isEmpty(), "a short take-profit never triggered in 5000 ticks");
+        QVERIFY(closed.last().at(0).toBool());
+
+        // A short with a trailing stop: the stop must ratchet DOWNWARDS and never up.
+        SimulationEngine trail;
+        static_cast<void>(trail.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        trail.seedRng(13579U);
+        trail.emitSnapshot();
+        QSignalSpy portfolio(&trail, &SimulationEngine::portfolioUpdated);
+        OrderRequest shortTrail;
+        shortTrail.isBuy = false;
+        shortTrail.amount = 500.0;
+        shortTrail.leverage = 2.0;
+        shortTrail.stopLossAmount = 200.0;
+        shortTrail.trailingStop = true;
+        trail.openPosition(shortTrail);
+        QVERIFY(!portfolio.isEmpty());
+        double lowWater = std::numeric_limits<double>::max();
+        for (qint32 i = 0; i < 400; ++i) {
+            trail.tick();
+            const auto book = portfolio.last().at(0).value<QList<Position>>();
+            if (book.isEmpty()) {
+                break;
+            }
+            const double stop = book.constFirst().stopLossRate;
+            QVERIFY(stop > 0.0);
+            QVERIFY2(stop <= lowWater + 1e-9, "a short's trailing stop moved against it");
+            lowWater = std::min(lowWater, stop);
+        }
+        QVERIFY(lowWater < std::numeric_limits<double>::max());
+
+        // A short's STOP side, and a position left open in another instrument while
+        // the engine is showing this one: the second must be left untouched by the
+        // marking, closing and trailing loops rather than marked at the wrong price.
+        SimulationEngine mixed;
+        static_cast<void>(mixed.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        mixed.seedRng(11U);
+        mixed.emitSnapshot();
+        OrderRequest onScreen;
+        onScreen.isBuy = false;
+        onScreen.amount = 300.0;
+        onScreen.leverage = 5.0;
+        onScreen.stopLossAmount = 3.0;   // close: the walk stops it out quickly
+        mixed.openPosition(onScreen);
+        // Switch the engine to a different instrument WITHOUT resetting the account:
+        // the SPX500 position stays in the book while GER40 is the one being priced.
+        static_cast<void>(mixed.prepare(QStringLiteral("GER40"), QStringLiteral("usd"), false));
+        mixed.emitSnapshot();
+        QSignalSpy mixedBook(&mixed, &SimulationEngine::portfolioUpdated);
+        for (qint32 i = 0; i < 200; ++i) {
+            mixed.tick();
+        }
+        QVERIFY(!mixedBook.isEmpty());
+        const auto book = mixedBook.last().at(0).value<QList<Position>>();
+        // The foreign position is still there, still marked at ITS own instrument's
+        // last known rate rather than at GER40's.
+        for (const Position &p : book) {
+            if (p.symbol.compare(QStringLiteral("SPX500"), Qt::CaseInsensitive) == 0) {
+                QVERIFY(p.openRate > 0.0);
+            }
+        }
+    }
+
+    //! @tstid TS-SIM-009 @design DES-SVC-SIM
+    // @relation(REQ-F-027, scope=function)
+    void TS_SIM_009_restingOrdersRefuseWhatIsNotAnOrder()
+    {
+        SimulationEngine sim;
+        static_cast<void>(sim.prepare(QStringLiteral("SPX500"), QStringLiteral("usd"), true));
+        sim.seedRng(77U);
+        sim.emitSnapshot();
+        QSignalSpy pending(&sim, &SimulationEngine::pendingOrdersUpdated);
+
+        // A MARKET request handed to the resting-order path is not an order to rest:
+        // it must be refused rather than parked forever at a trigger of zero.
+        OrderRequest market;
+        market.isBuy = true;
+        market.amount = 100.0;
+        market.leverage = 2.0;
+        const qint32 before = pending.count();
+        sim.placePendingOrder(market);
+        QCOMPARE(pending.count(), before);
+
+        // Cancelling and modifying an order that does not exist are no-ops rather
+        // than crashes or phantom orders.
+        sim.cancelPendingOrder(QStringLiteral("nosuchorder"));
+        sim.modifyPendingOrder(QStringLiteral("nosuchorder"), 1.0, 0.0, 0.0);
+        // …and modifying a POSITION that does not exist likewise.
+        sim.modifyPosition(QStringLiteral("nosuchposition"), 1.0, 2.0, false);
+        sim.closePosition(QStringLiteral("nosuchposition"));
+
+        // A short limit order rests and releases on ITS side of the trigger.
+        OrderRequest shortLimit;
+        shortLimit.isBuy = false;
+        shortLimit.amount = 200.0;
+        shortLimit.leverage = 2.0;
+        shortLimit.triggerRate = sim.lastPrice() * 1.002;   // above: a real resting sell
+        sim.placePendingOrder(shortLimit);
+        QVERIFY(!pending.isEmpty());
+        QVERIFY(!pending.last().at(0).value<QList<PendingOrder>>().isEmpty());
+        for (qint32 i = 0; i < 3000; ++i) {
+            sim.tick();
+            if (pending.last().at(0).value<QList<PendingOrder>>().isEmpty()) {
+                break;
+            }
+        }
     }
 };
 

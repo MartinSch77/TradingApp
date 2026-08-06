@@ -16,7 +16,7 @@ def main():
 
     # 1. The badge says SIMULATION. If a future change ever let real credentials
     #    through, this fails before any test can click BUY.
-    badge = waitForObject(names.modeBadge)
+    badge = waitForObject(names.modeLabel)
     test.verify("SIMULATION" in str(badge.text),
                 "the app must be in SIMULATION for a GUI test run — badge says: %s"
                 % str(badge.text))
@@ -40,7 +40,6 @@ def main():
         snooze(1)
         test.log("opened: %s" % window)
 
-    # 4. The bot simulation is simulated money by construction; the window says so.
+    # 4. The bot simulation is simulated money by construction; its window is up.
     bot = waitForObject(names.botSimDialog)
-    test.verify("Simulated money only" in str(bot.windowTitle) or True,
-                "bot window opened")
+    test.verify(bot is not None, "the bot window opened")

@@ -57,6 +57,46 @@ in @ref windows.
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |
 | Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `tools/sdoc_to_md.py`, `tools/parse_sanitizer_log.py`, `tools/merge_findings.py`, `tools/msvc_analyze.py`, `tools/coverity_findings.py`, `tools/clang_analyzer.py`, `tools/lizard_metrics.py`, `tools/cpd_scan.py`, `packaging/make_icon.py`, `axivion/external_import.py` |
 
+## What must be installed — and what happens when it is not
+
+Rather than a prose list that goes stale, the repository answers this by running:
+
+```bash
+tools/check_prerequisites.sh              # everything, grouped by pipeline stage
+tools/check_prerequisites.sh --release    # only what publishing a release needs
+tools\check_prerequisites.ps1 -Release    # the Windows counterpart
+```
+
+Each entry names the stage it belongs to, so a missing tool translates directly into
+"this stage will report skipped" instead of a surprise halfway through a release. The
+exit code is 1 only when something **required** is missing; licence-bound tools never
+fail it.
+
+The division is deliberate and is the rule the whole pipeline follows:
+
+| Kind | Examples | If absent |
+|------|----------|-----------|
+| **Required** | CMake, a C++23 compiler, Qt 6, Python 3, cppcheck, clang-tidy, git, `gh`, reportlab | the build or the release genuinely cannot proceed — `setup.sh` / `setup.ps1` install every one of them |
+| **Open-source, optional** | clazy, valgrind, lcov/gcovr, llvm-cov, PMD (Java), codespell, lizard, Ollama, linuxdeploy, Android SDK/NDK | the stage says so and **skips** (exit code 3); the pipeline stays green and the quality PDF records that this evidence was not measured here |
+| **Licence-bound** | Squish, Squish Coco, Axivion Suite, Qt Test Center | same skip, and additionally listed as a **MISSING LICENCE** in the quality PDF — so a reader can tell "measured and clean" from "not measured on this machine" |
+
+Two consequences worth stating plainly, because both have surprised people:
+
+* **A release does not need the licensed tools.** It needs the tests green, the seven
+  analyzers at zero, the metrics ratchet clean, zero hard traceability gaps and a PDF
+  newer than the sources. `tools/publish_release.sh` checks exactly that and refuses
+  otherwise — a missing Coco licence is not one of the reasons it can refuse.
+* **No single machine produces all four platforms.** The Windows ZIP, the ARM64
+  AppImage and the signed Android APK are built by `.github/workflows/release.yml` on
+  a `v*` tag, one runner each. The publisher attaches what exists and names what is
+  missing rather than quietly shipping three platforms as four.
+
+For the optional runtime feature the app itself can use — the local model the trading
+bot takes its picks from — `./setup.sh ollama` installs the runtime and the model
+under `~/.local/ollama`; on Windows it is `winget install Ollama.Ollama` followed by
+`ollama pull qwen2.5:1.5b`. Without it the bot simply reports the model as not
+configured and keeps trading its own composite.
+
 ## Windows-only tools
 
 Versions captured on the Windows reference machine (Windows 11, 2026-07-27).

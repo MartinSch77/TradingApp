@@ -197,6 +197,75 @@ private slots:
         QCOMPARE(noSide.measured(), 0);
         QVERIFY(noSide.reasons.isEmpty());
     }
+    //! @tstid TS-CONF-004 @design DES-DOM-CONFLUENCE
+    // @relation(REQ-F-035, scope=function)
+    void TS_CONF_004_theHeavyweightPulseSummarisesWhatWasActuallyRead()
+    {
+        // The early-warning view (the "Heavyweights" window) is built from this, and
+        // its whole value depends on two things being true: the numbers are the ones
+        // measured, and a name that could not be read is not counted as flat.
+        QHash<QString, QList<double>> series;
+        const QStringList nasdaq = nasdaqHeavyweights();
+        // Eight of the ten up by a little, NFLX up a lot, COST down a lot.
+        for (qsizetype i = 0; i < nasdaq.size(); ++i) {
+            const QString name = nasdaq.at(i);
+            double move = 0.5;
+            if (name == QStringLiteral("NFLX")) {
+                move = 4.0;
+            } else if (name == QStringLiteral("COST")) {
+                move = -3.0;
+            }
+            static_cast<void>(series.insert(name, sessionWith(move)));
+        }
+
+        const HeavyweightPulse pulse = heavyweightPulse(QStringLiteral("NSDQ100"), series);
+        QCOMPARE(pulse.indexName, QStringLiteral("Nasdaq-100"));
+        QCOMPARE(pulse.rows.size(), 10);
+        QCOMPARE(pulse.measured, 10);
+        QCOMPARE(pulse.up, 9);
+        QCOMPARE(pulse.leader, QStringLiteral("NFLX"));
+        QCOMPARE(pulse.laggard, QStringLiteral("COST"));
+        QVERIFY(pulse.leaderChangePct > pulse.laggardChangePct);
+        // The average is of the READABLE names, and it sits between the extremes.
+        QVERIFY(pulse.averageChangePct < pulse.leaderChangePct);
+        QVERIFY(pulse.averageChangePct > pulse.laggardChangePct);
+        // The headline names the index and carries the count, so the window's summary
+        // line cannot drift away from the numbers behind it.
+        QVERIFY(pulse.headline().contains(QStringLiteral("Nasdaq-100")));
+        QVERIFY(pulse.headline().contains(QStringLiteral("9 of 10")));
+        QVERIFY(pulse.headline().contains(QStringLiteral("NFLX")));
+
+        // An index whose names were NOT fetched: every row is present but unknown,
+        // and nothing is counted — "no data" must not read as "a flat market".
+        const HeavyweightPulse blind = heavyweightPulse(QStringLiteral("SPX500"), {});
+        QCOMPARE(blind.indexName, QStringLiteral("S&P 500"));
+        QCOMPARE(blind.rows.size(), 10);
+        QVERIFY(blind.isEmpty());
+        QCOMPARE(blind.measured, 0);
+        QCOMPARE(blind.up, 0);
+        QCOMPARE(blind.averageChangePct, 0.0);
+        QVERIFY(blind.headline().contains(QStringLiteral("no constituent prices")));
+        for (const HeavyweightRow &row : blind.rows) {
+            QVERIFY(!row.known);
+            QVERIFY(!row.ticker.isEmpty());
+        }
+
+        // A PARTIAL field: three of the S&P's ten readable, two of them up. The counts
+        // are of what was measured, never of the list length.
+        QHash<QString, QList<double>> partial;
+        const QStringList sp = spHeavyweights();
+        static_cast<void>(partial.insert(sp.at(0), sessionWith(1.0)));
+        static_cast<void>(partial.insert(sp.at(1), sessionWith(2.0)));
+        static_cast<void>(partial.insert(sp.at(2), sessionWith(-1.0)));
+        const HeavyweightPulse thin = heavyweightPulse(QStringLiteral("SPX500"), partial);
+        QCOMPARE(thin.measured, 3);
+        QCOMPARE(thin.up, 2);
+        QCOMPARE(thin.rows.size(), 10);
+        QVERIFY(thin.headline().contains(QStringLiteral("2 of 3")));
+        // …and the two indices really do read different names: the Nasdaq's pulse over
+        // the same S&P-only series is emptier than the S&P's.
+        QVERIFY(heavyweightPulse(QStringLiteral("NSDQ100"), partial).measured <= thin.measured);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestIndexConfluence)

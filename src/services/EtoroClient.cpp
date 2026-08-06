@@ -201,11 +201,21 @@ QList<qint32> eligibleLeverages(const QJsonObject &eligibility)
 // The public, unauthenticated trade-config feed the eToro web app uses; it
 // carries the per-unit overnight/weekend rollover fees. One request builder so
 // the URL and the browser headers cannot drift between its two callers.
+// Empty = the real host. Set only by tests, through
+// EtoroClient::setTradeConfigBaseForTesting.
+QString &tradeConfigBase()
+{
+    static QString base;
+    return base;
+}
+
 QNetworkRequest tradeConfigRequest(qint64 instrumentId)
 {
-    QNetworkRequest req(QUrl(
-        QStringLiteral("https://api.etorostatic.com/sapi/trade-real/instruments/%1")
-            .arg(instrumentId)));
+    const QString host = tradeConfigBase().isEmpty()
+                             ? QStringLiteral("https://api.etorostatic.com")
+                             : tradeConfigBase();
+    QNetworkRequest req(
+        QUrl(QStringLiteral("%1/sapi/trade-real/instruments/%2").arg(host).arg(instrumentId)));
     JsonHttp::setBrowserHeaders(req);
     return req;
 }
@@ -930,6 +940,11 @@ void EtoroClient::fetchFeesReal()
             emit feesUpdated(fees);
         }
     });
+}
+
+void EtoroClient::setTradeConfigBaseForTesting(const QString &base)
+{
+    tradeConfigBase() = base;
 }
 
 void EtoroClient::setExtraQuoteInstruments(const QSet<qint64> &instrumentIds)

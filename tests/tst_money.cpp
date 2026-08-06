@@ -3,6 +3,8 @@
 
 #include <QTest>
 
+#include <limits>
+
 using namespace trading;
 
 namespace {
@@ -305,6 +307,156 @@ private slots:
         bad.triggerRate = 5100.0;
         QVERIFY(validateGood(bad, goodContext()).problems.size() >= 3);
         QVERIFY(!validateGood(bad, goodContext()).summary().isEmpty());
+    }
+    //! @tstid TS-MONEY-003 @design DES-DOM-MONEY
+    // @relation(REQ-N-008, scope=function)
+    void TS_MONEY_003_everyBranchOfTheValueTypeAnswers()
+    {
+        // The remaining paths of the type, driven deliberately rather than by
+        // accident: MC/DC asks that each condition decide the outcome on its own, and
+        // an amount type whose refusal branches are never exercised is one whose
+        // refusals are a claim rather than a behaviour.
+        QCOMPARE(currencyCode(Currency::Invalid), QStringLiteral("---"));
+        QCOMPARE(currencyFromCode(QString()), Currency::Invalid);
+        // fromMinorUnits refuses an invalid currency; zero() inherits that refusal.
+        QVERIFY(!Money::fromMinorUnits(100, Currency::Invalid).isValid());
+        QVERIFY(!Money::zero(Currency::Invalid).isValid());
+        QCOMPARE(Money::fromMinorUnits(-5, Currency::Usd).minorUnits(), -5);
+
+        // toDouble of an invalid amount is 0.0 — asked for, not stumbled into.
+        QCOMPARE(Money().toDouble(), 0.0);
+        // Every predicate answers false for an invalid amount rather than throwing or
+        // guessing: isZero and isPositive are both used as guards before sending.
+        QVERIFY(!Money().isPositive());
+        QVERIFY(!Money().isNegative());
+
+        // Both operands matter in the arithmetic guards: invalid-on-the-left and
+        // invalid-on-the-right must each refuse.
+        QVERIFY(!(Money() + eur(1.0)).isValid());
+        QVERIFY(!(eur(1.0) + Money()).isValid());
+        QVERIFY(!(Money() - eur(1.0)).isValid());
+        QVERIFY(!(eur(1.0) - Money()).isValid());
+        QVERIFY(!(-Money()).isValid());
+        QVERIFY(!Money().timesInt(3).isValid());
+        QVERIFY(!Money().fractionOf(eur(1.0)));
+        QVERIFY(!eur(1.0).fractionOf(Money()));
+
+        // The compound assignments go through the same guards, and an invalid result
+        // STAYS invalid: a book that added a wrong-currency amount must not look sane
+        // again after the next addition.
+        Money running = eur(5.00);
+        running += eur(2.50);
+        QCOMPARE(running.minorUnits(), 750);
+        running -= eur(0.50);
+        QCOMPARE(running.minorUnits(), 700);
+        running += Money::fromDouble(1.0, Currency::Usd);
+        QVERIFY(!running.isValid());
+        running += eur(1.0);
+        QVERIFY(!running.isValid());
+
+        // Ordering: equal, less and greater are three answers, and equality across
+        // currencies is false even at the same number of minor units.
+        QVERIFY(eur(1.00) == eur(1.00));
+        QVERIFY(eur(1.00) < eur(1.01));
+        QVERIFY(eur(1.02) > eur(1.01));
+        QVERIFY(!(eur(1.00) == Money()));
+        QVERIFY(Money() == Money());
+        // scaledBy on the negative side and by zero, both exact.
+        QCOMPARE(eur(-10.00).scaledBy(0.5).minorUnits(), -500);
+        QCOMPARE(eur(10.00).scaledBy(0.0).minorUnits(), 0);
+        QCOMPARE(eur(-3.00).timesInt(-2).minorUnits(), 600);
+        // A scale so large it leaves the representable range refuses rather than wraps.
+        QVERIFY(!eur(1000000.00).scaledBy(1.0e18).isValid());
+    }
+
+    //! @tstid TS-ORDVAL-003 @design DES-DOM-ORDERVAL
+    // @relation(REQ-N-009, scope=function)
+    void TS_ORDVAL_003_theUnknownAndTheImpossibleAreBothHandled()
+    {
+        // "Unknown disables its own check" is a rule the validator states; these are
+        // the cases where it must actually hold, plus the refusal branches that a
+        // happy-path test never reaches.
+        OrderContext c = goodContext();
+        c.orderCurrency = Currency::Invalid;
+        QVERIFY(validateGood(goodRequest(), c)
+                    .codes()
+                    .contains(QStringLiteral("order-currency-unknown")));
+
+        // An unknown ladder disables the leverage check — including for a leverage no
+        // real instrument offers.
+        c = goodContext();
+        c.leverageLadder.clear();
+        OrderRequest odd = goodRequest();
+        odd.leverage = 7.5;
+        QVERIFY(validateGood(odd, c).ok());
+        // …while a non-finite leverage is refused whether or not a ladder is known.
+        odd.leverage = std::numeric_limits<double>::infinity();
+        QVERIFY(validateGood(odd, c).codes().contains(QStringLiteral("leverage-invalid")));
+        odd.leverage = std::numeric_limits<double>::quiet_NaN();
+        QVERIFY(validateGood(odd, goodContext())
+                    .codes()
+                    .contains(QStringLiteral("leverage-invalid")));
+
+        // The unit cap needs BOTH the cap and a rate; either missing disables it
+        // rather than guessing a bound.
+        c = goodContext();
+        c.instrument.maxUnitsPerOrder = 0.001;
+        c.marketRate = 0.0;
+        OrderRequest limit = goodRequest();
+        limit.triggerRate = 4900.0;   // a limit order needs no live rate
+        QVERIFY(validateGood(limit, c).ok());
+        // …and a units count exactly AT the cap passes, one hundredth over it does not.
+        c = goodContext();
+        c.instrument.maxUnitsPerOrder = 0.5;   // 500 x 5 / 5000 = exactly 0.5
+        QVERIFY(validateGood(goodRequest(), c).ok());
+
+        // A negative or non-finite trigger is refused before any side comparison.
+        OrderRequest bad = goodRequest();
+        bad.triggerRate = -1.0;
+        QVERIFY(validateGood(bad, goodContext())
+                    .codes()
+                    .contains(QStringLiteral("trigger-invalid")));
+        bad.triggerRate = std::numeric_limits<double>::quiet_NaN();
+        QVERIFY(validateGood(bad, goodContext())
+                    .codes()
+                    .contains(QStringLiteral("trigger-invalid")));
+
+        // The SELL side of the wrong-side rule: a sell limit BELOW the market is
+        // already better than the market and would fill at once.
+        OrderRequest sell = goodRequest();
+        sell.isBuy = false;
+        sell.triggerRate = 4900.0;
+        QVERIFY(validateGood(sell, goodContext())
+                    .codes()
+                    .contains(QStringLiteral("trigger-wrong-side")));
+        sell.triggerRate = 5100.0;   // above: a real resting sell
+        QVERIFY(validateGood(sell, goodContext()).ok());
+
+        // Protective levels: a stop of zero means "none", so it is not a refusal, and
+        // an invalid protective amount stops the geometry check from piling a second
+        // reason onto the same fault.
+        OrderRequest noStop = goodRequest();
+        noStop.stopLossAmount = 0.0;
+        noStop.takeProfitAmount = 0.0;
+        QVERIFY(validateGood(noStop, goodContext()).ok());
+        const OrderAmounts brokenStop{Money::fromDouble(500.0, Currency::Usd), Money(),
+                                      Money::fromDouble(150.0, Currency::Usd)};
+        const QStringList codes =
+            validateOrderRequest(goodRequest(), brokenStop, goodContext()).codes();
+        QVERIFY(codes.contains(QStringLiteral("stop-loss-invalid")));
+        QVERIFY(!codes.contains(QStringLiteral("stop-over-stake")));
+
+        // The daily cap with nothing committed yet: an invalid committedToday means
+        // "nothing so far", not "unknown, so allow anything".
+        c = goodContext();
+        c.maxStakePerDay = Money::fromDouble(400.0, Currency::Usd);
+        c.committedToday = Money();
+        QVERIFY(validateGood(goodRequest(), c).codes().contains(QStringLiteral("over-day-cap")));
+        // …and a committed total in the WRONG currency makes the sum invalid, which is
+        // a refusal rather than a passed cap check.
+        c.maxStakePerDay = Money::fromDouble(5000.0, Currency::Usd);
+        c.committedToday = Money::fromDouble(100.0, Currency::Eur);
+        QVERIFY(validateGood(goodRequest(), c).codes().contains(QStringLiteral("over-day-cap")));
     }
 };
 

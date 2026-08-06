@@ -1894,6 +1894,207 @@ private slots:
         c.closeTime = QDateTime();
         QCOMPARE(c.heldHours(), 0.0);
     }
+    //! @tstid TS-PT-030 @design DES-DOM-DAY
+    // @relation(REQ-F-031, scope=function)
+    void TS_PT_030_theDayGateAndItsCodesAnswerForEveryState()
+    {
+        BotConfig cfg;
+        cfg.dailyProfitTarget = 350.0;
+        cfg.dailyLossLimit = 350.0;
+        cfg.tradeWeekdaysOnly = true;
+        const QDateTime tuesday(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        const QDateTime saturday(QDate(2026, 8, 8), QTime(11, 0), QTimeZone::UTC);
+
+        BotDay day;
+        day.date = tuesday.date();
+        day.realized = 0.0;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::Open);
+        // The weekend outranks everything, including a day that made its target.
+        day.realized = 400.0;
+        QCOMPARE(paperDayGate(day, saturday, cfg), DayGate::Weekend);
+        // …and with weekend trading allowed, Saturday is just another day.
+        BotConfig anyDay = cfg;
+        anyDay.tradeWeekdaysOnly = false;
+        BotDay satDay;
+        satDay.date = saturday.date();
+        satDay.realized = 0.0;
+        QCOMPARE(paperDayGate(satDay, saturday, anyDay), DayGate::Open);
+
+        // Target and loss limit, each at its own boundary.
+        day.date = tuesday.date();
+        day.realized = 349.99;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::Open);
+        day.realized = 350.0;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::TargetReached);
+        day.realized = -350.0;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::LossLimitReached);
+        day.realized = -349.99;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::Open);
+        // A rule switched off cannot fire, however far the day went.
+        BotConfig noRules = cfg;
+        noRules.dailyProfitTarget = 0.0;
+        noRules.dailyLossLimit = 0.0;
+        day.realized = 10000.0;
+        QCOMPARE(paperDayGate(day, tuesday, noRules), DayGate::Open);
+        day.realized = -10000.0;
+        QCOMPARE(paperDayGate(day, tuesday, noRules), DayGate::Open);
+        // Yesterday's ledger does not govern today, and an unknown clock cannot
+        // close the day either.
+        day.date = tuesday.date().addDays(-1);
+        day.realized = 5000.0;
+        QCOMPARE(paperDayGate(day, tuesday, cfg), DayGate::Open);
+        QCOMPARE(paperDayGate(day, QDateTime(), cfg), DayGate::Open);
+
+        // Every gate reaches the entry verdict with its own countable code — the codes
+        // themselves are file-local, so they are asserted where a reader of the scan
+        // summary would see them.
+        BotConfig entryCfg = cfg;
+        const CandidateInput candidate = goodCandidate();
+        const EntrySignal sig = buildEntrySignal(candidate, entryCfg);
+        BookState book = freshBook();
+        book.day.date = candidate.now.date();
+
+        book.day.realized = 400.0;
+        QCOMPARE(paperEntryVerdict(candidate, sig, book, entryCfg).code,
+                 QStringLiteral("day-target"));
+        book.day.realized = -400.0;
+        QCOMPARE(paperEntryVerdict(candidate, sig, book, entryCfg).code,
+                 QStringLiteral("day-loss"));
+        book.day.realized = 0.0;
+        QVERIFY(paperEntryVerdict(candidate, sig, book, entryCfg).take);
+
+        CandidateInput onSaturday = candidate;
+        onSaturday.now = saturday;
+        BookState satBook = freshBook();
+        satBook.day.date = saturday.date();
+        QCOMPARE(paperEntryVerdict(onSaturday, buildEntrySignal(onSaturday, entryCfg), satBook,
+                                   entryCfg)
+                     .code,
+                 QStringLiteral("weekend"));
+    }
+
+    //! @tstid TS-PT-031 @design DES-DOM-DAY
+    // @relation(REQ-F-031, scope=function)
+    void TS_PT_031_harvestPicksTheSmallestSufficientWinnerOrNothing()
+    {
+        BotConfig cfg;
+        cfg.dailyProfitTarget = 100.0;
+        cfg.harvestForDailyTarget = true;
+        BotDay day;
+        day.realized = 40.0;   // 60 still missing
+
+        // Nothing on offer covers the rest of the day: nothing is closed.
+        QCOMPARE(paperHarvestPick({{1, 10.0}, {2, 59.99}}, day, cfg), 0);
+        // Two that do: the SMALLER is taken, because it gives up the least upside.
+        QCOMPARE(paperHarvestPick({{1, 500.0}, {2, 61.0}, {3, 60.0}}, day, cfg), 3);
+        // The day is already made — the day gate stops the bot, not the harvest.
+        BotDay made;
+        made.realized = 100.0;
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, made, cfg), 0);
+        // The rule can be switched off, and a target of zero disables it too.
+        BotConfig off = cfg;
+        off.harvestForDailyTarget = false;
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, off), 0);
+        BotConfig noTarget = cfg;
+        noTarget.dailyProfitTarget = 0.0;
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, noTarget), 0);
+        // No options at all is not a crash.
+        QCOMPARE(paperHarvestPick({}, day, cfg), 0);
+    }
+
+    //! @tstid TS-PT-032 @design DES-DOM-LIFECYCLE
+    // @relation(REQ-F-032, scope=function)
+    void TS_PT_032_theHoldReviewAnswersOnlyWhenItWasAsked()
+    {
+        BotConfig cfg;
+        cfg.minHoldMinutes = 30;
+        cfg.aiExitMinConfidence = 60.0;
+        const QDateTime opened(QDate(2026, 8, 4), QTime(10, 0), QTimeZone::UTC);
+        const QDateTime later = opened.addSecs(60 * 60);
+
+        PaperTrade trade;
+        trade.id = 1;
+        trade.symbol = QStringLiteral("SPX500");
+        trade.isBuy = true;
+        trade.openTime = opened;
+
+        // OFF: nobody was asked, so there is no opinion — not a silent keep.
+        QCOMPARE(paperAiHold(trade, {}, BotAiMode::Off, later, cfg).opinion,
+                 HoldOpinion::NoOpinion);
+        // Asked, but the model named other instruments: still NO opinion. Silence
+        // must never close a position.
+        AiProposal other;
+        other.ok = true;
+        other.resolvedSymbol = QStringLiteral("GOLD");
+        other.dir = -1;
+        other.confidence = 90.0;
+        const HoldVerdict silent = paperAiHold(trade, {other}, BotAiMode::Lead, later, cfg);
+        QCOMPARE(silent.opinion, HoldOpinion::NoOpinion);
+        QVERIFY(!silent.close);
+        // A proposal that failed to parse is not an opinion either.
+        AiProposal broken;
+        broken.ok = false;
+        broken.resolvedSymbol = QStringLiteral("SPX500");
+        broken.exitNow = true;
+        QCOMPARE(paperAiHold(trade, {broken}, BotAiMode::Lead, later, cfg).opinion,
+                 HoldOpinion::NoOpinion);
+
+        // Named, same side: a KEEP with the model behind it.
+        AiProposal keep;
+        keep.ok = true;
+        keep.resolvedSymbol = QStringLiteral("SPX500");
+        keep.dir = 1;
+        keep.confidence = 80.0;
+        const HoldVerdict kept = paperAiHold(trade, {keep}, BotAiMode::Lead, later, cfg);
+        QCOMPARE(kept.opinion, HoldOpinion::Hold);
+        QCOMPARE(kept.code, QStringLiteral("ai-keep"));
+        QVERIFY(!kept.close);
+        // An explicit HOLD (no direction) is also a keep, and says so in words.
+        AiProposal flat = keep;
+        flat.dir = 0;
+        QCOMPARE(paperAiHold(trade, {flat}, BotAiMode::Lead, later, cfg).opinion,
+                 HoldOpinion::Hold);
+
+        // Contrary and convinced, held long enough: a close.
+        AiProposal against = keep;
+        against.dir = -1;
+        const HoldVerdict closes = paperAiHold(trade, {against}, BotAiMode::Lead, later, cfg);
+        QCOMPARE(closes.opinion, HoldOpinion::Close);
+        QVERIFY(closes.close);
+        QCOMPARE(closes.code, QStringLiteral("ai-reversed"));
+        // An explicit CLOSE reads the same way but names itself differently.
+        AiProposal exit = keep;
+        exit.exitNow = true;
+        QCOMPARE(paperAiHold(trade, {exit}, BotAiMode::Lead, later, cfg).code,
+                 QStringLiteral("ai-close"));
+
+        // Too soon, or not convinced enough: the opinion is REPORTED but does not
+        // close — hiding it would make the bot look broken.
+        const QDateTime tooSoon = opened.addSecs(5 * 60);
+        const HoldVerdict early = paperAiHold(trade, {against}, BotAiMode::Lead, tooSoon, cfg);
+        QCOMPARE(early.opinion, HoldOpinion::Close);
+        QVERIFY(!early.close);
+        QCOMPARE(early.code, QStringLiteral("ai-too-soon"));
+        AiProposal unsure = against;
+        unsure.confidence = 30.0;
+        const HoldVerdict weak = paperAiHold(trade, {unsure}, BotAiMode::Lead, later, cfg);
+        QCOMPARE(weak.opinion, HoldOpinion::Close);
+        QVERIFY(!weak.close);
+        // An unknown clock counts as old enough — the alternative is a position
+        // nothing can ever close.
+        PaperTrade timeless = trade;
+        timeless.openTime = QDateTime();
+        QVERIFY(paperAiHold(timeless, {against}, BotAiMode::Lead, later, cfg).close);
+        QVERIFY(paperAiHold(trade, {against}, BotAiMode::Lead, QDateTime(), cfg).close);
+
+        // A SHORT position mirrors all of it: a long call is what contradicts it.
+        PaperTrade shortTrade = trade;
+        shortTrade.isBuy = false;
+        QCOMPARE(paperAiHold(shortTrade, {keep}, BotAiMode::Lead, later, cfg).opinion,
+                 HoldOpinion::Close);
+        QCOMPARE(paperAiHold(shortTrade, {against}, BotAiMode::Lead, later, cfg).opinion,
+                 HoldOpinion::Hold);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPaperTrader)

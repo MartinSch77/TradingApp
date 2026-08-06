@@ -247,8 +247,14 @@ def collect_metrics():
 
 
 def collect_coverage():
-    """(lines%, functions%) from lcov's tracefile, plus the MC/DC totals."""
-    result = {"lines": None, "functions": None, "mcdc": None, "mcdc_rows": []}
+    """(lines%, functions%) from lcov's tracefile, the MC/DC totals, and Coco's four.
+
+    THREE back ends, deliberately: gcov gives the line/branch figure the badge is built
+    from, clang instruments the IR for an independent MC/DC number, and Squish Coco
+    instruments the SOURCE for statement/decision/condition/MC/DC from a qualified
+    tool. A report that showed only whichever one ran last would hide the cross-check.
+    """
+    result = {"lines": None, "functions": None, "mcdc": None, "mcdc_rows": [], "coco": {}}
     info = ROOT / "coverage" / "gcov" / "coverage.info"
     if info.is_file():
         found = hit = fnf = fnh = 0
@@ -275,6 +281,15 @@ def collect_coverage():
                 pct = [c for c in cols if c.endswith("%")]
                 if pct:
                     result["mcdc"] = pct[-1]
+    # Coco writes its four levels as JSON precisely so this report can quote them
+    # (tools/coverage.sh coco_stat_levels). Absent = Coco did not run here, which is a
+    # licence question and is reported as one further down.
+    coco_json = ROOT / "coverage" / "coco" / "summary.json"
+    if coco_json.is_file():
+        try:
+            result["coco"] = json.loads(coco_json.read_text(**UTF8, errors="replace"))
+        except (ValueError, OSError):
+            result["coco"] = {}
     return result
 
 
@@ -660,10 +675,26 @@ def build_report(out_path, build_dir):
         "lizard ratchet: every over-threshold function is recorded with its numbers; "
         "a new or worsened one fails the stage")
     cov_txt = (f"lines {pct(coverage['lines'])} · functions {pct(coverage['functions'])}"
-               f" · MC/DC {coverage['mcdc'] or '—'}")
+               f" · MC/DC (clang) {coverage['mcdc'] or '—'}")
     add("Coverage", coverage["lines"] is not None,
         "measured" if coverage["lines"] is not None else "not run", cov_txt,
         warn=coverage["lines"] is None)
+    # Coco as its own row: the numbers, not merely the fact that a licence exists.
+    coco = coverage.get("coco") or {}
+    if coco:
+        def _lvl(name):
+            data = coco.get(name) or {}
+            if not data:
+                return f"{name} —"
+            return (f"{name} {data.get('percent', 0):.1f}% "
+                    f"({data.get('covered', 0)}/{data.get('total', 0)})")
+        add("Coverage (Squish Coco)", True, "measured",
+            " · ".join(_lvl(n) for n in ("statement", "decision", "condition", "mcdc")))
+    else:
+        add("Coverage (Squish Coco)", False, "not run",
+            "no coverage/coco/summary.json — Coco measures statement/decision/condition "
+            "and MC/DC from the source, independently of the clang figure above",
+            warn=True)
     add("Sanitizers", san_findings == 0,
         "CLEAN" if san_findings == 0 else f"{san_findings} FINDINGS",
         " · ".join(f"{name}: {n}" for name, n in sanitizers) or "not run")

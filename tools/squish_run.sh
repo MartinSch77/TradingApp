@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Run the Squish GUI suite — and never touch a real account doing it.
 #
-#   tools/squish_run.sh [build]        # runs squish/suite_gui against build/TradingApp
+#   tools/squish_run.sh [build]                    # squish/suite_gui vs build/TradingApp
+#   tools/squish_run.sh build --squish-dir ~/squish-for-qt-9.2.2
+#   tools/squish_run.sh --ai                       # opt into AI-assisted lookup
+#
+# The installation is found automatically when it is not given: SQUISH_DIR /
+# SQUISH_PREFIX, then PATH, then ~/squish-for-qt-<version> (where the official
+# installer puts it) and /opt/squish*, newest first. How to obtain and install
+# Squish: docs/qt-tools.md.
 #
 # Licence-bound, so it follows this project's rule for such tools: when Squish is
 # not installed or not licensed, the stage prints why and exits 3 ("skipped"). It is
@@ -23,13 +30,59 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="${1:-build}"
+
+# Both the build directory and the Squish installation are PARAMETERS: these tools
+# live wherever their owner installed them, and a hard-coded path is a script that
+# works on one machine.
+#   tools/squish_run.sh [build-dir] [--squish-dir DIR] [--ai]
+#   SQUISH_DIR / SQUISH_PREFIX do the same job from the environment.
+BUILD_DIR="build"
+SQUISH_ARG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --squish-dir) SQUISH_ARG="${2:-}"; shift ;;
+    --ai) SQUISH_AI=1 ;;
+    -h | --help)
+        sed -n '2,24p' "$0"
+        exit 0
+        ;;
+    -*)
+        echo "unknown argument: $1" >&2
+        exit 2
+        ;;
+    *) BUILD_DIR="$1" ;;
+    esac
+    shift
+done
 AUT="$ROOT/$BUILD_DIR/TradingApp"
 SUITE="$ROOT/squish/suite_gui"
 RESULTS="$ROOT/test-results/squish"
 SCRATCH="${TMPDIR:-/tmp}/tradingapp-squish"
 
-SQUISH_DIR="${SQUISH_DIR:-${SQUISH_PREFIX:-/opt/squish}}"
+# Where Squish is. In order: an explicit SQUISH_DIR/SQUISH_PREFIX, whatever is on
+# PATH, then the places the official installer actually puts it — its default is
+# ~/squish-for-qt-<version> in the user's home, NOT /opt. Newest version wins, so a
+# machine with two installs uses the one that was installed last.
+find_squish_dir() {
+    if [ -n "$SQUISH_ARG" ]; then
+        echo "$SQUISH_ARG"
+        return
+    fi
+    if [ -n "${SQUISH_DIR:-${SQUISH_PREFIX:-}}" ]; then
+        echo "${SQUISH_DIR:-$SQUISH_PREFIX}"
+        return
+    fi
+    local candidate
+    for candidate in $(ls -d "$HOME"/squish-for-qt-* /opt/squish* 2>/dev/null | sort -Vr); do
+        if [ -x "$candidate/bin/squishrunner" ]; then
+            echo "$candidate"
+            return
+        fi
+    done
+    echo "/opt/squish"
+}
+
+SQUISH_DIR="$(find_squish_dir)"
 runner="$(command -v squishrunner || echo "$SQUISH_DIR/bin/squishrunner")"
 server="$(command -v squishserver || echo "$SQUISH_DIR/bin/squishserver")"
 

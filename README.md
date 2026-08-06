@@ -568,6 +568,20 @@ independently unit-testable and shared by every view that shows a signal.
 | [`Palette.h`](src/ui/Palette.h)               | Shared UI colors |
 | [`main.cpp`](src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
 
+### The four licensed Qt tools
+
+Axivion Suite, Squish, Squish Coco and Squish Test Center are commercial products
+from The Qt Company and cannot be installed by `setup.sh`. **How to obtain, install
+and configure each of them — including where the licence file goes and which
+parameter points this project at the installation — is in
+[docs/qt-tools.md](docs/qt-tools.md).** `tools/check_prerequisites.sh` reports which
+of them the current machine has.
+
+Without them nothing breaks: their stages report *skipped*, the seven open-source
+analyzers still gate at zero findings, gcov and clang MC/DC still measure coverage,
+and the quality PDF lists the missing licences so a reader can tell "measured and
+clean" from "not measured here".
+
 ## SonarCloud is informational, not a gate
 
 The badges above show SonarCloud's own measures, not its quality gate. That is

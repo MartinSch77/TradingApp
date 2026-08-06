@@ -235,6 +235,62 @@ IndexReads indexReads(const QString &symbol, const QHash<QString, QList<double>>
     return out;
 }
 
+QString HeavyweightPulse::headline() const
+{
+    if (isEmpty()) {
+        return QStringLiteral("%1: no constituent prices yet").arg(indexName);
+    }
+    const QString direction = (averageChangePct > 0.0) ? QStringLiteral("+") : QString();
+    return QStringLiteral("%1: %2 of %3 up · average %4%5% · leader %6 %7%8% · laggard %9 %10%")
+        .arg(indexName)
+        .arg(up)
+        .arg(measured)
+        .arg(direction)
+        .arg(averageChangePct, 0, 'f', 2)
+        .arg(leader, (leaderChangePct > 0.0) ? QStringLiteral("+") : QString())
+        .arg(leaderChangePct, 0, 'f', 2)
+        .arg(laggard)
+        .arg(laggardChangePct, 0, 'f', 2);
+}
+
+HeavyweightPulse heavyweightPulse(const QString &symbol,
+                                  const QHash<QString, QList<double>> &series)
+{
+    HeavyweightPulse out;
+    out.indexName = isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100")
+                                           : QStringLiteral("S&P 500");
+    double sum = 0.0;
+    bool haveExtremes = false;
+    for (const QString &ticker : indexHeavyweights(symbol)) {
+        HeavyweightRow row;
+        row.ticker = ticker;
+        const std::optional<double> change = sessionChangePct(series.value(ticker));
+        if (change.has_value()) {
+            row.known = true;
+            row.changePct = *change;
+            ++out.measured;
+            if (*change > 0.0) {
+                ++out.up;
+            }
+            sum += *change;
+            if (!haveExtremes || (*change > out.leaderChangePct)) {
+                out.leader = ticker;
+                out.leaderChangePct = *change;
+            }
+            if (!haveExtremes || (*change < out.laggardChangePct)) {
+                out.laggard = ticker;
+                out.laggardChangePct = *change;
+            }
+            haveExtremes = true;
+        }
+        out.rows.append(row);
+    }
+    if (out.measured > 0) {
+        out.averageChangePct = sum / static_cast<double>(out.measured);
+    }
+    return out;
+}
+
 Confluence confluenceFor(const IndexReads &reads, qint32 dir)
 {
     Confluence out;

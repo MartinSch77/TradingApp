@@ -142,6 +142,66 @@ private slots:
         QCOMPARE(nb.expiryRetLong, 0.0);
         QCOMPARE(nb.expiryRetShort, 0.0);
     }
+    //! @tstid TS-FC-009 @design DES-DOM-FC
+    // @relation(REQ-F-006, scope=function)
+    void TS_FC_009_everyRefusalPathAnswersItsOwnGuard()
+    {
+        // The guards, one at a time: each of these returns the "nothing measured"
+        // answer, and each must do so for its OWN reason. A forecast that quietly
+        // reports 0.5 or a zero slope for an input it could not read is worse than one
+        // that says nothing, because the caller cannot tell the two apart.
+        QList<double> rising;
+        for (int i = 0; i < 60; ++i) {
+            rising.append(100.0 + (0.5 * i));
+        }
+
+        // Regression: too few points asked for, and more asked for than exist.
+        QVERIFY(!linRegForecast(rising, 2).valid);
+        QVERIFY(!linRegForecast(rising, rising.size() + 1).valid);
+        QVERIFY(linRegForecast(rising, 20).valid);
+        // A single repeated x cannot happen here, but a flat series can: the slope is
+        // zero and the fit is still valid — "no trend" is a measurement.
+        const QList<double> flat(40, 100.0);
+        const Regression flatFit = linRegForecast(flat, 20);
+        QVERIFY(flatFit.valid);
+        QCOMPARE(flatFit.slopePct, 0.0);
+
+        // kNN: window too small, series too short for window+k+3, and a series whose
+        // returns cannot fill one window.
+        QVERIFY(knnForecast(rising, 2, 5).k == 0);
+        QVERIFY(knnForecast(rising, 20, 40).k == 0);
+        QVERIFY(knnForecast({100.0, 101.0, 102.0}, 3, 2).k == 0);
+        QVERIFY(knnForecast(rising, 5, 5).k > 0);
+        // A series containing a non-positive value contributes a 0.0 return rather
+        // than a division by zero, and the forecast still comes out.
+        QList<double> withZero = rising;
+        withZero[10] = 0.0;
+        QVERIFY(knnForecast(withZero, 5, 5).k > 0);
+
+        // Hurst: fewer than 20 returns is undecidable (0.5 = "no answer"), and a
+        // perfectly flat series has neither range nor deviation to divide by.
+        QCOMPARE(hurstExponent({100.0, 101.0, 102.0}), 0.5);
+        QCOMPARE(hurstExponent(QList<double>(60, 100.0)), 0.5);
+        QVERIFY(hurstExponent(rising) != 0.5);
+
+        // Monte Carlo: each of the four refusals separately.
+        const McParams ok{.price = 100.0, .horizon = 5, .paths = 100, .seed = 7U};
+        QVERIFY(!monteCarlo({100.0, 101.0}, ok).valid);
+        McParams noPrice = ok;
+        noPrice.price = 0.0;
+        QVERIFY(!monteCarlo(rising, noPrice).valid);
+        McParams noHorizon = ok;
+        noHorizon.horizon = 0;
+        QVERIFY(!monteCarlo(rising, noHorizon).valid);
+        McParams noPaths = ok;
+        noPaths.paths = 0;
+        QVERIFY(!monteCarlo(rising, noPaths).valid);
+        // A seed of 0 means "seed from the system" — still a real run, just not a
+        // reproducible one, which is why every other test passes a seed.
+        McParams unseeded = ok;
+        unseeded.seed = 0U;
+        QVERIFY(monteCarlo(rising, unseeded).valid);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestForecasting)

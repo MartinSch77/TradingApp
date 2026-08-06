@@ -1,6 +1,7 @@
 #include "services/OrderGateway.h"
 
 #include <QDir>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -320,6 +321,195 @@ private slots:
         OrderAudit broken(dir.filePath(QStringLiteral("no/such/dir/audit.jsonl")));
         QVERIFY(!broken.append(entry));
         QVERIFY(broken.readAll().isEmpty());
+    }
+    //! @tstid TS-GATE-003 @design DES-SVC-GATEWAY
+    // @relation(REQ-N-009, scope=function)
+    void TS_GATE_003_everyRefusalIsSpelledOutAndEveryGuardHolds()
+    {
+        // A refusal a user cannot read is as useless as one a machine cannot count, so
+        // every ArmRefusal has both a code and a sentence — and they are distinct.
+        const QList<ArmRefusal> all{ArmRefusal::None,        ArmRefusal::NotArmed,
+                                    ArmRefusal::Expired,     ArmRefusal::Tripped,
+                                    ArmRefusal::OverOrderCap, ArmRefusal::OverDayCap};
+        QSet<QString> codes;
+        for (const ArmRefusal refusal : all) {
+            const QString code = armRefusalCode(refusal);
+            QVERIFY2(!code.isEmpty(), qPrintable(code));
+            QVERIFY2(code != QStringLiteral("unknown"), qPrintable(code));
+            codes.insert(code);
+        }
+        QCOMPARE(codes.size(), all.size());
+
+        // …and the same for the sentences the window shows. Each is reached by putting
+        // the outcome into exactly that state.
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        OrderAudit audit(dir.filePath(QStringLiteral("audit.jsonl")));
+        FakeOrderGateway gateway;
+        LiveArm arm;
+        GuardedOrderSender sender(&gateway, &arm, &audit);
+
+        // not armed
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(9),
+                            at(9))
+                    .refusalText()
+                    .contains(QStringLiteral("not armed")));
+        // expired — the window closed while nobody was looking
+        QVERIFY(arm.arm(10, usd(1000.0), usd(5000.0), at(9)));
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(9),
+                            at(9, 11))
+                    .refusalText()
+                    .contains(QStringLiteral("expired")));
+        // over the per-order cap
+        QVERIFY(arm.arm(60, usd(100.0), usd(5000.0), at(9)));
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(9),
+                            at(9, 1))
+                    .refusalText()
+                    .contains(QStringLiteral("per-order cap")));
+        // over the daily cap, checked by the ARM rather than by the validator: the
+        // caller passed its own context, so applyCapsTo is what carries the numbers.
+        QVERIFY(arm.arm(60, usd(5000.0), usd(600.0), at(9)));
+        arm.recordCommitted(usd(400.0), at(9));
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(9),
+                            at(9, 1))
+                    .refusalText()
+                    .contains(QStringLiteral("daily cap")));
+        // the kill switch. Re-armed with generous caps first, because the validator
+        // runs BEFORE the arm check and a day-cap breach would otherwise be the reason
+        // reported — which is correct behaviour and exactly why this has to be set up
+        // deliberately to see the kill switch's own sentence.
+        QVERIFY(arm.arm(60, usd(5000.0), usd(50000.0), at(9)));
+        arm.trip(QStringLiteral("hands off"));
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(9),
+                            at(9, 1))
+                    .refusalText()
+                    .contains(QStringLiteral("kill switch")));
+        arm.clearTrip();
+        // clearTrip on an untripped arm is a no-op rather than an event
+        arm.clearTrip();
+        QVERIFY(!arm.isTripped());
+
+        // A validation refusal speaks in the validator's own words…
+        QVERIFY(arm.arm(60, usd(5000.0), usd(50000.0), at(10)));
+        OrderRequest bad = goodRequest();
+        bad.leverage = 8.0;
+        QVERIFY(sender.send(bad, amounts(500.0, 100.0, 150.0), goodContext(), at(10), at(10))
+                    .refusalText()
+                    .contains(QStringLiteral("leverage-not-offered")));
+        // …and a broker rejection WITHOUT a reason still says something useful.
+        gateway.setNextResult(OrderResult{false, QStringLiteral("r"), QString(), {}});
+        QVERIFY(sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(10),
+                            at(10))
+                    .refusalText()
+                    .contains(QStringLiteral("did not accept")));
+        // A successful send has no refusal text at all.
+        gateway.setNextResult(OrderResult{true, QStringLiteral("ok"), QString(), {}});
+        const GuardedSendOutcome sent =
+            sender.send(goodRequest(), amounts(500.0, 100.0, 150.0), goodContext(), at(10),
+                        at(10));
+        QVERIFY(sent.sent);
+        QVERIFY(sent.refusalText().isEmpty());
+        // The request may leave the instrument at 0 and let the context name it — the
+        // audit entry must still carry the id somebody would search for.
+        OrderRequest fromContext = goodRequest();
+        fromContext.instrumentId = 0;
+        const GuardedSendOutcome viaContext =
+            sender.send(fromContext, amounts(500.0, 100.0, 150.0), goodContext(), at(10),
+                        at(10));
+        QCOMPARE(viaContext.audited.instrumentId, 27);
+    }
+
+    //! @tstid TS-ARM-003 @design DES-SVC-GATEWAY
+    // @relation(REQ-N-009, scope=function)
+    void TS_ARM_003_theCapsAndTheDayLedgerHandleTheirEdges()
+    {
+        LiveArm arm;
+        // Arming for no time at all is refused: a zero-length window is not a grant.
+        QVERIFY(!arm.arm(0, usd(100.0), usd(100.0), at(9)));
+        QVERIFY(!arm.arm(-5, usd(100.0), usd(100.0), at(9)));
+        QVERIFY(!arm.isArmed(at(9)));
+
+        // A grant with NO caps at all is legal (the caller relies on the validator's
+        // own limits), and then neither cap can refuse.
+        QVERIFY(arm.arm(30, Money(), Money(), at(9)));
+        QCOMPARE(arm.check(usd(999999.0), at(9, 1)), ArmRefusal::None);
+        QVERIFY(arm.stateLine(at(9, 1)).contains(QStringLiteral("no cap")));
+        // Nothing has been committed, so the state line says so in words.
+        QVERIFY(arm.stateLine(at(9, 1)).contains(QStringLiteral("nothing")));
+
+        // Committing in one currency and asking about another cannot pass a cap check
+        // by accident: the sum is invalid, which is a refusal.
+        QVERIFY(arm.arm(30, Money(), usd(1000.0), at(9)));
+        arm.recordCommitted(usd(200.0), at(9));
+        QCOMPARE(arm.check(Money::fromDouble(100.0, Currency::Eur), at(9, 1)),
+                 ArmRefusal::OverDayCap);
+        QCOMPARE(arm.check(usd(900.0), at(9, 1)), ArmRefusal::OverDayCap);
+        // Yesterday's total does not count against today's cap — for a session that is
+        // still open across midnight, which is the only way both can be true at once
+        // (a window that has expired refuses for that reason first, as it should).
+        LiveArm overnight;
+        const QDateTime lateEvening = at(23, 0);
+        QVERIFY(overnight.arm(180, Money(), usd(1000.0), lateEvening));
+        overnight.recordCommitted(usd(900.0), lateEvening);
+        QCOMPARE(overnight.check(usd(500.0), at(23, 30)), ArmRefusal::OverDayCap);
+        QCOMPARE(overnight.check(usd(500.0), at(23, 30).addSecs(3600)), ArmRefusal::None);
+        // Recording an INVALID stake leaves the ledger unusable rather than pretending
+        // the order was free.
+        arm.recordCommitted(Money(), at(9));
+        QVERIFY(!arm.committedToday().isValid());
+
+        // applyCapsTo hands the validator exactly what the grant carried.
+        QVERIFY(arm.arm(30, usd(250.0), usd(750.0), at(11)));
+        arm.recordCommitted(usd(100.0), at(11));
+        OrderContext ctx;
+        arm.applyCapsTo(ctx);
+        QCOMPARE(ctx.maxStakePerOrder, usd(250.0));
+        QCOMPARE(ctx.maxStakePerDay, usd(750.0));
+        QCOMPARE(ctx.committedToday, usd(100.0));
+    }
+
+    //! @tstid TS-GATE-004 @design DES-SVC-GATEWAY
+    // @relation(REQ-N-009, scope=function)
+    void TS_GATE_004_theAuditFileToleratesWhatRealFilesContain()
+    {
+        const QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("audit.jsonl"));
+        OrderAudit audit(path);
+        OrderAuditEntry entry;
+        entry.decidedAt = at(9);
+        entry.outcome = QStringLiteral("sent");
+        entry.stake = usd(10.0);
+        entry.stopLoss = usd(1.0);
+        entry.takeProfit = usd(2.0);
+        entry.orderCurrency = Currency::Usd;
+        entry.accountCurrency = Currency::Usd;
+        QVERIFY(audit.append(entry));
+
+        // Blank lines between entries — what an editor or a partial flush leaves —
+        // are skipped rather than counted as records.
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::Append | QIODevice::Text));
+        QVERIFY(file.write(QByteArrayLiteral("\n   \n")) > 0);
+        file.close();
+        QCOMPARE(audit.readAll().size(), 1);
+
+        // An entry whose amounts were never set round-trips as INVALID amounts rather
+        // than as zeros: "no stop" and "a stop of nothing" are different claims.
+        OrderAuditEntry empty;
+        empty.outcome = QStringLiteral("refused-validation");
+        QVERIFY(audit.append(empty));
+        const QList<OrderAuditEntry> back = audit.readAll();
+        QCOMPARE(back.size(), 2);
+        QVERIFY(!back.constLast().stake.isValid());
+        QVERIFY(!back.constLast().decidedAt.isValid());
+        QVERIFY(!back.constLast().sentAt.isValid());
+        QCOMPARE(back.constLast().orderCurrency, Currency::Invalid);
+
+        // The default path is under the app's config directory — used when no path is
+        // given, which is how the app itself constructs it.
+        const OrderAudit dflt;
+        QVERIFY(dflt.path().endsWith(QStringLiteral("order-audit.jsonl")));
     }
 };
 

@@ -8,11 +8,13 @@
 
 #include "MockHttpServer.h"
 #include "domain/DecisionEngine.h"
+#include "domain/IndexConfluence.h"
 #include "services/MarketFeeds.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -368,6 +370,94 @@ private slots:
         QTest::qWait(300);  // let the later failing replies be processed too
         // All failures fall inside the 10-minute window: one line, not one per poll.
         QCOMPARE(logCount(logs, vixLine), 1);
+    }
+    //! @tstid TS-FEED-010 @design DES-SVC-FEEDS
+    // @relation(REQ-F-035, scope=function)
+    void TS_FEED_010_theReferenceSweepFetchesEveryTickerOnce()
+    {
+        // The sweep behind the independent reads: fifteen tickers, each fetched once,
+        // each arriving under its own name. A ticker that fails leaves its read ABSENT
+        // rather than zero — which is what makes "unknown never counts as agreement"
+        // true at the feed level rather than only in the arithmetic.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            // ^TNX answers rubbish and NVDA fails outright: two different ways for a
+            // read to be unavailable.
+            if (path.contains(QStringLiteral("TNX"))) {
+                return MockHttpServer::Response{200, R"({"chart":{"result":[]}})", {}};
+            }
+            if (path.contains(QStringLiteral("NVDA"))) {
+                return MockHttpServer::Response{503, R"({"err":"nope"})", {}};
+            }
+            return MockHttpServer::Response{
+                200, yahooChartBody(R"("regularMarketPrice":100.0)", "100.0,101.0,102.0"), {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
+        feeds.fetchReferenceSeries();
+
+        const QStringList wanted = trading::referenceTickers();
+        QTRY_VERIFY_WITH_TIMEOUT(series.count() >= wanted.size() - 2, kWaitMs);
+        QSet<QString> arrived;
+        for (qsizetype i = 0; i < series.count(); ++i) {
+            static_cast<void>(arrived.insert(series.at(i).at(0).toString()));
+            QVERIFY(!series.at(i).at(1).value<QList<double>>().isEmpty());
+        }
+        // The two broken ones are absent; every other ticker arrived exactly once.
+        QVERIFY(!arrived.contains(QStringLiteral("^TNX")));
+        QVERIFY(!arrived.contains(QStringLiteral("NVDA")));
+        QVERIFY(arrived.contains(QStringLiteral("^VIX")));
+        QCOMPARE(arrived.size(), series.count());
+    }
+
+    //! @tstid TS-FEED-011 @design DES-SVC-FEEDS
+    // @relation(REQ-F-009, scope=function)
+    void TS_FEED_011_aFeedThatCannotBeReadReportsNothingRatherThanZero()
+    {
+        // Every "the payload is not what we asked for" branch of the feeds, one per
+        // response shape. The rule under test is the same everywhere: a feed that
+        // cannot be read must leave its reading ABSENT, because a zero would be
+        // indistinguishable from a real measurement of zero.
+        MockHttpServer server([](const QByteArray &method, const QString &path) {
+            if (path.contains(QStringLiteral("VIX"))) {
+                // No price and no closes at all: nothing to publish.
+                return MockHttpServer::Response{200, yahooChartBody(R"("x":1)", ""), {}};
+            }
+            if ((method == "POST") && path.contains(QStringLiteral("/global/scan"))) {
+                // A scan answer whose data array is empty.
+                return MockHttpServer::Response{200, R"({"data":[]})", {}};
+            }
+            if (path.contains(QStringLiteral("fearandgreed"))) {
+                // Score outside 0..100 is refused rather than clamped.
+                return MockHttpServer::Response{200, R"({"fear_and_greed":{"score":150}})", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        const QSignalSpy vix(&feeds, &MarketFeeds::vixUpdated);
+        const QSignalSpy fear(&feeds, &MarketFeeds::fearGreedUpdated);
+        QSignalSpy external(&feeds, &MarketFeeds::externalSignalUpdated);
+        feeds.setCurrentSymbol(QStringLiteral("SPX500"));
+        feeds.start(60000);
+        QTest::qWait(600);
+        // Nothing publishable arrived from either feed…
+        QCOMPARE(vix.count(), 0);
+        QCOMPARE(fear.count(), 0);
+        // …and the rating reports "no rating for this instrument" rather than 0.0,
+        // which would read as a neutral opinion the feed never gave.
+        if (external.count() > 0) {
+            QVERIFY(!external.at(0).at(0).toBool());
+        }
+
+        // Setting the SAME instrument again is a no-op rather than a second fetch.
+        feeds.setCurrentSymbol(QStringLiteral("SPX500"));
+        const qint32 before = requestCount(server, QStringLiteral("scan"));
+        feeds.setCurrentSymbol(QStringLiteral("SPX500"));
+        QTest::qWait(200);
+        QCOMPARE(requestCount(server, QStringLiteral("scan")), before);
     }
 };
 

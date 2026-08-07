@@ -7,6 +7,7 @@
 #include "domain/Models.h"
 
 #include <QString>
+#include <QHash>
 #include <QStringList>
 
 // Money/rate arithmetic for positions and prices. Pure functions shared by the
@@ -64,6 +65,37 @@ constexpr qint64 kQuoteStaleMs = 120LL * 1000;
 // previous set there is nothing to have disappeared.
 [[nodiscard]] QStringList closedSincePreviousIds(const QList<Position> &previous,
                                                  const QList<Position> &current);
+
+// What a just-closed position should do to the open-trades table, split three ways.
+//
+// WHY THIS IS NOT SIMPLY "REMOVE THE ROW". A close is confirmed by the broker's own reply,
+// but the open-trades table is driven by the PORTFOLIO poll, and this project has already
+// measured that endpoint lagging its own truth by seconds — the same lag that made
+// refreshClosedTradesForVanished fetch twice. So deleting the row on the reply is correct
+// and insufficient: the very next poll still lists the position, and the row reappears. A
+// row that vanishes and comes back is worse than one that lingers, because it reads as a
+// close that failed.
+//
+// So a confirmed close is remembered, and reported positions matching a remembered id are
+// hidden. Two things stop that from becoming a lie:
+//
+//   * The memory is BOUNDED. If the broker is still reporting the position after
+//     `windowMs`, the close did not take effect and the row comes BACK, named in `expired`
+//     so the caller can say so. Hiding a position forever would tell someone they were flat
+//     while they still carried the risk — the most dangerous thing this table can do.
+//   * An id the broker has stopped reporting is `confirmed` and dropped from the book, so
+//     it cannot grow without limit and cannot hide a later position. (eToro ids are unique
+//     per position, so a reopened trade gets a new one and is never suppressed by this.)
+struct CloseSuppression {
+    QList<Position> visible;     // what the table should show right now
+    QStringList expired;         // still reported after the window — shown again, and said
+    QStringList confirmed;       // gone from the broker's list — drop from the book
+};
+
+// `closedAtMs` maps a position id to when its close was confirmed.
+[[nodiscard]] CloseSuppression suppressClosedPositions(const QList<Position> &reported,
+                                                       const QHash<QString, qint64> &closedAtMs,
+                                                       qint64 nowMs, qint64 windowMs);
 
 } // namespace trading
 

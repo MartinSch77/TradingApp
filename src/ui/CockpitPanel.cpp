@@ -13,7 +13,10 @@ CockpitPanel::CockpitPanel(QWidget *parent)
 {
     setObjectName(QStringLiteral("cockpitPanel"));   // REQ-N-007: addressable by name
     setWindowTitle(tr("Market cockpit (Qt Quick)"));
-    resize(1180, 700);
+    // Tall enough for the whole evidence column — ticket, the nine-read meter AND the open
+    // book. At 700 the book was squeezed to nothing, and an open-trades panel you cannot see
+    // is the one panel that must never be missing.
+    resize(1180, 860);
 
     m_view->setObjectName(QStringLiteral("cockpitView"));
     m_view->setResizeMode(QQuickWidget::SizeRootObjectToView);

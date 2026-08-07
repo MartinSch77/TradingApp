@@ -321,6 +321,128 @@ private slots:
         QVERIFY(!model.candleSpan().isEmpty());
         QVERIFY(!model.candleSpan().contains(QStringLiteral("last")));
     }
+
+    //! @tstid TS-COCKPIT-008 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, REQ-N-005, scope=function)
+    //
+    // The cockpit can trade, and the double-press gate came WITH it rather than being left
+    // behind in the Widgets window. One press never emits an order; two do.
+    void TS_COCKPIT_008_theTicketNeverPlacesOnOnePress()
+    {
+        CockpitModel model;
+        const QSignalSpy placed(&model, &CockpitModel::placeRequested);
+
+        // A fresh model claims no account, so the ticket is blocked and says why.
+        QVERIFY(!model.ticketBlocked().isEmpty());
+        model.press(true);
+        QCOMPARE(placed.count(), 0);                 // blocked: nothing armed, nothing sent
+        QVERIFY(model.ticketPrompt().contains(QStringLiteral("SIMULATION")));
+
+        model.setTradeContext(/*hasCredentials=*/true, /*marketOpen=*/true,
+                              /*minAmount=*/50.0, /*maxAmount=*/5000.0);
+        model.setTicket(500.0, 5);
+        QVERIFY(model.ticketBlocked().isEmpty());
+
+        model.press(true);
+        QCOMPARE(placed.count(), 0);                 // one press arms only
+        QVERIFY(model.ticketArmed());
+        QVERIFY(model.ticketPrompt().contains(QStringLiteral("BUY")));
+
+        model.press(true);
+        QCOMPARE(placed.count(), 1);                 // …two commit
+        QCOMPARE(placed.at(0).at(0).toBool(), true);
+        QCOMPARE(placed.at(0).at(1).toDouble(), 500.0);
+        QCOMPARE(placed.at(0).at(2).toInt(), 5);
+        // Disarmed again: the NEXT order needs two fresh presses, not one.
+        QVERIFY(!model.ticketArmed());
+        model.press(true);
+        QCOMPARE(placed.count(), 1);
+    }
+
+    //! @tstid TS-COCKPIT-009 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, REQ-N-005, scope=function)
+    //
+    // Four ways an arming could be harvested by an order nobody confirmed, all refused.
+    // These are the reason the armed action names the WHOLE order rather than just the side.
+    void TS_COCKPIT_009_anArmingIsNeverHarvestedByADifferentOrder()
+    {
+        CockpitModel model;
+        model.setTradeContext(true, true, 50.0, 5000.0);
+        model.setTicket(500.0, 5);
+        const QSignalSpy placed(&model, &CockpitModel::placeRequested);
+
+        // 1. The opposite side does not inherit the confirmation.
+        model.press(true);
+        model.press(false);
+        QCOMPARE(placed.count(), 0);
+        model.cancelArm();
+
+        // 2. Editing the AMOUNT disarms: the user confirmed a 500 order, not a 5000 one.
+        model.press(true);
+        QVERIFY(model.ticketArmed());
+        model.setTicket(5000.0, 5);
+        QVERIFY(!model.ticketArmed());
+        model.press(true);
+        QCOMPARE(placed.count(), 0);                 // that press only re-arms
+        model.cancelArm();
+
+        // 3. Editing the LEVERAGE disarms for the same reason.
+        model.setTicket(500.0, 5);
+        model.press(true);
+        model.setTicket(500.0, 20);
+        QVERIFY(!model.ticketArmed());
+        model.cancelArm();
+
+        // 4. The ground shifting disarms. A confirmation given while the market was open
+        // must not survive into a market that has closed.
+        model.setTicket(500.0, 5);
+        model.press(true);
+        QVERIFY(model.ticketArmed());
+        model.setTradeContext(true, /*marketOpen=*/false, 50.0, 5000.0);
+        QVERIFY(!model.ticketArmed());
+        model.press(true);
+        model.press(true);
+        QCOMPARE(placed.count(), 0);                 // still nothing sent, market is shut
+    }
+
+    //! @tstid TS-COCKPIT-010 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, REQ-N-005, scope=function)
+    //
+    // Closing is gated too, and the gate is keyed BY POSITION: confirming a close of one
+    // trade must never close another. The blocked-reason order is also pinned here, because
+    // a reader shown three obstacles at once fixes the wrong one.
+    void TS_COCKPIT_010_closingIsGatedPerPositionAndReasonsAreOrdered()
+    {
+        CockpitModel model;
+        model.setTradeContext(true, true, 50.0, 5000.0);
+        model.setTicket(500.0, 5);
+        const QSignalSpy closed(&model, &CockpitModel::closeRequested);
+
+        model.pressClose(QStringLiteral("111"));
+        QCOMPARE(closed.count(), 0);
+        // Pressing close on a DIFFERENT position arms that one instead of committing #111.
+        model.pressClose(QStringLiteral("222"));
+        QCOMPARE(closed.count(), 0);
+        model.pressClose(QStringLiteral("222"));
+        QCOMPARE(closed.count(), 1);
+        QCOMPARE(closed.at(0).at(0).toString(), QStringLiteral("222"));
+
+        // Most fundamental obstacle first: no account outranks a closed market, which
+        // outranks an unusable amount.
+        QVERIFY(ticketBlockedReason(false, false, 0.0, 50.0, 5000.0)
+                    .contains(QStringLiteral("SIMULATION")));
+        QVERIFY(ticketBlockedReason(true, false, 0.0, 50.0, 5000.0)
+                    .contains(QStringLiteral("market closed")));
+        QVERIFY(ticketBlockedReason(true, true, 0.0, 50.0, 5000.0)
+                    .contains(QStringLiteral("enter an amount")));
+        QVERIFY(ticketBlockedReason(true, true, 10.0, 50.0, 5000.0)
+                    .contains(QStringLiteral("minimum")));
+        QVERIFY(ticketBlockedReason(true, true, 9000.0, 50.0, 5000.0)
+                    .contains(QStringLiteral("maximum")));
+        // An UNKNOWN bound (0) disables its own check rather than inventing one — the same
+        // rule OrderRequestValidator follows for every fact it was not given.
+        QVERIFY(ticketBlockedReason(true, true, 9000.0, 0.0, 0.0).isEmpty());
+    }
 };
 
 QTEST_MAIN(TestCockpitModel)

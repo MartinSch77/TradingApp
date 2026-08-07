@@ -38,7 +38,7 @@ set(CMAKE_AUTOUIC ON)
 # lets it be ONE PAGE of this Widgets application rather than a second executable — the same
 # domain and service libraries behind two presentations, which is the point of the exercise.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
-                                    Qml Quick QuickWidgets)
+                                    Qml Quick QuickWidgets QuickControls2)
 # Qt Graphs supplies CustomSeries (6.11), which draws the cockpit's candlesticks — but it is
 # found, NOT linked, and that is load-bearing.
 #
@@ -153,6 +153,8 @@ qt_add_library(trading_domain STATIC
     src/domain/LeadSignal.h
     src/domain/Candles.cpp
     src/domain/Candles.h
+    src/domain/ConfirmGate.cpp
+    src/domain/ConfirmGate.h
     src/domain/IndexConfluence.cpp
     src/domain/IndexConfluence.h
     src/domain/PredictionLedger.cpp
@@ -242,6 +244,10 @@ set_source_files_properties(src/quick/qml/PriceChart.qml
     PROPERTIES QT_RESOURCE_ALIAS PriceChart.qml)
 set_source_files_properties(src/quick/qml/CockpitWindow.qml
     PROPERTIES QT_RESOURCE_ALIAS CockpitWindow.qml)
+set_source_files_properties(src/quick/qml/TradeTicket.qml
+    PROPERTIES QT_RESOURCE_ALIAS TradeTicket.qml)
+set_source_files_properties(src/quick/qml/OpenPositions.qml
+    PROPERTIES QT_RESOURCE_ALIAS OpenPositions.qml)
 # QT_QML_SINGLETON_TYPE is REQUIRED as well as the file's own `pragma Singleton`: CMake does
 # not parse the QML, so without this the generated qmldir says "Theme 1.0 Theme.qml" instead
 # of "singleton Theme 1.0 Theme.qml". The failure is quiet and misleading — every Theme.*
@@ -261,7 +267,10 @@ qt_add_library(trading_cockpit STATIC
     src/ui/CockpitModel.h
 )
 target_include_directories(trading_cockpit PUBLIC src)
-target_link_libraries(trading_cockpit PUBLIC trading_domain Qt6::Quick)
+target_link_libraries(trading_cockpit PUBLIC trading_domain Qt6::Quick
+    # Controls supplies the ticket's SpinBox and Button. Widgets-free on purpose:
+    # this library is linked by the Qt Quick binary too.
+    Qt6::QuickControls2)
 
 qt_add_qml_module(trading_cockpit
     URI TradingApp.Cockpit
@@ -273,6 +282,8 @@ qt_add_qml_module(trading_cockpit
         src/quick/qml/ConfluenceMeter.qml
         src/quick/qml/PriceChart.qml
         src/quick/qml/CockpitWindow.qml
+        src/quick/qml/TradeTicket.qml
+        src/quick/qml/OpenPositions.qml
         src/quick/qml/Theme.qml
 )
 
@@ -326,6 +337,7 @@ if(Qt6Graphs_FOUND)
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        Qt6::QuickControls2
     )
     set_target_properties(TradingCockpit PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"

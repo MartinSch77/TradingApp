@@ -5,6 +5,7 @@
 #define TRADINGAPP_MAINWINDOW_H
 
 #include "domain/Candles.h"
+#include "domain/ConfirmGate.h"
 #include "domain/DecisionEngine.h"
 #include "domain/Forecasting.h"
 #include "domain/Models.h"
@@ -87,7 +88,7 @@ private slots:
     // The limit orders currently resting at eToro (REQ-F-027) — the panel's table and
     // the exposure check are pure views of this.
     void onPendingOrders(const QList<PendingOrder> &orders);
-    void onPositionClosed(bool ok, const QString &message);
+    void onPositionClosed(bool ok, const QString &message, const QString &positionId);
     void onVix(double level, double changePct);  // CBOE VIX ("fear index") update
     void onExternalSignal(bool available, double score, const QString &rating);  // web rating
     void onFearGreed(double score, const QString &rating);  // crowd sentiment (CNN F&G)
@@ -305,6 +306,8 @@ private:
     // QtConcurrent watchers). Called from the constructor; separate so its connection
     // list stays within the metrics budget.
     void connectSeriesFeeds();
+    // The reported book minus what the broker has already confirmed closed.
+    [[nodiscard]] QList<Position> withoutJustClosed(const QList<Position> &reported);
     void connectWorkerResults();
     // Live-refresh the open-trades P/L cells from the client's quote book, without
     // waiting for the next portfolio poll. EVERY row moves, each marked from its own
@@ -583,7 +586,12 @@ private:
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
     QHash<QString, QList<double>> m_intradayBySymbol;
     // OHLC for the cockpit's candlestick chart, from the same sweep as the closes above.
-    QHash<QString, QList<trading::Candle>> m_candlesBySymbol;   // Yahoo 1-min session closes
+    QHash<QString, QList<trading::Candle>> m_candlesBySymbol;
+    // Positions the broker CONFIRMED closed, and when. They leave the open-trades table at
+    // once and are hidden from the portfolio poll until it catches up — see
+    // trading::suppressClosedPositions for why a plain removal is not enough, and why this
+    // book is deliberately bounded rather than permanent.
+    QHash<QString, qint64> m_closedAtMs;   // Yahoo 1-min session closes
     QHash<QString, QList<double>> m_referenceSeries;    // volatility / term structure / yields / heavyweights
     // The same tickers' bars WITH volume, aligned — the session-VWAP and up/down-volume
     // reads (REQ-F-035). Absent for every ticker whose feed carries no volume.
@@ -634,8 +642,9 @@ private:
     QHash<QWidget *, QFont> m_baseFonts;
 
     // Double-tap buy/sell shortcut state.
-    qint32 m_quickKey = 0;
-    qint64 m_quickKeyMs = 0;
+    // The REQ-N-005 double-press state for the b/s quick keys. One shared rule with the
+    // cockpit's trade ticket — see trading::confirmPress.
+    trading::ConfirmGate m_quickKeyGate;
 
     // Buy/Sell button double-press state (see handleOrderButton).
     qint64 m_orderClickMs = 0;   // time of the first (arming) press, 0 = none pending

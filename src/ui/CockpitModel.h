@@ -5,6 +5,7 @@
 #define TRADINGAPP_UI_COCKPITMODEL_H
 
 #include "domain/Candles.h"
+#include "domain/ConfirmGate.h"
 #include "domain/IndexConfluence.h"
 #include "domain/LeadSignal.h"
 
@@ -114,6 +115,30 @@ struct CockpitCard {
 // question start to exist. The series itself adds `index`.
 [[nodiscard]] QVariantMap candleToVariant(const trading::Candle &candle);
 
+// One open position as QML sees it. Every number is formatted HERE: a binding that formats
+// is a binding that can format differently from the Widgets table showing the same trade.
+[[nodiscard]] QVariantMap positionToVariant(const Position &position, double markPrice);
+
+// The trade ticket's state as QML sees it (REQ-F-038, REQ-N-005).
+//
+// The QML owns NONE of this. A declarative surface is the wrong place for a money-moving
+// state machine: a binding that re-evaluates at the wrong moment would arm or disarm the
+// gate, and no test could see it happen. So the ticket is a C++ object, the QML calls one
+// method on it, and every rule below is checked headless.
+struct TicketState {
+    QString prompt;        // what the user must do next; empty when nothing is armed
+    QString blocked;       // why trading is impossible at all; empty when it is possible
+    bool armed = false;
+};
+
+// Whether an order may even be attempted, and the sentence saying why not.
+//
+// Order matters: the most fundamental obstacle is reported first, because a reader given
+// three reasons fixes the wrong one. No credentials outranks a closed market, which
+// outranks an unusable amount.
+[[nodiscard]] QString ticketBlockedReason(bool hasCredentials, bool marketOpen, double amount,
+                                          double minAmount, double maxAmount);
+
 // The view-model the QML binds to. Assembly only — every rule lives in the functions above.
 class CockpitModel : public QObject
 {
@@ -132,6 +157,12 @@ class CockpitModel : public QObject
     Q_PROPERTY(double candleMax READ candleMax NOTIFY changed)
     Q_PROPERTY(QString candleNote READ candleNote NOTIFY changed)
     Q_PROPERTY(QString candleSpan READ candleSpan NOTIFY changed)
+    Q_PROPERTY(QString ticketPrompt READ ticketPrompt NOTIFY changed)
+    Q_PROPERTY(QString ticketBlocked READ ticketBlocked NOTIFY changed)
+    Q_PROPERTY(bool ticketArmed READ ticketArmed NOTIFY changed)
+    Q_PROPERTY(double amount READ amount NOTIFY changed)
+    Q_PROPERTY(int leverage READ leverage NOTIFY changed)
+    Q_PROPERTY(QVariantList positions READ positions NOTIFY changed)
 
 public:
     explicit CockpitModel(QObject *parent = nullptr);
@@ -160,8 +191,42 @@ public:
     [[nodiscard]] QString candleNote() const { return m_candleNote; }
     [[nodiscard]] QString candleSpan() const { return m_candleSpan; }
 
+    // --- the trade ticket (REQ-F-038, REQ-N-005) ---------------------------------------
+    // Everything the account imposes on an order, pushed in by the host. The model never
+    // fetches: it is a view-model, and a view-model that reaches for data is a second,
+    // untested copy of the service layer.
+    void setTradeContext(bool hasCredentials, bool marketOpen, double minAmount,
+                         double maxAmount);
+    void setTicket(double amount, qint32 leverage);
+    // The open book. Already filtered by the host — a position the broker has confirmed
+    // closed must not be here, for the same reason it leaves the Widgets table at once.
+    void setPositions(const QList<Position> &positions, double markPrice);
+
+    [[nodiscard]] QString ticketPrompt() const { return m_ticketPrompt; }
+    [[nodiscard]] QString ticketBlocked() const { return m_ticketBlocked; }
+    [[nodiscard]] bool ticketArmed() const { return !m_gate.action.isEmpty(); }
+    [[nodiscard]] double amount() const { return m_amount; }
+    [[nodiscard]] qint32 leverage() const { return m_leverage; }
+    [[nodiscard]] QVariantList positions() const { return m_positions; }
+
+    // ONE press of buy or sell. Returns nothing and places nothing by itself: on a valid
+    // second press within the window it emits placeRequested, and the HOST sends the order.
+    // The model deliberately has no broker of its own — the thing that can move money stays
+    // in the composition root, where it is one object and one place to audit.
+    Q_INVOKABLE void press(bool buy);
+    // Abandon whatever is armed. Bound to Escape and to leaving the ticket.
+    Q_INVOKABLE void cancelArm();
+    // The same gate in front of closing a position, keyed by its id so confirming a close
+    // of one trade can never close another.
+    Q_INVOKABLE void pressClose(const QString &positionId);
+
 Q_SIGNALS:
     void changed();
+    // A human confirmed this, twice, just now. The host still validates it
+    // (OrderRequestValidator, REQ-N-009) before anything is sent — this signal means
+    // "authorised", never "correct".
+    void placeRequested(bool buy, double amount, qint32 leverage);
+    void closeRequested(const QString &positionId);
 
 private:
     QVariantList m_cards;
@@ -178,6 +243,22 @@ private:
     // rather than presenting an empty frame.
     QString m_candleNote;
     QString m_candleSpan;
+
+    // The REQ-N-005 gate, shared with the Widgets window through trading::confirmPress.
+    trading::ConfirmGate m_gate;
+    QString m_ticketPrompt;
+    // Deliberately NOT given a literal default here. It is computed in the constructor by
+    // ticketBlockedReason from the safe defaults below, so the sentence a blocked ticket
+    // shows has exactly ONE source. A hand-written default was a second copy of that rule
+    // and immediately disagreed with it — caught by TS-COCKPIT-008.
+    QString m_ticketBlocked;
+    double m_amount = 0.0;
+    qint32 m_leverage = 1;
+    bool m_hasCredentials = false;   // safe default: no account until told otherwise
+    bool m_marketOpen = false;
+    double m_minAmount = 0.0;
+    double m_maxAmount = 0.0;
+    QVariantList m_positions;
 
     // How many candles are drawn. 120 across a ~940-pixel plot leaves each body about five
     // pixels wide, which is where the hollow interior becomes visible inside its one-pixel

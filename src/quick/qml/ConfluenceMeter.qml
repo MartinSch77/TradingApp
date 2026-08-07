@@ -28,7 +28,7 @@ Rectangle {
     required property string probability
 
     implicitWidth: 300
-    implicitHeight: 220
+    implicitHeight: 300   // the nine-read list below the hero mark needs the room
     color: Theme.panel
     radius: Theme.radius
     border.width: 1

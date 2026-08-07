@@ -21,16 +21,28 @@
 // QQuickWidget panel inside TradingApp shows the same cockpit with the chart replaced by a
 // stated note (see the Loader in Main.qml) rather than pretending the constraint away.
 //
-// THIS FRONT END CANNOT TRADE. It links trading_services for the read-only feeds and never
-// constructs an EtoroClient, so there is no route to an order endpoint from here at all —
-// the same guarantee REQ-N-005 gives the bot simulation, obtained structurally rather than by
-// a check that could be forgotten.
+// THIS FRONT END CAN TRADE, and everything that stands in front of that is SHARED with the
+// Widgets window rather than rewritten here:
+//
+//   * The REQ-N-005 double-press gate is trading::confirmPress — one implementation, called
+//     by both front ends and tested headless (tst_confirmgate). A safety gate with two
+//     implementations is, in practice, the weaker of the two.
+//   * The order itself goes through the same EtoroClient, which is also the only object in
+//     this process that can reach an order endpoint. The view-model has no broker: it emits
+//     "a human authorised this" and the composition root decides what to do about it.
+//   * Whether the ticket may be used at all — credentials, market open, the amount bounds —
+//     is CockpitModel::ticketBlockedReason, pinned by TS-COCKPIT-010.
+//
+// Without credentials Config::hasCredentials() answers false, the ticket is blocked with
+// that reason spelled out, and no order can be attempted at all.
 
 #include "domain/Candles.h"
+#include "domain/Models.h"
 #include "domain/IndexConfluence.h"
 #include "domain/LeadSignal.h"
 #include "domain/PredictionLedger.h"
 #include "services/Config.h"
+#include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
 #include "ui/CockpitModel.h"
 
@@ -40,6 +52,8 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QTimer>
+
+#include <functional>
 
 namespace {
 
@@ -88,6 +102,131 @@ void push(const Books &books, const QString &symbol, trading::ui::CockpitModel *
     model->setCandles(books.candlesBySymbol.value(symbol));
 }
 
+
+// The feed wiring. Its own function because main() is on the metrics ratchet and this is one
+// self-contained job: books in, republish out.
+// const: this function only CONNECTS to the feeds, it never drives them. QObject::connect
+// takes a const sender, so the signature can say so — and saying so is the difference
+// between "wires up the feeds" and "may also start or reconfigure them".
+void connectFeeds(const MarketFeeds &feeds, QObject *ctx, Books &books,
+                  const std::function<void()> &republish)
+{
+    QObject::connect(&feeds, &MarketFeeds::referenceSeries, ctx,
+                     [&books, republish](const QString &ticker, const QList<double> &closes) {
+                         static_cast<void>(books.referenceSeries.insert(ticker, closes));
+                         republish();
+                     });
+    QObject::connect(&feeds, &MarketFeeds::referenceVolumeSeries, ctx,
+                     [&books, republish](const QString &ticker,
+                                         const trading::VolumeSeries &bars) {
+                         static_cast<void>(books.referenceVolumes.insert(ticker, bars));
+                         republish();
+                     });
+    QObject::connect(&feeds, &MarketFeeds::intradayCloses, ctx,
+                     [&books, republish](const QString &sym, const QList<double> &closes) {
+                         static_cast<void>(books.intradayBySymbol.insert(sym, closes));
+                         republish();
+                     });
+    QObject::connect(&feeds, &MarketFeeds::intradayCandles, ctx,
+                     [&books, republish](const QString &sym,
+                                         const QList<trading::Candle> &candles) {
+                         static_cast<void>(books.candlesBySymbol.insert(sym, candles));
+                         republish();
+                     });
+}
+
+// The trading wiring: what the ticket may do, what a confirmed press sends, and the open
+// book coming back. Everything money-moving in this process is connected here and nowhere
+// else, which is the point of collecting it.
+// Everything the trading wiring needs, as ONE bundle. Six loose parameters is what the
+// metrics gate flagged, and it is right for the usual reason: a run of same-shaped
+// references is an argument-order defect waiting to happen. The same answer ReadInputs and
+// OrderContext give elsewhere in this codebase.
+struct Session {
+    EtoroClient &client;
+    trading::ui::CockpitModel &model;
+    Books &books;
+    QString symbol;
+    const Config &config;
+};
+
+void connectTrading(Session &session, QObject *ctx)
+{
+    EtoroClient &client = session.client;
+    trading::ui::CockpitModel &model = session.model;
+    Books &books = session.books;
+    const QString symbol = session.symbol;
+    const Config &config = session.config;
+    // The ticket's own preconditions, refreshed as the account answers. `marketOpen` comes
+    // from the broker's tradeability poll rather than from a clock: this application has
+    // already measured that an instrument's own exchange hours and its tradeability can
+    // disagree, and the broker is the authority on which.
+    const auto refreshTicketContext = [&model, &config](bool marketOpen) {
+        model.setTradeContext(config.hasCredentials(), marketOpen,
+                              /*minAmount=*/0.0, /*maxAmount=*/0.0);
+    };
+    refreshTicketContext(false);   // shut until the broker says otherwise
+    QObject::connect(&client, &EtoroClient::tradeabilityUpdated, ctx,
+                     [refreshTicketContext, symbol](const QSet<QString> &tradeable) {
+                         refreshTicketContext(tradeable.contains(symbol));
+                     });
+
+    // AUTHORISED, not yet correct: the gate says a human asked for this twice, and the
+    // client's own validation is what decides whether it is sendable (REQ-N-009).
+    QObject::connect(&model, &trading::ui::CockpitModel::placeRequested, ctx,
+                     [&client](bool buy, double amount, qint32 leverage) {
+                         OrderRequest req;
+                         req.isBuy = buy;
+                         req.amount = amount;
+                         req.leverage = leverage;
+                         client.openPosition(req);
+                     });
+    QObject::connect(&model, &trading::ui::CockpitModel::closeRequested, ctx,
+                     [&client](const QString &positionId) {
+                         client.closePosition(positionId);
+                     });
+
+    // The open book. Marked off the latest candle CLOSE rather than a rates row: this
+    // project measured the rates feed running 6-12 minutes behind while the one-minute
+    // candle close matched the bid exactly.
+    QObject::connect(&client, &EtoroClient::portfolioUpdated, ctx,
+                     [&model, &books, symbol](const QList<Position> &positions) {
+                         const QList<trading::Candle> bars = books.candlesBySymbol.value(symbol);
+                         const double mark = bars.isEmpty() ? 0.0 : bars.constLast().close;
+                         model.setPositions(positions, mark);
+                     });
+}
+
+// The QA capture harness.
+void installShotHarness(QQmlApplicationEngine &engine, QObject *ctx)
+{
+    // QA aid, mirroring TRADINGAPP_SHOT in the Widgets binary: grab the window to a PNG and
+    // quit. The Widgets harness walks QApplication::allWidgets(), which finds nothing here —
+    // there are no widgets — so this front end needs its own, and it needs one for the same
+    // reason: a QML surface that fails to load renders as an empty rectangle, and only a
+    // capture distinguishes "loaded and empty" from "did not load".
+    const QString shot = qEnvironmentVariable("TRADINGAPP_SHOT");
+    if (!shot.isEmpty()) {
+        const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")
+                                   ? qEnvironmentVariableIntValue("TRADINGAPP_SHOT_DELAY_MS")
+                                   : 3000;
+        QTimer::singleShot(delayMs, ctx, [&engine, shot]() {
+            auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+            if (window == nullptr) {
+                qCritical("root object is not a QQuickWindow — nothing to grab");
+                QCoreApplication::exit(1);
+                return;
+            }
+            // grabWindow() renders through the scene graph, so this captures what the GPU
+            // path actually produced rather than re-rendering the item tree.
+            const bool saved = window->grabWindow().save(shot);
+            qInfo("cockpit capture %s -> %s", saved ? "written" : "FAILED",
+                  qUtf8Printable(shot));
+            QCoreApplication::exit(saved ? 0 : 1);
+        });
+    }
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -104,6 +243,11 @@ int main(int argc, char *argv[])
 
     MarketFeeds feeds;
 
+    // The ONE object in this process that can reach an order endpoint. Deliberately not
+    // owned by the view-model: a view-model that can place an order is a view-model no test
+    // can safely exercise.
+    EtoroClient client(config);
+
     // Every arrival re-pushes the whole picture rather than patching one field. The books are
     // small and the cost is nothing; a partial update that drifts out of step with the rest is
     // a cockpit showing two different moments at once.
@@ -111,28 +255,10 @@ int main(int argc, char *argv[])
         push(books, symbol, &model, !config.hasCredentials());
     };
 
-    QObject::connect(&feeds, &MarketFeeds::referenceSeries, &app,
-                     [&books, republish](const QString &ticker, const QList<double> &closes) {
-                         static_cast<void>(books.referenceSeries.insert(ticker, closes));
-                         republish();
-                     });
-    QObject::connect(&feeds, &MarketFeeds::referenceVolumeSeries, &app,
-                     [&books, republish](const QString &ticker,
-                                         const trading::VolumeSeries &bars) {
-                         static_cast<void>(books.referenceVolumes.insert(ticker, bars));
-                         republish();
-                     });
-    QObject::connect(&feeds, &MarketFeeds::intradayCloses, &app,
-                     [&books, republish](const QString &sym, const QList<double> &closes) {
-                         static_cast<void>(books.intradayBySymbol.insert(sym, closes));
-                         republish();
-                     });
-    QObject::connect(&feeds, &MarketFeeds::intradayCandles, &app,
-                     [&books, republish](const QString &sym,
-                                         const QList<trading::Candle> &candles) {
-                         static_cast<void>(books.candlesBySymbol.insert(sym, candles));
-                         republish();
-                     });
+    connectFeeds(feeds, &app, books, republish);
+
+    Session session{client, model, books, symbol, config};
+    connectTrading(session, &app);
 
     QQmlApplicationEngine engine;
     // setInitialProperties, not a context property: as a context property the model resolved
@@ -148,6 +274,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    client.start();
     feeds.setTradableSymbols({symbol});
     feeds.setCurrentSymbol(symbol);
     feeds.start(kRefreshMs);
@@ -167,31 +294,7 @@ int main(int argc, char *argv[])
     // "no bars yet" state rather than blank.
     republish();
 
-    // QA aid, mirroring TRADINGAPP_SHOT in the Widgets binary: grab the window to a PNG and
-    // quit. The Widgets harness walks QApplication::allWidgets(), which finds nothing here —
-    // there are no widgets — so this front end needs its own, and it needs one for the same
-    // reason: a QML surface that fails to load renders as an empty rectangle, and only a
-    // capture distinguishes "loaded and empty" from "did not load".
-    const QString shot = qEnvironmentVariable("TRADINGAPP_SHOT");
-    if (!shot.isEmpty()) {
-        const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")
-                                   ? qEnvironmentVariableIntValue("TRADINGAPP_SHOT_DELAY_MS")
-                                   : 3000;
-        QTimer::singleShot(delayMs, &app, [&engine, shot]() {
-            auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
-            if (window == nullptr) {
-                qCritical("root object is not a QQuickWindow — nothing to grab");
-                QCoreApplication::exit(1);
-                return;
-            }
-            // grabWindow() renders through the scene graph, so this captures what the GPU
-            // path actually produced rather than re-rendering the item tree.
-            const bool saved = window->grabWindow().save(shot);
-            qInfo("cockpit capture %s -> %s", saved ? "written" : "FAILED",
-                  qUtf8Printable(shot));
-            QCoreApplication::exit(saved ? 0 : 1);
-        });
-    }
+    installShotHarness(engine, &app);
 
     return QGuiApplication::exec();
 }

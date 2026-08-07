@@ -3,6 +3,7 @@
 
 #include "ui/CockpitModel.h"
 
+#include <QDateTime>
 #include <QVariantMap>
 
 namespace trading::ui {
@@ -193,6 +194,51 @@ QList<CockpitCard> referenceCards(const QHash<QString, QList<double>> &reference
     };
 }
 
+QVariantMap positionToVariant(const Position &position, double markPrice)
+{
+    QVariantMap out;
+    out[QStringLiteral("id")] = position.positionId;
+    out[QStringLiteral("symbol")] = position.symbol;
+    out[QStringLiteral("side")] = position.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+    // The side as a SIGN too, so direction survives without colour discrimination — the same
+    // second channel the market cards carry.
+    out[QStringLiteral("dir")] = position.isBuy ? 1 : -1;
+    out[QStringLiteral("amount")] = QStringLiteral("%1").arg(position.amount, 0, 'f', 2);
+    out[QStringLiteral("leverage")] = QStringLiteral("x%1").arg(position.leverage);
+    out[QStringLiteral("openRate")] = QStringLiteral("%1").arg(position.openRate, 0, 'f', 2);
+    // An unknown mark is an em dash, never 0.00 and never the entry price dressed up as the
+    // current one — the absent-is-not-zero rule this whole view is built on.
+    const bool markable = (markPrice > 0.0) && (position.openRate > 0.0);
+    out[QStringLiteral("markRate")] =
+        markable ? QStringLiteral("%1").arg(markPrice, 0, 'f', 2) : QStringLiteral("—");
+    return out;
+}
+
+QString ticketBlockedReason(bool hasCredentials, bool marketOpen, double amount,
+                            double minAmount, double maxAmount)
+{
+    // Most fundamental first. A reader shown three obstacles at once fixes the wrong one,
+    // and the ones below are not even reachable while the one above holds.
+    if (!hasCredentials) {
+        return QObject::tr("SIMULATION — no account configured, no order can be placed");
+    }
+    if (!marketOpen) {
+        return QObject::tr("market closed for this instrument");
+    }
+    if (amount <= 0.0) {
+        return QObject::tr("enter an amount");
+    }
+    // An unknown bound (0) disables its own check rather than inventing one — the same rule
+    // OrderRequestValidator follows for every fact it was not given.
+    if ((minAmount > 0.0) && (amount < minAmount)) {
+        return QObject::tr("below the %1 minimum").arg(minAmount, 0, 'f', 2);
+    }
+    if ((maxAmount > 0.0) && (amount > maxAmount)) {
+        return QObject::tr("above the %1 maximum").arg(maxAmount, 0, 'f', 2);
+    }
+    return {};   // no obstacle: the ticket may be used
+}
+
 QVariantMap candleToVariant(const trading::Candle &candle)
 {
     QVariantMap out;
@@ -207,6 +253,11 @@ QVariantMap candleToVariant(const trading::Candle &candle)
 CockpitModel::CockpitModel(QObject *parent) : QObject(parent)
 {
     setCandles({});   // start in the stated "no bars yet" state rather than at a blank axis
+    // The blocked sentence comes from the same function that computes it later, so a
+    // freshly built model and a re-evaluated one cannot say different things about the
+    // same state. The defaults are the safe ones: no account, market shut.
+    m_ticketBlocked =
+        ticketBlockedReason(m_hasCredentials, m_marketOpen, m_amount, m_minAmount, m_maxAmount);
 }
 
 void CockpitModel::setCandles(const QList<trading::Candle> &candles)
@@ -294,6 +345,95 @@ void CockpitModel::setCalibration(qint32 samples, qint32 minSamples, double hitR
 void CockpitModel::setSimulation(bool on)
 {
     m_simulation = on;
+    Q_EMIT changed();
+}
+
+void CockpitModel::setTradeContext(bool hasCredentials, bool marketOpen, double minAmount,
+                                   double maxAmount)
+{
+    m_hasCredentials = hasCredentials;
+    m_marketOpen = marketOpen;
+    m_minAmount = minAmount;
+    m_maxAmount = maxAmount;
+    m_ticketBlocked =
+        ticketBlockedReason(m_hasCredentials, m_marketOpen, m_amount, m_minAmount, m_maxAmount);
+    // Anything armed is abandoned when the ground shifts under it. A confirmation given
+    // while the market was open must not survive into a market that has closed.
+    if (!m_ticketBlocked.isEmpty()) {
+        m_gate = trading::ConfirmGate{};
+        m_ticketPrompt.clear();
+    }
+    Q_EMIT changed();
+}
+
+void CockpitModel::setTicket(double amount, qint32 leverage)
+{
+    m_amount = amount;
+    m_leverage = leverage;
+    m_ticketBlocked =
+        ticketBlockedReason(m_hasCredentials, m_marketOpen, m_amount, m_minAmount, m_maxAmount);
+    // CHANGING THE ORDER DISARMS IT. The user confirmed a specific order; editing the amount
+    // or the leverage makes the armed action a different one, and letting the old arming
+    // stand would send something nobody pressed twice for.
+    m_gate = trading::ConfirmGate{};
+    m_ticketPrompt.clear();
+    Q_EMIT changed();
+}
+
+void CockpitModel::setPositions(const QList<Position> &positions, double markPrice)
+{
+    m_positions.clear();
+    m_positions.reserve(positions.size());
+    for (const Position &p : positions) {
+        m_positions.append(positionToVariant(p, markPrice));
+    }
+    Q_EMIT changed();
+}
+
+void CockpitModel::press(bool buy)
+{
+    if (!m_ticketBlocked.isEmpty()) {
+        // Refuse loudly rather than silently: a dead control is the failure this project
+        // already measured with the quick keys, where a swallowed press "seemed dead".
+        m_ticketPrompt = m_ticketBlocked;
+        Q_EMIT changed();
+        return;
+    }
+    // The action string names the WHOLE order. Two presses that would send different orders
+    // must never combine into one confirmation, so amount and leverage are part of it.
+    const QString action = QStringLiteral("%1 %2 at x%3")
+                               .arg(buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
+                               .arg(m_amount, 0, 'f', 2)
+                               .arg(m_leverage);
+    const trading::ConfirmDecision decision = trading::confirmPress(
+        m_gate, action, QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
+    m_gate = decision.next;
+    m_ticketPrompt = decision.prompt;
+    Q_EMIT changed();
+    if (decision.commit) {
+        Q_EMIT placeRequested(buy, m_amount, m_leverage);
+    }
+}
+
+void CockpitModel::pressClose(const QString &positionId)
+{
+    // Keyed by the position id, so confirming a close of one trade can never close another
+    // — pressing close on #1 then on #2 arms #2 rather than committing #1.
+    const QString action = QStringLiteral("close position #%1").arg(positionId);
+    const trading::ConfirmDecision decision = trading::confirmPress(
+        m_gate, action, QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
+    m_gate = decision.next;
+    m_ticketPrompt = decision.prompt;
+    Q_EMIT changed();
+    if (decision.commit) {
+        Q_EMIT closeRequested(positionId);
+    }
+}
+
+void CockpitModel::cancelArm()
+{
+    m_gate = trading::ConfirmGate{};
+    m_ticketPrompt.clear();
     Q_EMIT changed();
 }
 

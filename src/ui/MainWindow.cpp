@@ -3,6 +3,7 @@
 
 #include "ui/MainWindow.h"
 
+#include "domain/ConfirmGate.h"
 #include "domain/DecisionEngine.h"
 #include "domain/EventInsight.h"
 #include "domain/Forecasting.h"
@@ -78,6 +79,15 @@ constexpr qint32 kOrderCooldownMs = 2000;
 // Hard cap on the total amount tied up in open trades at once (account currency).
 // A new order is rejected if it would push the open-trades total above this.
 constexpr double kMaxOpenExposure = 17000.0;
+
+// How long a confirmed-closed position stays hidden while the portfolio poll catches up.
+//
+// The number is bounded on both sides. Too short and the row flickers back on the next
+// poll, which reads as a close that failed. Too long and a close that did NOT take effect
+// stays invisible, telling someone they are flat while the risk is still open — which is
+// the more dangerous mistake, so this errs short. 30 s is several poll intervals at the
+// default cadence and comfortably past the seconds-scale lag measured on this endpoint.
+constexpr qint64 kClosedSuppressMs = 30000;
 
 // Open-trades table columns live in PositionsModel::Column; the aliases below
 // keep the SL/TP edit handling readable.
@@ -571,24 +581,24 @@ qint32 aiDecisionDir(const AiDecision &d)
 
 void MainWindow::handleQuickKey(qint32 key)
 {
-    constexpr qint64 kDoubleTapMs = 1000;  // two taps within one second
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if ((key == m_quickKey) && ((now - m_quickKeyMs) <= kDoubleTapMs)) {
-        m_quickKey = 0;  // consumed — the next trigger needs two fresh taps
-        // The keyboard shortcut is itself the double-confirm, so place directly
-        // (bypassing the buttons' own double-press gate).
-        placeOrder(key != Qt::Key_S);
-    } else {
-        m_quickKey = key;
-        m_quickKeyMs = now;
-        // Mirror the buttons' arming feedback. This line is also the tell that the
-        // key registered at all: with focus in an input field the shortcut is
-        // deliberately swallowed, and this line then stays absent from the log.
-        const bool isBuy = (key != Qt::Key_S);
-        appendLog(QStringLiteral("Press %1 again within 1 s to place %2.")
-                      .arg(isBuy ? QStringLiteral("B") : QStringLiteral("S"),
-                           isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL")));
+    // The rule lives in trading::confirmPress (REQ-N-005), not here. It used to be four
+    // lines inline, which was fine while this window was the only surface that could place
+    // an order; the Qt Quick cockpit can now place one too, and a safety gate with two
+    // implementations is in practice the weaker of the two.
+    const bool isBuy = (key != Qt::Key_S);
+    const QString action = isBuy ? QStringLiteral("place BUY") : QStringLiteral("place SELL");
+    const trading::ConfirmDecision decision =
+        trading::confirmPress(m_quickKeyGate, action, QDateTime::currentMSecsSinceEpoch(),
+                              trading::kConfirmWindowMs);
+    m_quickKeyGate = decision.next;
+    if (decision.commit) {
+        placeOrder(isBuy);
+        return;
     }
+    // The arming feedback is also the tell that the key registered at all: with focus in an
+    // input field the shortcut is deliberately swallowed, and this line then stays absent
+    // from the log.
+    appendLog(decision.prompt);
 }
 
 void MainWindow::onLeverageOptions(const QList<int> &values)
@@ -2678,6 +2688,8 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
         return aId < bId;
     });
 
+    sorted = withoutJustClosed(sorted);
+
     // Mark the entry of each open trade on the shown instrument as a bullet on the
     // chart (green=buy, red=sell). The portfolio can span several instruments in
     // real mode, so filter to the one on screen; the chart clamps older entries
@@ -3623,7 +3635,8 @@ void MainWindow::onOrderResult(bool ok, const QString &message)
     }
 }
 
-void MainWindow::onPositionClosed(bool ok, const QString &message)
+void MainWindow::onPositionClosed(bool ok, const QString &message,
+                                 const QString &positionId)
 {
     appendLog(message, !ok);
     if (!ok) {
@@ -3631,9 +3644,54 @@ void MainWindow::onPositionClosed(bool ok, const QString &message)
             QMessageBox::warning(this, QStringLiteral("Close position"), message);
         return;
     }
+    // The row goes NOW. Waiting for the next portfolio poll leaves a closed trade sitting
+    // in "open trades" for seconds, which is the one place this table must not be wrong —
+    // and the poll itself lags, so the wait is longer than the poll interval suggests.
+    if (!positionId.isEmpty()) {
+        m_closedAtMs.insert(positionId, QDateTime::currentMSecsSinceEpoch());
+        QList<Position> remaining;
+        remaining.reserve(m_shownPositions.size());
+        for (const Position &p : std::as_const(m_shownPositions)) {
+            if (p.positionId != positionId) {
+                remaining.append(p);
+            }
+        }
+        if (remaining.size() != m_shownPositions.size()) {
+            onPortfolio(remaining);   // one path builds the table, so the two cannot diverge
+        }
+    }
+
     // (Re)arm the delayed closed-trade P/L refresh so the just-closed trade shows up
     // in the summary; restarting collapses a burst of closes into a single fetch.
     m_pnlAfterCloseTimer->start();
+}
+
+// What the open-trades table should actually show, once the positions the broker has
+// already CONFIRMED closed are taken out.
+//
+// Its own function rather than more branches inside onPortfolio: that function builds a
+// table, this one answers "what belongs in it", and the metrics ratchet is right that the
+// two do not belong in one place. See trading::suppressClosedPositions for why a plain
+// removal on the close reply is not enough — the portfolio endpoint lags its own truth, so
+// the row would reappear on the next poll and read as a close that FAILED.
+QList<Position> MainWindow::withoutJustClosed(const QList<Position> &reported)
+{
+    if (m_closedAtMs.isEmpty()) {
+        return reported;
+    }
+    const trading::CloseSuppression hidden = trading::suppressClosedPositions(
+        reported, m_closedAtMs, QDateTime::currentMSecsSinceEpoch(), kClosedSuppressMs);
+    for (const QString &id : hidden.confirmed) {
+        static_cast<void>(m_closedAtMs.remove(id));   // the broker agrees it is gone
+    }
+    for (const QString &id : hidden.expired) {
+        // Said out loud AND shown again. A close that did not take must never leave someone
+        // believing they are flat while the risk is still open.
+        static_cast<void>(m_closedAtMs.remove(id));
+        appendLog(QStringLiteral("Position #%1 was reported closed but the broker still "
+                                 "lists it — showing it again.").arg(id), true);
+    }
+    return hidden.visible;
 }
 
 void MainWindow::refreshClosedTradesForVanished(const QList<Position> &current)

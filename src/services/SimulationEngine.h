@@ -77,7 +77,9 @@ signals:
     void orderResult(bool ok, const QString &message);
     // The resting entry orders after every change (placed / cancelled / triggered).
     void pendingOrdersUpdated(const QList<PendingOrder> &orders);
-    void positionClosed(bool ok, const QString &message);
+    // positionId travels WITH the result. The message already names it, but a UI that
+    // needed the id would have to parse prose — and prose is not an interface.
+    void positionClosed(bool ok, const QString &message, const QString &positionId);
     void leverageOptions(const QList<int> &values);
     void monthlyPnlReady(const MonthlyPnl &summary);
     void screenerRow(const ScreenerRow &row);

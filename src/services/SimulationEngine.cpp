@@ -404,13 +404,15 @@ void SimulationEngine::closePosition(const QString &positionId)
             emit positionClosed(true, QStringLiteral("[SIM] Closed %1 position #%2, "
                                                      "realised P/L $%3")
                                           .arg(p.symbol, positionId)
-                                          .arg(realized, 0, 'f', 2));
+                                          .arg(realized, 0, 'f', 2),
+                                positionId);
             emit portfolioUpdated(m_simPositions);
             emit cashUpdated(m_simCash, m_orderCurrency);
             return;
         }
     }
-    emit positionClosed(false, QStringLiteral("[SIM] Position #%1 not found.").arg(positionId));
+    emit positionClosed(false, QStringLiteral("[SIM] Position #%1 not found.").arg(positionId),
+                        positionId);
 }
 
 void SimulationEngine::modifyPosition(const QString &positionId, double stopLossRate,

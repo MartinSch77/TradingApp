@@ -187,7 +187,10 @@ signals:
     // The limit orders still resting at the broker, after every change (placed,
     // cancelled, triggered, or a status refresh). Empty means "none outstanding".
     void pendingOrdersUpdated(const QList<PendingOrder> &orders);
-    void positionClosed(bool ok, const QString &message);
+    // positionId travels WITH the result so the window can drop the row at once rather
+    // than waiting for a portfolio poll that is measurably behind. Empty only when no
+    // position was named at all.
+    void positionClosed(bool ok, const QString &message, const QString &positionId);
     void monthlyPnlReady(const MonthlyPnl &summary);
     void monthlyPnlFailed(const QString &error);
     // The individual closed trades behind the latest history walk (newest first,

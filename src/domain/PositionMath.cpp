@@ -91,4 +91,50 @@ QStringList closedSincePreviousIds(const QList<Position> &previous,
     return gone;
 }
 
+CloseSuppression suppressClosedPositions(const QList<Position> &reported,
+                                         const QHash<QString, qint64> &closedAtMs,
+                                         qint64 nowMs, qint64 windowMs)
+{
+    CloseSuppression out;
+    out.visible.reserve(reported.size());
+
+    // Which remembered ids the broker STILL reports. Anything it has stopped reporting is
+    // confirmed gone, and the caller can forget it.
+    QSet<QString> stillReported;
+    for (const Position &p : reported) {
+        if (closedAtMs.contains(p.positionId)) {
+            static_cast<void>(stillReported.insert(p.positionId));
+        }
+    }
+
+    for (const Position &p : reported) {
+        const auto closed = closedAtMs.constFind(p.positionId);
+        if (closed == closedAtMs.constEnd()) {
+            out.visible.append(p);          // never closed by us — show it
+            continue;
+        }
+        // Elapsed is computed rather than compared directly so a clock that moved backwards
+        // (NTP step, suspend/resume) expires the entry instead of hiding it indefinitely.
+        const qint64 elapsed = nowMs - closed.value();
+        if ((elapsed < 0) || (elapsed >= windowMs)) {
+            // The close did not take: the broker still has it. Show it again and name it —
+            // silence here would leave someone believing they were flat.
+            out.visible.append(p);
+            out.expired.append(p.positionId);
+        }
+        // else: inside the window and still reported — hidden, which is the whole point.
+    }
+
+    for (auto it = closedAtMs.constBegin(); it != closedAtMs.constEnd(); ++it) {
+        if (!stillReported.contains(it.key())) {
+            out.confirmed.append(it.key());
+        }
+    }
+    // Deterministic order: a QHash iterates arbitrarily, and a log line whose contents
+    // reshuffle between runs is not comparable.
+    out.expired.sort();
+    out.confirmed.sort();
+    return out;
+}
+
 } // namespace trading

@@ -320,6 +320,25 @@ publish_release; refuses to publish on a red pipeline).
   regularly overtaken. (3) The model supplies DIRECTION only: it can never exceed
   the stake/exposure/leverage/ruin limits, and `paperLeverageWithAi` honours a
   model's caution but never its ambition.
+- BOTH front ends can trade, and REQ-F-038's old "read-only by construction" clause is
+  SUPERSEDED — that was a scoping decision recorded as a safety property. The safety
+  property is the SAFEGUARD: `domain/ConfirmGate` (`confirmPress`) is the ONE REQ-N-005
+  double-press rule, called by `MainWindow::handleQuickKey` AND `CockpitModel::press`.
+  Never write a second copy — a gate with two implementations is the weaker of the two.
+  The armed action names the WHOLE order ("BUY 500.00 at x5"), so editing amount/leverage/
+  side disarms and a close confirmation is keyed by position id. `EtoroClient` stays the
+  single order-capable object per process; the view-model only emits "a human authorised
+  this" and never holds a broker. A view's claim about its own safety must be true of the
+  build making it — the cockpit banner used to say "no order can be placed from here" and
+  had to change when the ticket landed.
+- A CONFIRMED-CLOSED position leaves the open-trades table IMMEDIATELY and is then HIDDEN
+  from the portfolio poll for `kClosedSuppressMs` (30 s), because that endpoint lags its own
+  truth — without the suppression the row deleted on the close reply reappears on the next
+  poll, and a row that vanishes and returns reads as a close that FAILED. The hiding is
+  bounded on purpose: still reported after the window means the close did NOT take, so the
+  row comes back and is NAMED. Hiding it forever would tell someone they are flat while the
+  risk is open. `trading::suppressClosedPositions` owns the rule; `positionClosed` carries
+  the position id precisely so the window need not parse it out of a message string.
 - QT CHARTS AND QT GRAPHS CANNOT SHARE A PROCESS. They declare seventeen classes with
   identical names in one namespace (QValueAxis, QAbstractAxis, QLineSeries, QBarSeries,
   QPieSeries, QXYSeries…), so linking both makes qmltyperegistrar ambiguous and EVERY

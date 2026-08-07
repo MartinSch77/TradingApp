@@ -233,6 +233,80 @@ private slots:
         QVERIFY(buyWeekend.isValid());
         QVERIFY(sellWeekend.isValid());
     }
+
+    //! @tstid TS-POS-011 @design DES-DOM-POS
+    // @relation(REQ-F-002, scope=function)
+    //
+    // A CONFIRMED-CLOSED position leaves the open-trades table at once, and a lagging
+    // portfolio poll cannot put it back.
+    //
+    // This is not simply "remove the row". The close is confirmed by the broker's own
+    // reply, but the table is fed by the PORTFOLIO poll, which this project has measured
+    // running behind its own truth — so the next poll still lists the position and the row
+    // reappears. A row that vanishes and returns reads as a close that FAILED, which is
+    // worse than one that lingers.
+    void TS_POS_011_aConfirmedCloseIsHiddenWhileThePollCatchesUp()
+    {
+        Position a = makePosition();
+        a.positionId = QStringLiteral("111");
+        Position b = makePosition();
+        b.positionId = QStringLiteral("222");
+
+        // The broker still reports both; 222 was confirmed closed one second ago.
+        const QHash<QString, qint64> closed{{QStringLiteral("222"), 1000}};
+        const CloseSuppression fresh =
+            suppressClosedPositions({a, b}, closed, /*nowMs=*/2000, /*windowMs=*/30000);
+
+        QCOMPARE(fresh.visible.size(), 1);
+        QCOMPARE(fresh.visible.first().positionId, QStringLiteral("111"));
+        QVERIFY(fresh.expired.isEmpty());
+        // Still reported, so nothing may be forgotten yet — dropping it here is exactly
+        // how the row would come back on the following poll.
+        QVERIFY(fresh.confirmed.isEmpty());
+
+        // Once the broker stops reporting it, the entry is CONFIRMED gone and the caller
+        // may forget it. Without this the book would grow for the life of the session.
+        const CloseSuppression agreed =
+            suppressClosedPositions({a}, closed, /*nowMs=*/2000, /*windowMs=*/30000);
+        QCOMPARE(agreed.visible.size(), 1);
+        QCOMPARE(agreed.confirmed, QStringList{QStringLiteral("222")});
+    }
+
+    //! @tstid TS-POS-012 @design DES-DOM-POS
+    // @relation(REQ-F-002, scope=function)
+    //
+    // The hiding is BOUNDED, and that bound is the safety property. If the broker is still
+    // reporting the position after the window, the close did not take effect — so the row
+    // comes back and is NAMED. Hiding it indefinitely would tell someone they were flat
+    // while they still carried the risk, which is the most dangerous thing this table can
+    // do; lingering for a second is merely untidy.
+    void TS_POS_012_aCloseThatDidNotTakeEffectComesBackAndIsNamed()
+    {
+        Position stubborn = makePosition();
+        stubborn.positionId = QStringLiteral("333");
+        const QHash<QString, qint64> closed{{QStringLiteral("333"), 1000}};
+
+        // 31 s later, still reported: show it again and say so.
+        const CloseSuppression late =
+            suppressClosedPositions({stubborn}, closed, /*nowMs=*/32000, /*windowMs=*/30000);
+        QCOMPARE(late.visible.size(), 1);
+        QCOMPARE(late.expired, QStringList{QStringLiteral("333")});
+
+        // A clock that moved BACKWARDS (an NTP step, or a resume from suspend) expires the
+        // entry too. The alternative is a negative age that never reaches the window, which
+        // would hide the position forever — the failure this whole bound exists to prevent.
+        const CloseSuppression rewound =
+            suppressClosedPositions({stubborn}, closed, /*nowMs=*/500, /*windowMs=*/30000);
+        QCOMPARE(rewound.visible.size(), 1);
+        QCOMPARE(rewound.expired, QStringList{QStringLiteral("333")});
+
+        // An empty book changes nothing at all — the common case must not be special.
+        const CloseSuppression none =
+            suppressClosedPositions({stubborn}, {}, /*nowMs=*/32000, /*windowMs=*/30000);
+        QCOMPARE(none.visible.size(), 1);
+        QVERIFY(none.expired.isEmpty());
+        QVERIFY(none.confirmed.isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPositionMath)

@@ -45,9 +45,12 @@ Rectangle {
 
             Text {
                 anchors.centerIn: parent
+                // States what is TRUE of this build. It changed when the trade ticket
+                // landed: this view is no longer read-only, and a safety banner that
+                // over-claims is worse than none because it is believed.
                 text: root.cockpit.simulation
-                      ? qsTr("SIMULATION — read-only view, no order can be placed from here")
-                      : qsTr("REAL ACCOUNT — this view is still read-only")
+                      ? qsTr("SIMULATION — no credentials, so no order can reach an account")
+                      : qsTr("REAL ACCOUNT — orders placed here move real money")
                 color: "#ffffff"
                 font.pixelSize: 12
                 font.bold: true
@@ -105,6 +108,12 @@ Rectangle {
 
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // A MINIMUM, because a Loader whose component failed has no item and
+                // therefore no implicit size: in the Qt Charts process it collapsed to zero
+                // width, the evidence column stretched across the whole window, and the
+                // fallback message explaining the missing chart ended up hidden BEHIND it.
+                // The panel that exists to explain an absence must not itself go missing.
+                Layout.minimumWidth: 420
 
                 // setSource WITH initial properties, not a plain `source:`. PriceChart
                 // declares its four inputs `required` — deliberately, so a missing injection
@@ -158,12 +167,40 @@ Rectangle {
                 }
             }
 
-            ConfluenceMeter {
+            // Evidence and the ticket in one column: the reason to trade sits directly above
+            // the control that trades, so nobody has to hold one in their head while
+            // reaching for the other.
+            ColumnLayout {
                 Layout.fillHeight: true
-                ticks: root.cockpit.ticks
-                agreement: root.cockpit.agreement
-                evidence: root.cockpit.evidence
-                probability: root.cockpit.probability
+                // Bounded, so the chart keeps the room it needs. Without this the column's
+                // fillWidth children stretch it across the window.
+                Layout.preferredWidth: 340
+                Layout.maximumWidth: 440
+                spacing: Theme.gap
+
+                TradeTicket {
+                    Layout.fillWidth: true
+                    cockpit: root.cockpit
+                }
+
+                // The meter sits at its natural height and the open book absorbs the slack
+                // below it. The other way round clipped the meter's per-read list off the
+                // bottom of the window — and a confluence read you cannot see is exactly the
+                // "4 of 5 built from absent feeds" failure this view exists to prevent.
+                ConfluenceMeter {
+                    Layout.fillWidth: true
+
+                    ticks: root.cockpit.ticks
+                    agreement: root.cockpit.agreement
+                    evidence: root.cockpit.evidence
+                    probability: root.cockpit.probability
+                }
+
+                OpenPositions {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    cockpit: root.cockpit
+                }
             }
         }
     }

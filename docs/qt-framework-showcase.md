@@ -28,7 +28,10 @@ to lengthen the table.
 **Qt Charts is deprecated since Qt 6.10.** It is what this application uses today, and
 it is also the reason the project is GPL-3.0-or-later: Qt Charts is offered under a
 commercial licence or GPLv3 with **no LGPL option**, so a distributed binary linking it
-must be GPLv3-compatible. Qt Graphs is the module Qt recommends for new work.
+must be GPLv3-compatible. Qt Graphs is the module Qt recommends for new work, and it is
+now installed here (`qtgraphs`, added to `setup.sh`/`setup.ps1` on 2026-08-07) so the
+newer `QCustomSeries` backend can be built beside the shipping Qt Charts one rather than
+replacing it. Qt Graphs is likewise GPLv3-or-commercial.
 
 **Qt Quick is not used yet.** The interface is Qt Widgets throughout. A QML dashboard
 over the same `trading_domain` / `trading_services` libraries — which is where the

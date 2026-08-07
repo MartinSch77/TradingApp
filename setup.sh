@@ -16,7 +16,7 @@
 #   pipx   cmake (>= 4.2 — distro cmake is usually too old), strictdoc,
 #          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr,
 #          clang-format (pinned by wheel: one version on every platform)
-#   aqt    Qt ${QT_VERSION} (+ qtcharts) into ~/Qt — the layout the build
+#   aqt    Qt ${QT_VERSION} (+ qtcharts, qtgraphs) into ~/Qt — the layout the build
 #          scripts expect (override with QT_PREFIX at build time). The kit
 #          follows the host: gcc_64 on x86-64, gcc_arm64 on ARM64 (Raspberry
 #          Pi 4/5 with a 64-bit OS — Qt ships official Linux ARM64 binaries
@@ -165,7 +165,7 @@ android_install() {
             continue
         fi
         have aqt || { echo "aqt missing — run ./setup.sh install first" >&2; return 1; }
-        aqt install-qt all_os android "$want" "$abi" -m qtcharts -O "$HOME/Qt" ||
+        aqt install-qt all_os android "$want" "$abi" -m qtcharts qtgraphs -O "$HOME/Qt" ||
             echo "aqt could not install $abi for $want" >&2
     done
 
@@ -464,12 +464,25 @@ qt_install() {
         return 0
     fi
     have aqt || { echo "aqt missing — pipx step must run first" >&2; return 1; }
-    # qtbase (Widgets/Network/Test) + the Charts add-on the app links against.
+    # qtbase (Widgets/Network/Test) + the two graphing add-ons the app links against.
     # ARM64 lives under its own aqt host name (linux_arm64) and installs into
     # ~/Qt/<ver>/gcc_arm64 — hence qt_aqt_host/qt_aqt_arch instead of literals.
-    aqt install-qt "$(qt_aqt_host)" desktop "$QT_VERSION" "$(qt_aqt_arch)" -m qtcharts -O "$QT_DIR"
+    #
+    # qtgraphs alongside qtcharts, not instead of it. Qt Charts is what the shipping
+    # price chart uses and is deprecated since Qt 6.10; Qt Graphs is where QCustomSeries
+    # lives (new in 6.11 — each data point drawn by its own QML delegate, which is what
+    # makes candlesticks and box plots possible from one series type). Both are installed
+    # so the two backends can sit side by side behind one interface rather than the newer
+    # one arriving as a rewrite. Note qtgraphs is GPLv3-or-commercial like qtcharts, which
+    # is consistent with this project's GPL-3.0-or-later licence.
+    aqt install-qt "$(qt_aqt_host)" desktop "$QT_VERSION" "$(qt_aqt_arch)" \
+        -m qtcharts qtgraphs -O "$QT_DIR"
 }
 
+# Adding ONE module to a kit that is already installed: aqt has no "add module"
+# subcommand, so it is install-qt again with --noarchives, which fetches the module and
+# skips qtbase. Recorded because the obvious command re-downloads the whole kit:
+#   aqt install-qt linux desktop 6.11.1 linux_gcc_64 -m qtgraphs --noarchives -O ~/Qt
 plantuml_install() {
     echo "== PlantUML =="
     [ -f "$ROOT/tools/third-party/plantuml.jar" ] && { echo "already present"; return 0; }

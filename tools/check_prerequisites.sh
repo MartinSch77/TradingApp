@@ -121,7 +121,7 @@ if [ "$RELEASE_ONLY" -eq 0 ]; then
         report ok "Qt 6" "the distribution's Qt 6 (no ~/Qt kit for this architecture)"
     else
         report missing-required "Qt 6" "the toolkit the app is written in" \
-            "./setup.sh — installs a Qt kit with Charts under ~/Qt"
+            "./setup.sh — installs a Qt kit with Charts and Graphs under ~/Qt"
     fi
 
     section "static analysis (./build_all.sh analysis)"

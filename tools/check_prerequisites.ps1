@@ -83,7 +83,7 @@ if (-not $Release) {
 
     $qt = Resolve-QtPrefix -Quiet
     if ($qt) { Write-Item ok 'Qt 6' $qt }
-    else { Write-Item missing-required 'Qt 6' 'the toolkit the app is written in' '.\setup.ps1 - installs a Qt kit with Charts' }
+    else { Write-Item missing-required 'Qt 6' 'the toolkit the app is written in' '.\setup.ps1 - installs a Qt kit with Charts and Graphs' }
 
     $msvc = Get-VsInstallPath
     if ($msvc) { Write-Item ok 'MSVC' "the compiler ($msvc)" }

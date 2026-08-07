@@ -22,7 +22,7 @@ Measured, not assumed — `ls lib/cmake/Qt6*`, header presence, and the QML type
 | **Qt SQL + SQLite driver** | `Qt6Sql` | ✅ `plugins/sqldrivers/libqsqlite.so` |
 | Qt Quick 3D | `Qt6Quick3D` | ✅ present — but see the GPU note |
 | Qt Charts | `Qt6Charts` | ✅ present (deprecated since 6.10) |
-| **QCustomSeries** | `Qt6Graphs` | ❌ **not installed** — needs `aqt` + a `setup.sh` entry |
+| **QCustomSeries** | `Qt6Graphs` | ✅ **installed 2026-08-07** — `qcustomseries.h`, QML type `QtGraphs/CustomSeries 6.11`, compile-checked; `setup.sh`/`setup.ps1` now install it |
 | Qt WebSockets | `Qt6WebSockets` | ❌ not installed |
 | Qt State Machine | `Qt6StateMachine` | ❌ not installed (ships via qtscxml) |
 | Qt Remote Objects | `Qt6RemoteObjects` | ❌ not installed |
@@ -67,11 +67,19 @@ Three corrections fall out of the table:
 - **DoubleSpinBox** for amount / leverage / SL / TP, replacing hand-rolled decimal handling.
 - **Market Replay over SQLite** — see below. This is the deep one.
 
-### Stage 2 — one install, the biggest visual return
+### Stage 2 — the biggest visual return (the install is DONE)
 
-- **`qtgraphs` via aqt**, plus the `setup.sh` / `setup.ps1` entry the project's own rule
-  requires, then a **QCustomSeries candlestick chart** as a separate "Qt 6.11 Showcase"
-  view. Keeping the Qt Charts implementation alongside it is right: it turns a migration
+`qtgraphs` is installed and both setup scripts now request it (`-m qtcharts qtgraphs`),
+alongside qtcharts rather than instead of it. Verified: `Qt6Graphs` and `Qt6GraphsWidgets`
+CMake packages, `include/QtGraphs/qcustomseries.h`, the QML type exported as
+`QtGraphs/CustomSeries 6.11`, and a compile check against `QCustomSeries` that passes.
+
+One thing worth recording because the obvious command is wrong: aqt has no "add module"
+subcommand, so adding qtgraphs to an EXISTING kit is `install-qt … -m qtgraphs
+--noarchives`. Without `--noarchives` it re-downloads all of qtbase.
+
+- What remains is the code: a **QCustomSeries candlestick chart** as a separate
+  "Qt 6.11 Showcase" view. Keeping the Qt Charts implementation alongside it is right: it turns a migration
   into a side-by-side demonstration and cannot destabilise the working chart. The seam is
   `IPriceChartBackend` — legacy Charts backend, modern Graphs backend, one interface.
 

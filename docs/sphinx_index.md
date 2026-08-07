@@ -25,6 +25,8 @@ etoro-api
 bot
 qt-framework-showcase
 quick-dashboard-design
+roadmap
+prediction-strategy
 case-studies/squish
 case-studies/coco
 case-studies/test-center

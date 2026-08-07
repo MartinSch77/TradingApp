@@ -30,6 +30,10 @@ cost/fee accounting.
 - @ref bot — every switch on the simulated trading bot, and the QA helpers
 - @ref qtshowcase — which Qt technology is used where, one representative file per row
 - @ref quickdesign — the Qt Quick dashboard design, decided before any QML was written
+- @ref roadmap — Qt 6.11 features with MEASURED availability in this kit, and what to
+  build next ordered by cost rather than by impressiveness
+- @ref predictionstrategy — which signals are implemented, which are reachable, which
+  eToro data cannot provide, and why sample count is the binding constraint
 
 The four licensed Qt tools each get a case study — problem, configuration, what it
 found, the correction, the measurable result:

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/Models.h"
 
 // Out-of-line member definitions. These used to live inline in Models.h, but

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the costed trade planner (DES-DOM-PLAN).
 
 #include "domain/TradePlan.h"

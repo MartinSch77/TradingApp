@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/PaperTrader.h"
 
 #include "domain/Indicators.h"
@@ -265,6 +268,35 @@ EntryVerdict windowVerdict(const CandidateInput &in, const BotConfig &cfg, Sessi
 // The rules about HOW OFTEN, and the structure rule that goes with them: the
 // per-instrument cooldown, the book-wide pace limit, a fresh opposite range break,
 // and how many independent reads agree (REQ-F-034, REQ-F-035).
+// How many of the MEASURED independent reads have to agree before an index position may
+// be opened (REQ-F-035). Only measured reads count: a requirement satisfied by absent
+// feeds would be a requirement in name only.
+//
+// The bar TRACKS THE NUMBER OF READS rather than being a constant calibrated when there
+// were five of them. That is not a refinement, it is a defect fix: "3 agreeing" was a
+// MAJORITY of five reads and is a MINORITY of nine, so every read added to REQ-F-035
+// silently loosened the gate that is the bot's main protection. A majority of what was
+// actually measured cannot drift that way — and it is still clamped to the measured count
+// (never unsatisfiable) and still switched off entirely by minAgreeingReads = 0.
+EntryVerdict confluenceVerdict(const CandidateInput &in, const BotConfig &cfg)
+{
+    EntryVerdict out;
+    if ((cfg.minAgreeingReads <= 0) || (in.measuredReads <= 0)) {
+        return out;
+    }
+    const qint32 majority = (in.measuredReads + 1) / 2;
+    const qint32 needed = std::min(std::max(cfg.minAgreeingReads, majority), in.measuredReads);
+    if (in.agreeingReads >= needed) {
+        return out;
+    }
+    out.why = QStringLiteral("only %1 of %2 independent reads agree (needs %3)")
+                  .arg(in.agreeingReads)
+                  .arg(in.measuredReads)
+                  .arg(needed);
+    out.code = QStringLiteral("no-confluence");
+    return out;
+}
+
 EntryVerdict paceVerdict(const CandidateInput &in, const BotConfig &cfg, SessionPhase phase,
                          double windowFactor)
 {
@@ -295,15 +327,23 @@ EntryVerdict paceVerdict(const CandidateInput &in, const BotConfig &cfg, Session
     if (const EntryVerdict range = rangeBreakVerdict(in, cfg); !range.code.isEmpty()) {
         return range;
     }
-    // …and enough independent reads have to agree. Only MEASURED reads count: a
-    // requirement satisfied by absent feeds would be a requirement in name only.
-    if ((cfg.minAgreeingReads > 0) && (in.measuredReads > 0)
-        && (in.agreeingReads < std::min(cfg.minAgreeingReads, in.measuredReads))) {
-        out.why = QStringLiteral("only %1 of %2 independent reads agree (needs %3)")
-                      .arg(in.agreeingReads)
-                      .arg(in.measuredReads)
-                      .arg(std::min(cfg.minAgreeingReads, in.measuredReads));
-        out.code = QStringLiteral("no-confluence");
+    // The combined indication (REQ-F-036) may VETO, and only that: a signal of real
+    // grade pointing the other way is several independent reads plus the constituent
+    // field disagreeing with this trade at once. An absent signal (leadDir 0) changes
+    // nothing, and a weak one is not evidence enough to overrule the composite.
+    if ((in.leadDir != 0) && (in.dir != 0) && (in.leadDir != in.dir)
+        && (in.leadStrength >= cfg.leadVetoStrength)) {
+        out.why = QStringLiteral("the combined indication points the other way with strength "
+                                 "%1 — the reads and the constituent field disagree with this "
+                                 "trade")
+                      .arg(in.leadStrength, 0, 'f', 0);
+        out.code = QStringLiteral("lead-against");
+        return out;
+    }
+    // …and enough independent reads have to agree (its own function: one refusal, one
+    // reason, and paceVerdict is already at the complexity the gate allows).
+    if (const EntryVerdict reads = confluenceVerdict(in, cfg); !reads.code.isEmpty()) {
+        return reads;
     }
     return out;
 }
@@ -370,6 +410,11 @@ QString roomRefusalWhy(const StakeRoom &room, const BookState &book, const BotCo
         return QStringLiteral("margin cap reached (%1 of %2 invested)")
             .arg(book.invested, 0, 'f', 0)
             .arg(book.equity * cfg.maxExposureFraction, 0, 'f', 0);
+    }
+    if (room.limit == QStringLiteral("invested-cap")) {
+        return QStringLiteral("the %1 EUR invested ceiling is reached (%2 committed)")
+            .arg(cfg.maxInvestedEur, 0, 'f', 0)
+            .arg(book.invested, 0, 'f', 0);
     }
     return QStringLiteral("not enough free cash (%1)").arg(book.cash, 0, 'f', 0);
 }
@@ -983,6 +1028,12 @@ EntrySignal buildEntrySignal(const CandidateInput &in, const BotConfig &cfg)
     if (in.maxLeverage > 0) {
         cap = std::min(cap, in.maxLeverage);
     }
+    // The combined indication's own bound (REQ-F-036), applied like every other cap:
+    // BEFORE the ladder fold, so the result is a step the instrument really sells, and
+    // only ever downwards — evidence may lower leverage, never raise it.
+    if (in.leadMaxLeverage > 0) {
+        cap = std::min(cap, in.leadMaxLeverage);
+    }
     // The instrument's own ladder: what the caller supplied, else the catalog's steps
     // for that symbol (the bot scans every instrument, and only the one on screen
     // publishes its live ladder), else recommendLeverage's own default.
@@ -1073,6 +1124,58 @@ qint32 groupLeverageCap(const QString &group)
     return 5;
 }
 
+namespace {
+
+// The six ceilings that can bind a stake, as one value. A struct rather than six
+// parameters because six would breach the parameter limit the metrics ratchet enforces,
+// and because they are one concept: the set of things that could stop this trade.
+struct RoomCandidates {
+    double byRisk = 0.0;
+    double byGroup = 0.0;
+    double bySymbol = 0.0;
+    double margin = 0.0;
+    double invested = 0.0;
+    double cash = 0.0;
+};
+
+struct BindingLimit {
+    double room = 0.0;
+    QString label;
+};
+
+// Which ceiling actually binds, and the name a refusal must report for it.
+//
+// Extracted from paperStakeRoom rather than left inline: the original was a chain of one
+// `if` per limit, which cost a branch each time a limit was added, and adding the absolute
+// invested ceiling as the fifth pushed that function to CCN 17 against the ratchet's 15.
+// This is a fold over candidates, not control flow worth reading in place.
+//
+// STRICT `<`, and the order below is the reported precedence: when two ceilings are equally
+// tight the EARLIER one is named. That is deliberate — "the risk budget is full" is a more
+// useful thing to be told than "there is no cash", and a tie used to resolve that way in
+// the if-chain this replaces.
+BindingLimit bindingLimit(const RoomCandidates &c)
+{
+    BindingLimit out{c.byRisk, QStringLiteral("risk-budget")};
+    const auto consider = [&out](double room, const QString &label) {
+        if (room < out.room) {
+            out.room = room;
+            out.label = label;
+        }
+    };
+    consider(c.byGroup, QStringLiteral("group-risk"));
+    consider(c.bySymbol, QStringLiteral("symbol-risk"));
+    consider(c.margin, QStringLiteral("margin-cap"));
+    // Named apart from margin-cap on purpose: "the book is at its 15 000 EUR ceiling" and
+    // "there is no free margin left at this equity" are different facts, and a log that
+    // collapsed them would send someone to change the wrong number.
+    consider(c.invested, QStringLiteral("invested-cap"));
+    consider(c.cash, QStringLiteral("cash"));
+    return out;
+}
+
+} // namespace
+
 StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double riskPerStake,
                          const QString &symbol)
 {
@@ -1080,6 +1183,13 @@ StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double ris
     // size after losses without any extra rule.
     const double wanted = std::max(cfg.minStake, book.equity * cfg.stakeFraction);
     const double marginRoom = (book.equity * cfg.maxExposureFraction) - book.invested;
+    // The ABSOLUTE euro ceiling on what may be committed, separate from the fractional one
+    // because a fraction of current equity is not a fixed amount of money (see
+    // BotConfig::maxInvestedEur). Off when 0, in which case it must not bind — hence the
+    // fall back to marginRoom rather than to 0.
+    const double investedRoom = (cfg.maxInvestedEur > 0.0)
+                                    ? (cfg.maxInvestedEur - book.invested)
+                                    : marginRoom;
     // …and never more than the account actually holds, with a slice left for the
     // opening spread (which is charged from cash on top of the stake). Without this
     // the margin cap alone let cash go negative.
@@ -1106,25 +1216,13 @@ StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double ris
         stakeBySymbol = (symbolRoom > 0.0) ? (symbolRoom / perStake) : 0.0;
     }
     // Name the binding one, so a refusal can say which limit it was.
+    const BindingLimit binding = bindingLimit(RoomCandidates{stakeByRisk, stakeByGroup,
+                                                             stakeBySymbol, marginRoom,
+                                                             investedRoom, cashRoom});
     StakeRoom out;
-    double room = stakeByRisk;
-    out.limit = QStringLiteral("risk-budget");
-    if (stakeByGroup < room) {
-        room = stakeByGroup;
-        out.limit = QStringLiteral("group-risk");
-    }
-    if (stakeBySymbol < room) {
-        room = stakeBySymbol;
-        out.limit = QStringLiteral("symbol-risk");
-    }
-    if (marginRoom < room) {
-        room = marginRoom;
-        out.limit = QStringLiteral("margin-cap");
-    }
-    if (cashRoom < room) {
-        room = cashRoom;
-        out.limit = QStringLiteral("cash");
-    }
+    // const since the fold above replaced the if-chain that used to reassign this.
+    const double room = binding.room;
+    out.limit = binding.label;
     if (room < cfg.minStake) {
         return out;  // stake stays 0: no room left for a trade worth its costs
     }

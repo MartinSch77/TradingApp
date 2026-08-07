@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Test suite: unit tests over the pure domain layer plus integration tests over
 # the services (config layering, simulation engine, HTTP plumbing and the eToro
 # client against an in-process mock server). Every test function carries the
@@ -42,6 +45,9 @@ target_compile_definitions(tst_tradescript PRIVATE
 tradingapp_add_test(tst_papertrader tst_papertrader.cpp)
 tradingapp_add_test(tst_botnet tst_botnet.cpp)
 tradingapp_add_test(tst_indexconfluence tst_indexconfluence.cpp)
+tradingapp_add_test(tst_leadsignal tst_leadsignal.cpp)
+tradingapp_add_test(tst_predictionledger tst_predictionledger.cpp)
+tradingapp_add_test(tst_decisionlog tst_decisionlog.cpp)
 # The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
 # back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
 # and only an end-to-end round trip can show that they do.

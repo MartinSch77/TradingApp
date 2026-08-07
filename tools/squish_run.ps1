@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Run the Squish GUI suite on Windows — and never touch a real account doing it.
 

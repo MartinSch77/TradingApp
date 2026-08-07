@@ -1,12 +1,29 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "ui/HeavyweightsPanel.h"
 
+#include "domain/LeadSignal.h"
 #include "ui/Palette.h"
 
+#include <QChart>
+#include <QChartView>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLegendMarker>
+#include <QLineSeries>
+#include <QPainter>
+#include <QPen>
+#include <QSet>
 #include <QTableWidget>
+#include <QTime>
+#include <QTimer>
+#include <QValueAxis>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cmath>
 
 namespace trading::ui {
 
@@ -70,10 +87,38 @@ QString verdictFor(const HeavyweightPulse &nasdaq, const HeavyweightPulse &sp)
 
 HeavyweightsPanel::HeavyweightsPanel(QWidget *parent)
     : QDialog(parent)
+    , m_liveTimer(new QTimer(this))
 {
     setObjectName(QStringLiteral("heavyweightsPanel"));
     setWindowTitle(QStringLiteral("Index heavyweights — an early read on SPX500 and NSDQ100"));
     buildUi();
+    // 60 s is the data's OWN resolution: the constituent series are 1-minute closes,
+    // so asking more often would fetch the same numbers and spend someone else's rate
+    // limit doing it.
+    m_liveTimer->setInterval(60 * 1000);
+    static_cast<void>(connect(m_liveTimer, &QTimer::timeout, this,
+                              &HeavyweightsPanel::refreshRequested));
+}
+
+void HeavyweightsPanel::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    // State the combined indication IMMEDIATELY, from whatever is cached — which on a
+    // first open is nothing. An empty book produces "No usable read: 0 of N inputs
+    // measurable" plus each read listed as unmeasurable, and that is the honest answer;
+    // the ellipsis these labels are built with is not. A window that shows "…" until a
+    // feed happens to arrive cannot be told apart from one whose feeds are all down.
+    updateLeadSignals(m_series);
+    // Ask at once, then every minute: a window opened mid-session should not wait for
+    // the next five-minute scan to show anything.
+    emit refreshRequested();
+    m_liveTimer->start();
+}
+
+void HeavyweightsPanel::hideEvent(QHideEvent *event)
+{
+    QDialog::hideEvent(event);
+    m_liveTimer->stop();   // a closed window costs nothing
 }
 
 void HeavyweightsPanel::buildUi()
@@ -121,6 +166,42 @@ void HeavyweightsPanel::buildUi()
              QStringLiteral("spHeavyTable"), QStringLiteral("spHeavySummary"));
     outer->addLayout(tables);
 
+    // The movers as CURVES. Each constituent is normalised to its own session start,
+    // so ten names at ten price levels share one axis and the question the chart is
+    // for — are they moving TOGETHER — can be answered by looking at it.
+    m_chart = new QChart();
+    m_chart->setTitle(QStringLiteral("Nasdaq-100 heavyweights — % from their own session open"));
+    m_chart->legend()->setAlignment(Qt::AlignBottom);
+    m_axisX = new QValueAxis();
+    m_axisX->setTitleText(QStringLiteral("minutes into the session"));
+    m_axisY = new QValueAxis();
+    m_axisY->setTitleText(QStringLiteral("% from open"));
+    m_chart->addAxis(m_axisX, Qt::AlignBottom);
+    m_chart->addAxis(m_axisY, Qt::AlignLeft);
+    m_chartView = new QChartView(m_chart, this);
+    m_chartView->setObjectName(QStringLiteral("heavyChart"));
+    m_chartView->setRenderHint(QPainter::Antialiasing);
+    m_chartView->setMinimumHeight(260);
+    outer->addWidget(m_chartView, 1);
+
+    // The combined indication, per index: what the independent reads, the constituent
+    // field, the clock and the regime say TOGETHER, and the leverage that evidence
+    // justifies (REQ-F-036).
+    m_nasdaqLead = new QLabel(QStringLiteral("…"), this);
+    m_nasdaqLead->setObjectName(QStringLiteral("nasdaqLeadSignal"));
+    m_nasdaqLead->setWordWrap(true);
+    m_nasdaqLead->setTextFormat(Qt::RichText);
+    outer->addWidget(m_nasdaqLead);
+    m_spLead = new QLabel(QStringLiteral("…"), this);
+    m_spLead->setObjectName(QStringLiteral("spLeadSignal"));
+    m_spLead->setWordWrap(true);
+    m_spLead->setTextFormat(Qt::RichText);
+    outer->addWidget(m_spLead);
+
+    m_updated = new QLabel(QStringLiteral("waiting for the first constituent prices…"), this);
+    m_updated->setObjectName(QStringLiteral("heavyUpdated"));
+    outer->addWidget(m_updated);
+
     m_verdict = new QLabel(QStringLiteral("…"), this);
     m_verdict->setObjectName(QStringLiteral("heavyVerdict"));
     m_verdict->setWordWrap(true);
@@ -141,7 +222,7 @@ void HeavyweightsPanel::buildUi()
     m_caveat->setTextFormat(Qt::RichText);
     outer->addWidget(m_caveat);
 
-    resize(820, 560);
+    resize(980, 820);
 }
 
 void HeavyweightsPanel::fillTable(QTableWidget *table, QLabel *summary,
@@ -150,9 +231,20 @@ void HeavyweightsPanel::fillTable(QTableWidget *table, QLabel *summary,
     if ((table == nullptr) || (summary == nullptr)) {
         return;
     }
-    table->setRowCount(static_cast<int>(pulse.rows.size()));
+    // Ordered by the SIZE of the move, biggest first: these are the top movers, and a
+    // name that has not moved says nothing about where the index goes next. Unknown
+    // rows sort last — they are not "no movement", they are no reading.
+    QList<HeavyweightRow> ordered = pulse.rows;
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const HeavyweightRow &a, const HeavyweightRow &b) {
+                         if (a.known != b.known) {
+                             return a.known;
+                         }
+                         return std::abs(a.changePct) > std::abs(b.changePct);
+                     });
+    table->setRowCount(static_cast<int>(ordered.size()));
     int row = 0;
-    for (const HeavyweightRow &entry : pulse.rows) {
+    for (const HeavyweightRow &entry : ordered) {
         auto *name = new QTableWidgetItem(entry.ticker);
         table->setItem(row, ColName, name);
 
@@ -185,8 +277,155 @@ void HeavyweightsPanel::fillTable(QTableWidget *table, QLabel *summary,
     summary->setText(pulse.headline());
 }
 
+void HeavyweightsPanel::fillChart(const QHash<QString, QList<double>> &series)
+{
+    if (m_chart == nullptr) {
+        return;
+    }
+    // Rebuilt rather than updated in place: this window is opened to be looked at,
+    // not polled at 1 Hz, so the simple thing is the right thing here (the per-tick
+    // allocation-free rule of REQ-N-006 governs the open-trades table, not this).
+    for (QLineSeries *curve : std::as_const(m_curves)) {
+        m_chart->removeSeries(curve);
+        delete curve;
+    }
+    m_curves.clear();
+
+    // ALL TEN Nasdaq-100 constituents, every one of them — this is the field whose
+    // movement is meant to lead NSDQ100, so a chart that dropped the quiet ones would
+    // answer a different question ("who moved") than the one it is for ("are they
+    // moving together"). Ordered by size of move so the legend reads top-down.
+    struct Curve {
+        QString ticker;
+        QList<double> pct;
+        double move = 0.0;
+    };
+    QList<Curve> curves;
+    for (const QString &ticker : nasdaqHeavyweights()) {
+        const QList<double> raw = series.value(ticker);
+        if ((raw.size() < 2) || (raw.constFirst() <= 0.0)) {
+            continue;   // unreadable: absent from the chart rather than drawn flat
+        }
+        // EXACTLY two points means the series is the meta-block fallback
+        // (MarketFeeds::yahooMetaSessionChange): yesterday's close and the live price,
+        // because the feed served no intraday bars for this ticker. That is a perfectly
+        // good SESSION CHANGE — the table above shows it — but it is not a session SHAPE,
+        // and drawing it would render a straight diagonal that reads as "this name moved
+        // in one smooth line all day". The chart answers "are they moving together", which
+        // needs real bars, so a two-point series is left out of it on purpose.
+        if (raw.size() == 2) {
+            continue;
+        }
+        Curve c;
+        c.ticker = ticker;
+        c.pct.reserve(raw.size());
+        const double base = raw.constFirst();
+        for (const double price : raw) {
+            c.pct.append(((price - base) / base) * 100.0);
+        }
+        c.move = std::abs(c.pct.constLast());
+        curves.append(c);
+    }
+    std::stable_sort(curves.begin(), curves.end(),
+                     [](const Curve &a, const Curve &b) { return a.move > b.move; });
+
+    double lo = 0.0;
+    double hi = 0.0;
+    qsizetype longest = 0;
+    for (const Curve &c : curves) {
+        auto *line = new QLineSeries();
+        line->setName(c.ticker);
+        for (qsizetype x = 0; x < c.pct.size(); ++x) {
+            line->append(static_cast<double>(x), c.pct.at(x));
+            lo = std::min(lo, c.pct.at(x));
+            hi = std::max(hi, c.pct.at(x));
+        }
+        longest = std::max(longest, c.pct.size());
+        m_chart->addSeries(line);
+        line->attachAxis(m_axisX);
+        line->attachAxis(m_axisY);
+        m_curves.append(line);
+    }
+
+    if (m_curves.isEmpty()) {
+        m_chart->setTitle(QStringLiteral("No constituent series yet — nothing to plot"));
+        return;
+    }
+    m_chart->setTitle(QStringLiteral("Nasdaq-100: all %1 heavyweights, %% from their own "
+                                     "session open")
+                          .arg(m_curves.size()));
+    m_axisX->setRange(0.0, static_cast<double>(std::max<qsizetype>(longest - 1, 1)));
+    // A little headroom, and never a zero-height axis on a flat morning.
+    const double pad = std::max(0.1, (hi - lo) * 0.1);
+    m_axisY->setRange(lo - pad, hi + pad);
+}
+
+void HeavyweightsPanel::updateLeadSignals(const QHash<QString, QList<double>> &series)
+{
+    const auto describe = [this, &series](QLabel *label, const QString &symbol) {
+        if (label == nullptr) {
+            return;
+        }
+        LeadInputs in;
+        in.symbol = symbol;
+        // Through the one factory, so this window reads the SAME books the bot does.
+        // It used to pass the ticker book where a per-symbol series was wanted, which
+        // silently reduced this display to the reads that need neither the futures nor
+        // the instrument's own session.
+        in.reads = indexReads(symbol, readInputsFor(symbol, series, m_volumes, m_symbolSeries));
+        in.pulse = heavyweightPulse(symbol, series);
+        in.now = QDateTime::currentDateTimeUtc();
+        in.vixValid = m_vixValid;
+        in.vix = m_vix;
+        in.eventRisk = m_eventRisk;
+        in.term = termStructure(series);
+        const LeadSignal signal = leadSignal(in);
+        const QString colour = signal.actionable()
+                                   ? ((signal.dir > 0) ? greenHex() : redHex())
+                                   : greyHex();
+        label->setText(QStringLiteral("<span style='color:%1'><b>%2</b></span><br/>"
+                                      "<span style='color:%3'>%4</span>")
+                           .arg(colour, signal.headline, greyHex(),
+                                signal.reasons.join(QStringLiteral(" · "))));
+        label->setToolTip(
+            QStringLiteral("The combined indication (REQ-F-036): the nine independent reads, "
+                           "the constituent field, the session phase and the regime, scored "
+                           "together. An input that could not be measured contributes NOTHING "
+                           "and is listed as unmeasurable — and the strength is capped by how "
+                           "much was measurable, so a strong-looking read built from two feeds "
+                           "cannot be mistaken for one built from six. The leverage it names is "
+                           "an UPPER BOUND from the evidence; the risk budget, the correlation "
+                           "bucket cap and the instrument's own ladder all still apply."));
+    };
+    describe(m_nasdaqLead, QStringLiteral("NSDQ100"));
+    describe(m_spLead, QStringLiteral("SPX500"));
+}
+
+void HeavyweightsPanel::setRegime(bool vixValid, double vix, bool eventRisk)
+{
+    m_vixValid = vixValid;
+    m_vix = vix;
+    m_eventRisk = eventRisk;
+    if (!m_series.isEmpty()) {
+        updateLeadSignals(m_series);
+    }
+}
+
+void HeavyweightsPanel::setVolumeSeries(const QHash<QString, trading::VolumeSeries> &volumes)
+{
+    m_volumes = volumes;
+    // No redraw here: the closes for these very tickers arrive from the same sweep and
+    // setReferenceSeries — which does redraw — is called for each of them.
+}
+
+void HeavyweightsPanel::setSymbolSeries(const QHash<QString, QList<double>> &series)
+{
+    m_symbolSeries = series;
+}
+
 void HeavyweightsPanel::setReferenceSeries(const QHash<QString, QList<double>> &series)
 {
+    m_series = series;
     const HeavyweightPulse nasdaq = heavyweightPulse(QStringLiteral("NSDQ100"), series);
     const HeavyweightPulse sp = heavyweightPulse(QStringLiteral("SPX500"), series);
     fillTable(m_nasdaqTable, m_nasdaqSummary, nasdaq);
@@ -199,6 +438,18 @@ void HeavyweightsPanel::setReferenceSeries(const QHash<QString, QList<double>> &
                                                                               : greyHex());
     m_verdict->setText(
         QStringLiteral("<span style='color:%1'><b>%2</b></span>").arg(colour, verdict));
+    fillChart(series);
+    updateLeadSignals(series);
+    if (m_updated != nullptr) {
+        const HeavyweightPulse nasdaqPulse =
+            heavyweightPulse(QStringLiteral("NSDQ100"), series);
+        m_updated->setText(
+            QStringLiteral("Updated %1 · %2 of %3 Nasdaq-100 constituents reading · refreshing "
+                           "every 60 s while this window is open")
+                .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")))
+                .arg(nasdaqPulse.measured)
+                .arg(nasdaqPulse.rows.size()));
+    }
 }
 
 } // namespace trading::ui

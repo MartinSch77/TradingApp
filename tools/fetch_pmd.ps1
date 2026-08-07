@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Windows counterpart of tools/fetch_pmd.sh — fetch the pinned PMD release
     used for copy-paste detection (tools/cpd_scan.py).

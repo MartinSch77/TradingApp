@@ -278,3 +278,267 @@ be provisioned per-device — the same layered `Config` mechanism works with a
 bundled non-secret `config.json` plus keys entered at runtime or shipped via
 MDM. This target is *buildable-by-design but unverified here* (no macOS host
 on the reference machine) — listed as part of the REQ-N-001 gap.
+
+## Building, per platform (moved from the README)
+
+The full quality pipeline runs natively on **both Linux and Windows**, on
+x86-64 and on ARM64 (Raspberry Pi included — the few stages whose tools are
+x86-64-only report `skipped`, see [docs/platforms.md](../docs/platforms.md)). Each
+`*.sh` entry point has a one-to-one PowerShell counterpart; see
+[docs/windows.md](../docs/windows.md) for the complete tool mapping and the
+Windows-specific notes.
+
+On a naked Debian/Ubuntu Linux, `./setup.sh` installs every required tool
+and dependency (compilers, CMake, Qt 6 incl. Charts via aqtinstall, the
+clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, lizard, PMD, Doxygen +
+Java, StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
+latest versions and `./setup.sh status` reports what is present. On Windows,
+`.\setup.ps1` does the same through winget + pip + aqtinstall. License-bound
+tools (Axivion Suite, Squish Coco) are detected and reported but must be
+installed manually.
+
+The repository has three top-level entry points:
+
+```bash
+./build_all.sh            # everything: app, tests, traceability, docs,
+                          # coverage, static analysis, sanitizers, Axivion,
+                          # and the PDF quality report
+./build_all.sh app        # ONLY the TradingApp executable (build/TradingApp)
+./build_all.sh build test # any subset of stages, in order
+./build_all.sh --skip axivion  # everything except the (slow) Axivion analysis
+./clean_all.sh [--deep]   # remove everything generated
+```
+
+```powershell
+.\setup.ps1                     # provision/verify the Windows toolchain
+.\build_all.ps1                 # same stages, same order
+.\build_all.ps1 build test      # any subset of stages
+.\build_all.ps1 -Skip axivion   # everything except the (slow) Axivion analysis
+.\clean_all.ps1 [-Deep]         # remove everything generated
+```
+
+Stages: `build test trace docs coverage analysis sanitize axivion report`
+(default: all, continuing past failing stages with a summary at the end); the
+last one writes **`downloads/TradingApp-quality-report.pdf`** — one colour PDF
+with the run's verdict, every test function and its result, the traceability
+highlights per requirement, the analyzer findings, code metrics, coverage and
+the sanitizer results (`tools/make_report.py`, shared by both platforms); `app`,
+`release` and `android` (APK via androiddeployqt) are extra stages that are only run when named, and `build_all.ps1`
+additionally offers `vs` and `deploy`. For a different single CMake target:
+`cmake --build build --target <name>`.
+
+**No licence, no problem.** Stage outcomes are `ok` / `skipped` / `FAILED`. A
+stage needing a tool that is license-bound (Axivion Suite, Squish Coco) or
+otherwise absent reports **`skipped`** with a message saying what to install, and
+does *not* fail the run — so the whole pipeline goes green on a machine with only
+the free toolchain. Everything **open source** that the pipeline needs is
+installed for you by `./setup.sh` / `.\setup.ps1`; `setup.sh status` and
+`setup.ps1 status` list what is present, what is license-bound, and what has no
+counterpart on the platform.
+
+`build_all.ps1` selects the Qt kit itself (newest kit containing Qt6Charts,
+MSVC preferred) and imports the Visual Studio developer environment into the
+session, so no "x64 Native Tools" prompt is required. Override the kit with
+`$env:QT_PREFIX` or `-QtKit mingw_64`.
+
+Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
+(developed against Qt 6.11.1), CMake ≥ 4.2 and a C++23-capable compiler
+(GCC 13+, Clang 17+, MSVC 19.38+). The sources are
+plain cross-platform Qt/C++ — the same code builds on Linux (x86-64 **and**
+ARM64), Windows, and Android; only the Qt kit and the packaging step differ.
+
+## Linux / macOS
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_PREFIX_PATH=$HOME/Qt/6.11.1/gcc_64
+cmake --build build
+./build/TradingApp
+```
+
+## Raspberry Pi (ARM64)
+
+A Pi 4/5 with a **64-bit Raspberry Pi OS Trixie** (Debian 13) or newer builds and
+runs it with the ordinary commands — the scripts resolve the ARM64 Qt kit
+(`~/Qt/<ver>/gcc_arm64`) themselves, so nothing needs an extra flag:
+
+```bash
+./setup.sh install                  # installs Qt's Linux ARM64 kit + the toolchain
+./build_all.sh build test trace
+./build/TradingApp
+```
+
+`sudo apt-get install qt6-base-dev qt6-charts-dev` instead of the aqt kit also
+works on Trixie, and `tools/package_appimage.sh` produces
+`TradingApp-<version>-aarch64.AppImage`. Bookworm (Debian 12) has no supported
+route: its glibc 2.36 is below what Qt's aarch64 binaries need (2.38) and its own
+Qt is 6.4.2, below the app's floor — upgrade the OS.
+Details — display server (`xcb` / `wayland` / `eglfs`), which pipeline stages
+report `skipped` on ARM64 and why, and what CI verifies —
+in [docs/platforms.md](../docs/platforms.md).
+
+## Windows (MSVC)
+
+Install the Qt 6 **msvc2022_64** kit (with the Charts module), Visual Studio 2022
+(or its Build Tools), and CMake — or let `.\setup.ps1` do it. Then, from an
+ordinary PowerShell prompt:
+
+```powershell
+.\build_all.ps1 app          # -> build\TradingApp.exe
+.\build_all.ps1 build test   # app + tests + JUnit results
+```
+
+Or by hand, from a *Developer* command prompt:
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug `
+      -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\msvc2022_64
+cmake --build build
+build\TradingApp.exe
+```
+
+The **MinGW** kit works too: `.\build_all.ps1 -QtKit mingw_64` (the matching
+`C:\Qt\Tools\mingw*\bin` is put on PATH automatically).
+
+### Visual Studio IDE
+
+`CMakeLists.txt` is the single description of the build, so the `.sln` is
+**generated**, not committed:
+
+```powershell
+.\tools\make_vs_solution.ps1 -Open   # -> build-vs\TradingApp.sln
+.\build_all.ps1 vs                   # same thing, as a named stage
+```
+
+The solution contains `TradingApp`, `trading_domain`, `trading_services` and all
+12 `tst_*` projects in Debug/Release/RelWithDebInfo; `TradingApp` is the startup
+project, the Qt DLL directory is already on the debugger's PATH, and
+*Test → Run All Tests* works. Re-run the script after adding or removing source
+files. Two `.sln`-free alternatives, both driven by
+[CMakePresets.json](../CMakePresets.json):
+
+- **File → Open → Folder** on the repository root — Visual Studio offers the
+  `windows-msvc-debug` and `visual-studio` presets directly.
+- `cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug`
+  from any shell. Linux has `linux-gcc-debug` / `linux-gcc-release` presets too.
+  All presets take the Qt kit from `$QT_PREFIX`.
+
+To make the built executable runnable on its own — Qt DLLs, the platform
+plugin, the Schannel TLS backend and the compiler runtime copied next to it:
+
+```powershell
+.\build_all.ps1 deploy               # -> build\TradingApp.exe runs with nothing on PATH
+.\tools\deploy_app.ps1 -IncludeTests # also make the tst_*.exe standalone
+```
+
+Qt 6 uses the **Schannel** TLS backend on Windows, so HTTPS to the eToro API
+works with no OpenSSL install. For a distributable package rather than a
+runnable build tree, see [Packaging](#packaging-desktop) below.
+
+The Windows pipeline substitutes a few tools that do not exist there — MSVC
+`/analyze` for `g++ -fanalyzer`, OpenCppCoverage for gcov/lcov, ASan (MSVC) plus
+UBSan (clang-cl) for the combined GCC sanitizer build — and reports the genuine
+gaps (clazy, TSan, valgrind) instead of hiding them. MC/DC coverage is measured
+**twice**, by Squish Coco and by clang-cl/llvm-cov. Details, and the PowerShell
+pitfalls worth knowing about, are in [docs/windows.md](../docs/windows.md).
+
+## Android
+
+Requires the Qt 6 **Android** kit (e.g. `android_arm64_v8a`), the Android SDK +
+NDK, and a JDK. The simplest setup is to open the project in **Qt Creator** with
+an Android kit selected, which fills in the SDK/NDK paths and toolchain. On the
+command line, configure with the Android kit's `qt-cmake` wrapper:
+
+```bash
+~/Qt/6.11.1/android_arm64_v8a/bin/qt-cmake -S . -B build-android -G Ninja \
+      -DQT_ANDROID_ABIS=arm64-v8a
+cmake --build build-android --target apk     # produces the APK
+```
+
+`qt_add_executable()` builds the app as a shared library and `androiddeployqt`
+packages it into an APK. The build **bundles OpenSSL** (fetched at configure
+time — see [`CMakeLists.txt`](../CMakeLists.txt)) because Android's Qt does not ship
+it and HTTPS to eToro would otherwise fail.
+
+Caveats specific to Android:
+
+- The UI is **Qt Widgets** — a desktop-style layout. It runs on a phone but is
+  not touch-optimised.
+- The APK is sandboxed and has no working directory or `ETORO_*` environment, so
+  `config.json` / env-var configuration does not apply and the app starts in
+  **SIMULATION** mode. To trade for real you would have to ship credentials into
+  the app's data dir (bundle a `config.json` via `QT_ANDROID_PACKAGE_SOURCE_DIR`,
+  or write to `AppConfigLocation`) — private builds only; never publish keys.
+
+## Download a ready-made build
+
+| Platform | Artifact | How to run it |
+|---|---|---|
+| Linux (x86-64) | `TradingApp-<version>-x86_64.AppImage` | `chmod +x` it and run — one file, no install, Qt bundled |
+| Linux (ARM64, incl. Raspberry Pi 4/5) | `TradingApp-<version>-aarch64.AppImage` | same — needs a 64-bit OS with glibc ≥ 2.39: Raspberry Pi OS **Trixie** or Ubuntu 24.04 for Pi (Qt's own aarch64 binaries require 2.38, see [docs/platforms.md](../docs/platforms.md)) |
+| Windows (x64) | `TradingApp-<version>-windows-x64.zip` | unzip anywhere and run `TradingApp.exe` — every DLL is inside, no Qt and no MSVC redistributable needed |
+| Android (arm64-v8a) | `TradingApp-<version>-arm64-v8a.apk` | `adb install` it, or copy it to the phone and open it (allow installs from unknown sources). Built and signed by [`tools/build_android.sh`](../tools/build_android.sh) |
+| macOS | *build from source* | `cmake --preset default && cmake --build build` with Qt 6.11 — the CI job `build-macos` keeps it working; no notarised `.dmg` is published (that needs an Apple Developer identity) |
+| iOS / iPhone | *build from source, Xcode* | `~/Qt/<ver>/ios/bin/qt-cmake -S . -B build-ios -GXcode`, then sign with your own team in Xcode and deploy ([docs/platforms.md](../docs/platforms.md)). **No `.ipa` is published**: Apple only installs signed builds, signing needs a paid Apple Developer identity, and that identity cannot live in a public CI. The layout is also desktop-first — treat iOS as "it compiles and runs", not as a phone UI |
+| every release | `TradingApp-quality-report.pdf` | the whole quality run in one PDF: requirements traceability, test results, all eight analyzers, code metrics, clone detection, coverage and the sanitizers |
+
+All are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
+each with a `.sha256` next to it. Build them yourself into `downloads/`:
+
+```bash
+tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-<arch>.AppImage
+                                   #           (arch = the host's: x86_64 or aarch64)
+tools/build_android.sh --release   # Android -> downloads/TradingApp-<version>-arm64-v8a.apk
+python3 tools/make_report.py       # the PDF -> downloads/TradingApp-quality-report.pdf
+```
+```powershell
+.\tools\package_portable.ps1       # Windows -> downloads\TradingApp-<version>-windows-x64.zip
+```
+
+The PDF the release pipeline attaches marks the **Axivion** section "not run": the
+Suite is licence-bound and x86-64-host-only, so no public runner can produce it. To
+publish a report that includes it, run the full pipeline on a machine that has the
+Suite and attach that PDF over the CI one:
+
+```bash
+./build_all.sh                     # all stages, Axivion included, then the report
+gh release upload v<version> downloads/TradingApp-quality-report.pdf --clobber
+```
+
+`downloads/` is git-ignored — the artifacts belong to a release, not to the
+history. Both scripts build their own Release tree, bundle the Qt runtime
+(linuxdeploy + its Qt plugin on Linux, windeployqt on Windows) and print a
+SHA-256; `.github/workflows/release.yml` runs these same two scripts on a `v*`
+tag and attaches the results to the release. Without API keys the app starts in
+SIMULATION mode, so a downloaded build is safe to try.
+
+Two caveats worth knowing: the AppImage is built on Ubuntu 22.04, so it needs
+glibc ≥ 2.35 (any distro from 2022 onwards), and it deliberately does **not**
+bundle OpenSSL — Qt loads the system libssl for HTTPS, which keeps the download
+out of the business of shipping a frozen TLS stack.
+
+## Packaging (desktop)
+
+`cmake --install build --prefix dist` produces a self-contained folder with the
+binary and every Qt library/plugin it needs, ready to zip or hand to `cpack`. It
+runs **windeployqt** on Windows and **macdeployqt** on macOS automatically
+(`-DTRADINGAPP_SKIP_QT_DEPLOY=ON` turns that step off, which is what the AppImage
+build does — linuxdeploy handles the bundling there).
+
+**build linux / windows / macos** = the three platform jobs of
+[ci.yml](../.github/workflows/ci.yml), reported separately because a GitHub badge
+reports a workflow and not a job — and the defects this codebase has hit were
+platform-specific (MSVC rejected code that GCC and clang accepted). Each job
+publishes its own status, failures included, so a red badge names the platform.
+The same run also covers traceability, the sanitizers and the static analysis.
+**tests** = the Qt Test suite on its own
+([tests.yml](../.github/workflows/tests.yml)), which also measures the **coverage**
+number (line coverage of the domain + services layers, published as a badge
+endpoint on the `badges` branch — no third-party coverage service involved).
+**sonarcloud** is the SonarCloud quality gate for project
+`MartinSch77_TradingApp` — note that it comes from SonarCloud's *automatic
+analysis* of this public repository, not from
+[sonarcloud.yml](../.github/workflows/sonarcloud.yml), which stays a no-op until the
+`SONAR_TOKEN` secret exists. **coverity** is the Coverity Scan build status;
+that analysis runs server-side on a weekly submission, so the badge trails the
+other ones by design. **latest release** links the downloads below.

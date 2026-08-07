@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # -*- coding: utf-8 -*-
 # The decision window (REQ-F-008, REQ-F-035) shows its SOURCES, not just a verdict.
 #

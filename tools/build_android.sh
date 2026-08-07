@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Build the Android APK (and optionally run it on an emulator) from the same
 # CMake project the desktops use — REQ-N-001.
 #

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the eToro client's closed-trade history walk
 // (DES-SVC-CLIENT) against an in-process mock of the public API: the pager
 // accumulates multiple pages, and the cost estimator prices each trade from

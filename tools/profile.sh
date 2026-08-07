@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # CPU profiling for TradingApp (REQ-N-006): runs the release binary under the
 # best available profiler and prints the hotspot report.
 #

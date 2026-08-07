@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Run the Axivion analysis for TradingApp (MISRA C++ 2023, Qt-Autosar rules,
 # architecture checks) and upload the result to the dashboard.
 #

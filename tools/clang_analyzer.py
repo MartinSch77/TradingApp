@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Clang Static Analyzer over every project TU (provider `clang-analyzer`).
 
 Shared by tools/static_analysis.sh (Linux) and tools/static_analysis.ps1

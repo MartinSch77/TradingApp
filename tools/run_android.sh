@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Boot an Android emulator, install the APK, launch it and grab a screenshot —
 # the "does it actually run" counterpart of tools/build_android.sh.
 #

@@ -1,4 +1,7 @@
-﻿# What this machine can and cannot do — every external program the pipeline uses,
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# What this machine can and cannot do — every external program the pipeline uses,
 # what it is FOR, and how to get it. The PowerShell counterpart of
 # tools/check_prerequisites.sh; the two are meant to stay in lockstep.
 #

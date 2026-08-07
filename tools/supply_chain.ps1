@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Windows counterpart of tools/supply_chain.sh — supply-chain evidence, using
     whichever of the free tools are installed.

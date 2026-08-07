@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the buy/sell signal ensemble (DES-DOM-ENS).
 
 #include "domain/SignalEnsemble.h"

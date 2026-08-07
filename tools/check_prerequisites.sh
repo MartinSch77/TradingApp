@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # What this machine can and cannot do — every external program the pipeline uses,
 # what it is FOR, and how to get it.
 #
@@ -215,6 +218,14 @@ check gh required "GitHub CLI" "creates the release and uploads the assets" \
 check zip optional "zip" "the docs and qualification bundles" "apt-get install zip"
 check curl optional "curl" "downloads linuxdeploy, PMD, Test Center uploads" \
     "apt-get install curl"
+# The Coverity build log is fetched with gh from the weekly cloud run; the check above
+# already covers gh, so this only says where the evidence ends up.
+if [ -f "$ROOT/analysis-results/coverity-build-log.txt" ]; then
+    report ok "Coverity build log" "fetched into analysis-results/ (tools/fetch_coverity_log.sh)"
+else
+    report missing-optional "Coverity build log" "what cov-build captured on the cloud run" \
+        "tools/fetch_coverity_log.sh — needs gh and a run within the 90-day retention"
+fi
 
 if have linuxdeploy || [ -x "$ROOT/.cache/linuxdeploy-x86_64.AppImage" ] ||
     [ -x "$ROOT/tools/.cache/linuxdeploy" ]; then

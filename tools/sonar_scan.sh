@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Conditional SonarQube scan: runs ONLY when a SonarQube server is actually
 # reachable and sonar-scanner is installed — otherwise it reports why and
 # exits 0 (the pipeline is not failed by an absent optional tool).

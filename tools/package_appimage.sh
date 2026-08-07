@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Package the app as a single-file, self-contained Linux AppImage in downloads/.
 #
 #   tools/package_appimage.sh [--skip-build]

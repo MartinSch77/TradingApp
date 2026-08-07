@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the trade-script parser and execution semantics (DES-DOM-SCRIPT).
 
 #include "domain/TradeScript.h"

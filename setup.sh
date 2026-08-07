@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Provision a naked Debian/Ubuntu Linux with every tool this project needs,
 # idempotently — existing tools are left alone — and keep them current:
 #

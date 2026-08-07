@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Fetch the pinned PMD release used for copy-paste detection (tools/cpd_scan.py).
 # The dist is not committed (tools/third-party/ is git-ignored); see
 # docs/tools.md for the tool inventory. Keep $VERSION in sync with

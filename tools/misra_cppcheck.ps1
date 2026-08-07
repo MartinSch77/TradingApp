@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     cppcheck's free ADDONS on Windows - MISRA first, the other three after it.
     Informational by design: none of them gates a build.

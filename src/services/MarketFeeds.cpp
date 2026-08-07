@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "services/MarketFeeds.h"
 
 #include "domain/DecisionEngine.h"
@@ -95,6 +98,96 @@ QList<double> yahooCloses(const QJsonObject &chartResult, bool positiveOnly)
         }
     }
     return closes;
+}
+
+// The session change from the chart result's META block, as a two-point series
+// [previousClose, regularMarketPrice] — or empty when the meta cannot supply both.
+//
+// WHY THIS EXISTS, and it is not a nicety: Yahoo's chart endpoint stopped returning
+// intraday bars for EQUITY tickers while still answering 200. Measured 2026-08-07 with a
+// browser User-Agent, mid-session (11:47 New York, Thursday, the cash market open):
+// `AAPL?interval=1m&range=1d` came back with NO `timestamp` key at all and an empty close
+// array, while `^VIX` on the same request returned bars normally. `range=5d` did return
+// 1561 bars for AAPL, but the newest was the PREVIOUS day's 16:00 close — the current
+// session was absent entirely. Cookies, query2, includePrePost and interval=5m all made
+// no difference.
+//
+// The consequence in the running app was silent and total: yahooCloses() returned an empty
+// list for all twelve heavyweight constituents, so `emit referenceSeries` never fired for
+// them, `heavyweightPulse` measured 0 of 10, and the Heavyweights window sat on "no
+// constituent prices yet" forever. The bot's own decision log recorded the same damage as
+// "4 of 10 reads measured (6 unmeasurable)" on every single evaluation.
+//
+// The SAME response still carries live `regularMarketPrice` and `previousClose`, and the
+// difference between them IS the session change — the exact quantity `sessionChangePct`
+// derives from the first and last bar. So this is a MEASURED value, not a guess, which is
+// why using it does not violate the rule that an unmeasurable read stays UNKNOWN.
+//
+// Two traps, both load-bearing:
+//   * `chartPreviousClose` is the WRONG field. On a 5-day range it is the close before the
+//     WINDOW, not before today: for AAPL it read 333.43 against a live 311.00, i.e. −6.7%,
+//     where the true session change was +0.52% from previousClose 309.38. Only
+//     `previousClose` is yesterday's close on every range.
+//   * Two points are all this can honestly claim. It restores the session-change reads
+//     (participation, volatility direction, yields, the curve) and it must NOT be dressed
+//     up as an intraday series — the VWAP and up/down-volume reads need real bars and stay
+//     UNKNOWN, and the constituent CHART skips series this short rather than drawing a
+//     straight line that looks like a flat session.
+QList<double> yahooMetaSessionChange(const QJsonObject &chartResult)
+{
+    const QJsonObject meta = chartResult.value(QStringLiteral("meta")).toObject();
+    const QJsonValue nowV = meta.value(QStringLiteral("regularMarketPrice"));
+    const QJsonValue prevV = meta.value(QStringLiteral("previousClose"));
+    if (!nowV.isDouble() || !prevV.isDouble()) {
+        return {};
+    }
+    const double now = nowV.toDouble();
+    const double prev = prevV.toDouble();
+    // A non-positive base would make sessionChangePct divide by it; it already guards, but
+    // emitting a series it must reject is worse than emitting nothing.
+    if ((now <= 0.0) || (prev <= 0.0)) {
+        return {};
+    }
+    return {prev, now};
+}
+
+// The close AND volume arrays of a Yahoo chart result, as ALIGNED bars.
+//
+// Why this is not two calls to yahooCloses: that function skips gaps, and the close and
+// volume arrays do not have their gaps in the same places. Two independent parses
+// therefore return two lists whose index i refers to two different minutes, and a VWAP
+// built from them is a number about nothing. A bar survives here only when both halves
+// are present and positive, so index i always means one real minute.
+//
+// Tickers whose feed carries no volume at all — the volatility and yield indices — come
+// back empty, which is the honest answer: their reads are UNKNOWN rather than zero.
+trading::VolumeSeries yahooBars(const QJsonObject &chartResult)
+{
+    const QJsonObject quote = chartResult.value(QStringLiteral("indicators"))
+                                  .toObject()
+                                  .value(QStringLiteral("quote"))
+                                  .toArray()
+                                  .first()
+                                  .toObject();
+    const QJsonArray closeArr = quote.value(QStringLiteral("close")).toArray();
+    const QJsonArray volumeArr = quote.value(QStringLiteral("volume")).toArray();
+    trading::VolumeSeries out;
+    const qsizetype bars = std::min(closeArr.size(), volumeArr.size());
+    out.closes.reserve(bars);
+    out.volumes.reserve(bars);
+    for (qsizetype i = 0; i < bars; ++i) {
+        const QJsonValue close = closeArr.at(i);
+        const QJsonValue volume = volumeArr.at(i);
+        if (!close.isDouble() || !volume.isDouble()) {
+            continue;   // an empty minute: drop the whole bar, never half of one
+        }
+        if ((close.toDouble() <= 0.0) || (volume.toDouble() <= 0.0)) {
+            continue;
+        }
+        out.closes.append(close.toDouble());
+        out.volumes.append(volume.toDouble());
+    }
+    return out;
 }
 
 } // namespace
@@ -484,10 +577,29 @@ void MarketFeeds::fetchReferenceSeries()
                 reportFeedError(QStringLiteral("Reference series"), netError);
                 return;
             }
-            const QList<double> closes =
-                yahooCloses(yahooChartResult(doc), /*positiveOnly=*/false);
+            const QJsonObject result = yahooChartResult(doc);
+            QList<double> closes = yahooCloses(result, /*positiveOnly=*/false);
+            // Fewer than two points cannot yield a session change, so the read would be
+            // UNKNOWN. Before accepting that, ask the meta block — which still carries a
+            // live price and yesterday's close even on the equity responses that now come
+            // back with no bars at all. See yahooMetaSessionChange for the measurement.
+            if (closes.size() < 2) {
+                const QList<double> fromMeta = yahooMetaSessionChange(result);
+                if (!fromMeta.isEmpty()) {
+                    closes = fromMeta;
+                }
+            }
             if (!closes.isEmpty()) {
                 emit referenceSeries(ticker, closes);
+            }
+            // The same response, read a second way: the bars that carry volume, aligned.
+            // Emitted separately rather than folded into the close series above, because
+            // the close series must keep its own gap handling — the volatility and yield
+            // indices have no volume, and dropping their volume-less bars would empty
+            // the very reads that do work.
+            const trading::VolumeSeries bars = yahooBars(result);
+            if (!bars.volumes.isEmpty()) {
+                emit referenceVolumeSeries(ticker, bars);
             }
         });
     }

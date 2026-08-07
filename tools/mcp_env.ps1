@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Windows counterpart of tools/mcp_env.sh — resolve the three environment
     variables .mcp.json needs for the Axivion MCP servers (axdocumentation,

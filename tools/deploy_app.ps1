@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Copy the Qt runtime next to TradingApp.exe so it runs straight from the
     build directory, with nothing on PATH.

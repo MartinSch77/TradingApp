@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Fetch the pinned linuxdeploy + Qt plugin used to build the AppImage
 # (tools/package_appimage.sh). Both are themselves AppImages; they are not
 # committed (tools/third-party/ is git-ignored). See docs/tools.md.

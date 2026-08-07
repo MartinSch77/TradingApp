@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Resolve the three environment variables .mcp.json needs for the Axivion MCP
 # servers (axdocumentation, axdashboard):
 #

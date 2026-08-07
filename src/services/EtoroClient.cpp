@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "services/EtoroClient.h"
 
 #include "domain/PositionMath.h"
@@ -205,6 +208,11 @@ QList<qint32> eligibleLeverages(const QJsonObject &eligibility)
 // EtoroClient::setTradeConfigBaseForTesting.
 QString &tradeConfigBase()
 {
+    // cppcheck-suppress unassignedVariable  // assigned THROUGH the returned reference
+    // by setTradeConfigBaseForTesting; cppcheck does not follow a non-const reference
+    // out of a function and so reads the default-constructed static as never written.
+    // 1 hit, and the alternative — an explicit empty initialiser — would silence
+    // nothing and say less.
     static QString base;
     return base;
 }

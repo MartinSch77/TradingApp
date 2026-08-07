@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Remove everything build_all.sh (and the tools/ scripts) generate: all build
 # trees, test results, coverage and static-analysis reports, and the generated
 # documentation. Everything here is reproducible with ./build_all.sh.
@@ -17,9 +20,16 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 GENERATED=(
     build
+    # build-cov and build-cov-coco-gui were both missing here. Measured 2026-08-07: a
+    # build-cov tree from an earlier ad-hoc run survived a full clean_all (480 MB) and the
+    # GUI-coverage tree survived too (518 MB). A "clean" that leaves a gigabyte of stale
+    # build trees behind is not one, and a stale tree is exactly what makes a later
+    # measurement describe code that no longer exists.
+    build-cov
     build-cov-gcc
     build-cov-mcdc
     build-cov-coco
+    build-cov-coco-gui
     build-san
     build-san-tsan
     build-san-ubsan

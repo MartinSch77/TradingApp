@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # TradingApp — external-analyzer import layer (Axivion Python configuration).
 #
 # Brings the output of the project's third-party analyzers AND the dynamic

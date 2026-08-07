@@ -1,9 +1,13 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/IndexConfluence.h"
 
 #include "domain/DecisionEngine.h"
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <optional>
 
 namespace trading {
@@ -173,6 +177,168 @@ Read participationRead(const QString &symbol, const QHash<QString, QList<double>
     return out;
 }
 
+// The short end of the curve against the long end — the policy read, and the one that
+// matters most to a technology index. A front end rising faster than the long end is
+// the market pricing tighter policy, which presses on the multiple of everything that
+// earns its money later. Independent of the 10-year read: that one measures the level
+// of long rates, this one measures the SHAPE, and the two regularly disagree.
+//
+// The 2-year yield future is the honest instrument for the front end; the 13-week bill
+// is the fallback, because it is the one Yahoo serves most reliably. The read names
+// which one it actually got — a read whose source is ambiguous is not a read.
+Read curveRead(const QHash<QString, QList<double>> &series)
+{
+    Read out;
+    const std::optional<double> longEnd = sessionChangePct(series.value(QStringLiteral("^TNX")));
+    QString frontName = QStringLiteral("US 2y");
+    std::optional<double> frontEnd = sessionChangePct(series.value(QStringLiteral("2YY=F")));
+    if (!frontEnd.has_value()) {
+        frontName = QStringLiteral("US 13w");
+        frontEnd = sessionChangePct(series.value(QStringLiteral("^IRX")));
+    }
+    if (!frontEnd.has_value() || !longEnd.has_value()) {
+        return out;
+    }
+    out.known = true;
+    // Only a MEANINGFUL divergence is evidence. Both ends drifting a few hundredths
+    // together is the curve holding still, and calling that a policy signal would turn
+    // noise into a vote.
+    const double divergence = *frontEnd - *longEnd;
+    constexpr double kMeaningfulDivergencePct = 0.5;
+    if (divergence > kMeaningfulDivergencePct) {
+        out.dir = -1;    // front end leading higher: tightening pressure
+    } else if (divergence < -kMeaningfulDivergencePct) {
+        out.dir = 1;     // front end leading lower: easing pressure
+    }
+    out.detail = QStringLiteral("%1 %2%3% vs 10y %4%5%")
+                     .arg(frontName, (*frontEnd > 0.0) ? QStringLiteral("+") : QString())
+                     .arg(*frontEnd, 0, 'f', 2)
+                     .arg((*longEnd > 0.0) ? QStringLiteral("+") : QString())
+                     .arg(*longEnd, 0, 'f', 2);
+    return out;
+}
+
+// The leading future's own push, read over three horizons at once: the last minute,
+// the last five and the last fifteen.
+//
+// Deliberately ONE read rather than three. A 1-minute return, a 5-minute return and a
+// 15-minute return computed from the same series are one piece of evidence wearing
+// three hats — exactly what REQ-F-035 exists to refuse — so what counts here is
+// whether they AGREE. Three horizons pointing the same way is a push with staying
+// power; a 1-minute pop against a 15-minute slide is noise, and is reported as the
+// neutral it is.
+Read futuresMomentumRead(const QString &symbol, const QHash<QString, QList<double>> &bySymbol)
+{
+    Read out;
+    const QString future = isNasdaqSymbol(symbol) ? nasdaqFutureSymbol() : spFutureSymbol();
+    const QList<double> series = bySymbol.value(future);
+    constexpr qsizetype kLongestHorizon = 15;
+    if (series.size() <= kLongestHorizon) {
+        return out;   // not enough session to read the longest horizon
+    }
+    const double last = series.constLast();
+    const auto returnOver = [&series, last](qsizetype bars) {
+        const double then = series.at(series.size() - 1 - bars);
+        return (then > 0.0) ? (((last - then) / then) * 100.0) : 0.0;
+    };
+    const double oneMin = returnOver(1);
+    const double fiveMin = returnOver(5);
+    const double fifteenMin = returnOver(kLongestHorizon);
+    out.known = true;
+    if ((oneMin > 0.0) && (fiveMin > 0.0) && (fifteenMin > 0.0)) {
+        out.dir = 1;
+    } else if ((oneMin < 0.0) && (fiveMin < 0.0) && (fifteenMin < 0.0)) {
+        out.dir = -1;
+    }
+    out.detail = QStringLiteral("%1 1m %2% · 5m %3% · 15m %4%%5")
+                     .arg(future)
+                     .arg(oneMin, 0, 'f', 2)
+                     .arg(fiveMin, 0, 'f', 2)
+                     .arg(fifteenMin, 0, 'f', 2)
+                     .arg((out.dir == 0) ? QStringLiteral(" — horizons disagree") : QString());
+    return out;
+}
+
+// How many of the heavyweights trade above their OWN session VWAP.
+//
+// This is the closest this app can honestly get to the breadth measure a professional
+// desk actually watches. It is not the advance/decline line and not the share of all
+// 100 or 500 constituents — it is ten names — but unlike the plain up-count it knows
+// WHERE in the session the buying happened: a name up on the day yet below its VWAP
+// has been distributed into all morning, and the count alone cannot see that.
+Read aboveVwapRead(const QString &symbol, const QHash<QString, VolumeSeries> &volume)
+{
+    Read out;
+    const QStringList names = indexHeavyweights(symbol);
+    qint32 above = 0;
+    qint32 measured = 0;
+    for (const QString &ticker : names) {
+        const VolumeSeries bars = volume.value(ticker);
+        const std::optional<double> vwap = bars.vwap();
+        if (!vwap.has_value()) {
+            continue;
+        }
+        ++measured;
+        if (bars.closes.constLast() > *vwap) {
+            ++above;
+        }
+    }
+    if (measured < static_cast<qint32>(names.size() / 2)) {
+        return out;   // same rule as the participation read: half the field or it says nothing
+    }
+    out.known = true;
+    const double share = static_cast<double>(above) / static_cast<double>(measured);
+    out.dir = (share >= 0.625) ? 1 : ((share <= 0.375) ? -1 : 0);
+    out.detail = QStringLiteral("%1 of %2 above own VWAP (stand-in for breadth)")
+                     .arg(above)
+                     .arg(measured);
+    return out;
+}
+
+// Where the VOLUME is, rather than how many names moved: the session volume behind the
+// up names against the session volume behind the down names.
+//
+// Independent of the up-count on purpose. Six names up and four down is a positive
+// field by count, but if the four carry twice the volume the move is being sold into.
+// This is up/down volume at ten-name resolution — the honest fraction of the real
+// measure, which needs every constituent.
+Read upDownVolumeRead(const QString &symbol, const QHash<QString, VolumeSeries> &volume)
+{
+    Read out;
+    const QStringList names = indexHeavyweights(symbol);
+    double upVolume = 0.0;
+    double downVolume = 0.0;
+    qint32 measured = 0;
+    for (const QString &ticker : names) {
+        const VolumeSeries bars = volume.value(ticker);
+        const std::optional<double> change = sessionChangePct(bars.closes);
+        const std::optional<double> total = bars.totalVolume();
+        if (!change.has_value() || !total.has_value()) {
+            continue;
+        }
+        ++measured;
+        if (*change > 0.0) {
+            upVolume += *total;
+        } else if (*change < 0.0) {
+            downVolume += *total;
+        }
+    }
+    const double traded = upVolume + downVolume;
+    if ((measured < static_cast<qint32>(names.size() / 2)) || (traded <= 0.0)) {
+        return out;
+    }
+    out.known = true;
+    const double upShare = upVolume / traded;
+    // A wider band than the up-count uses: volume is far more skewed than a count
+    // (one megacap can out-trade three of its neighbours), so it takes a clearer
+    // imbalance before this is evidence rather than the shape of the index.
+    out.dir = (upShare >= 0.65) ? 1 : ((upShare <= 0.35) ? -1 : 0);
+    out.detail = QStringLiteral("%1% of heavyweight volume behind the up names, %2 read")
+                     .arg(upShare * 100.0, 0, 'f', 0)
+                     .arg(measured);
+    return out;
+}
+
 // Price structure: the opening range, where the session itself has already declared
 // a direction.
 Read structureRead(const QList<double> &ownSeries)
@@ -210,9 +376,94 @@ QStringList indexHeavyweights(const QString &symbol)
     return isNasdaqSymbol(symbol) ? nasdaqHeavyweightNames() : spHeavyweightNames();
 }
 
+std::optional<double> VolumeSeries::vwap() const
+{
+    // The two lists are filled together, so a size mismatch means something upstream
+    // parsed them independently — refuse rather than average across a shift.
+    if (closes.isEmpty() || (closes.size() != volumes.size())) {
+        return std::nullopt;
+    }
+    double turnover = 0.0;
+    double traded = 0.0;
+    for (qsizetype i = 0; i < closes.size(); ++i) {
+        const double volume = volumes.at(i);
+        if ((closes.at(i) <= 0.0) || (volume <= 0.0)) {
+            continue;
+        }
+        turnover += closes.at(i) * volume;
+        traded += volume;
+    }
+    if (traded <= 0.0) {
+        return std::nullopt;   // an index ticker: bars but no volume behind them
+    }
+    return turnover / traded;
+}
+
+std::optional<double> VolumeSeries::totalVolume() const
+{
+    if (volumes.isEmpty()) {
+        return std::nullopt;
+    }
+    // Negative or zero entries are skipped rather than subtracted: a feed that reports
+    // no trade for a minute is not negative turnover.
+    const double traded =
+        std::accumulate(volumes.cbegin(), volumes.cend(), 0.0, [](double sum, double volume) {
+            return (volume > 0.0) ? (sum + volume) : sum;
+        });
+    return (traded > 0.0) ? std::optional<double>{traded} : std::nullopt;
+}
+
+TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries)
+{
+    const auto lastOf = [&referenceSeries](const QString &ticker) -> std::optional<double> {
+        const QList<double> series = referenceSeries.value(ticker);
+        if (series.isEmpty() || (series.constLast() <= 0.0)) {
+            return std::nullopt;
+        }
+        return series.constLast();
+    };
+    TermStructure out;
+    const std::optional<double> nearTerm = lastOf(QStringLiteral("^VIX9D"));
+    // Three-month is the preferred far leg; thirty-day is the fallback, because a
+    // 9-day above a 30-day is already the inversion this read is looking for.
+    QString farName = QStringLiteral("^VIX3M");
+    std::optional<double> farTerm = lastOf(farName);
+    if (!farTerm.has_value()) {
+        farName = QStringLiteral("^VIX");
+        farTerm = lastOf(farName);
+    }
+    if (!nearTerm.has_value() || !farTerm.has_value()) {
+        out.detail = QStringLiteral("term structure: not measurable");
+        return out;
+    }
+    out.known = true;
+    out.nearFarRatio = *nearTerm / *farTerm;
+    out.inverted = out.nearFarRatio > 1.0;
+    out.detail = out.inverted
+                     ? QStringLiteral("term structure INVERTED: ^VIX9D %1 above %2 %3 — "
+                                      "protection is being bought for right now")
+                           .arg(*nearTerm, 0, 'f', 1)
+                           .arg(farName)
+                           .arg(*farTerm, 0, 'f', 1)
+                     : QStringLiteral("term structure normal: ^VIX9D %1 below %2 %3")
+                           .arg(*nearTerm, 0, 'f', 1)
+                           .arg(farName)
+                           .arg(*farTerm, 0, 'f', 1);
+    return out;
+}
+
 QStringList referenceTickers()
 {
-    QStringList out{QStringLiteral("^VIX"), QStringLiteral("^VXN"), QStringLiteral("^TNX")};
+    QStringList out{QStringLiteral("^VIX"), QStringLiteral("^VXN"), QStringLiteral("^TNX"),
+                    // The volatility term structure (REQ-F-035): the near leg and the
+                    // far leg, so an inverted curve can be SEEN rather than inferred
+                    // from the level of one number.
+                    QStringLiteral("^VIX9D"), QStringLiteral("^VIX3M"),
+                    // The short end of the yield curve. Both are listed because the
+                    // 2-year yield future is the right instrument and the 13-week bill
+                    // is the one that is always served; whichever arrives is used, and
+                    // the read names it.
+                    QStringLiteral("2YY=F"), QStringLiteral("^IRX")};
     // The union of both heavyweight lists, in a stable order and without duplicates:
     // the sweep fetches every name once, and each index's read picks its own subset.
     for (const QString &name : nasdaqHeavyweightNames() + spHeavyweightNames()) {
@@ -223,15 +474,34 @@ QStringList referenceTickers()
     return out;
 }
 
-IndexReads indexReads(const QString &symbol, const QHash<QString, QList<double>> &referenceSeries,
-                      const QList<double> &ownSeries)
+ReadInputs readInputsFor(const QString &symbol,
+                         const QHash<QString, QList<double>> &reference,
+                         const QHash<QString, VolumeSeries> &volume,
+                         const QHash<QString, QList<double>> &bySymbol)
+{
+    ReadInputs out;
+    out.reference = reference;
+    out.volume = volume;
+    out.bySymbol = bySymbol;
+    out.ownSeries = bySymbol.value(symbol);
+    return out;
+}
+
+IndexReads indexReads(const QString &symbol, const ReadInputs &in)
 {
     IndexReads out;
-    out.futuresLead = futuresLeadRead(referenceSeries);
-    out.volatility = volatilityRead(symbol, referenceSeries);
-    out.yields = yieldRead(referenceSeries);
-    out.participation = participationRead(symbol, referenceSeries);
-    out.structure = structureRead(ownSeries);
+    // The two futures reads take the SYMBOL book — the futures proxies are this app's
+    // own instruments, not Yahoo tickers, and reading them out of the ticker book is
+    // the defect ReadInputs exists to prevent.
+    out.futuresLead = futuresLeadRead(in.bySymbol);
+    out.futuresMomentum = futuresMomentumRead(symbol, in.bySymbol);
+    out.volatility = volatilityRead(symbol, in.reference);
+    out.yields = yieldRead(in.reference);
+    out.curve = curveRead(in.reference);
+    out.participation = participationRead(symbol, in.reference);
+    out.aboveVwap = aboveVwapRead(symbol, in.volume);
+    out.upDownVolume = upDownVolumeRead(symbol, in.volume);
+    out.structure = structureRead(in.ownSeries);
     return out;
 }
 
@@ -299,9 +569,13 @@ Confluence confluenceFor(const IndexReads &reads, qint32 dir)
     }
     const QList<QPair<QString, Read>> all{
         {QStringLiteral("futures lead"), reads.futuresLead},
+        {QStringLiteral("futures momentum"), reads.futuresMomentum},
         {QStringLiteral("volatility"), reads.volatility},
         {QStringLiteral("yields"), reads.yields},
+        {QStringLiteral("curve"), reads.curve},
         {QStringLiteral("participation"), reads.participation},
+        {QStringLiteral("above VWAP"), reads.aboveVwap},
+        {QStringLiteral("up/down volume"), reads.upDownVolume},
         {QStringLiteral("structure"), reads.structure},
     };
     for (const auto &[name, read] : all) {

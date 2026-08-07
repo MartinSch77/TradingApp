@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Publish one shields.io endpoint badge onto the `badges` branch.
 #
 #   tools/publish_badge.sh <file.json> <label> <message> <colour>

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_UI_BOTSIMPANEL_H
 #define TRADINGAPP_UI_BOTSIMPANEL_H
 
@@ -5,6 +8,8 @@
 #include "domain/DecisionEngine.h"
 #include "domain/Models.h"
 #include "domain/PaperTrader.h"
+#include "domain/DecisionLog.h"
+#include "domain/PredictionLedger.h"
 
 #include <QDialog>
 #include <QHash>
@@ -64,6 +69,16 @@ public:
     {
         m_referenceSeries = series;
     }
+    // The regime the combined indication is judged in (REQ-F-036). Handed over by the
+    // window that measures it, so the bot and the signals row cannot disagree about
+    // what the market is doing. Unset means UNKNOWN, which the signal reports as such
+    // rather than treating as calm.
+    void setRegime(bool vixValid, double vix, bool eventRisk)
+    {
+        m_vixValid = vixValid;
+        m_vix = vix;
+        m_eventRisk = eventRisk;
+    }
     // The daily target / loss limit from configuration (REQ-F-031). Logged, because
     // changing what a day must earn changes what the record means.
     void applyDailyRules(double target, double lossLimit);
@@ -103,6 +118,13 @@ public:
     // The append-only training set, and the model trained from it.
     [[nodiscard]] static QString experiencePath();
     [[nodiscard]] static QString modelPath();
+    // The append-only prediction ledger: every evaluation, including the ones that
+    // stayed out, and what the market then did (REQ-F-037).
+    [[nodiscard]] static QString ledgerPath();
+    // The human-readable decision log: one line per instrument CONSIDERED, saying
+    // whether it was traded and why (REQ-F-029). The ledger above is the machine's
+    // copy for measuring; this one is the one a person opens after a long weekend.
+    [[nodiscard]] static QString decisionLogPath();
 
     // Fed by the main window after every all-instruments scan: the composite
     // decision per instrument plus the snapshot behind it (its screenerRows carry
@@ -143,11 +165,12 @@ private:
     // opened in the past hour — the churn inputs of REQ-F-034.
     [[nodiscard]] QDateTime lastCloseFor(const QString &symbol) const;
     [[nodiscard]] qint32 opensInLastHour(const QDateTime &now) const;
-    // The learned model's say on one candidate: "" to proceed, else the refusal
-    // code. Annotates the basis line when it scored but allowed.
-    [[nodiscard]] QString applyNetGate(const QString &symbol,
-                                       const trading::EntryFeatures &features,
-                                       trading::EntrySignal &sig);
+    // The learned model's say on one candidate. The WHOLE verdict comes back, because
+    // the decision log needs the sentence and not only the code; `allow` is the answer
+    // to "may this trade proceed". Annotates the basis line when it scored but allowed.
+    [[nodiscard]] trading::NetVerdict applyNetGate(const QString &symbol,
+                                                   const trading::EntryFeatures &features,
+                                                   trading::EntrySignal &sig);
     // The entry's own numbers, captured for the experience log (REQ-F-033).
     [[nodiscard]] trading::EntryFeatures featuresFor(const trading::CandidateInput &in,
                                                      const trading::EntrySignal &sig, double stake,
@@ -163,7 +186,18 @@ private:
     // Is the model's current answer young enough to act on? Same bound as entries.
     [[nodiscard]] bool aiProposalsFresh() const;
     void onProposals(const QList<AiDecision> &picks, const QString &error);
-    void considerEntriesForScan();  // entries for the stored scan, with m_proposal
+    void considerEntriesForScan();
+    // One line per scan: what the RECORD says about calls like the ones just made
+    // (REQ-F-037) — a measured probability per horizon or an explicit refusal to quote
+    // one, plus whether the app's own calls have beaten the cheap baselines yet.
+    void reportForecast(const QList<trading::DecisionRow> &rows);
+    // Append one row to the prediction ledger for an evaluated candidate — taken or
+    // refused, and the refusals are the point (REQ-F-037). A default-constructed `in`
+    // means nothing was evaluated yet, so the row carries the refusal and no evidence.
+    // An EMPTY refusal means the trade was taken — the two cannot then disagree.
+    void recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
+                          const QDateTime &now, const trading::CandidateInput &in,
+                          const QString &refusal) const;  // entries for the stored scan, with m_proposal
     void markAndExit();          // one pass over the open simulated positions
     // The rate a simulated position closes at right now (bid for a long, ask for
     // a short), plus whether that came from a live quote. 0 = unknown.
@@ -229,6 +263,17 @@ private:
     // The reference series (^VIX / ^VXN / ^TNX / per-index heavyweights) the confluence read
     // needs, handed over by the window that fetches them.
     QHash<QString, QList<double>> m_referenceSeries;
+    // Both taken from the scan's own snapshot (see onDecisions): the volume bars keyed
+    // by Yahoo ticker, and the per-instrument series keyed by APP symbol.
+    QHash<QString, trading::VolumeSeries> m_referenceVolumes;
+    QHash<QString, QList<double>> m_symbolSeries;
+    // The combined indication's strength per instrument from the last evaluation, so the
+    // forecast line quotes the SAME number the ledger recorded rather than recomputing it.
+    QHash<QString, double> m_lastLeadStrength;
+    // The regime the combined indication is judged in (REQ-F-036); unset = unknown.
+    bool m_vixValid = false;
+    double m_vix = 0.0;
+    bool m_eventRisk = false;
     QFutureWatcher<trading::TrainResult> m_training;
     // The model's latest verdict per open trade, refreshed on every review pass.
     QHash<qint64, trading::HoldVerdict> m_holdOpinions;

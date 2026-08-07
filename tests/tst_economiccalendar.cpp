@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the macro-economic calendar service (DES-SVC-CAL)
 // against an in-process mock HTTP server: event parsing (title/impact/when/
 // forecast/previous), the trading-day window filter, region scoping through

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # -*- coding: utf-8 -*-
 # Object map, written by hand against the objectNames the app sets (REQ-N-007).
 #
@@ -102,3 +105,7 @@ nasdaqHeavySummary = {"type": "QLabel", "objectName": "nasdaqHeavySummary", "vis
 spHeavySummary = {"type": "QLabel", "objectName": "spHeavySummary", "visible": 1}
 heavyVerdict = {"type": "QLabel", "objectName": "heavyVerdict", "visible": 1}
 heavyCaveat = {"type": "QLabel", "objectName": "heavyCaveat", "visible": 1}
+# The combined indication per index (REQ-F-036): the nine reads, the constituent
+# field, the session phase and the regime, scored together.
+nasdaqLeadSignal = {"type": "QLabel", "objectName": "nasdaqLeadSignal", "visible": 1}
+spLeadSignal = {"type": "QLabel", "objectName": "spLeadSignal", "visible": 1}

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Run the Squish GUI suite — and never touch a real account doing it.
 #
 #   tools/squish_run.sh [build]                    # squish/suite_gui vs build/TradingApp

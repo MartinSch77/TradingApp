@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/BotNet.h"
 #include "domain/PaperTrader.h"
 
@@ -415,7 +418,7 @@ private slots:
         // …and one whose weight matrix does not match its feature list is refused
         // rather than indexed out of bounds.
         QJsonObject misshaped;
-        QJsonArray featureNames{QStringLiteral("a"), QStringLiteral("b")};
+        const QJsonArray featureNames{QStringLiteral("a"), QStringLiteral("b")};
         QJsonArray w1;
         QJsonArray row;
         row.append(0.1);   // one weight for two features

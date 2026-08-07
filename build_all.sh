@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Build every artefact this project produces, in dependency order:
 #
 #   build      build/                    app executable + test binaries (Debug,

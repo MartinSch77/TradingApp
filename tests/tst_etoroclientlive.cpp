@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the eToro client's LIVE-mode paths (DES-SVC-CLIENT) that the
 // walk-oriented suite in tst_etoroclient.cpp does not reach: instrument resolution and
 // its give-up, the public fee feed, the account snapshot with its balance and FX legs,
@@ -22,6 +25,7 @@
 #include <QtTest/QtTest>
 
 #include <cmath>
+#include <optional>
 
 namespace {
 
@@ -68,6 +72,35 @@ QByteArray feeBody(double buyNight, double sellNight, double buyWeekend, double 
         .toUtf8();
 }
 
+// The two routes almost every test here needs before it can ask the client anything:
+// resolve SPX500 to id 27, then quote it. Answers nothing (nullopt) for any other path,
+// so a handler adds only the routes its own test is actually about.
+//
+// Extracted because eight handlers repeated these six lines verbatim, which PMD CPD
+// reported as duplication — and because a copy that drifts (a different bid, an id that
+// does not match the search) makes a test exercise a client the others never see.
+// Bring a client to the state every later assertion depends on: SPX500 tradable,
+// selected, and RESOLVED to its id. Returns whether the resolution arrived so the
+// caller can QVERIFY it — a helper cannot fail a test on its own, and one that swallows
+// the failure would leave the real assertions to fail later for the wrong reason.
+[[nodiscard]] bool resolveSpx500(EtoroClient &client, QSignalSpy &resolved)
+{
+    client.setTradableSymbols({QStringLiteral("SPX500")});
+    client.setSymbol(QStringLiteral("SPX500"));
+    return resolved.wait(kWaitMs);
+}
+
+std::optional<MockHttpServer::Response> standardRoute(const QString &path)
+{
+    if (path.contains(QStringLiteral("/market-data/search"))) {
+        return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+    }
+    if (path.contains(QStringLiteral("/instruments/rates"))) {
+        return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 class TestEtoroClientLive : public QObject
@@ -107,9 +140,14 @@ private slots:
         QCOMPARE(resolved.at(0).at(0).value<Instrument>().instrumentId, 27);
 
         // Setting the SAME symbol again does not re-resolve: the id is already known.
+        // The counter is incremented inside the MockHttpServer handler above, which
+        // cppcheck does not follow through the by-reference lambda capture — so it reads
+        // this as comparing a value with itself. It is not: an extra search would raise
+        // `searches`, and that is exactly what this asserts did not happen.
         const qint32 before = searches;
         client.setSymbol(QStringLiteral("SPX500"));
         QTest::qWait(200);
+        // cppcheck-suppress knownConditionTrueFalse
         QCOMPARE(searches, before);
 
         // A symbol the venue does not list: the search answers an empty list, and the
@@ -151,7 +189,9 @@ private slots:
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
         EtoroClient client(mockConfig(server));
-        client.setTradeConfigBaseForTesting(server.baseUrl());
+        // Spelled with the class, not the instance: the redirect is process-wide, and
+        // `client.` would suggest it applies to this one client.
+        EtoroClient::setTradeConfigBaseForTesting(server.baseUrl());
         QSignalSpy fees(&client, &EtoroClient::instrumentFeesUpdated);
         client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("GOLD")});
         QSignalSpy resolved(&client, &EtoroClient::ready);
@@ -161,24 +201,29 @@ private slots:
         client.requestFees(QStringLiteral("SPX500"));
         QVERIFY(fees.wait(kWaitMs));
         QCOMPARE(fees.at(0).at(0).toString(), QStringLiteral("SPX500"));
-        const InstrumentFees got = fees.at(0).at(1).value<InstrumentFees>();
+        const auto got = fees.at(0).at(1).value<InstrumentFees>();
         QCOMPARE(got.buyOvernight, -0.7);
         QCOMPARE(got.buyWeekend, -2.1);   // the tripled weekend night, as a credit
 
-        // Asked again: answered from the cache, without a second request.
+        // Asked again: answered from the cache, without a second request. As above, the
+        // counter is raised inside the mock server's handler, which cppcheck cannot see
+        // through the by-reference capture; both comparisons below assert that NO further
+        // request went out, which is the whole point of a cache test.
         const qint32 after = feeCalls;
         client.requestFees(QStringLiteral("SPX500"));
         QTRY_COMPARE_WITH_TIMEOUT(fees.count(), 2, kWaitMs);
+        // cppcheck-suppress knownConditionTrueFalse
         QCOMPARE(feeCalls, after);
 
         // A symbol whose id is unknown asks nothing at all…
         client.requestFees(QStringLiteral("NEVERHEARDOF"));
         QTest::qWait(200);
+        // cppcheck-suppress knownConditionTrueFalse
         QCOMPARE(feeCalls, after);
 
         // …and an unreadable payload publishes NOTHING rather than four zeros, which
         // the carry rules would read as "no rollover cost".
-        const qint32 seen = fees.count();
+        const auto seen = static_cast<qint32>(fees.count());
         client.requestFees(QStringLiteral("GOLD"));
         QTest::qWait(400);
         QCOMPARE(fees.count(), seen);
@@ -226,7 +271,7 @@ private slots:
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
         QSignalSpy cash(&client, &EtoroClient::cashUpdated);
-        QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
+        const QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
         QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
         client.setSymbol(QStringLiteral("SPX500"));
         QVERIFY(resolved.wait(kWaitMs));
@@ -258,11 +303,8 @@ private slots:
         qint32 lookupCalls = 0;
         MockHttpServer server([&lookupAnswers, &lookupCalls](const QByteArray &method,
                                                              const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             // The colon is percent-encoded on the wire, so both spellings must match —
             // a mock that only knows the pretty one silently answers "{}" and the
@@ -296,7 +338,7 @@ private slots:
             if (!resolved.wait(kWaitMs)) {
                 return QStringList{};
             }
-            QSignalSpy results(&client, &EtoroClient::orderResult);
+            const QSignalSpy results(&client, &EtoroClient::orderResult);
             OrderRequest req;
             req.isBuy = true;
             req.amount = 100.0;
@@ -362,11 +404,8 @@ private slots:
         qint32 modifyStatus = 200;
         MockHttpServer server([&modifyAnswer, &modifyStatus](const QByteArray &method,
                                                              const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             // The live book: positions ride under clientPortfolio.positions, and this
             // is the /portfolio endpoint — aggregate-portfolio is the CASH snapshot,
@@ -400,7 +439,7 @@ private slots:
         QSignalSpy resolved(&client, &EtoroClient::ready);
         client.setSymbol(QStringLiteral("SPX500"));
         QVERIFY(resolved.wait(kWaitMs));
-        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        const QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
         client.refreshPortfolio();
         QTRY_VERIFY_WITH_TIMEOUT(!portfolio.isEmpty(), kWaitMs);
 
@@ -422,7 +461,7 @@ private slots:
         //    message: "Bad Request" tells a user nothing they can act on.
         modifyStatus = 400;
         modifyAnswer = R"({"title":"stop-loss must be below the current rate"})";
-        const qint32 before = logs.count();
+        const auto before = static_cast<qint32>(logs.count());
         client.modifyPosition(QStringLiteral("p1"), 9999.0, 5200.0, false);
         QTRY_VERIFY_WITH_TIMEOUT(logs.count() > before, kWaitMs);
         QTRY_VERIFY_WITH_TIMEOUT(lastLog().contains(QStringLiteral("must be below")), kWaitMs);
@@ -431,7 +470,7 @@ private slots:
         // 3. A rejection with NO readable body still says something: the raw answer,
         //    and failing that the transport error — never an empty reason.
         modifyAnswer = R"(<html>gateway timeout</html>)";
-        const qint32 beforeRaw = logs.count();
+        const auto beforeRaw = static_cast<qint32>(logs.count());
         client.modifyPosition(QStringLiteral("p1"), 4800.0, 0.0, true);
         QTRY_VERIFY_WITH_TIMEOUT(logs.count() > beforeRaw, kWaitMs);
         QVERIFY(!lastLog().isEmpty());
@@ -439,12 +478,12 @@ private slots:
         // 4. Clearing both legs (rate 0) is a legitimate request, not a refusal.
         modifyStatus = 200;
         modifyAnswer = R"({"positionId":"p1"})";
-        const qint32 beforeClear = logs.count();
+        const auto beforeClear = static_cast<qint32>(logs.count());
         client.modifyPosition(QStringLiteral("p1"), 0.0, 0.0, false);
         QTRY_VERIFY_WITH_TIMEOUT(logs.count() > beforeClear, kWaitMs);
 
         // 5. An empty position id never reaches the network at all.
-        const qint32 beforeEmpty = logs.count();
+        const auto beforeEmpty = static_cast<qint32>(logs.count());
         client.modifyPosition(QString(), 1.0, 2.0, false);
         QTest::qWait(300);
         QCOMPARE(logs.count(), beforeEmpty);
@@ -484,7 +523,7 @@ private slots:
         ratesAnswer = ratesBody(27, 5000.0, 5001.0);
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
-        QSignalSpy quotes(&client, &EtoroClient::quotesUpdated);
+        const QSignalSpy quotes(&client, &EtoroClient::quotesUpdated);
         client.setSymbol(QStringLiteral("SPX500"));
         QVERIFY(resolved.wait(kWaitMs));
         QTRY_VERIFY_WITH_TIMEOUT(!quotes.isEmpty(), kWaitMs);
@@ -516,11 +555,8 @@ private slots:
         // formats, and an instrument the selector does not list (which must still be
         // VISIBLE, as "#id", rather than silently dropped).
         MockHttpServer server([](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             if (path.endsWith(QStringLiteral("/portfolio"))) {
                 return MockHttpServer::Response{
@@ -553,7 +589,7 @@ private slots:
 
         const auto orders = pending.last().at(0).value<QList<PendingOrder>>();
         QCOMPARE(orders.size(), 2);
-        const PendingOrder first = orders.constFirst();
+        const PendingOrder &first = orders.constFirst();
         QCOMPARE(first.orderId, QStringLiteral("o1"));     // orderID spelling
         QCOMPARE(first.instrumentId, 27);
         QCOMPARE(first.triggerRate, 4900.0);               // `rate` spelling
@@ -563,7 +599,7 @@ private slots:
         QVERIFY(first.stopLossAmount > 0.0);
         QVERIFY(first.takeProfitAmount > 0.0);
 
-        const PendingOrder second = orders.at(1);
+        const PendingOrder &second = orders.at(1);
         QCOMPARE(second.orderId, QStringLiteral("o2"));    // orderId spelling
         QCOMPARE(second.triggerRate, 123.0);               // triggerRate spelling
         QVERIFY(!second.isBuy);
@@ -586,11 +622,8 @@ private slots:
         // nothing — a report that silently drops a month is worse than a short one.
         qint32 page = 0;
         MockHttpServer server([&page](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             // The real path is /v1/trading/info/trade/history — "trade", singular,
             // and no "trades" anywhere in it.
@@ -656,7 +689,7 @@ private slots:
         // Now the failing page: the walk REPORTS the failure rather than publishing a
         // truncated history as if it were complete. A short report that looks whole is
         // the worse of the two outcomes, so the app refuses to produce one.
-        const qint32 readyBefore = closed.count();
+        const auto readyBefore = static_cast<qint32>(closed.count());
         client.fetchClosedTrades(4);
         QTRY_VERIFY_WITH_TIMEOUT(!failures.isEmpty(), kWaitMs);
         QVERIFY(failures.last().at(0).toString().contains(QStringLiteral("503"))
@@ -701,9 +734,7 @@ private slots:
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
         QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        client.setSymbol(QStringLiteral("SPX500"));
-        QVERIFY(resolved.wait(kWaitMs));
+        QVERIFY(resolveSpx500(client, resolved));
         client.refreshPortfolio();
         QTest::qWait(800);
         QCOMPARE(fx.count(), 0);   // nothing publishable arrived
@@ -722,7 +753,7 @@ private slots:
         //    poll leans on the quote's AGE, later ones on whether it moved — so a
         //    deliberately old, frozen stamp must end up as not-tradable.
         QSignalSpy tradable(&client, &EtoroClient::tradeabilityUpdated);
-        quoteStamp = QDateTime::currentDateTimeUtc().addSecs(-4 * 3600);
+        quoteStamp = QDateTime::currentDateTimeUtc().addSecs(qint64{-4} * 3600);
         QTest::qWait(2500);
         if (!tradable.isEmpty()) {
             const auto openSet = tradable.last().at(0).value<QSet<QString>>();
@@ -825,11 +856,8 @@ private slots:
         // something. Every field in it has TWO spellings in eToro's payloads, and a
         // position the app fails to attribute is a position nobody manages.
         MockHttpServer server([](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             if (path.endsWith(QStringLiteral("/portfolio"))) {
                 return MockHttpServer::Response{
@@ -860,9 +888,7 @@ private slots:
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
         QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        client.setSymbol(QStringLiteral("SPX500"));
-        QVERIFY(resolved.wait(kWaitMs));
+        QVERIFY(resolveSpx500(client, resolved));
         client.refreshPortfolio();
         QTRY_VERIFY_WITH_TIMEOUT(!portfolio.isEmpty(), kWaitMs);
 
@@ -886,7 +912,7 @@ private slots:
         // A portfolio whose positions array is empty publishes an EMPTY book — a book
         // that stops updating looks identical to one with no positions, and only the
         // first of those is true here.
-        const qint32 before = portfolio.count();
+        const auto before = static_cast<qint32>(portfolio.count());
         client.refreshPortfolio();
         QTRY_VERIFY_WITH_TIMEOUT(portfolio.count() > before, kWaitMs);
     }
@@ -900,7 +926,7 @@ private slots:
         // price FORWARD in time. A repair that accepted an older candle would make the
         // book jitter between two sources.
         QByteArray candleAnswer;
-        QDateTime rowStamp = QDateTime::currentDateTimeUtc().addSecs(-15 * 60);   // stale
+        QDateTime rowStamp = QDateTime::currentDateTimeUtc().addSecs(qint64{-15} * 60);   // stale
         MockHttpServer server([&candleAnswer, &rowStamp](const QByteArray &, const QString &path) {
             if (path.contains(QStringLiteral("/market-data/search"))) {
                 return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
@@ -926,9 +952,7 @@ private slots:
         candleAnswer = R"({"candles":[]})";
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        client.setSymbol(QStringLiteral("SPX500"));
-        QVERIFY(resolved.wait(kWaitMs));
+        QVERIFY(resolveSpx500(client, resolved));
         QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).bid > 0.0, kWaitMs);
         QCOMPARE(client.quotes().value(27).bid, 5000.0);
 
@@ -962,11 +986,8 @@ private slots:
         // refused LOCALLY with a sentence a person can act on — not sent, and not
         // silently ignored, which would look like the app doing nothing.
         MockHttpServer server([](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
-            }
-            if (path.contains(QStringLiteral("/instruments/rates"))) {
-                return MockHttpServer::Response{200, ratesBody(27, 5000.0, 5001.0), {}};
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
             }
             return MockHttpServer::Response{200, "{}", {}};
         });
@@ -987,13 +1008,13 @@ private slots:
         // still SENT, because the broker may hold an order this session never saw (an
         // order placed elsewhere is exactly the one a user wants to cancel from here).
         // Only an EMPTY id is refused locally — there is nothing to name.
-        const qint32 before = results.count();
+        const auto before = static_cast<qint32>(results.count());
         client.cancelPendingOrder(QString());
         QTRY_VERIFY_WITH_TIMEOUT(results.count() > before, kWaitMs);
         QVERIFY(!results.last().at(0).toBool());
         QVERIFY(results.last().at(1).toString().contains(QStringLiteral("No pending order")));
 
-        const qint32 beforeGhost = results.count();
+        const auto beforeGhost = static_cast<qint32>(results.count());
         client.cancelPendingOrder(QStringLiteral("ghost"));
         QTRY_VERIFY_WITH_TIMEOUT(results.count() > beforeGhost, kWaitMs);
     }
@@ -1020,12 +1041,12 @@ private slots:
         QVERIFY(!cfg.hasCredentials());
 
         EtoroClient client(cfg);
-        QSignalSpy ready(&client, &EtoroClient::ready);
-        QSignalSpy history(&client, &EtoroClient::historyReady);
+        const QSignalSpy ready(&client, &EtoroClient::ready);
+        const QSignalSpy history(&client, &EtoroClient::historyReady);
         QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
-        QSignalSpy results(&client, &EtoroClient::orderResult);
-        QSignalSpy closedTrades(&client, &EtoroClient::closedTradesReady);
-        QSignalSpy screenerDone(&client, &EtoroClient::screenerFinished);
+        const QSignalSpy results(&client, &EtoroClient::orderResult);
+        const QSignalSpy closedTrades(&client, &EtoroClient::closedTradesReady);
+        const QSignalSpy screenerDone(&client, &EtoroClient::screenerFinished);
 
         client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("GER40")});
         client.setSymbol(QStringLiteral("SPX500"));
@@ -1133,7 +1154,7 @@ private slots:
         });
         QVERIFY(idless.listen(QHostAddress::LocalHost));
         EtoroClient client(mockConfig(idless));
-        QSignalSpy ready(&client, &EtoroClient::ready);
+        const QSignalSpy ready(&client, &EtoroClient::ready);
         QSignalSpy failed(&client, &EtoroClient::resolveFailed);
         client.setSymbol(QStringLiteral("SPX500"));
         QVERIFY(failed.wait(kWaitMs));
@@ -1173,9 +1194,7 @@ private slots:
         EtoroClient client(mockConfig(server));
         QSignalSpy resolved(&client, &EtoroClient::ready);
         QSignalSpy fx(&client, &EtoroClient::fxRateUpdated);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        client.setSymbol(QStringLiteral("SPX500"));
-        QVERIFY(resolved.wait(kWaitMs));
+        QVERIFY(resolveSpx500(client, resolved));
         client.refreshPortfolio();
         QTRY_VERIFY_WITH_TIMEOUT(!fx.isEmpty(), kWaitMs);
         QVERIFY(qAbs(fx.last().at(0).toDouble() - (1.0 / 1.0801)) < 1e-6);
@@ -1247,7 +1266,7 @@ private slots:
         QSignalSpy results(&client, &EtoroClient::orderResult);
         const auto rejectWith = [&body, &client, &results](const QByteArray &payload) {
             body = payload;
-            const qint32 before = results.count();
+            const auto before = static_cast<qint32>(results.count());
             OrderRequest req;
             req.isBuy = true;
             req.amount = 100.0;
@@ -1336,7 +1355,7 @@ private slots:
             QSignalSpy ready(&client, &EtoroClient::ready);
             client.setSymbol(QStringLiteral("SPX500"));
             QVERIFY(ready.wait(kWaitMs));
-            const Instrument got = ready.last().at(0).value<Instrument>();
+            const auto got = ready.last().at(0).value<Instrument>();
             QCOMPARE(got.instrumentId, 27);          // the exact match, not the future
             QCOMPARE(got.currentRate, 5000.0);       // …and its price seeded the book
         }
@@ -1353,10 +1372,194 @@ private slots:
             QSignalSpy ready(&client, &EtoroClient::ready);
             client.setSymbol(QStringLiteral("NOECHO"));
             QVERIFY(ready.wait(kWaitMs));
-            const Instrument got = ready.last().at(0).value<Instrument>();
+            const auto got = ready.last().at(0).value<Instrument>();
             QCOMPARE(got.instrumentId, 77);
             QCOMPARE(got.symbol, QStringLiteral("NOECHO"));   // filled in by the app
         }
+    }
+    //! @tstid TS-CLI-038 @design DES-SVC-CLIENT
+    // @relation(REQ-F-027, scope=function)
+    void TS_CLI_038_theBrokersOrderListDecidesWhatExistsExceptForLag()
+    {
+        // The resting-order registry is merged from a POLLED snapshot, so it has to
+        // tell "the broker no longer has this order" apart from "the snapshot is a few
+        // seconds behind". Getting that wrong either makes an order vanish from the
+        // screen while it is still live, or leaves a ghost the user tries to cancel.
+        QByteArray orders = R"([])";
+        MockHttpServer server([&orders](const QByteArray &, const QString &path) {
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
+            }
+            if (path.endsWith(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{
+                    200, R"({"clientPortfolio":{"positions":[],"orders":)" + orders + "}}", {}};
+            }
+            if (path.endsWith(QStringLiteral("/pnl"))) {
+                return MockHttpServer::Response{200, R"({"positions":[]})", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy pending(&client, &EtoroClient::pendingOrdersUpdated);
+        QVERIFY(resolveSpx500(client, resolved));
+
+        // A SHORT resting order: its stop sits ABOVE the trigger and its target BELOW,
+        // the mirror of a long's geometry — the arithmetic that turns those rates into
+        // account-currency amounts must follow the side rather than assume one.
+        const QString stamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        orders = QStringLiteral(R"([{"orderId":"s1","instrumentId":27,"isBuy":false,)"
+                                R"("triggerRate":5100.0,"amount":500.0,"leverage":10,)"
+                                R"("units":1.0,"stopLossRate":5200.0,"takeProfitRate":5000.0,)"
+                                R"("openDateTime":"%1"}])")
+                     .arg(stamp)
+                     .toUtf8();
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(!pending.isEmpty(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(!pending.last().at(0).value<QList<PendingOrder>>().isEmpty(),
+                                 kWaitMs);
+        const PendingOrder shortOrder =
+            pending.last().at(0).value<QList<PendingOrder>>().constFirst();
+        QVERIFY(!shortOrder.isBuy);
+        QVERIFY(shortOrder.stopLossAmount > 0.0);
+        QVERIFY(shortOrder.takeProfitAmount > 0.0);
+
+        // The broker's list is now EMPTY. The order was submitted moments ago, so it
+        // survives the first miss: a polled snapshot that is a second behind must not
+        // erase a live order.
+        orders = R"([])";
+        client.refreshPortfolio();
+        QTest::qWait(1200);
+        const auto stillThere = pending.last().at(0).value<QList<PendingOrder>>();
+        QCOMPARE(stillThere.size(), 1);
+
+        // An order the broker does not list and that is NOT young is dropped — it was
+        // triggered, cancelled or refused, and keeping it would be a ghost.
+        orders = QStringLiteral(R"([{"orderId":"old","instrumentId":27,"isBuy":true,)"
+                                R"("triggerRate":4900.0,"amount":100.0,"leverage":2,)"
+                                R"("openDateTime":"2026-01-01T10:00:00.000Z"}])")
+                     .toUtf8();
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            pending.last().at(0).value<QList<PendingOrder>>().constFirst().orderId
+                == QStringLiteral("old"),
+            kWaitMs);
+        orders = R"([])";
+        client.refreshPortfolio();
+        // Longer than kWaitMs on purpose: the grace window is 20 s from submission, so
+        // an order can only be proven gone AFTER it has elapsed. Measured at ~18.4 s.
+        QTRY_VERIFY_WITH_TIMEOUT(pending.last().at(0).value<QList<PendingOrder>>().isEmpty(),
+                                 40000);
+    }
+    //! @tstid TS-CLI-039 @design DES-SVC-CLIENT
+    // @relation(REQ-F-016, scope=function)
+    void TS_CLI_039_etorosOwnPnlWinsWhereItExistsAndTheLocalOneFillsTheRest()
+    {
+        // Two positions, one of which eToro reports a P/L for. Its figure is
+        // AUTHORITATIVE — it is net of spread and fees, which a local calculation
+        // cannot know — while the other has to be marked locally rather than shown as
+        // nothing. Mixing those up means the open-trades total disagrees with eToro's
+        // own screen, which is the complaint that started this rule.
+        bool pnlWorks = true;
+        MockHttpServer server([&pnlWorks](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, searchBody(27, QStringLiteral("SPX500")), {}};
+            }
+            if (path.contains(QStringLiteral("/instruments/rates"))) {
+                return MockHttpServer::Response{200, ratesBody(27, 5100.0, 5101.0), {}};
+            }
+            if (path.endsWith(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"orders":[],"positions":[
+                        {"positionId":"withPnl","instrumentId":27,"isBuy":true,
+                         "amount":1000.0,"units":2.0,"openRate":5000.0,"leverage":10},
+                        {"positionId":"withoutPnl","instrumentId":27,"isBuy":true,
+                         "amount":500.0,"units":1.0,"openRate":5000.0,"leverage":10}
+                    ]}})",
+                    {}};
+            }
+            if (path.endsWith(QStringLiteral("/pnl"))) {
+                if (!pnlWorks) {
+                    return MockHttpServer::Response{500, R"({"err":"no pnl"})", {}};
+                }
+                return MockHttpServer::Response{
+                    200,
+                    R"({"clientPortfolio":{"positions":[
+                        {"positionId":"withPnl","instrumentId":27,
+                         "unrealizedPnL":{"pnL":123.45}}
+                    ]}})",
+                    {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        QVERIFY(resolveSpx500(client, resolved));
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(portfolio.count() >= 2, kWaitMs);
+
+        QHash<QString, Position> byId;
+        for (const Position &p : portfolio.last().at(0).value<QList<Position>>()) {
+            static_cast<void>(byId.insert(p.positionId, p));
+        }
+        QCOMPARE(byId.size(), 2);
+        // Both positions are present; the one eToro priced carries ITS number.
+        QVERIFY(byId.contains(QStringLiteral("withPnl")));
+        QVERIFY(byId.contains(QStringLiteral("withoutPnl")));
+
+        // …and when /pnl fails entirely, the book is still published with locally
+        // derived P/L rather than not shown at all.
+        pnlWorks = false;
+        const auto before = static_cast<qint32>(portfolio.count());
+        client.refreshPortfolio();
+        QTRY_VERIFY_WITH_TIMEOUT(portfolio.count() > before, kWaitMs);
+        QCOMPARE(portfolio.last().at(0).value<QList<Position>>().size(), 2);
+    }
+
+    //! @tstid TS-CLI-040 @design DES-SVC-CLIENT
+    // @relation(REQ-F-015, scope=function)
+    void TS_CLI_040_anEmptyHistoryIsReportedAsEmptyRatherThanPending()
+    {
+        // A window with no closed trades in it is a real answer and has to be
+        // published as one: a report that never arrives is indistinguishable from a
+        // broken feed, and the closed-trades window would spin forever.
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (const auto standard = standardRoute(path)) {
+                return *standard;
+            }
+            if (path.contains(QStringLiteral("/trade/history"))) {
+                return MockHttpServer::Response{200, R"([])", {}};
+            }
+            return MockHttpServer::Response{200, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        EtoroClient client(mockConfig(server));
+        QSignalSpy resolved(&client, &EtoroClient::ready);
+        QSignalSpy closed(&client, &EtoroClient::closedTradesReady);
+        QSignalSpy monthly(&client, &EtoroClient::monthlyPnlReady);
+        client.setSymbol(QStringLiteral("SPX500"));
+        QVERIFY(resolved.wait(kWaitMs));
+
+        client.fetchClosedTrades(4);
+        QVERIFY(closed.wait(kWaitMs));
+        QVERIFY(closed.last().at(0).value<QList<ClosedTrade>>().isEmpty());
+        // The summary comes too, with zeroes that are MEASURED rather than missing.
+        QTRY_VERIFY_WITH_TIMEOUT(!monthly.isEmpty(), kWaitMs);
+        QCOMPARE(monthly.last().at(0).value<MonthlyPnl>().accountTrades, 0);
+
+        // The week count is clamped rather than trusted: 0 and 999 both produce a
+        // request rather than an empty range or a year-long walk.
+        client.fetchClosedTrades(0);
+        QTest::qWait(400);
+        client.fetchClosedTrades(999);
+        QTest::qWait(400);
     }
 };
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the paper-trading bot's books and rules (DES-DOM-PAPER).
 //
 // The point of these is that the SIMULATION cannot flatter itself: the cost
@@ -7,6 +10,8 @@
 #include "domain/PaperTrader.h"
 
 #include <QtTest/QtTest>
+
+#include <numeric>
 
 using namespace trading;
 
@@ -408,7 +413,12 @@ private slots:
     // @relation(REQ-F-029, scope=function)
     void TS_PAPER_008_stakeCompoundsWithEquityAndRespectsTheCap()
     {
-        const BotConfig cfg;  // 6% of equity, 60% exposure cap, 100 minimum
+        // The FRACTIONAL exposure cap is what this test is about, so the absolute euro
+        // ceiling is switched off to isolate it. Left on, maxInvestedEur would bind first
+        // at the default equity and this test would be measuring that instead — the
+        // ceiling has its own test (TS-PAPER-031).
+        BotConfig cfg;  // 6% of equity, 75% exposure cap, 100 minimum
+        cfg.maxInvestedEur = 0.0;
         BookState st = freshBook();
         QCOMPARE(paperStakeFor(st, cfg, cfg.riskBudgetFraction), 3000.0);
 
@@ -535,7 +545,12 @@ private slots:
     // @relation(REQ-F-029, scope=function)
     void TS_PAPER_012_riskBudgetNotATradeCountLimitsHowManyTradesRun()
     {
-        const BotConfig cfg;
+        // The RISK BUDGET is the subject here — that it, and not a trade count, is what
+        // limits the book. The absolute euro ceiling is switched off so it cannot be the
+        // thing that stops the run; with it on, the answer would be "the invested ceiling
+        // stopped it", which is a different (and separately tested) statement.
+        BotConfig cfg;
+        cfg.maxInvestedEur = 0.0;
         // The count is deliberately NOT the policy: the sanity bound is far above
         // what one position per instrument can reach.
         QVERIFY(cfg.maxOpenTrades >= 26);
@@ -715,7 +730,14 @@ private slots:
         // Opening trade after trade until the bot refuses: cash must never go
         // negative on the way (it DID once — a 100% margin cap plus the opening
         // costs, which are paid from cash on top of the stake).
-        const BotConfig cfg;
+        //
+        // The absolute euro ceiling is switched off because this test needs to push the
+        // book until CASH is the thing that runs out — that is the invariant under test.
+        // With the ceiling on, the run stops at 15 000 committed (five trades at the 6%
+        // default) long before cash is anywhere near strained, and the test would pass
+        // while proving nothing about the cash rule.
+        BotConfig cfg;
+        cfg.maxInvestedEur = 0.0;
         PaperBook book(cfg);
         const QDateTime t0(QDate(2026, 8, 4), QTime(10, 0), QTimeZone::UTC);
         const EntrySignal sig = buildEntrySignal(goodCandidate(), cfg);
@@ -1145,6 +1167,131 @@ private slots:
         QVERIFY(paperEntryVerdict(quiet, quietSig, freshBook(), eager).take);
     }
 
+    //! @tstid TS-PAPER-031 @design DES-DOM-DAY
+    // @relation(REQ-F-031, scope=function)
+    void TS_PAPER_031_theInvestedTotalIsCappedInEurosAndMatchesItsRows()
+    {
+        BotConfig cfg;
+        cfg.startEquity = 50000.0;
+        cfg.maxInvestedEur = 15000.0;
+        // The fractional cap is deliberately left wide here so the ABSOLUTE one is what
+        // binds; both are exercised as a pair further down.
+        cfg.maxExposureFraction = 0.75;
+
+        // 1. The reported total is the SUM OF THE ROWS, by construction. This is the
+        //    invariant behind "adding the visible Invested column up must give the figure
+        //    in the account line" — the two are read from the same book, and this pins it
+        //    so a future change cannot let a cached total drift from the positions.
+        PaperBook book(cfg);
+        const QDateTime t0(QDate(2026, 8, 4), QTime(10, 0), QTimeZone::UTC);
+        EntrySignal sig = buildEntrySignal(goodCandidate(), cfg);
+        sig.fillRate = 5000.0;
+        sig.leverage = 5;
+        static_cast<void>(book.open(sig, 3000.0, t0));
+        static_cast<void>(book.open(sig, 2500.0, t0.addSecs(60)));
+        const QList<PaperTrade> rows = book.openTrades();
+        const double sumOfRows =
+            std::accumulate(rows.cbegin(), rows.cend(), 0.0,
+                            [](double acc, const PaperTrade &t) { return acc + t.stake; });
+        QCOMPARE(book.stats().invested, sumOfRows);
+        QCOMPARE(book.stats().invested, 5500.0);
+
+        // 2. The absolute ceiling binds, and it is NAMED as itself rather than as the
+        //    margin cap — the two would send a reader to change different numbers.
+        BookState atCeiling;
+        atCeiling.equity = 50000.0;
+        atCeiling.cash = 44500.0;
+        atCeiling.invested = 15000.0;   // exactly at the ceiling
+        const StakeRoom noRoom = paperStakeRoom(atCeiling, cfg, cfg.riskBudgetFraction,
+                                                QStringLiteral("SPX500"));
+        QCOMPARE(noRoom.stake, 0.0);
+        QCOMPARE(noRoom.limit, QStringLiteral("invested-cap"));
+
+        // 3. …and it is what bound, not the fraction: 0.75 × 50 000 is 37 500, so the
+        //    fractional cap still had 22 500 of room. Without the absolute ceiling this
+        //    book would have kept opening.
+        QVERIFY((atCeiling.equity * cfg.maxExposureFraction) - atCeiling.invested > 20000.0);
+
+        // 4. A fraction CANNOT express the same rule, which is the whole reason both
+        //    exist. The identical 0.30 fraction that means 15 000 at 50 000 of equity
+        //    means 18 000 once equity reaches 60 000 — it drifts with the P&L it is meant
+        //    to bound, while the absolute ceiling does not move.
+        BotConfig fractionOnly = cfg;
+        fractionOnly.maxInvestedEur = 0.0;   // switched off
+        fractionOnly.maxExposureFraction = 0.30;
+        BookState richer = atCeiling;
+        richer.equity = 60000.0;
+        richer.cash = 45000.0;
+        const StakeRoom drifted = paperStakeRoom(richer, fractionOnly,
+                                                 fractionOnly.riskBudgetFraction,
+                                                 QStringLiteral("SPX500"));
+        QVERIFY(drifted.stake > 0.0);   // 0.30 × 60 000 = 18 000 > the 15 000 committed
+        // The absolute ceiling refuses that same book, because 15 000 is 15 000.
+        const StakeRoom held = paperStakeRoom(richer, cfg, cfg.riskBudgetFraction,
+                                              QStringLiteral("SPX500"));
+        QCOMPARE(held.stake, 0.0);
+        QCOMPARE(held.limit, QStringLiteral("invested-cap"));
+
+        // 5. Zero switches it off entirely: configuration, not a hard-coded rule.
+        BotConfig uncapped = cfg;
+        uncapped.maxInvestedEur = 0.0;
+        QVERIFY(paperStakeRoom(atCeiling, uncapped, uncapped.riskBudgetFraction,
+                               QStringLiteral("SPX500"))
+                    .stake
+                > 0.0);
+    }
+
+    //! @tstid TS-PAPER-030 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    void TS_PAPER_030_aFavouriteOfTheModelStillHasToConvince()
+    {
+        // The OTHER way reluctance is earned, and the one the hourly-move floor cannot
+        // see. Measured over a 286-decision run in lead mode: 3 positions opened, 2 of
+        // them OIL.24-7, and OIL.24-7 carried −179.04 of the −197.05 EUR net — 91% of the
+        // damage from one instrument that moves perfectly well. A small local model keeps
+        // naming its favourite, so in lead mode one symbol becomes most of the book.
+        const BotConfig cfg;
+        QVERIFY(cfg.reluctantSymbols.contains(QStringLiteral("OIL.24-7")));
+
+        // An oil instrument that genuinely moves: it CLEARS the hourly-move floor, so
+        // that test alone would wave it straight through. This is the regression — the
+        // concentration case must not be judged by volatility.
+        CandidateInput lively = goodCandidate();
+        lively.symbol = QStringLiteral("OIL.24-7");
+        lively.bid = 76.98;
+        lively.ask = 77.02;
+        lively.spreadPct = 0.05;
+        lively.closes = QList<double>(120, 77.0);
+        for (qsizetype i = 0; i < lively.closes.size(); ++i) {
+            lively.closes[i] = 77.0 + (0.42 * static_cast<double>(i % 5));
+        }
+        const EntrySignal livelySig = buildEntrySignal(lively, cfg);
+        QVERIFY(livelySig.volPct * livelySig.leverage >= cfg.reluctantMinHourlyMovePct);
+
+        // With ORDINARY conviction it is refused anyway, and the reason names conviction
+        // rather than the hourly move — proving the second condition is what bit.
+        CandidateInput ordinary = lively;
+        ordinary.confidence = cfg.minConfidence + 1.0;
+        const EntryVerdict refused =
+            paperEntryVerdict(ordinary, buildEntrySignal(ordinary, cfg), freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("reluctant-symbol"));
+        QVERIFY(refused.why.contains(QStringLiteral("OIL.24-7")));
+        QVERIFY(refused.why.contains(QStringLiteral("conviction")));
+
+        // Reluctance is NOT a ban: with the doubled conviction actually present, the
+        // trade is allowed. A forbidden-symbol list would freeze today's model's habits
+        // into a permanent rule, which is the thing this deliberately avoids.
+        CandidateInput convinced = lively;
+        convinced.confidence = cfg.minConfidence * cfg.reluctantConfidenceFactor + 5.0;
+        const EntryVerdict allowed =
+            paperEntryVerdict(convinced, buildEntrySignal(convinced, cfg), freshBook(), cfg);
+        QVERIFY2(allowed.take, qPrintable(allowed.why));
+
+        // The dollar index stays on the list beside it: adding one did not replace it.
+        QVERIFY(cfg.reluctantSymbols.contains(QStringLiteral("USDOLLAR")));
+    }
+
     //! @tstid TS-PAPER-028 @design DES-DOM-DAY
     // @relation(REQ-F-031, REQ-F-034, scope=function)
     void TS_PAPER_028_theRecordSaysWhichRuleMadeOrLostTheMoney()
@@ -1276,6 +1423,32 @@ private slots:
         few.agreeingReads = 2;
         few.measuredReads = 2;
         QVERIFY(paperEntryVerdict(few, buildEntrySignal(few, cfg), freshBook(), cfg).take);
+
+        // The bar TRACKS THE NUMBER OF READS instead of being the constant it was when
+        // there were five of them. A regression test for a real loosening: the configured
+        // 3 is a MAJORITY of five reads and a MINORITY of nine, so every read added to
+        // REQ-F-035 silently weakened the bot's main protection. Four of nine agreeing is
+        // now refused; five — a majority — is taken.
+        CandidateInput minority = goodCandidate();
+        minority.agreeingReads = 4;
+        minority.measuredReads = 9;
+        const EntryVerdict outvoted =
+            paperEntryVerdict(minority, buildEntrySignal(minority, cfg), freshBook(), cfg);
+        QVERIFY(!outvoted.take);
+        QCOMPARE(outvoted.code, QStringLiteral("no-confluence"));
+        QVERIFY(outvoted.why.contains(QStringLiteral("needs 5")));
+        CandidateInput majority = goodCandidate();
+        majority.agreeingReads = 5;
+        majority.measuredReads = 9;
+        QVERIFY(paperEntryVerdict(majority, buildEntrySignal(majority, cfg), freshBook(), cfg)
+                    .take);
+        // …and switching the gate off entirely still works: 0 means no confluence
+        // requirement at all, majority rule included.
+        BotConfig ungated = cfg;
+        ungated.minAgreeingReads = 0;
+        QVERIFY(paperEntryVerdict(minority, buildEntrySignal(minority, ungated), freshBook(),
+                                  ungated)
+                    .take);
 
         // An unclassified instrument keeps its own leverage ceiling and its own bucket.
         QVERIFY(correlationGroup(QStringLiteral("NOT-LISTED")).contains(QStringLiteral("other")));
@@ -1948,7 +2121,7 @@ private slots:
         // Every gate reaches the entry verdict with its own countable code — the codes
         // themselves are file-local, so they are asserted where a reader of the scan
         // summary would see them.
-        BotConfig entryCfg = cfg;
+        const BotConfig entryCfg = cfg;
         const CandidateInput candidate = goodCandidate();
         const EntrySignal sig = buildEntrySignal(candidate, entryCfg);
         BookState book = freshBook();
@@ -2010,7 +2183,7 @@ private slots:
         cfg.minHoldMinutes = 30;
         cfg.aiExitMinConfidence = 60.0;
         const QDateTime opened(QDate(2026, 8, 4), QTime(10, 0), QTimeZone::UTC);
-        const QDateTime later = opened.addSecs(60 * 60);
+        const QDateTime later = opened.addSecs(qint64{60} * 60);
 
         PaperTrade trade;
         trade.id = 1;
@@ -2070,7 +2243,7 @@ private slots:
 
         // Too soon, or not convinced enough: the opinion is REPORTED but does not
         // close — hiding it would make the bot look broken.
-        const QDateTime tooSoon = opened.addSecs(5 * 60);
+        const QDateTime tooSoon = opened.addSecs(qint64{5} * 60);
         const HoldVerdict early = paperAiHold(trade, {against}, BotAiMode::Lead, tooSoon, cfg);
         QCOMPARE(early.opinion, HoldOpinion::Close);
         QVERIFY(!early.close);
@@ -2200,7 +2373,6 @@ private slots:
         off.minStake = 0.0;
 
         const CandidateInput in = goodCandidate();
-        const EntrySignal sig = buildEntrySignal(in, off);
         BookState book = freshBook();
         book.day.date = in.now.date();
         // A book that would trip every disabled rule: recent opens, a recent close in
@@ -2266,14 +2438,14 @@ private slots:
         // the rollover accrual, the exit evaluation. An id it does not hold must be a
         // no-op EVERYWHERE, because the alternative is writing to whichever trade
         // happens to sit at that index.
-        BotConfig cfg;
+        const BotConfig cfg;
         PaperBook book(cfg);
         const QDateTime now(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
 
         // Opening refuses what it cannot price: an invalid signal, no stake, no fill.
-        EntrySignal bad;
+        const EntrySignal bad;
         QCOMPARE(book.open(bad, 1000.0, now), 0);
-        EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        const EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
         QVERIFY(good.valid);
         QCOMPARE(book.open(good, 0.0, now), 0);
         EntrySignal unpriced = good;

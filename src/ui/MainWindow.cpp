@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "ui/MainWindow.h"
 
 #include "domain/DecisionEngine.h"
@@ -1118,6 +1121,24 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     titleFont.setBold(true);
     m_titleLabel->setFont(titleFont);
 
+    // The wall clock, to the second. A fixed-width font so the seconds digit changing
+    // does not shift the label's width and nudge the header layout every tick.
+    m_clockLabel = new QLabel(central);
+    m_clockLabel->setObjectName(QStringLiteral("clockLabel"));
+    QFont clockFont = m_clockLabel->font();
+    clockFont.setBold(true);
+    clockFont.setStyleHint(QFont::Monospace);
+    clockFont.setFamily(QStringLiteral("monospace"));
+    m_clockLabel->setFont(clockFont);
+    m_clockTimer = new QTimer(this);
+    // One second exactly. Qt::PreciseTimer so the displayed second does not drift into
+    // showing the same value twice under the default coarse timer's slack.
+    m_clockTimer->setTimerType(Qt::PreciseTimer);
+    m_clockTimer->setInterval(1000);
+    static_cast<void>(connect(m_clockTimer, &QTimer::timeout, this, &MainWindow::updateClock));
+    m_clockTimer->start();
+    updateClock();  // paint immediately rather than showing an empty label for a second
+
     // Instrument selector, grouped by asset class. The item text is the eToro
     // internalSymbolFull used for lookup; picking one switches the whole app to
     // it. The universe itself lives in the domain InstrumentCatalog (single
@@ -1189,8 +1210,73 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_heavyButton);
     header->addWidget(m_closedButton);
     header->addStretch();
+    header->addWidget(m_clockLabel);
+    header->addSpacing(12);
     header->addLayout(priceCol);
     return header;
+}
+
+// Hand the heavyweight window every book its reads are computed from (REQ-F-035/036).
+// ONE place on purpose: it is fed from two call sites — the button that opens it and the
+// reference sweep that refreshes it — and a book supplied to one but not the other would
+// make the same window show a different signal depending on how it was last updated.
+// The heavyweight window: built on first use, then fed and raised. Out of line rather
+// than a lambda in buildHeaderButtons, which is at the size limit the metrics ratchet
+// enforces — and this mirrors how the decision window is opened.
+void MainWindow::openHeavyPanel()
+{
+    if (m_heavyPanel == nullptr) {
+        m_heavyPanel = new trading::ui::HeavyweightsPanel(this);
+        // While the window is open it asks for a fresh sweep every minute — the resolution
+        // of the 1-minute series behind it. The five-minute scan cycle is enough for the
+        // bot; a chart someone is watching is not.
+        static_cast<void>(connect(m_heavyPanel,
+                                  &trading::ui::HeavyweightsPanel::refreshRequested, this,
+                                  [this] { m_feeds->fetchReferenceSeries(); }));
+    }
+    pushBooksToHeavyPanel();
+    m_heavyPanel->show();
+    m_heavyPanel->raise();
+}
+
+// The header clock, once a second. Formatting only — no feed, no model, no allocation
+// beyond the two strings, because this runs 3600 times an hour for as long as the app
+// is open and the positions table must not pay for it.
+void MainWindow::updateClock()
+{
+    if (m_clockLabel == nullptr) {
+        return;
+    }
+    const QDateTime now = QDateTime::currentDateTime();
+    // Local time is what the user reads; the zone abbreviation is shown because this app
+    // spans exchanges and "14:35" alone is ambiguous the moment anyone compares it to a
+    // session edge.
+    m_clockLabel->setText(QStringLiteral("%1 %2")
+                              .arg(now.toString(QStringLiteral("HH:mm:ss")),
+                                   now.timeZoneAbbreviation()));
+    // UTC and New York in the tooltip rather than the label: they are the clocks
+    // sessionPhaseFor actually reads (US releases and the Fed are New York, never a fixed
+    // offset), so they belong within reach — but three clocks in a header is clutter.
+    m_clockLabel->setToolTip(
+        QStringLiteral("Local %1\nUTC   %2\nNew York %3\n\nThe session rules read the "
+                       "instrument's own exchange clock, and the New York clock for US "
+                       "releases and the Fed.")
+            .arg(now.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss t")),
+                 now.toUTC().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                 now.toTimeZone(QTimeZone(QByteArrayLiteral("America/New_York")))
+                     .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
+}
+
+void MainWindow::pushBooksToHeavyPanel()
+{
+    if (m_heavyPanel == nullptr) {
+        return;
+    }
+    // The same regime read the signals row shows, so the two cannot disagree.
+    m_heavyPanel->setRegime(m_vixValid, m_vix, trading::marketRegime(marketSnapshot()).eventRisk);
+    m_heavyPanel->setVolumeSeries(m_referenceVolumes);
+    m_heavyPanel->setSymbolSeries(m_intradayBySymbol);
+    m_heavyPanel->setReferenceSeries(m_referenceSeries);
 }
 
 void MainWindow::buildHeaderButtons(QWidget *central)
@@ -1274,14 +1360,8 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "field that is already moving together is an early read on the index — and one "
         "name carrying the whole move is a reason to distrust it. A constituent whose "
         "price could not be read is shown as unknown, never as 0.00 %."));
-    static_cast<void>(connect(m_heavyButton, &QPushButton::clicked, this, [this] {
-        if (m_heavyPanel == nullptr) {
-            m_heavyPanel = new trading::ui::HeavyweightsPanel(this);
-        }
-        m_heavyPanel->setReferenceSeries(m_referenceSeries);
-        m_heavyPanel->show();
-        m_heavyPanel->raise();
-    }));
+    static_cast<void>(
+        connect(m_heavyButton, &QPushButton::clicked, this, &MainWindow::openHeavyPanel));
 
     // Trading-bot simulation: paper money, live prices, no order ever placed.
     m_botButton = new QPushButton(QStringLiteral("Bot sim…"), central);
@@ -4139,7 +4219,9 @@ void MainWindow::updateConfluenceSignal()
     m_sigConfluence->setTextFormat(Qt::RichText);
     const QString symbol = m_client->config().symbol;
     const trading::IndexReads reads =
-        trading::indexReads(symbol, m_referenceSeries, m_intradayBySymbol.value(symbol));
+        trading::indexReads(symbol, trading::readInputsFor(symbol, m_referenceSeries,
+                                                           m_referenceVolumes,
+                                                           m_intradayBySymbol));
     // Scored for the side the app's own composite currently leans to, so the number
     // answers "does the evidence agree with the call" rather than "is it bullish".
     const qint32 dir = (m_lastSignalDir != 0) ? m_lastSignalDir : 1;
@@ -4378,6 +4460,8 @@ void MainWindow::connectInstrumentFeeds()
                               &MainWindow::onInstrumentNews));
     static_cast<void>(connect(m_feeds, &MarketFeeds::referenceSeries, this,
                               &MainWindow::onReferenceSeries));
+    static_cast<void>(connect(m_feeds, &MarketFeeds::referenceVolumeSeries, this,
+                              &MainWindow::onReferenceVolumeSeries));
 }
 
 // The per-instrument source table of the decision window: eight rows now (the six
@@ -4398,11 +4482,25 @@ void MainWindow::buildDecisionSourcesTable(QVBoxLayout *lay)
     lay->addWidget(m_decisionSources);
 }
 
+void MainWindow::onReferenceVolumeSeries(const QString &ticker,
+                                         const trading::VolumeSeries &bars)
+{
+    static_cast<void>(m_referenceVolumes.insert(ticker, bars));
+    // Deliberately no refresh of its own: the volume bars arrive from the same sweep as
+    // the closes, and onReferenceSeries — which fires for every one of these tickers —
+    // already rebuilds everything that reads them. Refreshing twice per ticker would
+    // double the work for one snapshot.
+}
+
 void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &closes)
 {
     static_cast<void>(m_referenceSeries.insert(ticker, closes));
     if (m_botRunner != nullptr) {
         m_botRunner->setReferenceSeries(m_referenceSeries);
+        // …and the regime those reads are judged in, from the same snapshot the
+        // signals row uses (REQ-F-036).
+        m_botRunner->setRegime(m_vixValid, m_vix,
+                               trading::marketRegime(marketSnapshot()).eventRisk);
     }
     // The index reads change what the signals row and the decision sources say, and
     // what the bot is told; none of them are worth a full rebuild per ticker, so the
@@ -4411,7 +4509,7 @@ void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &c
     // The heavyweight window, when it is open: it exists to show these very series,
     // so a stale one would be worse than none.
     if ((m_heavyPanel != nullptr) && m_heavyPanel->isVisible()) {
-        m_heavyPanel->setReferenceSeries(m_referenceSeries);
+        pushBooksToHeavyPanel();
     }
 }
 
@@ -4774,6 +4872,7 @@ trading::MarketSnapshot MainWindow::marketSnapshot() const
     m.ratingBySymbol = m_ratingBySymbol;
     m.newsBySymbol = m_newsBySymbol;
     m.referenceSeries = m_referenceSeries;
+    m.referenceVolumes = m_referenceVolumes;
     m.vixValid = m_vixValid;
     m.vix = m_vix;
     m.vixChangePct = m_vixChangePct;

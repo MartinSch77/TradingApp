@@ -1,6 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_DOMAIN_DECISIONENGINE_H
 #define TRADINGAPP_DOMAIN_DECISIONENGINE_H
 
+#include "domain/IndexConfluence.h"
 #include "domain/Models.h"
 
 #include <QHash>
@@ -28,9 +32,14 @@ struct MarketSnapshot {
     // Independent Yahoo Finance intraday series (1-minute closes, session so
     // far) per instrument — an additional source for the composite.
     QHash<QString, QList<double>> intradayBySymbol;
-    // The reference series that are not instruments: ^VIX, ^VXN, ^TNX and the top-ten
-    // constituents of the Nasdaq-100 and the S&P 500 (REQ-F-035), keyed by Yahoo ticker.
+    // The reference series that are not instruments: the volatility, term-structure and
+    // yield tickers plus the top-ten constituents of the Nasdaq-100 and the S&P 500
+    // (REQ-F-035), keyed by Yahoo ticker.
     QHash<QString, QList<double>> referenceSeries;
+    // The same tickers WITH volume, closes and volumes aligned bar for bar — what the
+    // session-VWAP and up/down-volume reads need. Absent for every ticker whose feed
+    // carries no volume, which keeps those reads honestly unknown instead of zero.
+    QHash<QString, VolumeSeries> referenceVolumes;
 };
 
 // One aggregated row per instrument, combining every source into a weighted

@@ -166,6 +166,18 @@ jobs:
               ;;
           esac
 
+      # The build log is the only artefact THIS job produces that says anything about
+      # the submission's quality: how many translation units cov-build actually
+      # captured, and what its front end could not parse. `tools/fetch_coverity_log.sh`
+      # pulls it back down into analysis-results/, where it joins the other analyzers'
+      # output and rides along in the qualification bundle.
+      #
+      # Expect ~69 "recoverable errors" warnings, two per TU: measured on 2026-08-06,
+      # every one of them is Coverity's front end failing on
+      # `std::__format::__float128_t` inside libstdc++'s <format> — a SYSTEM header,
+      # not this project's code. They are recoverable in the literal sense: each TU
+      # still emits ("Emit for file ... complete", 91 units captured), so the
+      # submission is complete. Do not go looking for them in src/.
       - name: Upload the cov-build log
         if: always() && steps.token.outputs.present == 'true'
         uses: actions/upload-artifact@v7
@@ -173,3 +185,19 @@ jobs:
           name: coverity-build-log
           path: cov-int/build-log.txt
           if-no-files-found: ignore
+
+      - name: Summarise what cov-build captured
+        if: always() && steps.token.outputs.present == 'true'
+        run: |
+          set -uo pipefail
+          [ -f cov-int/build-log.txt ] || exit 0
+          {
+            echo "### Coverity cov-build"
+            units=$(sed -n 's/.*Emitted \([0-9]\{1,\}\) .*compilation units.*/\1/p' \
+              cov-int/build-log.txt | tail -1)
+            echo "- compilation units emitted: ${units:-unknown}"
+            echo "- recoverable-error warnings: $(grep -c 'recoverable errors detected' \
+              cov-int/build-log.txt || echo 0) (libstdc++ <format>, see the note in this file)"
+            echo "- full log: the \`coverity-build-log\` artifact, or"
+            echo "  \`tools/fetch_coverity_log.sh\` to place it in analysis-results/"
+          } >> "$GITHUB_STEP_SUMMARY"

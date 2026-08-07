@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the layered configuration (DES-SVC-CFG): built-in
 // defaults ← config.json ← apiKeyEtoro.json ← environment variables.
 

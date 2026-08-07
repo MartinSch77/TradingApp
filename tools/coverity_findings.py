@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Coverity defects -> analysis-results/coverity.txt for the Axivion import.
 
 Coverity runs here as the cloud service only -- scan.coverity.com project

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/SignalEnsemble.h"
 
 #include "domain/Forecasting.h"

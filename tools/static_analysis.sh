@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Static analysis over the app AND test sources: cppcheck + clang-tidy + the
 # Clang Static Analyzer + g++ -fanalyzer + code metrics (lizard) + copy-paste
 # detection (PMD CPD), plus clazy (Qt coding rules) and codespell when

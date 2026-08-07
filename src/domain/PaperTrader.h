@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_DOMAIN_PAPERTRADER_H
 #define TRADINGAPP_DOMAIN_PAPERTRADER_H
 
@@ -122,16 +125,38 @@ struct BotConfig {
     // of cash ON TOP of the stakes, so a 1.0 cap drove cash NEGATIVE (measured: 17
     // trades, cash −7.69). Free margin is a feature, not slack.
     double maxExposureFraction = 0.75;
+    // An ABSOLUTE euro ceiling on Σ stakes, applied on top of the fraction above, with
+    // the smaller of the two winning. 0 switches it off.
+    //
+    // Why both, when a fraction looks like it should be enough: a fraction of CURRENT
+    // equity is not a fixed amount of money. 0.30 × 50 000 is 15 000 only while equity is
+    // exactly 50 000 — it becomes 18 000 after a good week and 12 000 after a bad one. The
+    // instruction "the book never has more than 15 000 EUR committed" therefore cannot be
+    // expressed as a fraction at all, and expressing it as one would silently let the
+    // committed amount drift with the very P&L it is supposed to bound.
+    //
+    // The fraction is kept beside it because the two answer different questions: the
+    // fraction guarantees FREE MARGIN exists whatever the account size (a book that
+    // commits every euro as margin is what a real broker answers with a margin call), and
+    // this one bounds absolute exposure in the currency the user actually thinks in.
+    double maxInvestedEur = 15000.0;
     // The real governor: the summed loss-if-every-stop-is-hit of all open trades
     // must stay within this fraction of equity. That is what "as many trades as it
     // should, at a decent risk level" means operationally — conviction decides the
     // COUNT, this decides the total exposure to being wrong.
     //
     // 20% with the 25%-per-trade budget below means room for ~0.8 × equity of stake
-    // (~13 trades at the 6% target), which is deliberately LESS than the margin cap
-    // above: the binding constraint has to be the risk one, or the bot would stop
-    // for a bookkeeping reason ("no margin left") instead of a risk reason, and the
-    // log would say the wrong thing about why it stopped.
+    // (~13 trades at the 6% target), which is deliberately LESS than the FRACTIONAL
+    // margin cap above: between those two the binding constraint has to be the risk
+    // one, or the bot would stop for a bookkeeping reason ("no margin left") instead
+    // of a risk reason, and the log would say the wrong thing about why it stopped.
+    //
+    // That ordering no longer holds against `maxInvestedEur`, and this comment used to
+    // claim otherwise. At the default 50 000 equity the absolute 15 000 EUR ceiling is
+    // reached after 5 stakes of 3 000, well before this budget is exhausted — so the
+    // ceiling is what usually stops the book now. It is a deliberate, requested limit
+    // rather than an accident, and it reports itself as `invested-cap` precisely so the
+    // log still says the right thing about why it stopped.
     double maxPortfolioRiskFraction = 0.20;
     // …and no more than this fraction inside ONE correlation bucket, so the budget
     // above cannot be spent on a single market view (REQ-F-031).
@@ -164,10 +189,22 @@ struct BotConfig {
     // exceed the exit cost by this multiple before it may act.
     double fadeMinLossOverCost = 1.5;
     // Instruments the bot is RELUCTANT to trade: it may, but only when the move it
-    // expects is big enough and fast enough to be worth the attempt. USDOLLAR is the
-    // measured example — 3 trades for −19.22 EUR, because the dollar index moves a few
-    // hundredths of a percent an hour and the spread does not care.
-    QStringList reluctantSymbols{QStringLiteral("USDOLLAR")};
+    // expects is big enough and fast enough to be worth the attempt.
+    //
+    // USDOLLAR was the first measured example — 3 trades for −19.22 EUR, because the
+    // dollar index moves a few hundredths of a percent an hour and the spread does not
+    // care.
+    //
+    // OIL.24-7 was added for the OPPOSITE reason, and it is the more instructive one:
+    // the instrument moves plenty, so the hourly-move test above waves it through. What
+    // went wrong is CONCENTRATION. Measured over one 286-decision run in lead mode:
+    // 3 trades opened in total, 2 of them OIL.24-7, and OIL.24-7 accounted for −179.04
+    // of the −197.05 EUR net (91%). The cause is that a 1.5B local model keeps naming
+    // the same instrument — `ai-none` 182 and `ai-other-pick` 81 of the refusals — so
+    // in LEAD mode one favourite becomes most of the book. The conviction multiplier
+    // below is what bites here: it does not ban the instrument, it makes the model pay
+    // a higher price for repeating itself.
+    QStringList reluctantSymbols{QStringLiteral("USDOLLAR"), QStringLiteral("OIL.24-7")};
     // For those: the expected move per HOUR at the chosen leverage, as a percentage of
     // the stake, must reach this…
     double reluctantMinHourlyMovePct = 1.0;
@@ -213,7 +250,12 @@ struct BotConfig {
     // 0 switches the requirement off; the reads are still shown and still given to
     // the model. Deliberately below the five available: demanding all of them means
     // never trading, and demanding none means the reads were decoration.
-    qint32 minAgreeingReads = 3;      // an opposite call this strong closes the trade
+    qint32 minAgreeingReads = 3;
+    // How strong the combined indication (REQ-F-036) has to be before it may VETO a
+    // trade that points the other way. 35 is its "fair" threshold — below that it is a
+    // lean rather than a case, and a lean must not overrule the composite. 0 switches
+    // the veto off entirely, like every other rule here.
+    double leadVetoStrength = 35.0;      // an opposite call this strong closes the trade
     double minEquityFraction = 0.25;   // stop OPENING below this × start equity (ruin guard)
     // The DAY rules — the only honest form of "make 350 a day". A fixed daily
     // profit cannot be guaranteed by any strategy; what a rule CAN do is stop the
@@ -579,6 +621,19 @@ struct CandidateInput {
     // add to a position it already holds (REQ-F-032): stacking on the composite
     // alone would turn one opinion into three copies of the same trade.
     bool aiBacked = false;               // for the day rules (invalid = they are skipped)
+    // The combined indication for this instrument (REQ-F-036), when one could be
+    // computed. It may only ever REDUCE what the bot does: a contradicting signal of
+    // real grade refuses the entry, and its leverage bound is intersected with every
+    // other cap. All three fields at their defaults mean "no signal", which changes
+    // nothing — an absent indication is not a negative one.
+    qint32 leadDir = 0;                  // +1 / −1 / 0 = no usable indication
+    double leadStrength = 0.0;           // 0..100, as leadSignal reports it
+    qint32 leadMaxLeverage = 0;          // 0 = no bound from the evidence
+    // How much the indication was built FROM, carried alongside it so the prediction
+    // ledger (REQ-F-037) records the coverage of every call rather than deriving it —
+    // a strength of 40 from nine reads and one from two are different facts.
+    qint32 leadMeasured = 0;
+    qint32 leadUnknowns = 0;
 };
 
 // A fully specified simulated entry: the side, the price it fills at, the

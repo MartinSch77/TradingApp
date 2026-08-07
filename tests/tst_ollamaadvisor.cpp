@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the LOCAL model adapter (DES-SVC-OLLAMA) against an
 // in-process mock of Ollama's HTTP API: the unconfigured short circuit, the
 // availability probe over /api/tags, the exact request shape on the wire
@@ -255,7 +258,7 @@ private slots:
         // EVERY confidence spelling a 1.5B model has been seen to use, including the
         // ones that must NOT become a trade. The parse is the feature here: a
         // mis-read confidence is a silent no-trade or, worse, a sized-up one.
-        const auto confidenceOf = [this](const QString &spelling) {
+        const auto confidenceOf = [](const QString &spelling) {
             return firstPickOf(QStringLiteral(R"json({"symbol":"SPX500","action":"BUY",)json")
                                + QStringLiteral(R"json("confidence":%1})json").arg(spelling))
                 .confidence;
@@ -276,7 +279,7 @@ private slots:
 
         // …and the action words, including the CLOSE-before-SHORT ordering that keeps
         // "close the short" from opening one.
-        const auto actionOf = [this](const QString &word) {
+        const auto actionOf = [](const QString &word) {
             return firstPickOf(QStringLiteral(R"json({"symbol":"SPX500","action":"%1",)json")
                                    .arg(word)
                                + QStringLiteral(R"json("confidence":60})json"))

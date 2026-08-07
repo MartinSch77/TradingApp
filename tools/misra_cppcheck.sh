@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # cppcheck's free ADDONS — MISRA first, the other three after it. Informational by
 # design: none of them gates a build, and the reason for each is measured below.
 #

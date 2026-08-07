@@ -333,6 +333,22 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          # The CORRESPONDING SOURCE, produced here rather than only by
+          # tools/publish_release.sh: this job is what creates the release and attaches
+          # the binaries, so the GPL-3.0-or-later obligation to offer the source must be
+          # met on THIS path too — a release published by CI alone still ships binaries.
+          # HEAD, not "$tag": actions/checkout is a shallow clone already positioned ON
+          # the tag, so HEAD is that commit while refs/tags/<tag> is not guaranteed to
+          # exist locally — naming the tag would fail on a fetch-depth-1 checkout.
+          version="${tag#v}"
+          git archive --format=tar.gz --prefix="TradingApp-$version/" \
+            -o "downloads/TradingApp-$version-source.tar.gz" HEAD
+          (cd downloads && sha256sum "TradingApp-$version-source.tar.gz" \
+            > "TradingApp-$version-source.tar.gz.sha256")
+          # The licence texts as their own small asset, so a recipient does not have to
+          # unpack the source archive to read the terms.
+          cp LICENSE "downloads/LICENSE.txt"
+          cp THIRD_PARTY_LICENSES.md "downloads/THIRD_PARTY_LICENSES.md"
           ls -l downloads
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \

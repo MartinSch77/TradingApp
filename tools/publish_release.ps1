@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Publish a release: the binaries, the documentation and the QUALIFICATION
     evidence — but only when there is proof that the pipeline ran green.
@@ -174,8 +177,22 @@ foreach ($f in @(Get-ChildItem $out -File | Where-Object {
 
 Remove-Item -Force -ErrorAction SilentlyContinue $docsZip, $qualZip, "$docsZip.sha256", "$qualZip.sha256"
 
+# The CORRESPONDING SOURCE, which GPL-3.0-or-later obliges us to offer alongside every
+# binary (see THIRD_PARTY_LICENSES.md). git archive exports exactly what the tag holds,
+# so a local edit that never got committed cannot slip into the published source.
+$sourceTgz = Join-Path $out "TradingApp-$version-source.tar.gz"
+Remove-Item -Force -ErrorAction SilentlyContinue $sourceTgz, "$sourceTgz.sha256"
+& git archive --format=tar.gz --prefix="TradingApp-$version/" -o $sourceTgz HEAD
+if ($LASTEXITCODE -eq 0 -and (Test-Path $sourceTgz)) {
+    Write-Ok "source         $([IO.Path]::GetFileName($sourceTgz)) ($([math]::Round((Get-Item $sourceTgz).Length/1MB,1)) MB)"
+} else {
+    Write-Bad "could not produce the corresponding source archive - GPL-3.0-or-later requires it"
+}
+
+# The licence texts travel with the docs zip too, so a recipient of that alone has the terms.
 $docItems = @(Get-ChildItem 'docs' -Filter '*.md' -File | ForEach-Object { $_.FullName })
-$docItems += (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE')
+$docItems += (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE'),
+    (Join-Path $Root 'THIRD_PARTY_LICENSES.md'), (Join-Path $Root 'LICENSES')
 foreach ($extra in @('docs\traceability.html', 'docs\html', 'docs\uml')) {
     $p = Join-Path $Root $extra
     if (Test-Path $p) { $docItems += $p }
@@ -193,12 +210,15 @@ foreach ($item in @('docs\requirements.md', 'docs\design.md', 'docs\test_spec.md
 Compress-Archive -Path $qualItems -DestinationPath $qualZip -Force
 Write-Ok "qualification  $([IO.Path]::GetFileName($qualZip)) ($([math]::Round((Get-Item $qualZip).Length/1MB,1)) MB)"
 
-foreach ($z in @($docsZip, $qualZip)) {
+foreach ($z in @($docsZip, $qualZip, $sourceTgz)) {
+    if (-not (Test-Path $z)) { continue }
     (Get-FileHash $z -Algorithm SHA256).Hash.ToLower() + "  " + [IO.Path]::GetFileName($z) |
         Set-Content -Path "$z.sha256" -Encoding ascii
 }
 
 $assets = @($pdf, $docsZip, "$docsZip.sha256", $qualZip, "$qualZip.sha256") + $binAssets
+# The source archive is what makes shipping the GPL binaries lawful, so it is always attached.
+if (Test-Path $sourceTgz) { $assets += @($sourceTgz, "$sourceTgz.sha256") }
 foreach ($f in $binAssets) { Write-Ok "binary         $([IO.Path]::GetFileName($f))" }
 if ($binAssets.Count -eq 0) {
     Write-Note "no binary for $version in downloads\ - .github\workflows\release.yml builds"

@@ -1,699 +1,196 @@
 # eToro TradingApp
 
-[![build linux](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
-[![build linux arm64](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux-arm64.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
-[![build windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-windows.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
-[![build macos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-macos.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/github/actions/workflow/status/MartinSch77/TradingApp/tests.yml?branch=main&label=tests)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fcoverage.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/tests.yml)
 [![latest release](https://img.shields.io/github/v/release/MartinSch77/TradingApp?label=latest%20release&sort=semver)](https://github.com/MartinSch77/TradingApp/releases/latest)
+[![License: GPL v3 or later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+
+*A cross-platform Qt 6/C++23 trading workbench and software-quality showcase
+featuring Qt Widgets, Charts, Network, Squish, Coco, Test Center and Axivion.*
+
+![TradingApp main window](docs/images/screenshot-main.png)
+
+**[Try it without an account](#try-it-without-an-account)** ·
+[What it does](#what-it-does) ·
+[Why this is a Qt showcase](#why-this-is-a-qt-showcase) ·
+[Quality evidence](#quality-evidence) ·
+[Architecture](#architecture) ·
+[Documentation](#documentation) ·
+[Disclaimer](#disclaimer) ·
+[License](#license)
+
+## Try it without an account
+
+The application runs fully in **SIMULATION** mode with no API keys, no credentials and
+no network account — live prices, simulated money. That is the default when no key file
+is present, and it can be forced.
+
+```bash
+# A ready-made build — no toolchain needed
+#   https://github.com/MartinSch77/TradingApp/releases/latest
+chmod +x TradingApp-*.AppImage && ./TradingApp-*.AppImage
+
+# …or from source (provisions every open-source tool it needs)
+git clone https://github.com/MartinSch77/TradingApp.git && cd TradingApp
+./setup.sh && ./build_all.sh build && ./build/TradingApp
+```
+
+**[⬇ Download for Linux (x86-64 / ARM64), Windows, macOS or Android](https://github.com/MartinSch77/TradingApp/releases/latest)**
+
+Forcing simulation explicitly, which is also what every GUI test does:
+
+```bash
+TRADINGAPP_FORCE_SIMULATION=1 ./build/TradingApp
+```
+
+Real money needs a key in git-ignored `apiKeyEtoro.json` and a deliberate switch to
+`real` — see [docs/configuration.md](docs/configuration.md).
+
+## What it does
+
+- **One screen instead of many steps.** Amount, leverage and auto-proposed
+  stop-loss/take-profit are always ready, so a trade is two deliberate clicks away.
+  BUY and SELL are **double-press guarded**; money-moving actions cannot happen on one
+  click.
+- **A live chart and a leverage screener** across every instrument — indices, forex,
+  commodities and eToro's thematic baskets. The instrument selector switches the whole
+  application live.
+- **A decision window that names its sources.** A composite call per instrument from a
+  technical ensemble, TradingView, news sentiment, the volatility regime, Fear & Greed,
+  intraday series, the session's own structure, and optionally a local LLM — each shown
+  as its own row with its own read.
+- **Nine independent reads, and their agreement.** Futures leadership, the leading
+  future's own push, volatility *direction*, the US 10-year, the *shape* of the yield
+  curve, heavyweight participation, how many heavyweights trade above their own session
+  VWAP, where the session's volume sits, and the opening range. They do not come from
+  one price series, so their agreement is actual evidence — and **a read that could not
+  be measured never counts as agreement**.
+- **A probability that was measured, not asserted.** The evidence score is not a
+  probability. P(up) over 5/15/60/180 minutes comes only from the record: every
+  evaluation is logged *including the ones that stayed out*, and until a band holds
+  enough resolved samples the app says **UNCALIBRATED** and quotes no number. Hit rates
+  are shown beside baselines on the same samples, because 58% right is worthless if
+  always-long scored 61%.
+- **A trading bot that simulates on live prices** and can never reach an order
+  endpoint. It prices the whole round trip, aggregates risk by correlation rather than
+  by count, learns from its own closes, and writes a human-readable line for every
+  instrument it considered — traded or refused, with the reason either way.
+- **Closed-trade history with real cost accounting** — half-spread per side, per-night
+  rollover with the tripled weekend charge — and a macro event calendar. A simulation
+  without costs measures nothing.
+
+## Why this is a Qt showcase
+
+The application is a real Qt 6 program rather than a demo: Qt Widgets, Qt Charts,
+Qt Network, Qt Concurrent, Model/View and Qt Test all carry weight, and the layering is
+enforced by the linker so the domain cannot reach a widget or a socket.
+
+More unusually, it is built with **all four licensed Qt quality tools** wired into one
+pipeline, and each is documented as a case study — problem, configuration, what it
+found, the correction, the measurable result:
+
+| Tool | What it found here |
+|---|---|
+| [Squish for Qt](docs/case-studies/squish.md) | On its first real run: an object map in the wrong place, and a widget name that never existed. 7 scenarios, 35 verifications. |
+| [Squish Coco](docs/case-studies/coco.md) | That 90.5% line coverage hid **77% MC/DC**. Tests written against Coco's own unexecuted-condition list took it to ~88%. |
+| [Qt Test Center](docs/case-studies/test-center.md) | That the first uploader POSTed to a REST endpoint that did not exist. The product ships `testcentercmd`. |
+| [Axivion Suite](docs/case-studies/axivion.md) | Architecture as **code**, checked every run: 0 divergences, 0 absences. Also 154,183 rule findings, of which ~490 are actionable — and it is honestly not a gate. |
+
+A full map of which Qt technology is used where, with one representative source file
+per row, is in [docs/qt-framework-showcase.md](docs/qt-framework-showcase.md).
+
+## Quality evidence
+
+The point of this repository is that claims are backed by artefacts.
+`tools/publish_release.sh` **refuses to publish** unless the tests are green, all seven
+gated analyzers are at zero, the metrics ratchet is clean, traceability has no hard
+gaps, and every artefact is newer than the newest source.
+
+- **Requirements as code.** They live only in `requirements/requirements.sdoc`
+  (StrictDoc); `docs/requirements.md` is generated. Every test carries its requirement
+  and design tags, and `tools/trace_report.py` **fails the build on a hard gap** — so a
+  new behaviour that nothing verifies cannot land.
+- **Seven analyzers at zero**, gated: cppcheck, clang-tidy, Clang Static Analyzer,
+  `g++ -fanalyzer`, clazy, PMD CPD (the clone gate) and codespell. Every disabled check
+  carries a written reason *and* the measured hit count that justifies it.
+- **Three sanitizers**: ASan+UBSan, TSan and valgrind.
+- **Coverage at decision level**, not just lines: MC/DC via Coco and clang, with GUI
+  coverage measured and reported **separately** so a well-covered domain cannot hide an
+  untested interface.
+- **A complexity ratchet**, not a threshold: existing debt is recorded with its
+  numbers, and new debt, a worsened number or a stale entry all fail the stage.
+- **Informational, deliberately not gates:** SonarCloud (its default gate fails on
+  hotspot categories only a human can rule on) and Coverity Scan (weekly cron, because
+  the free tier's submission cap makes per-push builds waste).
+
+[![build linux arm64](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-linux-arm64.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-windows.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
+[![build macos](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMartinSch77%2FTradingApp%2Fbadges%2Fbuild-macos.json)](https://github.com/MartinSch77/TradingApp/actions/workflows/ci.yml)
 [![sonarcloud bugs](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=bugs)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![sonarcloud code smells](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![coverity](https://scan.coverity.com/projects/33200/badge.svg)](https://scan.coverity.com/projects/TradingApp)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+Most of this code was written with an AI assistant. The interesting question is how you
+know it is right — [docs/ai-assisted-development.md](docs/ai-assisted-development.md)
+answers it, including a section on what the harness demonstrably does **not** catch,
+with real examples from this repository.
 
-A Qt 6 desktop app to trade **eToro instruments** — indices (SPX500, NSDQ100,
-GER40, …), forex, commodities and eToro's thematic baskets — through the
-**official eToro public API**
-([api-portal.etoro.com](https://api-portal.etoro.com/), base URL
-`https://public-api.etoro.com/api`). SPX500 is merely the start-up default;
-the instrument selector switches everything live.
+## Architecture
 
-**Purpose:** placing a trade with stop-loss and take-profit through the eToro
-web interface takes quite a few steps. This app puts everything on one
-screen — amount, leverage and auto-proposed SL/TP are always ready, so a
-trade is two deliberate clicks away — and it shows upcoming market events
-plus a battery of indicators and independent sources that suggest **when to
-buy or sell** (and, just as importantly, when to stay out).
+Three layers, one direction, enforced by the **linker** and independently verified as
+an [architecture-as-code model](docs/case-studies/axivion.md) on every Axivion run.
 
-It provides:
-
-- an **instrument selector** with a **live time chart** of the selected
-  instrument (Qt Charts) and a leverage screener across all instruments;
-- an **amount** field, a **leverage** selector and auto-proposed **SL/TP**;
-- **BUY** and **SELL** buttons (double-press guarded) to open a market position;
-- a table of **open trades** with live P/L, editable SL/TP and marked-close;
-- a **decision window**: multi-source composite call per instrument (technical
-  ensemble, TradingView, news, VIX regime, Fear & Greed, Yahoo intraday,
-  optional Claude synthesis, the **session's own structure** — where price sits against
-  the first half hour's range, and whether the Nasdaq future is leading or lagging the
-  S&P future, both from series the app already fetches — **plus the local model's own
-  per-instrument read**) and a
-  costed **trade plan**; the same local-model row appears in the signals panel, where
-  "no opinion on this instrument" is told apart from "not configured";
-- **closed-trades history** (7–13 weeks) with cost accounting, a macro-economic
-  **event calendar** with activity proposals, and an activity log;
-- **independent reads and their agreement** (REQ-F-035): the futures that lead the
-  cash market (Nasdaq vs S&P), expected volatility by its *direction* (^VXN for the
-  Nasdaq, ^VIX otherwise), the US 10-year yield, how many of the eight Nasdaq
-  heavyweights are participating, and the opening range — five reads that do **not**
-  come from the same price series, so their agreement is actual evidence, unlike a
-  stack of oscillators over one set of closes. Each says whether it could be
-  **measured at all**, and an unmeasured read *never* counts as agreement. The count
-  is shown per instrument, given to the model in those words, and gates the bot
-  (`no-confluence`). The bot's own record is broken down **by exit rule**, worst first,
-  because that is the view that says which rule is losing the money — on the first 18
-  real closes it read `signal faded −97.12 over 7` against `banked +99.10 over 2`, on a
-  book whose gross was **+119.35** against **148.77 of costs**. Named instruments are
-  traded only **reluctantly** — the dollar index has to promise a real move per hour
-  and doubled conviction before it is worth its spread (3 trades, −19.22 € measured); Heavyweight participation is labelled a **stand-in** for market
-  breadth everywhere it appears — real breadth needs per-constituent data this app
-  does not fetch;
-- **scripted trading**: a plain-text file of conditional orders, executed as
-  broker-side limit orders while the script is explicitly armed (REQ-F-028).
-  [`examples/trade_script_reference.txt`](examples/trade_script_reference.txt) shows
-  every keyword the format has on lines that **cannot fill** — the buys wait far
-  below and the sells far above anything their instrument trades at — so it is safe
-  to load, arm and copy from. A test parses that very file, so the example cannot
-  drift away from the parser;
-- a **trading-bot simulation**: the same composite decision traded across **all**
-  instruments with **simulated money** (50 000 € to start) on live prices, with the
-  real cost model charged — spread on both sides, overnight rollover with the
-  tripled weekend night — so the question "would this strategy have made money
-  over weeks" gets an answer that is not flattered. It shows the invested amount
-  and costs per trade, open and closed simulated trades, and the running P/L. It
-  takes **as many trades as it judges worthwhile** — the limit is a portfolio risk
-  budget (summed loss-if-every-stop-is-hit ≤ 20% of equity, and ≤ 8% inside any one
-  **correlation bucket** — twelve long index positions are one bet, not twelve), not
-  a trade count —
-  closes on its stop/target, on a signal flip, on the holding limit and — because a
-  leveraged position pays rent nightly and triple over the weekend — when the carry
-  no longer covers what is left to win. It trades **both directions** on equal
-  terms — a negative composite opens a short with mirrored geometry, the same
-  sizing and the sell-side rollover — and reports the long and short result
-  separately, so an edge that only exists in a rising market cannot hide inside a
-  total. It logs one summary line per scan so
-  "nothing happened" is never silent, resumes
-  where it left off after a restart, announces every position it opens with a notice
-  you acknowledge (non-modal, one at a time), and **never places an order at eToro**
-  (REQ-F-029);
-- **daily discipline and an evidence gate before real money** (REQ-F-031): a daily
-  result target (350 € by default) that is a *stopping rule*, not a promise — when
-  the day's **booked** net reaches it the bot opens nothing further that day, and
-  when it reaches the mirror-image loss limit it also stops. Since only booked money
-  counts, the bot banks the day by closing the *smallest* open winner that already
-  covers the target (bigger winners keep running) — giving up that one position's
-  remaining upside is the deliberate cost of aiming at a daily number. Size is never
-  increased to win a loss back (the stake is a fraction of *current* equity, so it
-  can only shrink), and trading is Monday–Friday only. Whether the strategy may be
-  trusted with real money is then decided by the closed-trade record alone: trades
-  and distinct days, net after costs, net per day and over the last few days,
-  profit factor, expectancy, win rate, deepest drawdown in € and %, how often the
-  target was actually reached, and the long/short split — compared against
-  thresholds and reported as either "ready" or **every** unmet condition, always
-  visible in the window. No fixed daily profit can be guaranteed by any strategy;
-  what the app guarantees is that the claim is measured before capital is risked;
-- the bot **manages** positions rather than only opening them (REQ-F-032): it may
-  hold **several positions in one instrument** when the model names it again (never
-  both sides at once, and under a per-instrument risk cap tighter than the bucket
-  one), it shows the model **what it already holds** and closes a position when the
-  answer comes back with the other side or an explicit CLOSE — while *silence* never
-  closes anything, and each open position carries the model's current conclusion
-  (**hold** / **close** / **—** for one it has not mentioned) — and it exits on the trade's own **dynamics**: a signal that has
-  faded while the position is not paying, or a winner that has handed back most of
-  its best result. Costs are part of the **entry** decision too: the move to the
-  target must be worth a multiple of the full round trip (both half-spreads plus the
-  rollover to the horizon), or the trade is refused as `cost-vs-edge`;
-- **frequency and timing discipline** (REQ-F-034), added after a measured hour in
-  which the simulation closed six trades with a median holding time of **5.2 minutes**
-  for +1.64 € of gross profit and **19.38 € of costs** — the churn lost that money,
-  not the strategy. An instrument that just closed is left alone for 45 minutes, the
-  book opens at most 6 positions per hour, and **no position is closed by opinion**
-  (a model changing its mind, a faded signal, a surrendered gain) within its first 30
-  minutes — while a stop or target still closes instantly, because those are prices.
-  A model reversal must also be *convinced* (≥ 60%) to be worth the two half-spreads
-  it costs to act on. The loud windows of the trading day — the opening minutes on the
-  instrument's own exchange clock, the 14:30 and 16:00 macro slots, the run into the
-  German 17:30 close, the power hour — demand more conviction and are traded in smaller
-  size, while the **first quarter hour** after an open and the **central-bank window**
-  (20:00/20:30 Berlin) are sat out entirely because their first move reverses too often;
-  every window is measured in its own time zone, so the weeks when Europe and the US
-  shift clocks on different days need no maintenance. And
-  leverage is capped per correlation bucket with **forex tightest** (x5: a few tenths
-  of a percent is a currency pair's whole day);
-- the bot **learns from its own record** (REQ-F-033): every closed trade is appended
-  to an experience log — the features that were true at entry, and what the trade
-  actually kept after costs — and a small neural network is fitted to it **inside the
-  app**, in C++, with no Python or other runtime needed on the machine (it retrains
-  itself every 25 closed trades, or on the button). The model scores each candidate
-  before it is taken, but it has to **earn** the right to refuse: below 200 examples
-  or an out-of-sample AUC of 0.55 it only annotates. Validation always uses the
-  *latest* trades, never a random sample. `TRADINGAPP_BOT_NET=off|advise|gate`
-  chooses how much say it gets; [`tools/train_bot_net.py`](tools/train_bot_net.py) is
-  an optional desktop counterpart that writes the identical model file;
-- an optional **local LLM** (Ollama, no key, nothing leaves the machine) as the
-  bot's proposal source: it gets the same evidence as the cloud advisor and
-  answers with a ranked list of every instrument it considers worth trading, each
-  with side, confidence, leverage and rationale. Three
-  settings decide what the simulator does with it — *off* (log only), *confirm*
-  (the model may veto the composite) or *lead* (trade the model's pick) — and in
-  none of them can it exceed the risk limits (REQ-F-030). `./setup.sh ollama`
-  installs the runtime and a small model under `~/.local`.
-
-If no API keys are configured it runs in a clearly-labelled **SIMULATION** mode
-with a synthetic price feed, so it is fully usable before you have credentials.
-
-## Build
-
-The full quality pipeline runs natively on **both Linux and Windows**, on
-x86-64 and on ARM64 (Raspberry Pi included — the few stages whose tools are
-x86-64-only report `skipped`, see [docs/platforms.md](docs/platforms.md)). Each
-`*.sh` entry point has a one-to-one PowerShell counterpart; see
-[docs/windows.md](docs/windows.md) for the complete tool mapping and the
-Windows-specific notes.
-
-On a naked Debian/Ubuntu Linux, `./setup.sh` installs every required tool
-and dependency (compilers, CMake, Qt 6 incl. Charts via aqtinstall, the
-clang-18/LLVM tooling, cppcheck/clazy/valgrind/lcov, lizard, PMD, Doxygen +
-Java, StrictDoc/Doorstop) idempotently; `./setup.sh update` brings them to their
-latest versions and `./setup.sh status` reports what is present. On Windows,
-`.\setup.ps1` does the same through winget + pip + aqtinstall. License-bound
-tools (Axivion Suite, Squish Coco) are detected and reported but must be
-installed manually.
-
-The repository has three top-level entry points:
-
-```bash
-./build_all.sh            # everything: app, tests, traceability, docs,
-                          # coverage, static analysis, sanitizers, Axivion,
-                          # and the PDF quality report
-./build_all.sh app        # ONLY the TradingApp executable (build/TradingApp)
-./build_all.sh build test # any subset of stages, in order
-./build_all.sh --skip axivion  # everything except the (slow) Axivion analysis
-./clean_all.sh [--deep]   # remove everything generated
+```mermaid
+flowchart TD
+    M["main.cpp — composition root"] --> U
+    U["<b>ui</b> — Qt Widgets, Qt Charts, Model/View"] --> S
+    S["<b>services</b> — Qt Network: eToro REST, market feeds, config"] --> D
+    D["<b>domain</b> — Qt Core ONLY: pure trading logic, no I/O, no UI"]
 ```
 
-```powershell
-.\setup.ps1                     # provision/verify the Windows toolchain
-.\build_all.ps1                 # same stages, same order
-.\build_all.ps1 build test      # any subset of stages
-.\build_all.ps1 -Skip axivion   # everything except the (slow) Axivion analysis
-.\clean_all.ps1 [-Deep]         # remove everything generated
-```
+`trading_domain` links Qt::Core and nothing else, so a domain file that reaches for a
+socket or a widget **does not compile**. Details and per-module responsibilities:
+[docs/architecture.md](docs/architecture.md).
 
-Stages: `build test trace docs coverage analysis sanitize axivion report`
-(default: all, continuing past failing stages with a summary at the end); the
-last one writes **`downloads/TradingApp-quality-report.pdf`** — one colour PDF
-with the run's verdict, every test function and its result, the traceability
-highlights per requirement, the analyzer findings, code metrics, coverage and
-the sanitizer results (`tools/make_report.py`, shared by both platforms); `app`,
-`release` and `android` (APK via androiddeployqt) are extra stages that are only run when named, and `build_all.ps1`
-additionally offers `vs` and `deploy`. For a different single CMake target:
-`cmake --build build --target <name>`.
+## Documentation
 
-**No licence, no problem.** Stage outcomes are `ok` / `skipped` / `FAILED`. A
-stage needing a tool that is license-bound (Axivion Suite, Squish Coco) or
-otherwise absent reports **`skipped`** with a message saying what to install, and
-does *not* fail the run — so the whole pipeline goes green on a machine with only
-the free toolchain. Everything **open source** that the pipeline needs is
-installed for you by `./setup.sh` / `.\setup.ps1`; `setup.sh status` and
-`setup.ps1 status` list what is present, what is license-bound, and what has no
-counterpart on the platform.
-
-`build_all.ps1` selects the Qt kit itself (newest kit containing Qt6Charts,
-MSVC preferred) and imports the Visual Studio developer environment into the
-session, so no "x64 Native Tools" prompt is required. Override the kit with
-`$env:QT_PREFIX` or `-QtKit mingw_64`.
-
-Requires Qt 6 with the **Widgets**, **Network**, and **Charts** modules
-(developed against Qt 6.11.1), CMake ≥ 4.2 and a C++23-capable compiler
-(GCC 13+, Clang 17+, MSVC 19.38+). The sources are
-plain cross-platform Qt/C++ — the same code builds on Linux (x86-64 **and**
-ARM64), Windows, and Android; only the Qt kit and the packaging step differ.
-
-### Linux / macOS
-
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$HOME/Qt/6.11.1/gcc_64
-cmake --build build
-./build/TradingApp
-```
-
-### Raspberry Pi (ARM64)
-
-A Pi 4/5 with a **64-bit Raspberry Pi OS Trixie** (Debian 13) or newer builds and
-runs it with the ordinary commands — the scripts resolve the ARM64 Qt kit
-(`~/Qt/<ver>/gcc_arm64`) themselves, so nothing needs an extra flag:
-
-```bash
-./setup.sh install                  # installs Qt's Linux ARM64 kit + the toolchain
-./build_all.sh build test trace
-./build/TradingApp
-```
-
-`sudo apt-get install qt6-base-dev qt6-charts-dev` instead of the aqt kit also
-works on Trixie, and `tools/package_appimage.sh` produces
-`TradingApp-<version>-aarch64.AppImage`. Bookworm (Debian 12) has no supported
-route: its glibc 2.36 is below what Qt's aarch64 binaries need (2.38) and its own
-Qt is 6.4.2, below the app's floor — upgrade the OS.
-Details — display server (`xcb` / `wayland` / `eglfs`), which pipeline stages
-report `skipped` on ARM64 and why, and what CI verifies —
-in [docs/platforms.md](docs/platforms.md).
-
-### Windows (MSVC)
-
-Install the Qt 6 **msvc2022_64** kit (with the Charts module), Visual Studio 2022
-(or its Build Tools), and CMake — or let `.\setup.ps1` do it. Then, from an
-ordinary PowerShell prompt:
-
-```powershell
-.\build_all.ps1 app          # -> build\TradingApp.exe
-.\build_all.ps1 build test   # app + tests + JUnit results
-```
-
-Or by hand, from a *Developer* command prompt:
-
-```powershell
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug `
-      -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\msvc2022_64
-cmake --build build
-build\TradingApp.exe
-```
-
-The **MinGW** kit works too: `.\build_all.ps1 -QtKit mingw_64` (the matching
-`C:\Qt\Tools\mingw*\bin` is put on PATH automatically).
-
-#### Visual Studio IDE
-
-`CMakeLists.txt` is the single description of the build, so the `.sln` is
-**generated**, not committed:
-
-```powershell
-.\tools\make_vs_solution.ps1 -Open   # -> build-vs\TradingApp.sln
-.\build_all.ps1 vs                   # same thing, as a named stage
-```
-
-The solution contains `TradingApp`, `trading_domain`, `trading_services` and all
-12 `tst_*` projects in Debug/Release/RelWithDebInfo; `TradingApp` is the startup
-project, the Qt DLL directory is already on the debugger's PATH, and
-*Test → Run All Tests* works. Re-run the script after adding or removing source
-files. Two `.sln`-free alternatives, both driven by
-[CMakePresets.json](CMakePresets.json):
-
-- **File → Open → Folder** on the repository root — Visual Studio offers the
-  `windows-msvc-debug` and `visual-studio` presets directly.
-- `cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug`
-  from any shell. Linux has `linux-gcc-debug` / `linux-gcc-release` presets too.
-  All presets take the Qt kit from `$QT_PREFIX`.
-
-To make the built executable runnable on its own — Qt DLLs, the platform
-plugin, the Schannel TLS backend and the compiler runtime copied next to it:
-
-```powershell
-.\build_all.ps1 deploy               # -> build\TradingApp.exe runs with nothing on PATH
-.\tools\deploy_app.ps1 -IncludeTests # also make the tst_*.exe standalone
-```
-
-Qt 6 uses the **Schannel** TLS backend on Windows, so HTTPS to the eToro API
-works with no OpenSSL install. For a distributable package rather than a
-runnable build tree, see [Packaging](#packaging-desktop) below.
-
-The Windows pipeline substitutes a few tools that do not exist there — MSVC
-`/analyze` for `g++ -fanalyzer`, OpenCppCoverage for gcov/lcov, ASan (MSVC) plus
-UBSan (clang-cl) for the combined GCC sanitizer build — and reports the genuine
-gaps (clazy, TSan, valgrind) instead of hiding them. MC/DC coverage is measured
-**twice**, by Squish Coco and by clang-cl/llvm-cov. Details, and the PowerShell
-pitfalls worth knowing about, are in [docs/windows.md](docs/windows.md).
-
-### Android
-
-Requires the Qt 6 **Android** kit (e.g. `android_arm64_v8a`), the Android SDK +
-NDK, and a JDK. The simplest setup is to open the project in **Qt Creator** with
-an Android kit selected, which fills in the SDK/NDK paths and toolchain. On the
-command line, configure with the Android kit's `qt-cmake` wrapper:
-
-```bash
-~/Qt/6.11.1/android_arm64_v8a/bin/qt-cmake -S . -B build-android -G Ninja \
-      -DQT_ANDROID_ABIS=arm64-v8a
-cmake --build build-android --target apk     # produces the APK
-```
-
-`qt_add_executable()` builds the app as a shared library and `androiddeployqt`
-packages it into an APK. The build **bundles OpenSSL** (fetched at configure
-time — see [`CMakeLists.txt`](CMakeLists.txt)) because Android's Qt does not ship
-it and HTTPS to eToro would otherwise fail.
-
-Caveats specific to Android:
-
-- The UI is **Qt Widgets** — a desktop-style layout. It runs on a phone but is
-  not touch-optimised.
-- The APK is sandboxed and has no working directory or `ETORO_*` environment, so
-  `config.json` / env-var configuration does not apply and the app starts in
-  **SIMULATION** mode. To trade for real you would have to ship credentials into
-  the app's data dir (bundle a `config.json` via `QT_ANDROID_PACKAGE_SOURCE_DIR`,
-  or write to `AppConfigLocation`) — private builds only; never publish keys.
-
-### Download a ready-made build
-
-| Platform | Artifact | How to run it |
-|---|---|---|
-| Linux (x86-64) | `TradingApp-<version>-x86_64.AppImage` | `chmod +x` it and run — one file, no install, Qt bundled |
-| Linux (ARM64, incl. Raspberry Pi 4/5) | `TradingApp-<version>-aarch64.AppImage` | same — needs a 64-bit OS with glibc ≥ 2.39: Raspberry Pi OS **Trixie** or Ubuntu 24.04 for Pi (Qt's own aarch64 binaries require 2.38, see [docs/platforms.md](docs/platforms.md)) |
-| Windows (x64) | `TradingApp-<version>-windows-x64.zip` | unzip anywhere and run `TradingApp.exe` — every DLL is inside, no Qt and no MSVC redistributable needed |
-| Android (arm64-v8a) | `TradingApp-<version>-arm64-v8a.apk` | `adb install` it, or copy it to the phone and open it (allow installs from unknown sources). Built and signed by [`tools/build_android.sh`](tools/build_android.sh) |
-| macOS | *build from source* | `cmake --preset default && cmake --build build` with Qt 6.11 — the CI job `build-macos` keeps it working; no notarised `.dmg` is published (that needs an Apple Developer identity) |
-| iOS / iPhone | *build from source, Xcode* | `~/Qt/<ver>/ios/bin/qt-cmake -S . -B build-ios -GXcode`, then sign with your own team in Xcode and deploy ([docs/platforms.md](docs/platforms.md)). **No `.ipa` is published**: Apple only installs signed builds, signing needs a paid Apple Developer identity, and that identity cannot live in a public CI. The layout is also desktop-first — treat iOS as "it compiles and runs", not as a phone UI |
-| every release | `TradingApp-quality-report.pdf` | the whole quality run in one PDF: requirements traceability, test results, all eight analyzers, code metrics, clone detection, coverage and the sanitizers |
-
-All are attached to the [latest release](https://github.com/MartinSch77/TradingApp/releases/latest),
-each with a `.sha256` next to it. Build them yourself into `downloads/`:
-
-```bash
-tools/package_appimage.sh          # Linux  -> downloads/TradingApp-<version>-<arch>.AppImage
-                                   #           (arch = the host's: x86_64 or aarch64)
-tools/build_android.sh --release   # Android -> downloads/TradingApp-<version>-arm64-v8a.apk
-python3 tools/make_report.py       # the PDF -> downloads/TradingApp-quality-report.pdf
-```
-```powershell
-.\tools\package_portable.ps1       # Windows -> downloads\TradingApp-<version>-windows-x64.zip
-```
-
-The PDF the release pipeline attaches marks the **Axivion** section "not run": the
-Suite is licence-bound and x86-64-host-only, so no public runner can produce it. To
-publish a report that includes it, run the full pipeline on a machine that has the
-Suite and attach that PDF over the CI one:
-
-```bash
-./build_all.sh                     # all stages, Axivion included, then the report
-gh release upload v<version> downloads/TradingApp-quality-report.pdf --clobber
-```
-
-`downloads/` is git-ignored — the artifacts belong to a release, not to the
-history. Both scripts build their own Release tree, bundle the Qt runtime
-(linuxdeploy + its Qt plugin on Linux, windeployqt on Windows) and print a
-SHA-256; `.github/workflows/release.yml` runs these same two scripts on a `v*`
-tag and attaches the results to the release. Without API keys the app starts in
-SIMULATION mode, so a downloaded build is safe to try.
-
-Two caveats worth knowing: the AppImage is built on Ubuntu 22.04, so it needs
-glibc ≥ 2.35 (any distro from 2022 onwards), and it deliberately does **not**
-bundle OpenSSL — Qt loads the system libssl for HTTPS, which keeps the download
-out of the business of shipping a frozen TLS stack.
-
-### Packaging (desktop)
-
-`cmake --install build --prefix dist` produces a self-contained folder with the
-binary and every Qt library/plugin it needs, ready to zip or hand to `cpack`. It
-runs **windeployqt** on Windows and **macdeployqt** on macOS automatically
-(`-DTRADINGAPP_SKIP_QT_DEPLOY=ON` turns that step off, which is what the AppImage
-build does — linuxdeploy handles the bundling there).
-
-## Configuration / API keys
-
-The settings are split into two files so the repo never carries a secret:
-
-- `config.json` — non-secret settings (mode, symbol, leverage, …); committed.
-- `apiKeyEtoro.json` — the API keys only, looked up beside `config.json`;
-  **git-ignored — never commit it**.
-
-1. Sign in at **[api-portal.etoro.com](https://api-portal.etoro.com/)** →
-   **Settings → Trading → API Key Management** → **Create New Key**.
-2. Copy `apiKeyEtoro.example.json` to `apiKeyEtoro.json` (next to the binary /
-   `config.json`, or beside the file the `ETORO_CONFIG` env var points at) and
-   fill in `apiKey` / `userKey`.
-
-Config resolution order (later wins): built-in defaults → `config.json` →
-`apiKeyEtoro.json` → environment variables. Any field can also be set via env
-var:
-
-| Setting        | JSON key         | Env var                | Default                             |
-|----------------|------------------|------------------------|-------------------------------------|
-| API key        | `apiKey`         | `ETORO_API_KEY`        | *(empty → simulation)*              |
-| User key       | `userKey`        | `ETORO_USER_KEY`       | *(empty → simulation)*              |
-| Mode           | `mode`           | `ETORO_MODE`           | `demo`                              |
-| Username       | `username`       | `ETORO_USERNAME`       | *(empty)*                           |
-| Symbol         | `symbol`         | `ETORO_SYMBOL`         | `SPX500`                            |
-| Base URL       | `baseUrl`        | `ETORO_BASE_URL`       | `https://public-api.etoro.com/api`  |
-| Order currency | `orderCurrency`  | `ETORO_ORDER_CURRENCY` | `usd`                               |
-| Leverage       | `defaultLeverage`| `ETORO_LEVERAGE`       | `1`                                 |
-| Poll interval  | `pollIntervalMs` | `ETORO_POLL_MS`        | `5000`                              |
-
-### Demo vs. live (real money)
-
-- **`mode: "demo"`** (default) trades your eToro **virtual** account — no real
-  money. The app uses the `/demo/` endpoint variants.
-- **`mode: "real"`** trades **real money**. This is opt-in only: the mode badge
-  turns red, the window title says *LIVE*, and every buy/sell/close asks for
-  confirmation first.
-
-The app will never place a real-money order unless you both provide credentials
-*and* explicitly set `mode` to `real`.
-
-#### The machinery behind a real order (REQ-N-008, REQ-N-009)
-
-The double-press keeps a human in the loop for one action. It does not make the
-request *correct*, and it leaves no record. Four separate pieces do that, built
-and tested before anything is wired to them:
-
-- **[`Money`](src/domain/Money.h)** — every amount that can move real money is an
-  integer number of minor units plus its currency, with **one** named lossy
-  conversion (`fromDouble`, rounding half away from zero) and exact arithmetic
-  after it. Mixing currencies yields an amount that reports itself **invalid**
-  rather than a plausible wrong number, and comparison across currencies is
-  *unordered*, so no cap check can pass by accident.
-- **[`OrderRequestValidator`](src/domain/OrderRequestValidator.h)** — a pure check
-  that **refuses rather than repairs**: an amount that is not the validated stake,
-  a leverage off the instrument's ladder, an order currency that is not the
-  account's (eToro accepts that one and rejects it at execution), a units count
-  over the per-order cap, a stop bigger than the money at risk, a limit trigger on
-  the wrong side that would fill at once. Every refusal carries a stable code
-  beside its sentence, because a reason only a human can read cannot be counted.
-- **[`LiveArm`](src/services/OrderGateway.h)** — an explicit, **time-bounded**
-  armed state carrying the per-order and per-day caps it was granted under, plus a
-  **sticky kill switch**: one action disarms immediately, outranks every other
-  refusal, and stays tripped until it is explicitly cleared, so a panic action
-  cannot be undone by the next timer tick.
-- **`IOrderGateway` + `FakeOrderGateway` + `OrderAudit`** — the seam that makes the
-  send testable at all (the fake records exactly what it was asked to do), and an
-  append-only JSON-Lines record of **every** attempt — sent, refused by validation,
-  refused by the arming state, rejected by the broker — with the order's
-  fingerprint, both timestamps, the request id and the broker's verbatim answer.
-
-`guardedSend()` is the single composed entry point, because the three guarantees
-are only guarantees when none of them can be skipped individually. Wiring this to
-a live account is still a separate, deliberate act under REQ-N-005 — the machinery
-exists so that act does not have to be written under time pressure.
-
-## eToro endpoints used
-
-All requests send the documented `x-api-key`, `x-user-key`, and per-request
-`x-request-id` (UUID) headers. See [`src/services/EtoroClient.cpp`](src/services/EtoroClient.cpp).
-
-| Purpose            | Method & path | Verified live |
-|--------------------|---------------|:---:|
-| Resolve instrument | `GET /v1/market-data/search?internalSymbolFull=SPX500&fields=…` | ✅ (SPX500 = id `27`) |
-| Chart history      | `GET /v1/market-data/instruments/{id}/history/candles/{dir}/{interval}/{count}` | ✅ |
-| Live price         | `GET /v1/market-data/instruments/rates?instrumentIds={id}` | ✅ |
-| Open position      | `POST /v2/trading/execution/{demo\|}/orders` (`orderType: mkt`) | ⚠️ needs trading token |
-| Limit order        | `POST /v2/trading/execution/{demo\|}/orders` (`orderType: mit` + `triggerRate`) | ⚠️ needs trading token |
-| Order status       | `GET /v2/trading/info/{demo\|}/orders:lookup?orderId={id}` | ⚠️ needs trading token |
-| Cancel limit order | `DELETE /v2/trading/execution/{demo\|}/orders/{orderId}` | ⚠️ needs trading token |
-| Close position     | `POST /v1/trading/execution/{demo\|}/market-close-orders/positions/{positionId}` | ⚠️ needs trading token |
-| Portfolio          | `GET /v1/trading/info/{demo\|}/portfolio` | ⚠️ needs trading token |
-
-Confirmed real quirks (already handled in code):
-- Search **ignores** a free-text `query=`; filter with **`internalSymbolFull`**. The
-  first result row `{"instrumentId":-100000}` is a placeholder and is skipped.
-- Candles are **nested**: `{ candles: [ { instrumentId, candles: [ {fromDate,open,high,low,close} ] } ] }`.
-- Rates fields are `lastExecution` / `bid` / `ask` (no `currentRate`/`close`).
-
-**Note on JSON schemas.** Order and portfolio response schemas are only visible in
-the authenticated reference. The client parses responses **defensively** (tries
-several field names, unwraps `data`) and logs anything it cannot parse to the
-Activity panel. Adjust the `pick(...)` key lists in `src/services/EtoroClient.cpp`, and the
-candle interval/direction/count near the top of `EtoroClient.h`
-(`m_candleInterval`, `m_candleDirection`, `m_candleCount`) if needed.
-
-### Troubleshooting: HTTP 403 `InsufficientPermissions`
-
-Market-data calls succeed but trading/portfolio calls return
-`403 {"errorCode":"InsufficientPermissions"}`. This means your API token is an
-**`UnregisteredApplication`** token without trading scope. Register/approve the
-application in the API portal and regenerate the keys to get trading + portfolio
-access; no code change is needed afterwards.
-
-## Architecture & project layout
-
-The code is organised in three layers, each built as its own target so the
-dependency direction (UI → services → domain) is enforced by the linker: the
-domain cannot reach the network, and the services cannot reach the widgets.
-All layers are plain cross-platform Qt/C++, so the same split holds on Linux,
-Windows and Android.
-
-### `src/domain/` — pure trading logic (`trading_domain`, Qt Core only)
-
-Deterministic functions with no I/O and no UI, in `namespace trading` —
-independently unit-testable and shared by every view that shows a signal.
-
-| File | Responsibility |
-|------|----------------|
-| [`Models.h`](src/domain/Models.h)                 | `Instrument`, `Candle`, `Position`, ... value types |
-| [`Indicators.*`](src/domain/Indicators.h)         | SMA, RSI, MACD, Bollinger, stochastic, volatility, ROC |
-| [`Forecasting.*`](src/domain/Forecasting.h)       | OLS regression, kNN analogs, Hurst, Monte-Carlo outlook |
-| [`SignalEnsemble.*`](src/domain/SignalEnsemble.h) | The BUY/SELL indicator vote + VIX confidence haircut |
-| [`DecisionEngine.*`](src/domain/DecisionEngine.h) | Weighted multi-source composite + AI evidence prompt |
-| [`TradePlan.*`](src/domain/TradePlan.h)           | Costed trade proposal: verdict, P(win), risk factor, leverage, SL/TP, cost bill |
-| [`PositionMath.*`](src/domain/PositionMath.h)     | SL/TP amount↔rate maths, value-per-point, price decimals |
-| [`EventInsight.*`](src/domain/EventInsight.h)     | Macro-event impact heuristics and descriptions |
-| [`TradeScript.*`](src/domain/TradeScript.h)       | Trade-script parsing + per-entry execution predicates |
-| [`PaperTrader.*`](src/domain/PaperTrader.h)       | Paper-trading bot: simulated account, real cost model, entry/exit rules |
-
-### `src/services/` — integration (`trading_services`, adds Qt Network)
-
-| File | Responsibility |
-|------|----------------|
-| [`Config.*`](src/services/Config.h)                   | Load keys/settings from JSON + env; demo/live decision |
-| [`EtoroClient.*`](src/services/EtoroClient.h)         | The broker: eToro REST calls (rates, orders, portfolio, history) |
-| [`SimulationEngine.*`](src/services/SimulationEngine.h) | Synthetic feed + virtual account (no-credentials fallback) |
-| [`MarketFeeds.*`](src/services/MarketFeeds.h)         | Public web feeds: VIX, TradingView ratings, news |
-| [`AiAdvisor.*`](src/services/AiAdvisor.h)             | Claude (Anthropic API) decision synthesis |
-| [`OllamaAdvisor.*`](src/services/OllamaAdvisor.h)     | Local-LLM trading proposal (Ollama, optional, no key) |
-| [`JsonHttp.*`](src/services/JsonHttp.h)               | Shared reply/retry/JSON plumbing for all REST calls |
-| [`EconomicCalendar.*`](src/services/EconomicCalendar.h) | Macro-economic calendar feed |
-
-### `src/ui/` + `src/main.cpp` — presentation (Qt Widgets/Charts)
-
-| File | Responsibility |
-|------|----------------|
-| [`MainWindow.*`](src/ui/MainWindow.h)         | Main window: trade panel, signals, positions, events |
-| [`ScreenerDialog.*`](src/ui/ScreenerDialog.h) | Leverage screener window |
-| [`PriceChart.*`](src/ui/PriceChart.h)         | Live time-vs-price Qt Charts widget |
-| [`ChartView.*`](src/ui/ChartView.h)           | Interactive pan/zoom chart view |
-| [`PositionsModel.*`](src/ui/PositionsModel.h) | Open-trades table model, in-place re-price |
-| [`TradeGauge.*`](src/ui/TradeGauge.h)         | Per-trade gauge window |
-| [`TradeScriptPanel.*`](src/ui/TradeScriptPanel.h) | Trade-script runner + window |
-| [`BotSimPanel.*`](src/ui/BotSimPanel.h)       | Paper-trading bot runner + window (simulated money, live prices) |
-| [`Palette.h`](src/ui/Palette.h)               | Shared UI colors |
-| [`main.cpp`](src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
-
-### The four licensed Qt tools
-
-Axivion Suite, Squish, Squish Coco and Squish Test Center are commercial products
-from The Qt Company and cannot be installed by `setup.sh`. **How to obtain, install
-and configure each of them — including where the licence file goes and which
-parameter points this project at the installation — is in
-[docs/qt-tools.md](docs/qt-tools.md).** `tools/check_prerequisites.sh` reports which
-of them the current machine has.
-
-Without them nothing breaks: their stages report *skipped*, the seven open-source
-analyzers still gate at zero findings, gcov and clang MC/DC still measure coverage,
-and the quality PDF lists the missing licences so a reader can tell "measured and
-clean" from "not measured here".
-
-## SonarCloud is informational, not a gate
-
-The badges above show SonarCloud's own measures, not its quality gate. That is
-deliberate: Sonar's default gate fails on *hotspot* categories that need a human
-"safe" verdict on their dashboard — a pseudorandom generator used for reproducible
-model training, plain HTTP to a model server on `localhost`, unpinned action
-versions — and none of those can be answered by a build. This project's gates are
-the ones in `build_all.sh`: the test suite, requirements traceability, the metrics
-ratchet, eight analyzers at zero findings, clone detection, the sanitizers and
-Axivion's MISRA C++ 2023. SonarCloud runs alongside them as a second opinion, and
-its findings are read rather than obeyed.
-
-Two notes on the badges themselves. There is no "issues" badge any more: Sonar
-retired `metric=violations`, and the badge endpoint answers a JSON error for it
-rather than an image — which is why that badge rendered as a broken-image icon
-until it was replaced by the two measures above. And what the dashboard currently
-counts is worth stating plainly rather than hiding behind a green picture: **0
-bugs**, 891 code smells and 113 findings Sonar files as vulnerabilities, of which
-the large majority (74) are GitHub Actions hardening rules about workflow
-permissions and unpinned action versions, 24 are taint warnings in the Python
-tooling and 3 are the reproducible-RNG rule in the simulation feed. None is a
-finding about the trading path; they are on the backlog as hygiene, not as
-blockers.
-
-## QA helper
-
-`TRADINGAPP_SHOT=/path/out.png ./build/TradingApp` grabs every visible window
-to one PNG each (further windows get a `-1`, `-2`, … suffix) after 3000 ms and
-exits — handy for headless screenshots (`QT_QPA_PLATFORM=offscreen`).
-`TRADINGAPP_SHOT_OPEN=1` opens the decision and closed-trades windows first;
-`TRADINGAPP_SHOT_DELAY_MS` overrides the capture delay.
-
-## The bot's switches
-
-| Variable / setting | Effect |
+| | |
 |---|---|
-| `TRADINGAPP_BOT_ARM=1` | arms the paper bot at start-up, for unattended runs (the armed flag is persisted anyway) |
-| `TRADINGAPP_BOT_AI=off\|confirm\|lead` | how much say the local model gets over ENTRIES (REQ-F-030); it may also close positions it no longer believes in (REQ-F-032) |
-| `TRADINGAPP_BOT_NET=off\|advise\|gate` | how much say the LEARNED model gets (REQ-F-033): score only, or refuse below the floor once it is trusted |
-| `TRADINGAPP_BOT_TARGET` / `TRADINGAPP_BOT_LOSS_LIMIT` | the daily stopping rules in EUR of booked net; `0` switches one off (REQ-F-031) |
-| `TRADINGAPP_FORCE_SIMULATION=1` | the app runs in SIMULATION whatever the keys say — no live mode, no broker network, no order path. What makes the Squish GUI suite safe on a machine that has real credentials (REQ-N-007) |
-| `TRADINGAPP_BOT_TRAIN=1` | refit the learned model once at start-up (for headless machines with nobody to press the button) |
-| `config.json`: `botDailyTarget`, `botDailyLossLimit`, `ollamaHost`, `ollamaModel` | the same settings, without the environment |
-
-The bot writes three files next to its config (`~/.config/TradingApp/eToro Trader/`
-on Linux): `botsim.json` (the book — open trades, closed trades, the day ledger),
-`botsim-experience.jsonl` (one training example per closed trade) and `botnet.json`
-(the model it fitted to them).
-
-
-## Additional build information
-**build linux / windows / macos** = the three platform jobs of
-[ci.yml](.github/workflows/ci.yml), reported separately because a GitHub badge
-reports a workflow and not a job — and the defects this codebase has hit were
-platform-specific (MSVC rejected code that GCC and clang accepted). Each job
-publishes its own status, failures included, so a red badge names the platform.
-The same run also covers traceability, the sanitizers and the static analysis.
-**tests** = the Qt Test suite on its own
-([tests.yml](.github/workflows/tests.yml)), which also measures the **coverage**
-number (line coverage of the domain + services layers, published as a badge
-endpoint on the `badges` branch — no third-party coverage service involved).
-**sonarcloud** is the SonarCloud quality gate for project
-`MartinSch77_TradingApp` — note that it comes from SonarCloud's *automatic
-analysis* of this public repository, not from
-[sonarcloud.yml](.github/workflows/sonarcloud.yml), which stays a no-op until the
-`SONAR_TOKEN` secret exists. **coverity** is the Coverity Scan build status;
-that analysis runs server-side on a weekly submission, so the badge trails the
-other ones by design. **latest release** links the downloads below.
-
-
-## Topics / keywords
-
-Searchable subject tags for this repository. These are the GitHub **topics** —
-keep them in sync with the repository settings (Settings → General → Topics, or
-the `gh` command below), since GitHub search and the topic pages only index what
-is configured there, not what a README mentions.
-
-`qt` `qt6` `cpp` `cpp23` `cmake` `cross-platform` `desktop-application`
-`trading` `etoro` `technical-analysis` `monte-carlo`
-`static-analysis` `axivion` `misra` `clang-tidy` `cppcheck` `sanitizers`
-`code-coverage` `mcdc` `requirements-traceability` `strictdoc` `aspice`
-`functional-safety`
-
-Apply them in one go (needs the GitHub CLI, `gh auth login` once):
-
-```bash
-gh repo edit MartinSch77/TradingApp \
-  --add-topic qt --add-topic qt6 --add-topic cpp --add-topic cpp23 \
-  --add-topic cmake --add-topic cross-platform --add-topic desktop-application \
-  --add-topic trading --add-topic etoro --add-topic technical-analysis \
-  --add-topic monte-carlo --add-topic static-analysis --add-topic axivion \
-  --add-topic misra --add-topic clang-tidy --add-topic cppcheck \
-  --add-topic sanitizers --add-topic code-coverage --add-topic mcdc \
-  --add-topic requirements-traceability --add-topic strictdoc --add-topic aspice \
-  --add-topic functional-safety
-```
-
-GitHub allows at most 20 topics per repository, so if it rejects the tail, drop
-the least specific ones (`cpp`, `cmake`, `cross-platform`) first — the
-quality-toolchain tags are what make this repository findable, since a
-"Qt trading app" is common and a "Qt trading app with MISRA C++, MC/DC coverage
-and requirements-as-code traceability" is not.
+| [Building on each platform](docs/platforms.md) | Linux (x86-64 and ARM64/Raspberry Pi), macOS, Android |
+| [Windows](docs/windows.md) | MSVC, MinGW, and the PowerShell counterpart of every script |
+| [Configuration and API keys](docs/configuration.md) | `apiKeyEtoro.json`, demo vs. real money, the safety gates |
+| [The eToro API as used here](docs/etoro-api.md) | Endpoints, quirks, rate-limit pools, troubleshooting |
+| [The trading bot](docs/bot.md) | Every switch, the risk model, the exit rules, the decision log |
+| [Requirements](docs/requirements.md) · [Design](docs/design.md) · [Test spec](docs/test_spec.md) | The generated V-model documents |
+| [Verification](docs/verification.md) · [Tools](docs/tools.md) | What is measured, how, and the gotchas that cost hours |
+| [Qt quality tools](docs/qt-tools.md) | How to obtain, install and point this project at all four |
+| [V-model](docs/vmodel.md) · [Qt framework map](docs/qt-framework-showcase.md) | Process and technology overviews |
 
 ## Disclaimer
 
-Trading involves risk of financial loss. This is example software provided as-is,
-is not affiliated with or endorsed by eToro, and is not financial advice. Verify
-every order in eToro's own interface. Use `demo` mode until you fully trust the
-behaviour on your account.
+Trading involves risk of financial loss. This is example software provided as-is, is
+not affiliated with or endorsed by eToro, and is not financial advice. Verify every
+order in eToro's own interface. Use `demo` mode until you fully trust the behaviour on
+your account.
 
 ## License
 
-[MIT](LICENSE). Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md)
-and [SECURITY.md](SECURITY.md) for the quality bar and how to report
-vulnerabilities.
+TradingApp is free and open-source software licensed under the
+GNU General Public License v3.0 or later.
+
+It uses the Qt framework under its applicable open-source licenses.
+
+The full text is in [LICENSE](LICENSE); everything the project links against or ships
+is inventoried in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), with the texts
+under [`LICENSES/`](LICENSES/). Every source file carries an
+`SPDX-License-Identifier: GPL-3.0-or-later` header.
+
+Why GPL rather than something more permissive: **Qt Charts is offered under a
+commercial licence or GPLv3 only — it has no LGPL option** — so a distributed binary
+linking it must be GPLv3-compatible. The project was MIT until v1.0.2; MIT was not a
+licence these binaries could actually be distributed under. Each release therefore also
+attaches the corresponding source archive, as GPL-3.0-or-later requires.
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and
+[SECURITY.md](SECURITY.md) for the quality bar and how to report vulnerabilities.

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Build the HTML documentation: refresh the traceability matrix (so the docs
 # always ship the current trace state), fetch PlantUML if missing, run doxygen.
 set -euo pipefail

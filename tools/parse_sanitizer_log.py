@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Normalize sanitizer / valgrind raw logs into the pipe format the Axivion
 external import understands (file|line|severity|id|message — the same shape
 as the cppcheck log), so runtime findings appear on the dashboard next to the

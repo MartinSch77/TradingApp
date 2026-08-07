@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Windows counterpart of ./clean_all.sh — remove everything build_all.ps1
     (and the tools\ scripts) generate.
@@ -30,9 +33,16 @@ $Root = Get-RepoRoot
 
 $Generated = @(
     'build'
+    # build-cov and build-cov-coco-gui were both missing here, exactly as in clean_all.sh.
+    # Measured 2026-08-07 on Linux: a stale build-cov survived a full clean (480 MB) and the
+    # GUI-coverage tree survived too (518 MB). A clean that leaves a gigabyte of stale build
+    # trees behind is not one, and a stale tree is what makes a later measurement describe
+    # code that no longer exists.
+    'build-cov'
     'build-cov-gcc'
     'build-cov-mcdc'
     'build-cov-coco'
+    'build-cov-coco-gui'
     'build-cov-msvc'
     'build-san'
     'build-san-tsan'

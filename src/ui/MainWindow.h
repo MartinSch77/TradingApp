@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_MAINWINDOW_H
 #define TRADINGAPP_MAINWINDOW_H
 
@@ -141,7 +144,15 @@ private slots:
     void connectInstrumentFeeds();
     void buildDecisionSourcesTable(QVBoxLayout *lay);
     void onReferenceSeries(const QString &ticker, const QList<double> &closes);
+    void onReferenceVolumeSeries(const QString &ticker, const trading::VolumeSeries &bars);
+    // The heavyweight window: lazily built, fed and raised (mirrors openDecision).
+    void openHeavyPanel();
+    // Every book the heavyweight window's reads need, from the one place that knows them.
+    void pushBooksToHeavyPanel();
     void updateConfluenceSignal();
+    // Repaints the header clock. Called once per second, so it does formatting only —
+    // no feed access, no model rebuild.
+    void updateClock();
 
     // Decision window: a separate window listing each source's independent read and a
     // final AI+algorithmic conclusion on which instrument to trade, and how, now.
@@ -366,6 +377,13 @@ private:
 
     PriceChart *m_chart = nullptr;
     QLabel *m_titleLabel = nullptr;
+    // Wall-clock time to the SECOND, with its own 1 s timer. A trading window that
+    // shows prices but not the time makes every "is this quote current?" question
+    // unanswerable from the screen, and this app already keys behaviour on the clock
+    // (session phases, the policy window, rollover). The tooltip carries UTC and New
+    // York, because those are the clocks the session rules actually read.
+    QLabel *m_clockLabel = nullptr;
+    QTimer *m_clockTimer = nullptr;
     QComboBox *m_instrumentBox = nullptr;  // instrument selector next to the title
     QPushButton *m_chartToggle = nullptr;  // small show/hide toggle for the chart window
     QPushButton *m_screenerButton = nullptr;  // opens the leverage screener dialog
@@ -548,7 +566,10 @@ private:
     QHash<QString, WebRating> m_ratingBySymbol;         // latest web rating per instrument
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
     QHash<QString, QList<double>> m_intradayBySymbol;   // Yahoo 1-min session closes
-    QHash<QString, QList<double>> m_referenceSeries;    // ^VIX / ^VXN / ^TNX / heavyweights (both indices)
+    QHash<QString, QList<double>> m_referenceSeries;    // volatility / term structure / yields / heavyweights
+    // The same tickers' bars WITH volume, aligned — the session-VWAP and up/down-volume
+    // reads (REQ-F-035). Absent for every ticker whose feed carries no volume.
+    QHash<QString, trading::VolumeSeries> m_referenceVolumes;
 
     // Decision window (separate, lazily built like the screener dialog).
     QPushButton *m_decisionButton = nullptr;   // opens the window, in the header

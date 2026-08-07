@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the technical indicators (DES-DOM-IND).
 // Each test function maps 1:1 to a TS id in docs/test_spec.md.
 

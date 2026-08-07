@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Structural-coverage measurement for the test suite. Modes:
 #
 #   tools/coverage.sh [auto]  — Squish Coco when installed AND licensed,
@@ -13,6 +16,12 @@
 #   tools/coverage.sh coco    — Squish Coco (Qt Group, $COCO_DIR): csg++
 #                               instrumented build incl. MC/DC
 #                               → coverage/coco/index.html
+#   tools/coverage.sh coco-gui — the SQUISH GUI suite's own coverage, reported
+#                               SEPARATELY from the unit/integration numbers (its own
+#                               instrumented tree WITH src/ui, its own database, its own
+#                               report). The two suites answer different questions and a
+#                               merged figure would answer neither
+#                               → coverage/coco-gui/index.html
 #   tools/coverage.sh coco-ai — CocoAI's test-case SUGGESTIONS over the coverage
 #                               database the coco mode produced (newer Coco
 #                               releases only; skips when the installation has no
@@ -44,9 +53,12 @@
 #    those functions are affected, and they lie outside the measured
 #    domain+services scope below.
 #
-# Scope: coverage is reported for the domain + services sources (src/domain,
-# src/services). The UI layer has no automated GUI tests yet — that gap is
-# tracked in the traceability report, not hidden by excluding it silently.
+# Scope: the unit/integration modes report the domain + services sources (src/domain,
+# src/services) and exclude src/ui, because those suites do not drive it. The UI is
+# measured by its OWN mode — coco-gui, which instruments src/ui and is exercised by the
+# Squish suite — and the two are reported separately rather than merged: one figure built
+# from both would answer neither "are the domain decisions exercised" nor "does a user
+# driving the window reach this code".
 set -euo pipefail
 
 MODE="${1:-auto}"
@@ -377,6 +389,81 @@ run_coco_components() {
     echo "HTML: $OUT/index.html   (per-test attribution: open $OUT/merged.csmes in coveragebrowser and group by test case)"
 }
 
+run_coco_gui() {
+    # What the SQUISH GUI suite covers, reported SEPARATELY from the unit/integration
+    # numbers — and separate is the whole point. The two suites answer different
+    # questions: the unit suite says which domain decisions were exercised, the GUI suite
+    # says which code a real user driving the real window actually reaches. Merged into
+    # one figure they would flatter each other and answer neither, so this mode keeps its
+    # own instrumented tree, its own database and its own report.
+    #
+    # Two differences from the plain coco mode, both deliberate:
+    #  * src/ui is INSTRUMENTED here. In the unit-suite mode it is excluded because
+    #    nothing exercises it; excluding it here would measure the GUI suite everywhere
+    #    except the GUI.
+    #  * the instrumented artefact is the APP, not the test binaries — the GUI suite
+    #    drives TradingApp through Squish, so the app is what writes the execution report.
+    if ! coco_usable; then
+        echo "SKIPPED: Squish Coco not usable — $COCO_DIR/bin/csg++ missing or license invalid"
+        echo "         (check: $COCO_DIR/bin/cocolic --check). License-bound; ./setup.sh cannot install it."
+        exit 3
+    fi
+    local BUILD="$ROOT/build-cov-coco-gui"
+    local CSFLAGS="--cs-on --cs-mcdc --cs-mcc$(coco_excludes)"
+    coco_build "$BUILD" "$CSFLAGS"
+    local app="$BUILD/TradingApp"
+    if [ ! -x "$app" ]; then
+        echo "no instrumented app at $app — the coco build produced no TradingApp" >&2
+        exit 1
+    fi
+    local OUT="$ROOT/coverage/coco-gui"
+    mkdir -p "$OUT"
+    rm -f "$OUT/merged.csmes"
+    # An instrumented binary writes its .csexe into its WORKING DIRECTORY, and under
+    # Squish that directory is squishserver's, not ours (the same lesson coco_run_one
+    # records for the test binaries). Pin it instead of guessing: COVERAGESCANNER_ARGS
+    # is read by the Coco runtime inside the AUT itself, so the report lands where this
+    # mode can find it however the AUT was started.
+    local csexe="$OUT/squish-gui.csexe"
+    rm -f "$csexe"
+    export COVERAGESCANNER_ARGS="--cs-exec=$csexe"
+    # The GUI run is licence-bound and forced into SIMULATION by squish_run.sh itself
+    # (TRADINGAPP_FORCE_SIMULATION) — a coverage run must not be able to reach an account.
+    local rc=0
+    "$ROOT/tools/squish_run.sh" "$(basename "$BUILD")" || rc=$?
+    unset COVERAGESCANNER_ARGS
+    if [ "$rc" -eq 3 ]; then
+        echo "SKIPPED: the Squish GUI suite did not run (see above) — no GUI coverage to report"
+        exit 3
+    fi
+    if [ ! -f "$csexe" ]; then
+        # Fall back to the places a Coco runtime writes when --cs-exec was not honoured,
+        # rather than reporting a zero that looks like untested code.
+        local found
+        found="$(find "$BUILD" "$ROOT" -maxdepth 2 -name 'TradingApp.csexe' -newer "$app" 2>/dev/null | head -1)"
+        if [ -n "$found" ]; then
+            csexe="$found"
+        else
+            echo "SKIPPED: the GUI run produced no execution report (.csexe)" >&2
+            echo "         the suite ran (rc=$rc) but the Coco runtime wrote nothing —" >&2
+            echo "         a missing report is reported, never shown as 0% coverage." >&2
+            exit 3
+        fi
+    fi
+    # -t names the test source in the database, so a later merge with the unit suite's
+    # can still tell the two apart instead of blending them.
+    "$COCO_DIR/bin/cmcsexeimport" -m "$BUILD/TradingApp.csmes" -e "$csexe" -t "squish-suite_gui"
+    "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "$BUILD/TradingApp.csmes"
+    coco_report "$OUT/merged.csmes" "TradingApp — Squish GUI suite coverage (separate from the unit suite)" \
+        "--html=$OUT/index.html" \
+        "--csv-excel=$OUT/functions.csv" \
+        "--junit=$ROOT/test-results/coco-gui.xml"
+    coco_stat_levels "$OUT/merged.csmes" "$OUT/summary.json"
+    echo "GUI coverage (Squish suite only): $OUT/index.html"
+    echo "unit/integration coverage stays in coverage/coco/ — the two are never merged"
+    return "$rc"
+}
+
 run_coco() {
     # Squish Coco measures statement/decision/condition and true MC/DC and feeds
     # CocoAI test-case suggestions. Every switch below has been run against a licensed
@@ -421,6 +508,7 @@ gcov) run_gcov ;;
 mcdc) run_mcdc ;;
 coco) run_coco ;;
 coco-components) run_coco_components ;;
+coco-gui) run_coco_gui ;;
 coco-ai) run_coco_ai ;;
 auto)
     # EVERY back end that is available runs — Coco is not a replacement for the free
@@ -457,7 +545,7 @@ auto)
     echo "coverage measured by: ${measured[*]}"
     ;;
 *)
-    echo "usage: $0 [auto|gcov|mcdc|coco]" >&2
+    echo "usage: $0 [auto|gcov|mcdc|coco|coco-gui|coco-components|coco-ai]" >&2
     exit 2
     ;;
 esac

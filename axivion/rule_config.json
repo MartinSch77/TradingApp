@@ -254,7 +254,8 @@
             "_active": true
         },
         "CWE-464": {
-            "_active": true
+            ".#": "2026-08-07: OFF for runtime. Measured over a full run: this single rule took 2455.67 s (41 min) — 38% of all 6490 s of rule time across 712 rule executions, and the CRITICAL PATH, since no amount of parallelism finishes a stage faster than its slowest single rule (the run already uses 12 workers via axivion_ci --jobs on 20 cores). Together with CWE-789 it is 71% of the stage. For contrast, every MisraC++2023 rule COMBINED takes 209 s. Its findings are taint fan-out on JSON parsed from a public API, and the analysis log warns it hit the maximum number of reported sinks — so the cost buys findings that cannot be triaged one by one. Narrower than the 2026-07-26 experiment: the four rules re-enabled on request on 2026-07-27 (CWE-20/200/502/79 + StaticSemanticAnalysis) stay ON.",
+            "_active": false
         },
         "CWE-467": {
             "_active": true
@@ -396,7 +397,8 @@
             "_active": true
         },
         "CWE-789": {
-            "_active": true
+            ".#": "2026-08-07: OFF for runtime, same measurement as CWE-464. This rule took 2176.30 s (36 min) of the 6490 s total — the second-largest single cost, and the two together are 71% of the stage. A 2026-08-07 run was still executing 'CWE-789 (part 1 of 2)' 2 h 03 m in. Also taint-based, so the same 'maximum reported sinks' saturation applies. The four rules re-enabled on request on 2026-07-27 stay ON.",
+            "_active": false
         },
         "CWE-79": {
             ".#": "2026-07-27: re-enabled on request after the 2026-07-26 experiment (rule off cut the run from 75 to 3 min); the taint findings on Qt/JSON code are mostly noise — triage via dashboard justifications",

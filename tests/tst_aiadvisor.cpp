@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the Claude decision adapter (DES-SVC-AI) against an
 // in-process mock of the Anthropic Messages API: the unconfigured short
 // circuit (no key -> immediate error result, no HTTP), the exact request

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Regenerate docs/requirements.md from requirements/requirements.sdoc.
 
 The .sdoc file (StrictDoc) is the single source of truth for requirements;

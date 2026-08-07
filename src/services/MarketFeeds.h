@@ -1,6 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_SERVICES_MARKETFEEDS_H
 #define TRADINGAPP_SERVICES_MARKETFEEDS_H
 
+#include "domain/IndexConfluence.h"
 #include "domain/Models.h"
 
 #include <QHash>
@@ -77,6 +81,11 @@ signals:
     // One reference ticker's 1-minute session closes, keyed by its Yahoo ticker
     // ("^VXN", "^TNX", "MSFT", …) rather than by an app instrument.
     void referenceSeries(const QString &ticker, const QList<double> &closes);
+    // The same tickers' bars WITH volume, closes and volumes aligned bar for bar — what
+    // a session VWAP and an up/down-volume split need (REQ-F-035). Emitted only for
+    // tickers whose feed actually carries volume: the volatility and yield indices do
+    // not, and their absence is what keeps those reads honestly UNKNOWN.
+    void referenceVolumeSeries(const QString &ticker, const trading::VolumeSeries &bars);
     // CNN Fear & Greed index — what the trading crowd is doing right now:
     // 0 (extreme fear) .. 100 (extreme greed), with CNN's own rating word.
     void fearGreedUpdated(double score, const QString &rating);

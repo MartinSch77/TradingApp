@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Traceability matrix generator (ASPICE-style bidirectional traces).
 
 Joins the four legs of the traceability chain and reports completeness:

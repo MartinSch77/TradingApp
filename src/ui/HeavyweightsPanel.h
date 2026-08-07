@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_UI_HEAVYWEIGHTSPANEL_H
 #define TRADINGAPP_UI_HEAVYWEIGHTSPANEL_H
 
@@ -8,8 +11,15 @@
 #include <QList>
 #include <QString>
 
+QT_FORWARD_DECLARE_CLASS(QChart)
+QT_FORWARD_DECLARE_CLASS(QChartView)
+QT_FORWARD_DECLARE_CLASS(QLineSeries)
+QT_FORWARD_DECLARE_CLASS(QValueAxis)
+class QHideEvent;
 class QLabel;
+class QShowEvent;
 class QTableWidget;
+class QTimer;
 
 namespace trading::ui {
 
@@ -42,11 +52,42 @@ public:
 
     // Fed from the same reference series the confluence reads use, keyed by ticker.
     void setReferenceSeries(const QHash<QString, QList<double>> &series);
+    // The other two books the combined indication needs (REQ-F-035/036): the volume bars
+    // keyed by TICKER, and the app's own per-instrument series keyed by APP SYMBOL. The
+    // second is what the futures reads and the opening range are read out of — without
+    // it this window scored its indices on the handful of reads that need neither, and
+    // reported the rest as unmeasurable while the app had the data all along.
+    void setVolumeSeries(const QHash<QString, trading::VolumeSeries> &volumes);
+    void setSymbolSeries(const QHash<QString, QList<double>> &series);
+    // The regime the signal is judged in, from the feeds the app already has.
+    void setRegime(bool vixValid, double vix, bool eventRisk);
+
+signals:
+    // "Fetch the constituent series again." Emitted on a timer while this window is
+    // VISIBLE and never while it is closed: the graph is the only consumer that wants
+    // minute-by-minute data, so a closed window must not keep the sweep running.
+    void refreshRequested();
+
+protected:
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     void buildUi();
-    // One index's table + summary line, filled from its own pulse.
-    void fillTable(QTableWidget *table, QLabel *summary, const HeavyweightPulse &pulse);
+    // One index's table + summary line, filled from its own pulse. The table is
+    // ordered by the size of the move — the top MOVERS, since a name that has not
+    // moved says nothing about where the index goes next.
+    //
+    // static because it writes only through its arguments: the widgets to fill are
+    // passed in, so the same code serves the Nasdaq and the S&P tables without
+    // reaching for a member and picking the wrong one.
+    static void fillTable(QTableWidget *table, QLabel *summary,
+                          const HeavyweightPulse &pulse);
+    // The movers as CURVES: each constituent's session normalised to its own start,
+    // so ten instruments at ten price levels can be compared on one axis. This is the
+    // view that shows the field moving together — or one name running away from it.
+    void fillChart(const QHash<QString, QList<double>> &series);
+    void updateLeadSignals(const QHash<QString, QList<double>> &series);
 
     QTableWidget *m_nasdaqTable = nullptr;
     QTableWidget *m_spTable = nullptr;
@@ -54,6 +95,21 @@ private:
     QLabel *m_spSummary = nullptr;
     QLabel *m_verdict = nullptr;
     QLabel *m_caveat = nullptr;
+    QChartView *m_chartView = nullptr;
+    QChart *m_chart = nullptr;
+    QValueAxis *m_axisX = nullptr;
+    QValueAxis *m_axisY = nullptr;
+    QList<QLineSeries *> m_curves;
+    QLabel *m_nasdaqLead = nullptr;
+    QLabel *m_spLead = nullptr;
+    bool m_vixValid = false;
+    double m_vix = 0.0;
+    bool m_eventRisk = false;
+    QHash<QString, QList<double>> m_series;
+    QHash<QString, trading::VolumeSeries> m_volumes;
+    QHash<QString, QList<double>> m_symbolSeries;
+    QTimer *m_liveTimer = nullptr;
+    QLabel *m_updated = nullptr;
 };
 
 } // namespace trading::ui

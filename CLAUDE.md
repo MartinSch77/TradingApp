@@ -23,6 +23,18 @@ tools/publish_release.sh       # release: REFUSES unless the evidence is there
                                # (tests green, 7 analyzers at 0, ratchet clean,
                                # 0 hard gaps, PDF newer than the sources), then
                                # attaches binaries + docs + qualification bundle
+tools/make_test_report.sh      # the FINAL report, reproducibly: tests -> Squish GUI ->
+                               # GUI coverage (Coco, SEPARATE from the unit figure) ->
+                               # Test Center upload -> the PDF, in that order. build_all's
+                               # default run omits the licence-bound stages, so its PDF
+                               # reports them as absent even where a licence exists
+tools/axivion_report.sh        # downloads/TradingApp-axivion-report.pdf — the Axivion
+                               # findings as their OWN PDF, via AXIVION'S delivered report
+                               # module (bin/report_runner + example/reports/
+                               # report_misra_pdf.py). Never reimplement that document.
+                               # Run AFTER the axivion stage or it reports the PREVIOUS
+                               # analysis — it prints the version so staleness is visible.
+                               # NOTE: --noninteractive goes BEFORE the subcommand
 tools/make_report.py           # downloads/TradingApp-quality-report.pdf — the
                                # whole run in one colour PDF (build_all `report`
                                # stage; skips with exit 3 without reportlab). Reads
@@ -52,7 +64,9 @@ lockstep.
 
 Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 `/ax-fixcode` (fix Axivion SVs + refactor the marked/selected code),
-`/add-requirement` (requirements-as-code workflow), `/perf-check` (benchmarks).
+`/add-requirement` (requirements-as-code workflow), `/perf-check` (benchmarks),
+`/clean-build-release` (clean_all -> full build_all -> commit, push, tag,
+publish_release; refuses to publish on a red pipeline).
 
 ## Non-negotiables
 
@@ -121,6 +135,21 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   trade count — don't reintroduce a queue limit. Every scan logs one summary line
   (candidates, opened, risk vs budget, refusals per `code`); those codes on
   `EntryVerdict`/`AiGate` are what make it countable, so keep them stable.
+- Exposure is bounded TWICE and the smaller wins: `maxExposureFraction` (0.75 of
+  CURRENT equity, which guarantees free margin at any account size) and
+  `maxInvestedEur` (an ABSOLUTE 15000 EUR ceiling on Σ stakes; 0 = off). Both are
+  needed because a fraction of current equity is not a fixed amount of money —
+  0.30 × 50k is 15k only while equity is exactly 50k, and it drifts with the very
+  P&L it is meant to bound. NOTE THE CONSEQUENCE, new in 1.0.3: at the default 50k
+  equity and the 6% stake the EUR ceiling binds FIRST — 5 concurrent positions,
+  where 0.75 × 50k allowed ~12 — so the binding constraint is no longer the risk
+  budget that `maxPortfolioRiskFraction`'s own comment describes. That is
+  deliberate and requested, but it means a refusal reading `invested-cap` is
+  normal rather than a defect. It is reported as `invested-cap` and NEVER as
+  `margin-cap`, because the two send a reader to change different numbers. Tests
+  that are about the risk budget, the margin cap or the cash rule set
+  `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
+  TS-PAPER-031 owns the ceiling itself.
 - The bot's DEFAULT decision source is the local model in LEAD mode
   (`BotConfig::aiMode`), bounded by every risk rule; a book saved earlier keeps the
   mode it was left in, because an upgrade must not change what a running experiment
@@ -128,14 +157,45 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   (`MainWindow::onBotTradeOpened`) — a modal box would stop the marking/exit timers,
   and one scan can open a dozen trades.
 - Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
-  `domain/IndexConfluence`): futures leadership, volatility DIRECTION (^VXN for
-  Nasdaq, ^VIX otherwise), the US 10-year yield, heavyweight participation and the
-  opening range. `MarketFeeds::fetchReferenceSeries` fetches the eleven tickers.
+  `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
+  1/5/15-minute push (ONE read, because three horizons off one series are one piece of
+  evidence in three hats; disagreeing horizons are neutral), volatility DIRECTION (^VXN
+  for Nasdaq, ^VIX otherwise), the US 10-year, the CURVE (2YY=F else ^IRX against ^TNX —
+  the read names which it got), heavyweight participation, how many heavyweights trade
+  above their OWN session VWAP, whether the session's VOLUME is behind the up names or
+  the down ones, and the opening range. `MarketFeeds::fetchReferenceSeries` fetches the
+  nineteen tickers. The two volume reads need `VolumeSeries` — closes and volumes ALIGNED
+  bar for bar, parsed together in `yahooBars`, because the two arrays skip different empty
+  minutes and a VWAP across that shift is a number about nothing; a feed with no volume
+  (the vol/yield indices) leaves them UNKNOWN, never zero. `termStructure` (^VIX9D vs
+  ^VIX3M) is a REGIME damper and never a direction.
   Two invariants: an unmeasurable read is UNKNOWN and NEVER counts as agreement
   (a "4 of 5" built from absent feeds is a lie), and heavyweight participation is
   labelled a STAND-IN for breadth — real breadth needs per-constituent data this app
-  does not fetch. The bot refuses below `minAgreeingReads` (3) MEASURED agreements
-  (`no-confluence`), and the threshold is clamped to what is actually available.
+  does not fetch. Order flow (volume delta, CVD, bid/ask imbalance) is NOT available at
+  all: it needs CME level-2, and eToro gives one bid/ask with no sizes.
+  THE BOOKS ARE KEYED DIFFERENTLY AND A READ MUST NEVER SEARCH THE WRONG ONE — the
+  references by Yahoo TICKER, the futures proxies by APP SYMBOL. `ReadInputs` +
+  `readInputsFor` exist to make that unrepresentable: the futures-lead read once looked
+  for `NSDQ100.24-7` in the ticker book, was therefore permanently UNKNOWN in the running
+  app, and its unit test passed because the test filed the futures in the book the read
+  was searching (TS-CONF-006 is the regression).
+  The bot refuses below a MAJORITY of the measured reads, floored at `minAgreeingReads`
+  (3) and clamped to what is available (`no-confluence`), 0 switching it off. The majority
+  rule is load-bearing: an absolute 3 was a majority of five reads and a MINORITY of nine,
+  so every read added silently weakened the gate (TS-PAPER-025 pins it).
+- A probability is MEASURED, never asserted (REQ-F-037, `domain/PredictionLedger`).
+  The 0..100 strength is EVIDENCE; P(up, 5/15/60/180 min) comes only from the record.
+  EVERY evaluation is appended to `prediction-ledger.jsonl`, including the ones that
+  STAYED OUT with their refusal code — a record of executed trades measures the gate in
+  front of the signal, not the signal. Outcomes resolve by PAIRING the ledger's own later
+  rows for the same instrument (so no second store can disagree), refusing a pairing too
+  far past the horizon (an overnight gap is not a 5-minute outcome) and taking the
+  EARLIEST qualifying row (the latest would silently lengthen every horizon). Below
+  `kMinSamplesPerBucket` the answer is UNCALIBRATED with its sample count and NO number —
+  the `paperLiveReadiness` discipline. Every score sits beside baselines on identical
+  samples (always-long, prior 5-min move, VWAP side) plus a Brier score against 0.25, and
+  an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten.
 - Session STRUCTURE is read before any oscillator (REQ-F-022, `openingRange` +
   `relativeStrength` in DecisionEngine): both come from the 1-minute series the app
   already fetches for every catalog instrument — including ES=F and NQ=F via
@@ -253,6 +313,28 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no
   clean/build while it runs. External findings import: `axivion/external_import.py`
   (Python layer — matchlist is not expressible in the JSON configs).
+- The Axivion stage takes ~30 min, and it is 30 rather than 94 because **CWE-464 and
+  CWE-789 are `_active: false`** in `axivion/rule_config.json` with the measurements in
+  their `".#"` comments. Do not re-enable them casually: parallelism is already maxed
+  (12 workers via `axivion_ci --jobs`), and CWE-464 alone was a 41-minute CRITICAL PATH
+  — no worker count beats the slowest single rule. Those two were 71% of rule time while
+  every MisraC++2023 rule COMBINED takes 209 s, and removing them left the finding count
+  essentially unchanged. The four rules re-enabled on request on 2026-07-27
+  (CWE-20/200/502/79 + StaticSemanticAnalysis) stay ON — this is narrower than that
+  experiment. Comment keys inside rule entries must be `".#"`; a bare `"#"` fails the
+  Suite's config validator.
+- `tools/gates_to_junit.py` and `tools/publish_release.sh` must judge artefact staleness
+  against the SAME yardstick — `git ls-files 'src/*' 'tests/*' 'CMakeLists.txt'
+  'tests/CMakeLists.txt'`, i.e. SOURCES ONLY. A bare `git ls-files` includes tracked-but-
+  GENERATED files, and `make_test_report.sh` regenerates `docs/requirements.md` from the
+  .sdoc *after* the analyzers run — which made the chain declare eight analyzer artefacts
+  stale, invalidating evidence it had just collected. Two tools disagreeing about whether
+  the same evidence is stale is worse than either rule alone.
+- Artefacts are not all findings-only. `check_object_names.py` prints a human-readable
+  SUCCESS sentence into `analysis-results/object-names.txt`, so counting non-empty lines
+  reported "1 finding" for a CLEAN check — a permanent false red. `static_analysis.sh`
+  judges it by exit code and the `has no objectName` marker; `gates_to_junit.py`'s
+  `FINDING_MARKERS` mirrors that. Any new artefact carrying prose needs an entry there.
 - SonarCloud is INFORMATIONAL, never a gate: its default gate fails on hotspot
   categories only a human can rule on (deterministic PRNG for reproducible
   training, plain HTTP to a localhost model server, unpinned action versions). The
@@ -290,6 +372,32 @@ Skills: `/verify` (all checks), `/axivion-dashboard` (run + REST verification),
   servers need 37-53 s to start cold, well past the 30 s default.
 - Check `.clang-tidy` header comments before disabling checks; disable only
   with a written rationale.
+- ANY Rust component (the Qt Bridges risk-engine experiment) is checked by BOTH
+  Axivion and Rust's own checker — neither alone. Verified 2026-08-07 against Suite
+  7.12.3 and its documentation:
+  * Axivion DOES support Rust (C, C++, CUDA C++, C#, Rust). This install has the
+    frontend (`lib/scripts/_rust2rfg.abi3.so`, `example/projectconfig/rust`) and the
+    machine has cargo/rustc/rustup. Enable `AxivionRustFrontend` under
+    `BuildSystemIntegration` with `manifest_path` pointing at the crate's `Cargo.toml`.
+    Rust analysis is CARGO-driven, not IR-based — `cafeCC` is not used — so it needs a
+    buildable `cargo build` and network access for dependencies.
+  * `RustClippyIntegration` (also a `BuildSystemIntegration` action, same
+    `manifest_path`) imports Clippy diagnostics onto the same dashboard, so Rust and
+    C++ findings sit together. That is the "Rust internal checker" half; the gate is
+    `cargo clippy -- -D warnings`.
+  * THE REASON THIS MATTERS MORE THAN USUAL: the Rust RFG MERGES with the C/C++ RFG,
+    and `Rust-CheckExternSignatures` then detects FFI signature mismatches between Rust
+    `extern` declarations and their C/C++ implementations — parameter count, parameter
+    types, return type. That is exactly the failure mode of a Qt/Rust bridge, and the
+    class of bug that otherwise surfaces as a corrupted stack at runtime.
+  * Do NOT oversell it: MISRA for Rust is only MisraC2012Directive-4.2 and 4.3 (both
+    about assembly), so this is not a MISRA story. The Axivion setup wizard does not
+    support Rust — the config is written by hand.
+  * When the crate lands, `setup.sh`/`setup.ps1` must install the Rust toolchain too
+    (rustup + `rustup component add rust-src`, which the Rust frontend needs for std
+    sources), because every open-source tool the pipeline needs is installable by setup.
+  * Configure this only once a real `Cargo.toml` exists: `AxivionRustFrontend` pointed
+    at a missing manifest just fails the stage.
 
 ## Gotchas that cost hours (details: docs/verification.md, docs/tools.md)
 

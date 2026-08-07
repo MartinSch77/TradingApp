@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # -*- coding: utf-8 -*-
 # The FIRST test of this suite, and the one that must never be deleted: it proves
 # that a Squish run cannot reach a real account.

@@ -58,3 +58,36 @@ development).
 
 Short imperative subject, body explains the why. Reference requirement ids
 (`REQ-…`) when the change affects specified behaviour.
+
+## Repository topics and keywords (moved from the README)
+
+Searchable subject tags for this repository. These are the GitHub **topics** —
+keep them in sync with the repository settings (Settings → General → Topics, or
+the `gh` command below), since GitHub search and the topic pages only index what
+is configured there, not what a README mentions.
+
+`qt` `qt6` `cpp` `cpp23` `cmake` `cross-platform` `desktop-application`
+`trading` `etoro` `technical-analysis` `monte-carlo`
+`static-analysis` `axivion` `misra` `clang-tidy` `cppcheck` `sanitizers`
+`code-coverage` `mcdc` `requirements-traceability` `strictdoc` `aspice`
+`functional-safety`
+
+Apply them in one go (needs the GitHub CLI, `gh auth login` once):
+
+```bash
+gh repo edit MartinSch77/TradingApp \
+  --add-topic qt --add-topic qt6 --add-topic cpp --add-topic cpp23 \
+  --add-topic cmake --add-topic cross-platform --add-topic desktop-application \
+  --add-topic trading --add-topic etoro --add-topic technical-analysis \
+  --add-topic monte-carlo --add-topic static-analysis --add-topic axivion \
+  --add-topic misra --add-topic clang-tidy --add-topic cppcheck \
+  --add-topic sanitizers --add-topic code-coverage --add-topic mcdc \
+  --add-topic requirements-traceability --add-topic strictdoc --add-topic aspice \
+  --add-topic functional-safety
+```
+
+GitHub allows at most 20 topics per repository, so if it rejects the tail, drop
+the least specific ones (`cpp`, `cmake`, `cross-platform`) first — the
+quality-toolchain tags are what make this repository findable, since a
+"Qt trading app" is common and a "Qt trading app with MISRA C++, MC/DC coverage
+and requirements-as-code traceability" is not.

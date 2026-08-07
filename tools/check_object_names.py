@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Every widget a GUI test has to find must have a STABLE objectName (REQ-N-007).
 
 Squish (and any other GUI driver) identifies widgets either by a fragile

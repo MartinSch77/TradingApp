@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Quality report as one colourful PDF — the pipeline's result on a few pages.
 
 Collects what the other stages already produced and renders it:
@@ -25,6 +28,7 @@ green, as with every other optional tool) · 1 real failure.
 
 import argparse
 import base64
+import configparser
 import csv
 import glob
 import json
@@ -35,6 +39,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -254,7 +259,12 @@ def collect_coverage():
     instruments the SOURCE for statement/decision/condition/MC/DC from a qualified
     tool. A report that showed only whichever one ran last would hide the cross-check.
     """
-    result = {"lines": None, "functions": None, "mcdc": None, "mcdc_rows": [], "coco": {}}
+    # coco = the unit/integration suites; coco_gui = the Squish GUI suite. Two separate
+    # figures on purpose (tools/coverage.sh coco vs coco-gui): one blended percentage would
+    # answer neither "are the domain decisions exercised" nor "does a user driving the real
+    # window reach this code", and blending lets a well-covered domain hide an untouched UI.
+    result = {"lines": None, "functions": None, "mcdc": None, "mcdc_rows": [],
+              "coco": {}, "coco_gui": {}}
     info = ROOT / "coverage" / "gcov" / "coverage.info"
     if info.is_file():
         found = hit = fnf = fnh = 0
@@ -284,13 +294,64 @@ def collect_coverage():
     # Coco writes its four levels as JSON precisely so this report can quote them
     # (tools/coverage.sh coco_stat_levels). Absent = Coco did not run here, which is a
     # licence question and is reported as one further down.
-    coco_json = ROOT / "coverage" / "coco" / "summary.json"
-    if coco_json.is_file():
+    for key, folder in (("coco", "coco"), ("coco_gui", "coco-gui")):
+        summary = ROOT / "coverage" / folder / "summary.json"
+        if not summary.is_file():
+            continue
         try:
-            result["coco"] = json.loads(coco_json.read_text(**UTF8, errors="replace"))
+            result[key] = json.loads(summary.read_text(**UTF8, errors="replace"))
         except (ValueError, OSError):
-            result["coco"] = {}
+            result[key] = {}
     return result
+
+
+class _Redirected(Exception):
+    """A redirect, carried out of the opener so the CALLER can read the destination.
+
+    Test Center answers 302 -> /activation/index until it has been activated, and that is
+    the one piece of information worth reporting: following the redirect would land on a
+    perfectly healthy login page and hide the fact that nothing can be uploaded yet.
+    """
+
+    def __init__(self, location):
+        super().__init__(location)
+        self.location = location or ""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise _Redirected(newurl)
+
+
+def _testcentercmd_has_token(url):
+    """True when testcentercmd's OWN credential store holds a token for this server.
+
+    The recommended way to authenticate is `testcentercmd config token <value>`, which
+    keeps the secret out of the environment entirely. Judging credentials by environment
+    variables alone therefore reports "no credentials were given" on a machine where
+    uploads demonstrably work — so the store is consulted too, or this report drifts away
+    from the practice its own documentation recommends.
+
+    Only the value's PRESENCE is read, never the value. The Linux path is measured; the
+    Windows candidates are included because the same client runs there and a false
+    negative here only costs a slightly pessimistic line in the report.
+    """
+    host = urllib.parse.urlsplit(url).netloc or "localhost:8800"
+    candidates = [Path.home() / ".squish" / "ver1" / "testcentercmd.ini"]
+    if appdata := os.environ.get("APPDATA"):
+        candidates.append(Path(appdata) / "froglogic" / "Squish" / "ver1"
+                          / "testcentercmd.ini")
+    for path in candidates:
+        try:
+            parser = configparser.ConfigParser()
+            parser.read(path, encoding="utf-8")
+        except (configparser.Error, OSError, UnicodeDecodeError):
+            continue
+        # Sections are named `host:port`; an empty section is what `config remove` leaves
+        # behind, so a section existing is NOT the same as a token existing.
+        if parser.has_option(host, "token") and parser.get(host, "token").strip(' "'):
+            return True
+    return False
 
 
 def _runs_ok(argv):
@@ -329,23 +390,65 @@ def licensed_tools():
                        "above (tools/coverage.sh coco is the licensed path)")
     out.append(("Squish Coco", coco, coco_detail))
 
-    squish_dir = Path(os.environ.get("SQUISH_DIR", os.environ.get("SQUISH_PREFIX", "/opt/squish")))
+    # The SAME search order tools/squish_run.sh uses, and for a measured reason: the
+    # official installer puts Squish in ~/squish-for-qt-<version> and does NOT put it on
+    # PATH, so a probe limited to PATH and /opt/squish reports "not installed" on a machine
+    # that is fully licensed — and the PDF then lists a missing licence that is not missing.
+    squish_candidates = []
+    configured = os.environ.get("SQUISH_DIR") or os.environ.get("SQUISH_PREFIX")
+    if configured:
+        squish_candidates.append(Path(configured))
+    squish_candidates.append(Path("/opt/squish"))
+    squish_candidates.extend(sorted(Path.home().glob("squish-for-qt-*"), reverse=True))
+    squish_candidates.extend(sorted(Path("/opt").glob("squish*"), reverse=True))
+    squish_dir = next((d for d in squish_candidates if (d / "bin" / "squishrunner").exists()),
+                      Path(configured) if configured else Path("/opt/squish"))
     squish = bool(shutil.which("squishrunner")) or (squish_dir / "bin" / "squishrunner").exists()
     out.append(("Squish (GUI tests)", squish,
                 "the GUI suite in squish/suite_gui runs the app FORCED into simulation "
                 "(TRADINGAPP_FORCE_SIMULATION) so it can never reach a real account. Not "
                 "installed here — tools/squish_run.sh skipped"
                 if not squish else
-                "GUI suite available; every run is forced into simulation and can never "
-                "reach a real account"))
+                f"GUI suite available at {squish_dir}; every run is forced into simulation "
+                "and can never reach a real account"))
 
-    tc_url = os.environ.get("TESTCENTER_URL", "")
-    tc = bool(tc_url) and bool(os.environ.get("TESTCENTER_TOKEN", ""))
-    out.append(("Qt Test Center", tc,
-                "central store for every test result (unit, integration and GUI). Not "
-                "configured here — set TESTCENTER_URL and TESTCENTER_TOKEN; "
-                "tools/testcenter_upload.sh skipped"
-                if not tc else f"uploading to {tc_url}"))
+    # Test Center is reported by its ACTUAL state, not merely by whether a variable is
+    # set: "no token", "server down" and "server up but never activated" are three
+    # different situations, and a reader who cannot tell them apart cannot act on any of
+    # them. Credentials may be a token OR an email/password pair — the product accepts both.
+    tc_url = os.environ.get("TESTCENTER_URL", "http://localhost:8800")
+    have_creds = bool(os.environ.get("TESTCENTER_TOKEN")) or bool(
+        os.environ.get("TESTCENTER_USER") and os.environ.get("TESTCENTER_PASSWORD")) or (
+        _testcentercmd_has_token(tc_url))
+    state = "unreachable"
+    try:
+        request = urllib.request.Request(tc_url, method="GET")
+        opener = urllib.request.build_opener(_NoRedirect())
+        with opener.open(request, timeout=4) as response:
+            state = "activated" if response.status < 300 else "reachable"
+    except _Redirected as redirect:
+        state = "not activated" if "/activation" in redirect.location else "activated"
+    except (urllib.error.URLError, OSError, ValueError):
+        state = "unreachable"
+
+    tc = have_creds and (state == "activated")
+    if tc:
+        detail = f"uploading to {tc_url}"
+    elif state == "not activated":
+        detail = (f"server is running at {tc_url} but has NEVER BEEN ACTIVATED (it "
+                  "redirects to /activation) — the licence and the first user are entered "
+                  "in a browser, which cannot be scripted. Nothing was uploaded; the "
+                  "JUnit XML is complete in test-results/ and can be uploaded later")
+    elif state == "unreachable":
+        detail = (f"no server answering at {tc_url} — start it with "
+                  "<b>bin/testcenter start</b>. tools/testcenter_upload.sh skipped; the "
+                  "results stay in test-results/")
+    else:
+        detail = ("server is up but no credential was found — store one once with "
+                  "<b>testcentercmd config token &lt;value&gt;</b> (Admin -> User Management "
+                  "-> upload token), or set TESTCENTER_TOKEN / TESTCENTER_USER + "
+                  "TESTCENTER_PASSWORD. tools/testcenter_upload.sh skipped")
+    out.append(("Qt Test Center", tc, detail))
     return out
 
 
@@ -680,20 +783,33 @@ def build_report(out_path, build_dir):
         "measured" if coverage["lines"] is not None else "not run", cov_txt,
         warn=coverage["lines"] is None)
     # Coco as its own row: the numbers, not merely the fact that a licence exists.
-    coco = coverage.get("coco") or {}
-    if coco:
+    def _levels(source):
         def _lvl(name):
-            data = coco.get(name) or {}
+            data = source.get(name) or {}
             if not data:
                 return f"{name} —"
             return (f"{name} {data.get('percent', 0):.1f}% "
                     f"({data.get('covered', 0)}/{data.get('total', 0)})")
-        add("Coverage (Squish Coco)", True, "measured",
-            " · ".join(_lvl(n) for n in ("statement", "decision", "condition", "mcdc")))
+        return " · ".join(_lvl(n) for n in ("statement", "decision", "condition", "mcdc"))
+
+    coco = coverage.get("coco") or {}
+    if coco:
+        add("Coverage (Coco — unit + integration)", True, "measured", _levels(coco))
     else:
-        add("Coverage (Squish Coco)", False, "not run",
+        add("Coverage (Coco — unit + integration)", False, "not run",
             "no coverage/coco/summary.json — Coco measures statement/decision/condition "
             "and MC/DC from the source, independently of the clang figure above",
+            warn=True)
+    # The GUI suite's coverage is its OWN row, never folded into the one above: they
+    # answer different questions and a merged number would answer neither.
+    coco_gui = coverage.get("coco_gui") or {}
+    if coco_gui:
+        add("Coverage (Coco — Squish GUI suite)", True, "measured", _levels(coco_gui))
+    else:
+        add("Coverage (Coco — Squish GUI suite)", False, "not run",
+            "no coverage/coco-gui/summary.json — tools/coverage.sh coco-gui instruments "
+            "src/ui and measures what the GUI workflows actually reach; reported apart "
+            "from the unit figure by design",
             warn=True)
     add("Sanitizers", san_findings == 0,
         "CLEAN" if san_findings == 0 else f"{san_findings} FINDINGS",

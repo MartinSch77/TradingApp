@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the shared JSON/HTTP plumbing (DES-SVC-HTTP) against
 // an in-process mock HTTP server: parsing, the idempotent-GET retry policy
 // (429 + Retry-After) and the no-retry rule for non-GET requests.

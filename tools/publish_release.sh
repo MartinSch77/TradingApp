@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Publish a release: the binaries, the documentation, and the QUALIFICATION
 # evidence — but only when there is proof that the pipeline actually ran green.
 #
@@ -211,8 +214,22 @@ done < <(find "$OUT" -maxdepth 1 -type f \
 
 rm -f "$DOCS_ZIP" "$QUAL_ZIP" "$DOCS_ZIP.sha256" "$QUAL_ZIP.sha256"
 
-# Documentation: what a reader needs, not the whole tree.
-DOC_ITEMS=(docs/*.md README.md LICENSE)
+# The CORRESPONDING SOURCE, which GPL-3.0-or-later obliges us to offer alongside
+# every binary (see THIRD_PARTY_LICENSES.md). git archive is used deliberately: it
+# exports exactly what the tag contains, so the archive cannot quietly include a
+# local edit that never made it into the published commit. A dirty tree is already
+# refused above, so HEAD is the published tree.
+SOURCE_TGZ="$OUT/TradingApp-$VERSION-source.tar.gz"
+rm -f "$SOURCE_TGZ" "$SOURCE_TGZ.sha256"
+if git archive --format=tar.gz --prefix="TradingApp-$VERSION/" -o "$SOURCE_TGZ" HEAD; then
+    ok "source         $(basename "$SOURCE_TGZ") ($(du -h "$SOURCE_TGZ" | cut -f1))"
+else
+    bad "could not produce the corresponding source archive — GPL-3.0-or-later requires it"
+fi
+
+# Documentation: what a reader needs, not the whole tree. The licence texts travel
+# with it so a recipient of the docs zip alone still has the terms.
+DOC_ITEMS=(docs/*.md README.md LICENSE THIRD_PARTY_LICENSES.md LICENSES)
 [ -f docs/traceability.html ] && DOC_ITEMS+=(docs/traceability.html)
 [ -d docs/html ] && DOC_ITEMS+=(docs/html)
 [ -d docs/uml ] && DOC_ITEMS+=(docs/uml)
@@ -228,11 +245,15 @@ zip -qr "$QUAL_ZIP" "${QUAL_ITEMS[@]}" -x '*.gcda' -x '*.gcno' >/dev/null 2>&1 |
 ok "qualification  $(basename "$QUAL_ZIP") ($(du -h "$QUAL_ZIP" | cut -f1))"
 
 # A checksum for each archive this script produced, like the packagers do.
-for z in "$DOCS_ZIP" "$QUAL_ZIP"; do
+for z in "$DOCS_ZIP" "$QUAL_ZIP" "$SOURCE_TGZ"; do
+    [ -f "$z" ] || continue
     (cd "$OUT" && sha256sum "$(basename "$z")" > "$(basename "$z").sha256")
 done
 
 ASSETS=("$PDF" "$DOCS_ZIP" "$DOCS_ZIP.sha256" "$QUAL_ZIP" "$QUAL_ZIP.sha256")
+# The source archive is not optional furniture: it is the thing that makes shipping
+# the GPL binaries lawful, so it is attached to every release.
+[ -f "$SOURCE_TGZ" ] && ASSETS+=("$SOURCE_TGZ" "$SOURCE_TGZ.sha256")
 for f in "${BIN_ASSETS[@]}"; do
     ASSETS+=("$f")
     ok "binary         $(basename "$f")"
@@ -274,6 +295,18 @@ NOTES="$(mktemp)"
     echo "cannot produce), the requirements/design/test-spec documents, every JUnit XML and"
     echo "every analyzer output. \`TradingApp-$VERSION-docs.zip\` holds the documentation and"
     echo "the generated API reference."
+    echo
+    echo "### Licence"
+    echo
+    echo "TradingApp is free software under **GPL-3.0-or-later**."
+    echo "\`TradingApp-$VERSION-source.tar.gz\` is the complete corresponding source for this"
+    echo "tag, attached so that the binaries above can be redistributed lawfully. The licence"
+    echo "texts are in \`LICENSE\` and \`LICENSES/\`, and every component this build links or"
+    echo "ships is inventoried in \`THIRD_PARTY_LICENSES.md\`."
+    echo
+    echo "The Qt libraries bundled inside the artefacts are used under their open-source"
+    echo "licences: LGPLv3 for Core/Gui/Widgets/Network/Concurrent, and **GPLv3 for Qt"
+    echo "Charts**, which has no LGPL option — that module is why this project is GPL."
 } > "$NOTES"
 
 if ! gh release view "$TAG" >/dev/null 2>&1; then

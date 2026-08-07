@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the calendar-event heuristics (DES-DOM-EVT).
 
 #include "domain/EventInsight.h"

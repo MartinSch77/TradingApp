@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Shared host detection for the Linux (bash) entry points — the counterpart of
 # tools/common.ps1, limited to the two things that genuinely differ between the
 # machines this project is built on:

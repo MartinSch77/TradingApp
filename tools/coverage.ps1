@@ -1,4 +1,7 @@
-﻿<#
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+<#
 .SYNOPSIS
     Windows counterpart of tools/coverage.sh — structural-coverage measurement
     for the test suite.
@@ -14,6 +17,10 @@
                                          AND true MC/DC, and feeding CocoAI
                                          test-case suggestions
                                          -> coverage\coco\index.html (+ summary.csv)
+      tools\coverage.ps1 -Mode coco-gui — the SQUISH GUI suite's own coverage,
+                                         reported SEPARATELY from the unit numbers
+                                         (its own instrumented tree WITH src\ui)
+                                         -> coverage\coco-gui\index.html
       tools\coverage.ps1 -Mode mcdc    — clang-cl source-based coverage with
                                          MC/DC (-fcoverage-mcdc); llvm-cov HTML
                                          + console summary incl. the MC/DC column
@@ -48,7 +55,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('auto', 'msvc', 'mcdc', 'coco', 'coco-components', 'coco-ai')][string]$Mode = 'auto',
+    [ValidateSet('auto', 'msvc', 'mcdc', 'coco', 'coco-gui', 'coco-components', 'coco-ai')][string]$Mode = 'auto',
     [string]$CocoDir = $(if ($env:COCO_DIR) { $env:COCO_DIR } else { 'C:\Program Files\squishcoco' })
 )
 
@@ -388,6 +395,85 @@ function Invoke-CocoCoverage {
     return $true
 }
 
+function Invoke-CocoGuiCoverage {
+    # What the SQUISH GUI suite covers, reported SEPARATELY from the unit/integration
+    # numbers - the Linux counterpart is `tools/coverage.sh coco-gui`, and the reasoning is
+    # the same: the two suites answer different questions, so one blended percentage would
+    # answer neither, and blending lets a well-covered domain hide an untouched UI.
+    #
+    # Two differences from Invoke-CocoCoverage, both deliberate: src\ui IS instrumented
+    # here (excluding it would measure the GUI suite everywhere except the GUI), and the
+    # instrumented artefact is the APP rather than the test binaries, because the Squish
+    # suite drives TradingApp.
+    Write-Stage 'Squish Coco - GUI suite only (separate from the unit suite)'
+    if (-not (Test-CocoUsable)) {
+        Write-Skip "Squish Coco not usable - $(Get-CocoWrapper) missing or license invalid"
+        return $false
+    }
+    $wrapper = Get-CocoWrapper
+    $build = Join-Path $Root 'build-cov-coco-gui'
+    $csflags = @('--cs-on', '--cs-mcdc', '--cs-mcc')
+    # Note the absence of "$Root\src\ui" from this list - that is the point of the mode.
+    foreach ($p in @($QtPrefix, $build, "$Root\tests")) {
+        $csflags += "--cs-exclude-file-abs-wildcard=$(ConvertTo-CocoWildcard $p)"
+    }
+    $csflags += '--cs-exclude-file-abs-wildcard=*Microsoft*Visual*Studio*'
+    $csflags += '--cs-exclude-file-abs-wildcard=*Windows*Kits*'
+    $csflags = $csflags -join ' '
+    $extra = @(
+        "-DCMAKE_CXX_COMPILER=$($wrapper -replace '\\','/')",
+        "-DCMAKE_CXX_FLAGS=$csflags",
+        '-DCMAKE_CXX_STANDARD=20'
+    )
+    if (Test-QtIsMsvcKit $QtPrefix) {
+        $extra += "-DCMAKE_AR=$((Join-Path $CocoDir 'cslib.exe') -replace '\\','/')"
+        $extra += "-DCMAKE_LINKER=$((Join-Path $CocoDir 'cslink.exe') -replace '\\','/')"
+    }
+    if (-not (Invoke-Configure -BuildDir $build -ExtraArgs $extra)) { return $false }
+    if (-not (Invoke-Native -FilePath 'cmake' -Arguments @('--build', $build, '-j', "$Jobs"))) { return $false }
+
+    $app = Join-Path $build 'TradingApp.exe'
+    if (-not (Test-Path $app)) { Write-Warning "no instrumented app at $app"; return $false }
+    $out = Join-Path $Root 'coverage\coco-gui'
+    if (-not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
+    Remove-Item (Join-Path $out 'merged.csmes') -Force -ErrorAction SilentlyContinue
+
+    # Under Squish the AUT's working directory is squishserver's, not ours, so the
+    # execution report is PINNED rather than guessed: COVERAGESCANNER_ARGS is read by the
+    # Coco runtime inside the AUT however it was started.
+    $csexe = Join-Path $out 'squish-gui.csexe'
+    Remove-Item $csexe -Force -ErrorAction SilentlyContinue
+    $env:COVERAGESCANNER_ARGS = "--cs-exec=$csexe"
+    $rc = 0
+    try {
+        & (Join-Path $Root 'tools\squish_run.ps1') -BuildDir (Split-Path $build -Leaf)
+        $rc = $LASTEXITCODE
+    } finally {
+        Remove-Item Env:\COVERAGESCANNER_ARGS -ErrorAction SilentlyContinue
+    }
+    if ($rc -eq 3) { Write-Skip 'the Squish GUI suite did not run - no GUI coverage to report'; return $false }
+    if (-not (Test-Path $csexe)) {
+        # Reported as missing, never shown as 0% - an absent measurement is not untested code.
+        Write-Warning "the GUI run produced no execution report ($csexe)"
+        return $false
+    }
+    $csmes = "$app.csmes"
+    & (Join-Path $CocoDir 'cmcsexeimport.exe') -m $csmes -e $csexe -t 'squish-suite_gui'
+    if ($LASTEXITCODE -ne 0) { return $false }
+    & (Join-Path $CocoDir 'cmmerge.exe') -o (Join-Path $out 'merged.csmes') $csmes
+    if ($LASTEXITCODE -ne 0) { return $false }
+    & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
+        '--select=.*' "--html=$out\index.html" --coverage-mcdc `
+        '--title=TradingApp - Squish GUI suite coverage (separate from the unit suite)'
+    & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
+        '--select=.*' "--csv-excel=$out\summary.csv" --coverage-mcdc *> $null
+    & (Join-Path $CocoDir 'cmreport.exe') -m (Join-Path $out 'merged.csmes') `
+        '--select=.*' "--junit=$Root\test-results\coco-gui.xml" *> $null
+    Write-Host "GUI coverage (Squish suite only): $out\index.html"
+    Write-Host "unit/integration coverage stays in coverage\coco - the two are never merged"
+    return $true
+}
+
 # ---------------------------------------------------------------------------
 
 switch ($Mode) {
@@ -408,6 +494,12 @@ switch ($Mode) {
         if (Invoke-CocoCoverage) { exit 0 }
         if (-not (Test-CocoUsable)) { exit 3 }
         exit 1
+    }
+    'coco-gui' {
+        if (Invoke-CocoGuiCoverage) { exit 0 }
+        # Not installed/licensed, or the licence-bound GUI suite did not run: both are
+        # "skipped" (exit 3), never a build gate.
+        exit 3
     }
     'auto' {
         # Unlike the Linux script, auto does not treat Coco and the free

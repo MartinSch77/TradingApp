@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "domain/DecisionEngine.h"
 
 #include "domain/IndexConfluence.h"
@@ -294,8 +297,9 @@ QString confluenceLine(const QList<DecisionRow> &rows, const MarketSnapshot &m)
         return {};
     }
     const DecisionRow &lead = rows.constFirst();
-    const IndexReads reads = indexReads(lead.symbol, m.referenceSeries,
-                                        m.intradayBySymbol.value(lead.symbol));
+    const IndexReads reads =
+        indexReads(lead.symbol, readInputsFor(lead.symbol, m.referenceSeries,
+                                              m.referenceVolumes, m.intradayBySymbol));
     const Confluence score = confluenceFor(reads, (lead.dir != 0) ? lead.dir : 1);
     if (score.measured() == 0) {
         return {};

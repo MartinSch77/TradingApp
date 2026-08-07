@@ -1,4 +1,7 @@
-﻿# Shared helpers for the Windows (PowerShell) build scripts — the counterpart
+﻿# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Shared helpers for the Windows (PowerShell) build scripts — the counterpart
 # of the plumbing the *.sh scripts get for free from a POSIX shell:
 # a repo root, a compiler environment, a Qt kit, a core count and tool probes.
 #

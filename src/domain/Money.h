@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_DOMAIN_MONEY_H
 #define TRADINGAPP_DOMAIN_MONEY_H
 

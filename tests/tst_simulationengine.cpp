@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the self-contained simulation (DES-SVC-SIM): the
 // synthetic feed, virtual account and SL execution work end-to-end through
 // the same signal interface the real client exposes.
@@ -466,7 +469,7 @@ private slots:
         market.isBuy = true;
         market.amount = 100.0;
         market.leverage = 2.0;
-        const qint32 before = pending.count();
+        const auto before = static_cast<qint32>(pending.count());
         sim.placePendingOrder(market);
         QCOMPARE(pending.count(), before);
 
@@ -517,7 +520,7 @@ private slots:
         const auto resting = pending.last().at(0).value<QList<PendingOrder>>();
         QVERIFY(!resting.isEmpty());
         const QString id = resting.constFirst().orderId;
-        const qint32 before = results.count();
+        const auto before = static_cast<qint32>(results.count());
         sim.modifyPendingOrder(id, 0.0, 0.0, 0.0);
         QVERIFY(results.count() > before);
         QVERIFY(!results.last().at(0).toBool());
@@ -533,8 +536,8 @@ private slots:
         other.seedRng(4242U);
         other.emitSnapshot();
         QVERIFY(other.lastPrice() > 0.0);
-        QSignalSpy rows(&other, &SimulationEngine::screenerRow);
-        QSignalSpy finished(&other, &SimulationEngine::screenerFinished);
+        const QSignalSpy rows(&other, &SimulationEngine::screenerRow);
+        const QSignalSpy finished(&other, &SimulationEngine::screenerFinished);
         other.scanInstruments({QStringLiteral("NOSUCHSYMBOL"), QStringLiteral("SPX500")});
         QTRY_VERIFY_WITH_TIMEOUT(!finished.isEmpty(), 15000);
         QVERIFY(rows.count() >= 1);

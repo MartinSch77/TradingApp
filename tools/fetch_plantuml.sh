@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Fetch the pinned PlantUML release used for the Doxygen diagrams (the jar is
 # not committed; see docs/tools.md for the tool inventory).
 set -euo pipefail

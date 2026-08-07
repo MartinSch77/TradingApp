@@ -5,10 +5,19 @@
 
 ## Test suite
 
-`tests/` holds 59 requirement-tagged Qt Test cases (see @ref test_spec):
-unit tests over the pure domain layer and integration tests over the services
-(config layering, simulation engine, HTTP retry policy, eToro history pager
-against an in-process mock HTTP server — no network access in tests).
+`tests/` holds requirement-tagged Qt Test cases (see @ref test_spec): unit tests over
+the pure domain layer and integration tests over the services (config layering,
+simulation engine, HTTP retry policy, eToro history pager against an in-process mock HTTP
+server — no network access in tests), plus the Squish GUI workflows in `squish/suite_gui`
+driving the real application forced into SIMULATION.
+
+The COUNT is deliberately not written here. It is generated, and the generated figure is
+the one to quote — `python3 tools/trace_report.py` prints
+"N requirements · N design elements · N specified tests · N implemented tests · N recorded
+results" and writes `docs/traceability.html`; the quality PDF
+(`downloads/TradingApp-quality-report.pdf`) carries the same numbers per suite and per
+test function. A hand-maintained number in prose is drift waiting to happen — this
+sentence used to say 59.
 
     cmake -S . -B build -DCMAKE_PREFIX_PATH=~/Qt/6.10.2/gcc_64
     cmake --build build && (cd build && ctest --output-on-failure)
@@ -61,9 +70,15 @@ gaps in the traceability report).
 **Squish Coco** (Qt Group's coverage tool) measures MC/DC natively and its
 CocoAI feature can propose test inputs that close specific uncovered
 conditions. `tools/coverage.sh` auto-detects it at `/opt/SquishCoco` and uses
-it as the coverage tool whenever the license is valid (`cocolic --check`); with
-the Linux license currently expired that script falls back to the clang MC/DC
-path above as the measuring tool of record. Note that clang-18 cannot
+it whenever the license is valid (`cocolic --check`) — and `auto` runs it IN ADDITION to
+gcov and clang MC/DC rather than instead of them, because a second opinion from a
+qualified tool is not a replacement for the free toolchain's numbers. Two Coco figures are
+reported SEPARATELY and never merged: `coco` measures the unit/integration suites over
+`src/domain` + `src/services`, and `coco-gui` measures what the Squish GUI suite reaches
+over a tree that includes `src/ui`. One blended percentage would answer neither question,
+and blending lets a well-covered domain hide an untouched UI. Where Coco is absent or
+unlicensed the stage reports `skipped` (exit 3) and the clang MC/DC path remains the
+measuring tool of record. Note that clang-18 cannot
 instrument decisions with more than 6 conditions for MC/DC, so the sources keep
 every decision at ≤ 6 conditions (keyword groups are tested via
 `hasAny()`/`std::any_of`).

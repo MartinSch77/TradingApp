@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # -*- coding: utf-8 -*-
 # The index-heavyweight window (REQ-F-035): ten names per index, side by side, as an
 # early read on where SPX500 and NSDQ100 may go.

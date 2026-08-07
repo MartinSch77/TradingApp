@@ -30,12 +30,43 @@ in @ref windows.
 | g++ -fanalyzer | GNU/GCC | 13.3.0 | Symbolic-execution analyzer over every project TU (`tools/static_analysis.sh`); C++ support is upstream-experimental — findings triaged on the dashboard (provider `gcc-analyzer`). Memory scales hard with TU size (unbounded: ~13 GB peak on MainWindow.cpp — full per-core parallelism OOM-killed the 16 GB CI runner, step exit 143), so TUs > 50 KB run sequentially after the parallel pool with the exploded graph bounded (call summaries + depth params, ~4.4 GB peak, identical finding set); analyzer crashes surface as `gcc-analyzer-failed` findings instead of vanishing |
 | clazy | KDE / clazy project, invent.kde.org/sdk/clazy | 1.11 (Ubuntu package; install: `apt install clazy`) | Qt-specific coding rules (connect syntax, detach, QString…) |
 | Axivion Suite | Axivion GmbH / Qt Group, axivion.com | 7.12.3 (`~/bauhaus-suite`) | MISRA C++ 2023, architecture checks, dashboard; external-findings import |
-| Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco | installed at `/opt/SquishCoco` — **license expired**; auto-detected and used by `tools/coverage.sh` once renewed | MC/DC coverage + CocoAI test-case suggestion (documented alternative) |
+| Squish Coco | Qt Group (froglogic), qt.io/product/quality-assurance/coco | installed and **licensed** at `/opt/SquishCoco`; auto-detected by `tools/coverage.sh` | MC/DC coverage for the unit/integration suites (`coco`), the Squish GUI suite's own coverage reported SEPARATELY (`coco-gui`), per-test call coverage of the integrated components (`coco-components`), CocoAI test-case suggestions (`coco-ai`) |
 | lizard | terryyin/lizard (MIT) | 1.23.0 (pipx) | Code metrics per function — cyclomatic complexity, NLOC, parameter count — over `src/` and `tests/` (`tools/lizard_metrics.py`, provider `lizard`). Full measurement in `analysis-results/lizard-metrics.csv`; the gate is a **ratchet** against `tools/lizard_baseline.json` (limits CCN 15 / NLOC 100 / params 5): new or worsened debt fails, and an entry that no longer violates must be deleted |
 | PMD CPD | PMD project (BSD-style) | 7.19.0 (`tools/third-party/pmd-bin-7.19.0/`, fetched by `tools/fetch_pmd.sh`) | Token-based copy-paste detection over `src/` and `tests/` at ≥ 100 tokens (`tools/cpd_scan.py`, provider `pmd-cpd`). This is the project's only clone gate — the Axivion configuration here runs MISRA C++ 2023 only, without clone detection |
 | GCC / clang warning set | GNU / LLVM | with the compiler | `-Wall -Wextra` plus `-Wshadow -Wnon-virtual-dtor -Woverloaded-virtual -Wsuggest-override -Wimplicit-fallthrough -Wmisleading-indentation -Wformat=2 -Wdouble-promotion -Wcast-qual` (GCC-only spellings gated), `/W4 /permissive-` on MSVC — set in `CMakeLists.txt`. `-DTRADINGAPP_WARNINGS_AS_ERRORS=ON` (what `build_all` uses) makes them fatal. `-Wpedantic` is deliberately absent: it reports the required `Q_OBJECT;` anchor as an extra `;` |
 | codespell | codespell-project (GPL-2.0) | pipx | Typos in comments/docs (`.codespellrc`; provider `codespell` on the dashboard) |
 | SonarQube / SonarCloud | Sonar (LGPL server / free cloud tier) | conditional | `tools/sonar_scan.sh` runs only against a reachable server; issues → dashboard provider `sonarqube`; CI via SONAR_TOKEN |
+
+### Why the architecture check is Axivion's job, not SonarCloud's
+
+SonarQube Cloud has an architecture feature ("architecture as code": an
+`architecture.json`/`.yaml` declaring perspectives, groups and constraints, verified during
+analysis). It cannot be used here, for two independent reasons, both checked against
+Sonar's own documentation (2026-08-06):
+
+1. **C++ is not supported.** Architecture analysis covers C#, Java, JavaScript, Python and
+   TypeScript. Architecture-as-code specifically is Java-only.
+2. **It is deprecated.** The docs mark cycle detection and architecture as code as
+   deprecated, pending removal in January 2026 — a date already past.
+
+Writing an `architecture.json` for this repository would therefore produce a file no
+analyzer reads, which is worse than no file: it looks like a verified constraint and is
+not one.
+
+The intended architecture is instead declared where it can actually be checked for C++,
+and it is checked on every run:
+
+| Layer of defence | Where | What it catches |
+|---|---|---|
+| the linker | `CMakeLists.txt` — domain links Qt Core only, services may not link ui | an illegal dependency fails the BUILD, before any analyzer runs |
+| Axivion architecture check | `axivion/architecture.py` (`Architecture-ScriptedArchitecture`) | divergences (a dependency the model forbids) **and** absences (a declared edge the code no longer has), as AV findings on the dashboard |
+
+`axivion/architecture.py` is the intended architecture as code: four components (Domain,
+Services, UI, Main), the strictly downward edges between them, and a transitive directory
+mapping so adding a class never requires touching the model. An edge is declared only
+where the dependency is both intended *and* present — a declared-but-unused edge is
+reported as an Absence, which is why "Main may use Domain directly" is deliberately not
+modelled while `main.cpp` composes services and ui only.
 | Coverity Scan | Black Duck (formerly Synopsys), scan.coverity.com | cloud only — project [`TradingApp`](https://scan.coverity.com/projects/TradingApp/builds) (the Scan APIs match the name case-sensitively) | Fifth static analyser, free tier for public repositories, used **only** as the cloud service (no local `cov-analyze`, no Coverity Connect): `.github/workflows/coverity.yml` builds under `cov-build` and uploads, analysis runs server-side. Defects exported from the web UI → `tools/coverity_findings.py` → dashboard provider `coverity`. Self-activating on COVERITY_SCAN_TOKEN + COVERITY_SCAN_EMAIL. Runs on the weekly cron or on manual dispatch only — no push/PR trigger: the free tier caps weekly submissions and queues accepted builds behind everyone else's (188 deep when measured), so a build per push spends quota to displace itself |
 | CodeQL | GitHub | CI | Security scanning, free for public repositories (.github/workflows/codeql.yml) |
 | Syft / Grype / Trivy | Anchore / Aqua (Apache-2.0) | ~/.local/bin via setup.sh | SBOM (SPDX+CycloneDX), vulnerability scan, repo/misconfig/secret scan (`tools/supply_chain.sh` + CI) |
@@ -56,6 +87,36 @@ in @ref windows.
 | Graphviz (dot) | graphviz.org | Ubuntu 24.04 package | Doxygen graphs, PlantUML layout backend |
 | OpenJDK | openjdk.org (Ubuntu package) | 21 | Runs the PlantUML jar |
 | Python | python.org (Ubuntu package) | 3.12 | `tools/trace_report.py`, `tools/sdoc_to_md.py`, `tools/parse_sanitizer_log.py`, `tools/merge_findings.py`, `tools/msvc_analyze.py`, `tools/coverity_findings.py`, `tools/clang_analyzer.py`, `tools/lizard_metrics.py`, `tools/cpd_scan.py`, `packaging/make_icon.py`, `axivion/external_import.py` |
+
+## Coverity Scan: where its evidence lives
+
+Coverity analyses SERVER-SIDE, so its defect list is on scan.coverity.com rather than
+in this repository. The one artefact the run itself produces is `cov-int/build-log.txt`
+— what `cov-build` actually captured — and it answers the question a failed or empty
+submission raises: did it see the compiler at all, and how many translation units did
+it emit? The workflow uploads it on every run (artifact `coverity-build-log`, kept 90
+days) and
+
+```bash
+tools/fetch_coverity_log.sh          # newest run
+tools/fetch_coverity_log.sh --list   # pick another
+```
+
+places it in `analysis-results/coverity-build-log.txt`, next to the other analyzers'
+output — which also puts it in the qualification bundle rather than behind a download
+button in a web UI. Without `gh`, without authentication or without a run to fetch
+from, it prints why and exits 3 (skipped), like every other optional stage.
+
+Two things measured in that log on 2026-08-06, both worth knowing before anyone
+re-diagnoses them:
+
+* **91 compilation units** were captured. `cov-build` exits 0 even when it captures
+  NOTHING, so the workflow asserts on this count rather than on the exit code — a
+  silent empty submission still spends a weekly quota slot.
+* **69 "recoverable errors" warnings**, two per TU, are all one cause: Coverity's
+  front end fails on `std::__format::__float128_t` inside libstdc++'s `<format>` — a
+  SYSTEM header, not this project's code. "Recoverable" is literal: each TU still
+  emits, so the submission is complete. There is nothing to fix in `src/`.
 
 ## What must be installed — and what happens when it is not
 
@@ -178,3 +239,27 @@ Three things about this configuration are load-bearing:
 See @ref verification for why these are the honest route to a *proof* of
 absence of out-of-bounds/runtime errors, and what evidence this project
 provides in the meantime.
+
+## SonarCloud is informational, not a gate (moved from the README)
+
+The badges above show SonarCloud's own measures, not its quality gate. That is
+deliberate: Sonar's default gate fails on *hotspot* categories that need a human
+"safe" verdict on their dashboard — a pseudorandom generator used for reproducible
+model training, plain HTTP to a model server on `localhost`, unpinned action
+versions — and none of those can be answered by a build. This project's gates are
+the ones in `build_all.sh`: the test suite, requirements traceability, the metrics
+ratchet, eight analyzers at zero findings, clone detection, the sanitizers and
+Axivion's MISRA C++ 2023. SonarCloud runs alongside them as a second opinion, and
+its findings are read rather than obeyed.
+
+Two notes on the badges themselves. There is no "issues" badge any more: Sonar
+retired `metric=violations`, and the badge endpoint answers a JSON error for it
+rather than an image — which is why that badge rendered as a broken-image icon
+until it was replaced by the two measures above. And what the dashboard currently
+counts is worth stating plainly rather than hiding behind a green picture: **0
+bugs**, 891 code smells and 113 findings Sonar files as vulnerabilities, of which
+the large majority (74) are GitHub Actions hardening rules about workflow
+permissions and unpinned action versions, 24 are taint warnings in the Python
+tooling and 3 are the reproducible-RNG rule in the simulation feed. None is a
+finding about the trading path; they are on the backlog as hygiene, not as
+blockers.

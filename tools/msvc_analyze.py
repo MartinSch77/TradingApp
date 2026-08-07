@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """MSVC /analyze over every project TU — the Windows counterpart of the
 `g++ -fanalyzer` stage in tools/static_analysis.sh.
 

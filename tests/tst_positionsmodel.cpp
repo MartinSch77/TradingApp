@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Headless unit tests over the open-trades table model (DES-UI-POSMODEL):
 // the in-place refresh path (REQ-N-006) and the SL/TP edit guard that keeps
 // polls from overwriting a cell while its editor is open (REQ-F-012). The

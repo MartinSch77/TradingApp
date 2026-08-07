@@ -1,8 +1,13 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "ui/BotSimPanel.h"
 
 #include "domain/PositionMath.h"   // priceDecimals + the quote-freshness bound
 #include "services/EtoroClient.h"
+#include "domain/Forecasting.h"
 #include "domain/IndexConfluence.h"
+#include "domain/LeadSignal.h"
 #include "services/OllamaAdvisor.h"
 
 #include <QComboBox>
@@ -100,6 +105,25 @@ qsizetype indexOfTrade(const QList<PaperTrade> &trades, qint64 id)
         }
     }
     return -1;
+}
+
+// The fields EVERY decision line shares, in one place (REQ-F-029). The traded path and
+// the refused path record the same evaluation, so they must not drift apart in what they
+// say about it — and writing the eight common fields twice is exactly how they would.
+// The caller sets only what distinguishes the two: `traded`, the refusal `code`, and the
+// geometry a trade has and a refusal does not.
+trading::DecisionNote decisionNoteFor(const QString &symbol, qint32 dir, double confidence,
+                                      const trading::CandidateInput &in, const QDateTime &at)
+{
+    trading::DecisionNote note;
+    note.at = at;
+    note.symbol = symbol;
+    note.dir = dir;
+    note.confidence = confidence;
+    note.leadStrength = in.leadStrength;
+    note.leadMeasured = in.leadMeasured;
+    note.leadUnknowns = in.leadUnknowns;
+    return note;
 }
 
 // One advisor pick as the domain's plain proposal: the side as ±1, and the model's
@@ -513,6 +537,13 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
         static_cast<void>(m_dirBySymbol.insert(row.symbol, row.dir));
         static_cast<void>(m_confBySymbol.insert(row.symbol, row.confidence));
     }
+    // The other two books the reads need, taken from the SAME snapshot the ranking was
+    // computed from (REQ-F-035): the volume bars behind the VWAP and up/down-volume
+    // reads, and the app's own per-symbol series the futures reads live in. Keyed by
+    // APP SYMBOL, not by Yahoo ticker — passing the ticker book here is exactly the
+    // mistake that left the futures lead permanently unknown.
+    m_referenceVolumes = snap.referenceVolumes;
+    m_symbolSeries = snap.intradayBySymbol;
     // Exits first: a position the ranking has turned against should go before the
     // capital it frees is committed elsewhere.
     markAndExit();
@@ -602,12 +633,40 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     in.lastClosedAt = lastCloseFor(row.symbol);
     // The session's own structure, from the 1-minute series the scan already carries.
     in.rangeBreakDir = trading::openingRange(closes).breakDir;
-    // How many independent reference reads agree with this side (REQ-F-035).
-    const trading::Confluence score =
-        trading::confluenceFor(trading::indexReads(row.symbol, m_referenceSeries, closes),
-                              gate.dir);
+    // How many independent reference reads agree with this side (REQ-F-035). Built once
+    // and used for both the count and the combined indication below — the two must be
+    // computed from identical inputs or the window contradicts itself.
+    trading::ReadInputs inputs = trading::readInputsFor(row.symbol, m_referenceSeries,
+                                                        m_referenceVolumes, m_symbolSeries);
+    // The scan's own series for this instrument, which is fresher than the reference
+    // sweep's copy and is what every other decision in this function already uses.
+    inputs.ownSeries = closes;
+    const trading::IndexReads reads = trading::indexReads(row.symbol, inputs);
+    const trading::Confluence score = trading::confluenceFor(reads, gate.dir);
     in.agreeingReads = score.met;
     in.measuredReads = score.measured();
+    // The combined indication (REQ-F-036): the same reads plus the constituent field,
+    // the session phase and the regime, scored into one answer. It can only ever
+    // reduce what the bot does — veto a trade the evidence contradicts, and bound the
+    // leverage — which is why it is computed for every candidate rather than only for
+    // the two indices whose window shows it.
+    trading::LeadInputs lead;
+    lead.symbol = row.symbol;
+    lead.reads = reads;
+    lead.pulse = trading::heavyweightPulse(row.symbol, m_referenceSeries);
+    lead.now = now;
+    lead.vixValid = m_vixValid;
+    lead.vix = m_vix;
+    lead.eventRisk = m_eventRisk;
+    lead.term = trading::termStructure(m_referenceSeries);
+    lead.compositeDir = gate.dir;
+    lead.compositeConfidence = in.confidence;
+    const trading::LeadSignal signal = trading::leadSignal(lead);
+    in.leadDir = signal.actionable() ? signal.dir : 0;
+    in.leadStrength = signal.strength;
+    in.leadMaxLeverage = signal.actionable() ? signal.suggestedLeverage : 0;
+    in.leadMeasured = signal.measured;
+    in.leadUnknowns = signal.unknowns;
     in.opensLastHour = opensInLastHour(now);
     in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol);
     in.quoteLive = sides.ok && in.marketOpen;
@@ -649,23 +708,25 @@ qint32 BotSimRunner::opensInLastHour(const QDateTime &now) const
     return static_cast<qint32>(count);
 }
 
-QString BotSimRunner::applyNetGate(const QString &symbol,
-                                   const trading::EntryFeatures &features,
-                                   trading::EntrySignal &sig)
+trading::NetVerdict BotSimRunner::applyNetGate(const QString &symbol,
+                                              const trading::EntryFeatures &features,
+                                              trading::EntrySignal &sig)
 {
-    // Empty = nothing in the way. A scored-but-allowed candidate carries the number
-    // into its basis line, so the record shows what the model thought of a trade it
-    // did not stop.
+    // The WHOLE verdict is returned, not just its code: the decision log has to state
+    // WHY the learned model stood in the way, and a code alone ("net-refused") explains
+    // nothing to the person reading the file later.
     const trading::NetVerdict verdict =
         trading::paperNetGate(m_net, features, m_netMode, trading::NetGateConfig{});
     if (!verdict.allow) {
         emit log(QStringLiteral("SIM SKIP %1: %2").arg(symbol, verdict.why), false);
-        return verdict.code;
+        return verdict;
     }
+    // A scored-but-allowed candidate carries the number into its basis line, so the
+    // record shows what the model thought of a trade it did not stop.
     if (verdict.scored) {
         sig.basis += QStringLiteral(" [net %1]").arg(verdict.score, 0, 'f', 2);
     }
-    return {};
+    return verdict;
 }
 
 trading::EntryFeatures BotSimRunner::featuresFor(const trading::CandidateInput &in,
@@ -729,6 +790,19 @@ QString BotSimRunner::experiencePath()
 {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     return QDir(dir).filePath(QStringLiteral("botsim-experience.jsonl"));
+}
+
+QString BotSimRunner::ledgerPath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    return QDir(dir).filePath(QStringLiteral("prediction-ledger.jsonl"));
+}
+
+QString BotSimRunner::decisionLogPath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // .log, not .jsonl: this one is meant to be opened, tailed and grepped by a person.
+    return QDir(dir).filePath(QStringLiteral("botsim-decisions.log"));
 }
 
 QString BotSimRunner::modelPath()
@@ -994,6 +1068,93 @@ void BotSimRunner::considerEntries(const QList<trading::DecisionRow> &rows,
                                  ? QString()
                                  : QStringLiteral(" · skipped: %1").arg(parts.join(u", ")))),
              false);
+    reportForecast(rows);
+}
+
+void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
+{
+    // What the RECORD says about calls like the ones just made (REQ-F-037), for the
+    // leading candidate: the probability per horizon, or an explicit refusal to quote one.
+    // Logged once per scan rather than per candidate — one line a reader will actually
+    // read beats twenty-six they will not.
+    if (rows.isEmpty()) {
+        return;
+    }
+    const trading::DecisionRow &lead = rows.constFirst();
+    const QList<double> closes = m_symbolSeries.value(lead.symbol);
+    const QList<trading::Prediction> history = trading::loadPredictions(ledgerPath());
+    QList<trading::Prediction> forSymbol;
+    for (const trading::Prediction &row : history) {
+        if (row.symbol == lead.symbol) {
+            forSymbol.append(row);
+        }
+    }
+    trading::Prediction now;
+    now.at = QDateTime::currentDateTimeUtc();
+    now.symbol = lead.symbol;
+    now.dir = lead.dir;
+    now.strength = m_lastLeadStrength.value(lead.symbol, 0.0);
+    now.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    if (!now.isValid()) {
+        return;   // nothing to forecast from, and a forecast from nothing is the lie
+    }
+    QStringList lines;
+    for (const trading::HorizonProbability &answer :
+         trading::horizonProbabilities(now, forSymbol, closes)) {
+        lines << answer.sentence;
+    }
+    // The record's own verdict on itself, at the horizon a CFD can actually be traded on:
+    // whether the app's calls have beaten the cheap baselines yet. It is allowed to say no.
+    const trading::HorizonScore score = trading::scoreHorizon(forSymbol, trading::Horizon::M15);
+    emit log(QStringLiteral("FORECAST %1: %2 · record: %3")
+                 .arg(lead.symbol, lines.join(QStringLiteral(" · ")), score.headline()),
+             false);
+}
+
+// One ledger row per evaluated candidate, whatever the outcome (REQ-F-037). The rows
+// that STAY OUT are the reason the ledger is worth keeping: a record of the trades
+// actually taken can only measure the gate in front of it, never the signal — it cannot
+// see the calls that were right and skipped.
+//
+// Its own function rather than a lambda inside tryOpen: recording what was decided is a
+// different job from deciding, and folding it in pushed tryOpen past the complexity gate.
+void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
+                                    const QList<double> &closes, const QDateTime &now,
+                                    const trading::CandidateInput &in,
+                                    const QString &refusal) const
+{
+    trading::Prediction entry;
+    entry.at = now.toUTC();
+    entry.symbol = row.symbol;
+    entry.dir = in.leadDir;
+    entry.strength = in.leadStrength;
+    entry.measured = in.leadMeasured;
+    entry.unknowns = in.leadUnknowns;
+    entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    trading::RegimeInputs regime;
+    // Persistence needs a session to measure; below that it stays UNKNOWN rather than
+    // defaulting to a comfortable "range".
+    if (closes.size() >= 32) {
+        regime.hurstKnown = true;
+        regime.hurst = trading::hurstExponent(closes);
+    }
+    regime.vixValid = m_vixValid;
+    regime.vix = m_vix;
+    regime.eventWindow = m_eventRisk;
+    entry.regime = trading::regimeFor(regime);
+    // No refusal code IS the taken case — one parameter fewer, and the two can no longer
+    // be set inconsistently (a "taken" row carrying a refusal was expressible before).
+    entry.taken = refusal.isEmpty();
+    entry.refusal = refusal;
+    // The baseline this app CAN measure at decision time: the previous five minutes'
+    // direction. The session-VWAP side stays 0 — unknown — because the instrument's own
+    // candles carry no volume, and an unmeasurable baseline must not be scored.
+    if (closes.size() > 5) {
+        const double then = closes.at(closes.size() - 6);
+        const double last = closes.constLast();
+        entry.priorMoveDir = (last > then) ? 1 : ((last < then) ? -1 : 0);
+    }
+    static_cast<void>(trading::appendPrediction(ledgerPath(), entry));
 }
 
 bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> &closes,
@@ -1004,6 +1165,20 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
             *skipCode = code;
         }
         return false;
+    };
+    // Every refusal goes through here, so a path cannot record a prediction while
+    // forgetting to say WHY it refused (REQ-F-029). The ledger row is for measuring the
+    // decision later; the decision-log line is for a person asking what happened.
+    const auto refuse = [&](const QString &code, const QString &why,
+                            const trading::CandidateInput &input) {
+        recordPrediction(row, closes, now, input, code);
+        trading::DecisionNote note =
+            decisionNoteFor(row.symbol, input.dir, row.confidence, input, now);
+        note.traded = false;
+        note.code = code;
+        note.why = why;
+        static_cast<void>(trading::appendDecision(decisionLogPath(), note));
+        return skip(code);
     };
     trading::BookState state = m_book.state();
     state.symbol = m_book.exposureFor(row.symbol);
@@ -1018,12 +1193,16 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
         if (aboutTheAiPick && !gate.why.isEmpty()) {
             emit log(QStringLiteral("SIM SKIP %1: %2").arg(row.symbol, gate.why), false);
         }
-        return skip(gate.code);
+        // Nothing was evaluated yet, so the row carries no evidence — only the refusal.
+        return refuse(gate.code, gate.why, trading::CandidateInput{});
     }
     const qint64 id = m_client->instrumentIdFor(row.symbol);
     const trading::AiProposal pick =
         (gate.pick >= 0) ? m_proposals.at(gate.pick) : trading::AiProposal{};
     const trading::CandidateInput in = candidateFor(row, gate, closes, now);
+    // Kept for the scan's forecast line, so it quotes the SAME strength the ledger
+    // recorded for this instrument rather than recomputing it from newer inputs.
+    static_cast<void>(m_lastLeadStrength.insert(row.symbol, in.leadStrength));
 
     trading::EntrySignal sig = trading::buildEntrySignal(in, m_book.config());
     // A model leading the trade may ask for LESS leverage than the risk budget
@@ -1040,25 +1219,51 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     const trading::EntryVerdict verdict =
         trading::paperEntryVerdict(in, sig, state, m_book.config());
     if (!verdict.take) {
-        // Per instrument this is noise; COUNTED over the scan it is the answer to
-        // "why did the bot open nothing?", which considerEntries logs once.
-        return skip(verdict.code);
+        // Per instrument this is noise in the WINDOW; COUNTED over the scan it is the
+        // answer to "why did the bot open nothing?", which considerEntries logs once. In
+        // the ledger it is a full row, and in the decision log a sentence a person can
+        // read months later: the evidence measured, and the rule that refused it.
+        return refuse(verdict.code, verdict.why, in);
     }
     // Last: what the bot has LEARNED from its own record about setups like this one
     // (REQ-F-033). It rides along until the model has earned the right to refuse.
     const trading::EntryFeatures features = featuresFor(in, sig, verdict.stake, now);
-    if (const QString netCode = applyNetGate(row.symbol, features, sig); !netCode.isEmpty()) {
-        return skip(netCode);
+    // Named netGate, not net: BotSimRunner::net() is the model accessor, and a local
+    // that shadows a member function reads as if the gate WERE the model.
+    if (const trading::NetVerdict netGate = applyNetGate(row.symbol, features, sig);
+        !netGate.allow) {
+        return refuse(netGate.code, netGate.why, in);
     }
     const qint64 openedId = (id == 0) ? 0 : m_book.open(sig, verdict.stake, now);
     if (openedId == 0) {
-        return skip(QStringLiteral("instrument-unresolved"));
+        return refuse(QStringLiteral("instrument-unresolved"),
+                      QStringLiteral("the venue's instrument id for %1 is not known, so no "
+                                     "order geometry could be attached to it")
+                          .arg(row.symbol),
+                      in);
     }
+    recordPrediction(row, closes, now, in, QString{});
     m_book.setFeatures(openedId, features);
     // The COMPOSITE's conviction, whatever decided the trade: the fade rule compares
     // like with like (REQ-F-032).
     m_book.setEntryCompositeConf(openedId, row.confidence);
     emit tradeOpened(sig.symbol);
+    // The same event in the persistent log, with the geometry beside the evidence, so the
+    // file answers "why WAS this traded?" as fully as it answers why the others were not.
+    {
+        trading::DecisionNote note =
+            decisionNoteFor(sig.symbol, sig.isBuy ? 1 : -1, row.confidence, in, now);
+        note.traded = true;
+        note.why = verdict.why;
+        note.stake = verdict.stake;
+        note.leverage = sig.leverage;
+        note.fillRate = sig.fillRate;
+        note.slRate = sig.slRate;
+        note.tpRate = sig.tpRate;
+        note.openCost =
+            trading::paperHalfSpreadCost(verdict.stake, sig.leverage, sig.spreadPct);
+        static_cast<void>(trading::appendDecision(decisionLogPath(), note));
+    }
     emit log(QStringLiteral("SIM OPEN %1 %2 %3 @ %4 x%5 — SL %6 / TP %7, spread cost %8 — %9")
                  .arg(sig.symbol)
                  .arg(sig.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))

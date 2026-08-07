@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Supply-chain evidence, using whichever of the free tools are installed
 # (./setup.sh installs all three; each missing tool is reported and skipped):
 #

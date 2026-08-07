@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # The reference architecture of TradingApp, as code — the same layering the
 # linker already enforces (CMakeLists: domain links Qt Core only; services may
 # not link ui; ui sits on top), now stated once as the model the Axivion

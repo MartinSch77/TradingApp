@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "services/AiAdvisor.h"
 #include "services/Config.h"
 #include "services/EconomicCalendar.h"
@@ -75,6 +78,11 @@ int main(int argc, char *argv[])
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openDecision"));
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openClosedTrades"));
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openBotSim"));
+                // The heavyweight window too: it is the one view whose emptiness was a
+                // real defect nobody could see from a screenshot set that omitted it
+                // (the constituent reads went dark when the feed stopped serving equity
+                // bars). A QA capture that cannot show the regression is not QA.
+                static_cast<void>(QMetaObject::invokeMethod(&window, "openHeavyPanel"));
             });
         }
         const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")

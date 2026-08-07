@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_ETOROCLIENT_H
 #define TRADINGAPP_ETOROCLIENT_H
 
@@ -78,7 +81,10 @@ public:
     // here — the same hook AiAdvisor, MarketFeeds and EconomicCalendar carry, and for
     // the same reason: a fee path that can only be exercised against the real host is
     // one that is never exercised.
-    void setTradeConfigBaseForTesting(const QString &base);
+    // static, and that is the honest signature: the redirect is held in one
+    // function-local static behind tradeConfigBase(), so it applies to EVERY client in
+    // the process, not to the instance it happens to be called on.
+    static void setTradeConfigBaseForTesting(const QString &base);
 
     // Live spread (percent of mid) for any listed symbol, from the most recent
     // bulk rates snapshot (the periodic tradeability refresh keeps it warm for

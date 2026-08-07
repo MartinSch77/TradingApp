@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Run the whole test suite and record per-test-function results as JUnit XML
 # in test-results/ — the result leg of the traceability chain
 # (tools/trace_report.py joins them with the specs). ctest alone only records

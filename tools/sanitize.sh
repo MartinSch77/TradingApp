@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Dynamic runtime-error evidence over the test suite, three independent
 # checkers (LLVM/GCC sanitizers + valgrind):
 #
@@ -105,16 +108,35 @@ run_valgrind() {
         return 3
     fi
     : > "$OUT/sanitize-valgrind.raw.txt"
+    local name out
     for exe in "$BUILD"/tests/tst_*; do
         [ -f "$exe" ] && [ -x "$exe" ] || continue
-        echo "=== valgrind $(basename "$exe") ===" | tee -a "$OUT/sanitize-valgrind.raw.txt"
-        valgrind \
+        name="$(basename "$exe")"
+        out="$OUT/valgrind-$name.out"
+        echo "=== valgrind $name ===" | tee -a "$OUT/sanitize-valgrind.raw.txt"
+        # STDOUT IS KEPT, not sent to /dev/null. valgrind's own findings go to stderr, so
+        # discarding stdout used to look harmless — but --error-exitcode=1 is not the only
+        # way this loop fails: the TEST's own exit code counts too, and QtTest reports a
+        # failing case on STDOUT. A run where every ERROR SUMMARY said "0 errors" and the
+        # stage still failed was therefore undiagnosable: the one line naming the test had
+        # been thrown away. Measured on the 2026-08-06 run, which cost an hour to not
+        # identify. The file is removed again when the test passes, so a clean run leaves
+        # no clutter behind.
+        if valgrind \
             --leak-check=full \
             --show-leak-kinds=all \
             --track-origins=yes \
             --error-exitcode=1 \
             --suppressions="$ROOT/tools/valgrind.supp" \
-            "$exe" >/dev/null 2>>"$OUT/sanitize-valgrind.raw.txt" || rc=1
+            "$exe" >"$out" 2>>"$OUT/sanitize-valgrind.raw.txt"; then
+            rm -f "$out"
+        else
+            rc=1
+            # Name it, and show the part of its output that says why, so the failure is
+            # actionable from the pipeline log alone.
+            echo "valgrind FAILED: $name — its output is in $(basename "$out")" >&2
+            grep -E '^(FAIL!|QFATAL|QWARN|Totals:)' "$out" | head -20 >&2 || tail -20 "$out" >&2
+        fi
     done
     normalize valgrind
     [ $rc -eq 0 ] && echo "valgrind memcheck: all tests clean"

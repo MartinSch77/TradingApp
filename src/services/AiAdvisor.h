@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_SERVICES_AIADVISOR_H
 #define TRADINGAPP_SERVICES_AIADVISOR_H
 

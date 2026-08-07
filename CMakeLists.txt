@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 cmake_minimum_required(VERSION 4.2)
 
 # cmake_minimum_required(4.2) turns every policy up to 4.2 NEW, including
@@ -13,7 +16,7 @@ if(POLICY CMP0156)
 endif()
 
 project(TradingApp
-    VERSION 1.0.2
+    VERSION 1.0.3
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 
@@ -122,8 +125,14 @@ qt_add_library(trading_domain STATIC
     src/domain/TradeScript.h
     src/domain/BotNet.cpp
     src/domain/BotNet.h
+    src/domain/LeadSignal.cpp
+    src/domain/LeadSignal.h
     src/domain/IndexConfluence.cpp
     src/domain/IndexConfluence.h
+    src/domain/PredictionLedger.cpp
+    src/domain/PredictionLedger.h
+    src/domain/DecisionLog.cpp
+    src/domain/DecisionLog.h
     src/domain/PaperTrader.cpp
     src/domain/PaperTrader.h
 )
@@ -286,6 +295,22 @@ if(NOT ANDROID AND NOT IOS)
     install(TARGETS TradingApp
         BUNDLE  DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+
+    # The licence texts travel INSIDE the artefact, not only beside it in the
+    # release page. GPL-3.0-or-later requires the terms to reach whoever receives
+    # the binary, and an AppImage or a portable ZIP is often passed on by itself.
+    # Installed here rather than in each packager so the AppImage
+    # (tools/package_appimage.sh) and the Windows portable ZIP
+    # (tools/package_portable.ps1) — both of which run `cmake --install` — cannot
+    # disagree about what they ship.
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+        ${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_LICENSES.md
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/TradingApp
+    )
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/LICENSES
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/TradingApp
     )
 
     # Generates a CMake script, run at install time, that collects and copies the

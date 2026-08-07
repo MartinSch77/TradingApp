@@ -18,10 +18,26 @@ cost/fee accounting.
 - @ref verification — test suite, coverage (line/branch + MC/DC), sanitizers,
   static analysis (Axivion, clang-tidy, cppcheck, clazy, g++ -fanalyzer)
 - @ref vmodel — how the V-model is covered with everything-as-code artefacts
+- @ref aiassisted — this code was written with an AI assistant: the verification that is
+  independent of the generator, what it demonstrably catches, and — with real examples
+  that passed the whole pipeline green — what it does not
 - @ref tools — the tools used: origin, version, role
 - @ref platforms — building for Linux (x86-64 and ARM64/Raspberry Pi), Windows, Android, iOS
 - @ref windows — the Windows (PowerShell) quality pipeline: script-by-script
   mapping against the `*.sh` entry points, tool substitutions and real gaps
+- @ref configuration — configuration, API keys, and the demo/real-money gates
+- @ref etoroapi — the eToro endpoints actually called, their quirks and troubleshooting
+- @ref bot — every switch on the simulated trading bot, and the QA helpers
+- @ref qtshowcase — which Qt technology is used where, one representative file per row
+- @ref quickdesign — the Qt Quick dashboard design, decided before any QML was written
+
+The four licensed Qt tools each get a case study — problem, configuration, what it
+found, the correction, the measurable result:
+
+- @ref cssquish — Squish for Qt: GUI tests that cannot reach real money
+- @ref cscoco — Squish Coco: MC/DC from 77% to ~88%
+- @ref cstestcenter — Qt Test Center: results that outlive the working tree
+- @ref csaxivion — Axivion Suite: architecture as code, and an honest finding count
 
 ## Traceability tags
 

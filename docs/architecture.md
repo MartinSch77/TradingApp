@@ -142,3 +142,71 @@ Trader -> MW : (alternatively) Cancel selected limit order
 MW -> EC : cancelPendingOrder(orderId)
 EC -> API : DELETE orders/{orderId}
 @enduml
+
+## Project layout, module by module (moved from the README)
+
+The code is organised in three layers, each built as its own target so the
+dependency direction (UI → services → domain) is enforced by the linker: the
+domain cannot reach the network, and the services cannot reach the widgets.
+All layers are plain cross-platform Qt/C++, so the same split holds on Linux,
+Windows and Android.
+
+## `src/domain/` — pure trading logic (`trading_domain`, Qt Core only)
+
+Deterministic functions with no I/O and no UI, in `namespace trading` —
+independently unit-testable and shared by every view that shows a signal.
+
+| File | Responsibility |
+|------|----------------|
+| [`Models.h`](../src/domain/Models.h)                 | `Instrument`, `Candle`, `Position`, ... value types |
+| [`Indicators.*`](../src/domain/Indicators.h)         | SMA, RSI, MACD, Bollinger, stochastic, volatility, ROC |
+| [`Forecasting.*`](../src/domain/Forecasting.h)       | OLS regression, kNN analogs, Hurst, Monte-Carlo outlook |
+| [`SignalEnsemble.*`](../src/domain/SignalEnsemble.h) | The BUY/SELL indicator vote + VIX confidence haircut |
+| [`DecisionEngine.*`](../src/domain/DecisionEngine.h) | Weighted multi-source composite + AI evidence prompt |
+| [`TradePlan.*`](../src/domain/TradePlan.h)           | Costed trade proposal: verdict, P(win), risk factor, leverage, SL/TP, cost bill |
+| [`PositionMath.*`](../src/domain/PositionMath.h)     | SL/TP amount↔rate maths, value-per-point, price decimals |
+| [`EventInsight.*`](../src/domain/EventInsight.h)     | Macro-event impact heuristics and descriptions |
+| [`TradeScript.*`](../src/domain/TradeScript.h)       | Trade-script parsing + per-entry execution predicates |
+| [`PaperTrader.*`](../src/domain/PaperTrader.h)       | Paper-trading bot: simulated account, real cost model, entry/exit rules |
+
+## `src/services/` — integration (`trading_services`, adds Qt Network)
+
+| File | Responsibility |
+|------|----------------|
+| [`Config.*`](../src/services/Config.h)                   | Load keys/settings from JSON + env; demo/live decision |
+| [`EtoroClient.*`](../src/services/EtoroClient.h)         | The broker: eToro REST calls (rates, orders, portfolio, history) |
+| [`SimulationEngine.*`](../src/services/SimulationEngine.h) | Synthetic feed + virtual account (no-credentials fallback) |
+| [`MarketFeeds.*`](../src/services/MarketFeeds.h)         | Public web feeds: VIX, TradingView ratings, news |
+| [`AiAdvisor.*`](../src/services/AiAdvisor.h)             | Claude (Anthropic API) decision synthesis |
+| [`OllamaAdvisor.*`](../src/services/OllamaAdvisor.h)     | Local-LLM trading proposal (Ollama, optional, no key) |
+| [`JsonHttp.*`](../src/services/JsonHttp.h)               | Shared reply/retry/JSON plumbing for all REST calls |
+| [`EconomicCalendar.*`](../src/services/EconomicCalendar.h) | Macro-economic calendar feed |
+
+## `src/ui/` + `src/main.cpp` — presentation (Qt Widgets/Charts)
+
+| File | Responsibility |
+|------|----------------|
+| [`MainWindow.*`](../src/ui/MainWindow.h)         | Main window: trade panel, signals, positions, events |
+| [`ScreenerDialog.*`](../src/ui/ScreenerDialog.h) | Leverage screener window |
+| [`PriceChart.*`](../src/ui/PriceChart.h)         | Live time-vs-price Qt Charts widget |
+| [`ChartView.*`](../src/ui/ChartView.h)           | Interactive pan/zoom chart view |
+| [`PositionsModel.*`](../src/ui/PositionsModel.h) | Open-trades table model, in-place re-price |
+| [`TradeGauge.*`](../src/ui/TradeGauge.h)         | Per-trade gauge window |
+| [`TradeScriptPanel.*`](../src/ui/TradeScriptPanel.h) | Trade-script runner + window |
+| [`BotSimPanel.*`](../src/ui/BotSimPanel.h)       | Paper-trading bot runner + window (simulated money, live prices) |
+| [`Palette.h`](../src/ui/Palette.h)               | Shared UI colors |
+| [`main.cpp`](../src/main.cpp)                    | Composition root: builds the services, injects them into the UI |
+
+## The four licensed Qt tools
+
+Axivion Suite, Squish, Squish Coco and Squish Test Center are commercial products
+from The Qt Company and cannot be installed by `setup.sh`. **How to obtain, install
+and configure each of them — including where the licence file goes and which
+parameter points this project at the installation — is in
+[docs/qt-tools.md](../docs/qt-tools.md).** `tools/check_prerequisites.sh` reports which
+of them the current machine has.
+
+Without them nothing breaks: their stages report *skipped*, the seven open-source
+analyzers still gate at zero findings, gcov and clang MC/DC still measure coverage,
+and the quality PDF lists the missing licences so a reader can tell "measured and
+clean" from "not measured here".

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Requirements-as-code toolchain (StrictDoc; see strictdoc_config.py):
 #
 #   1. Validate + export requirements/requirements.sdoc to HTML with

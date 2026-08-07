@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef TRADINGAPP_DOMAIN_INDEXCONFLUENCE_H
 #define TRADINGAPP_DOMAIN_INDEXCONFLUENCE_H
 
@@ -5,6 +8,8 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+
+#include <optional>
 
 // What the index instruments are really doing, from the reference series the app can
 // actually fetch (REQ-F-035).
@@ -49,22 +54,88 @@ struct Read {
     QString detail;   // the number behind it, for the tooltip and the prompt
 };
 
+// One ticker's session bars as the sweep delivers them: the closes, and — when the
+// feed carries volume for that ticker — the volume of the SAME bars, index for index.
+//
+// The alignment is the entire point. The close sweep skips empty minutes, and a volume
+// array parsed independently skips a DIFFERENT set of minutes; a VWAP computed from
+// two such series is a number about nothing. These two lists are therefore filled
+// together, and a bar is kept only when both halves are present.
+struct VolumeSeries {
+    QList<double> closes;
+    QList<double> volumes;
+
+    // Volume-weighted average price of the session so far, or nothing when the bars
+    // cannot support one.
+    [[nodiscard]] std::optional<double> vwap() const;
+    [[nodiscard]] std::optional<double> totalVolume() const;
+};
+
+// Everything the reads are computed from, in ONE bundle — and the bundle exists to
+// make a specific defect unrepresentable rather than for tidiness.
+//
+// Two books arrive from two different worlds: the Yahoo references are keyed by
+// TICKER (^VIX, ^TNX, AAPL), the futures proxies by this app's own INSTRUMENT SYMBOL
+// (SP.24-7, NSDQ100.24-7). They were once one parameter, and the futures-lead read —
+// the most immediate directional signal there is — looked for NSDQ100.24-7 in the
+// ticker book, where nothing ever put it. It was therefore permanently UNKNOWN in the
+// running app while its unit test passed, because the test put the futures in the
+// book the read was searching. Named fields make that mistake visible at every call
+// site.
+struct ReadInputs {
+    QHash<QString, QList<double>> reference;      // by Yahoo ticker
+    QHash<QString, VolumeSeries> volume;          // by Yahoo ticker, closes+volumes aligned
+    QHash<QString, QList<double>> bySymbol;       // by APP symbol — the futures proxies
+    QList<double> ownSeries;                      // the instrument's own 1-minute closes
+};
+
 // Everything the reference series say, for one index instrument.
+//
+// Nine reads, not five, and the three added from volume are the ones a professional
+// dashboard would reach for first. What is deliberately NOT here: order flow (volume
+// delta, cumulative delta, bid/ask imbalance, absorbed liquidity) needs CME level-2
+// tick data, and this app sees one bid/ask with no sizes and candles with no volume at
+// all. An honest gap beats a proxy wearing the name of the real thing.
 struct IndexReads {
     Read futuresLead;      // Nasdaq future vs S&P future this session
+    Read futuresMomentum;  // the leading future's 1/5/15-minute returns, agreeing or not
     Read volatility;       // the instrument's own volatility index, rising or falling
     Read yields;           // the US 10-year, rising (headwind) or falling (tailwind)
+    Read curve;            // the short end against the long end — the policy read
     Read participation;    // how many of THAT index's heavyweights are up on the session
+    Read aboveVwap;        // how many of them trade above their OWN session VWAP
+    Read upDownVolume;     // whether the volume sits behind the up names or the down ones
     Read structure;        // where price sits against its own opening range
 };
 
-// `series` is keyed by reference ticker (as fetched) plus the app's own instrument
-// series for the structure read. `symbol` selects both index-specific reads: NSDQ100
-// is judged by ^VXN and the Nasdaq-100 heavyweights, everything else by ^VIX and the
-// S&P 500's.
-[[nodiscard]] IndexReads indexReads(const QString &symbol,
-                                    const QHash<QString, QList<double>> &referenceSeries,
-                                    const QList<double> &ownSeries);
+// The reads for `symbol`. It selects every index-specific one: NSDQ100 is judged by
+// ^VXN, the Nasdaq-100 heavyweights and the Nasdaq future, everything else by ^VIX,
+// the S&P 500's names and the S&P future.
+[[nodiscard]] IndexReads indexReads(const QString &symbol, const ReadInputs &in);
+
+// The bundle, assembled from the two books the app already keeps. Every caller goes
+// through this: the mapping from "which book holds what" to "which read needs which"
+// is stated ONCE, so a window and the bot cannot each get it wrong in a different way.
+// `ownSeries` is the instrument's own series out of the symbol book — the same place
+// the futures proxies live, because the traded instrument is one of this app's symbols
+// too, not a Yahoo ticker.
+[[nodiscard]] ReadInputs readInputsFor(const QString &symbol,
+                                       const QHash<QString, QList<double>> &reference,
+                                       const QHash<QString, VolumeSeries> &volume,
+                                       const QHash<QString, QList<double>> &bySymbol);
+
+// The volatility TERM STRUCTURE: nine-day expected volatility against thirty-day
+// against three-month. Not a direction and never counted as one — an inverted curve
+// (the near term priced above the far) says the market is paying up for protection
+// RIGHT NOW, which is a statement about how much the next print can overrule, not
+// about which way it goes. It therefore only ever reduces conviction.
+struct TermStructure {
+    bool known = false;
+    bool inverted = false;
+    double nearFarRatio = 1.0;   // ^VIX9D / ^VIX3M, or the closest pair available
+    QString detail;
+};
+[[nodiscard]] TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries);
 
 // One heavyweight constituent, as the early-warning view shows it (REQ-F-035): the
 // name, how far it has moved on the session, and whether that was measurable at all.

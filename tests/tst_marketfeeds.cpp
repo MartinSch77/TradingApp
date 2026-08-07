@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Integration tests for the public market feeds (DES-SVC-FEEDS) against an
 // in-process mock HTTP server: the VIX reading vs its multi-month baseline,
 // the TradingView rating (current instrument and bulk with ticker->symbols
@@ -394,7 +397,7 @@ private slots:
         QVERIFY(server.listen(QHostAddress::LocalHost));
         MarketFeeds feeds;
         feeds.setEndpointBaseForTesting(server.baseUrl());
-        QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
+        const QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
         feeds.fetchReferenceSeries();
 
         const QStringList wanted = trading::referenceTickers();
@@ -439,7 +442,7 @@ private slots:
         feeds.setEndpointBaseForTesting(server.baseUrl());
         const QSignalSpy vix(&feeds, &MarketFeeds::vixUpdated);
         const QSignalSpy fear(&feeds, &MarketFeeds::fearGreedUpdated);
-        QSignalSpy external(&feeds, &MarketFeeds::externalSignalUpdated);
+        const QSignalSpy external(&feeds, &MarketFeeds::externalSignalUpdated);
         feeds.setCurrentSymbol(QStringLiteral("SPX500"));
         feeds.start(60000);
         QTest::qWait(600);
@@ -591,6 +594,76 @@ private slots:
             QCOMPARE(series.count(), 0);
             QCOMPARE(intraday.count(), 0);
         }
+    }
+
+    //! @tstid TS-FEED-014 @design DES-SVC-FEEDS
+    // @relation(REQ-F-035, scope=function)
+    void TS_FEED_014_aBarlessEquityResponseStillYieldsItsSessionChange()
+    {
+        // The regression for a SILENT, TOTAL loss of the heavyweight reads. Measured
+        // 2026-08-07 mid-session (11:47 New York, Thursday, cash market open) with a
+        // browser User-Agent: Yahoo answered 200 for AAPL with NO timestamp key and an
+        // empty close array, while ^VIX on the identical request returned bars. Because
+        // yahooCloses() then produced nothing, referenceSeries never fired for any of the
+        // twelve constituents, heavyweightPulse measured 0 of 10, and the window sat on
+        // "no constituent prices yet". The bot's decision log recorded it as "4 of 10
+        // reads measured (6 unmeasurable)" on every evaluation — the feature was dark and
+        // nothing said so.
+        //
+        // The same barless response still carries a live price and yesterday's close, and
+        // their difference IS the session change. So the read is MEASURED, and the rule
+        // that an unmeasurable read stays UNKNOWN is not bent.
+        MockHttpServer server([](const QByteArray & /*method*/, const QString &path) {
+            if (path.contains(QStringLiteral("AAPL"))) {
+                // Exactly the shape observed: meta present, close array empty.
+                return MockHttpServer::Response{
+                    200,
+                    yahooChartBody(R"("regularMarketPrice":311.0,"previousClose":309.38,)"
+                                   R"("chartPreviousClose":333.43)",
+                                   ""),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("MSFT"))) {
+                // No usable meta either: this one must stay absent, not be invented.
+                return MockHttpServer::Response{200, yahooChartBody(R"("x":1)", ""), {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        const QSignalSpy series(&feeds, &MarketFeeds::referenceSeries);
+        feeds.fetchReferenceSeries();
+        QTRY_VERIFY_WITH_TIMEOUT(series.count() >= 1, kWaitMs);
+
+        QList<double> aapl;
+        bool sawMsft = false;
+        for (qsizetype i = 0; i < series.count(); ++i) {
+            const QString ticker = series.at(i).at(0).toString();
+            if (ticker == QStringLiteral("AAPL")) {
+                aapl = series.at(i).at(1).value<QList<double>>();
+            }
+            if (ticker == QStringLiteral("MSFT")) {
+                sawMsft = true;
+            }
+        }
+        // Two points, in order: yesterday's close then the live price. Read with value()
+        // rather than at(): it is bounds-safe, so the reads below cannot be an out-of-range
+        // access even on the failure path where the series never arrived.
+        QCOMPARE(aapl.size(), qsizetype(2));
+        QCOMPARE(aapl.value(0), 309.38);
+        QCOMPARE(aapl.value(1), 311.0);
+        // And that is the session change the reads consume: +0.524%, NOT the −6.7% that
+        // chartPreviousClose (333.43) would have produced. Picking the wrong meta field is
+        // the trap this pins — it is present in the payload above precisely so a future
+        // edit that reaches for it fails here.
+        const double pct = ((aapl.value(1) - aapl.value(0)) / aapl.value(0)) * 100.0;
+        QVERIFY(pct > 0.0);
+        QVERIFY(qAbs(pct - 0.5236) < 0.01);
+
+        // A response with neither bars nor usable meta publishes NOTHING. The fallback
+        // fills a measurable gap; it never manufactures a reading.
+        QVERIFY(!sawMsft);
     }
 };
 

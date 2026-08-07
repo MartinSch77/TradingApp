@@ -14,8 +14,13 @@ INPUT                  = src docs/mainpage.md docs/architecture.md \
                          docs/requirements.md docs/design.md docs/test_spec.md \
                          docs/verification.md docs/vmodel.md docs/tools.md \
                          docs/platforms.md docs/windows.md docs/qt-tools.md \
+                         docs/ai-assisted-development.md docs/configuration.md \
+                         docs/etoro-api.md docs/bot.md \
+                         docs/qt-framework-showcase.md docs/quick-dashboard-design.md \
+                         docs/case-studies/squish.md docs/case-studies/coco.md \
+                         docs/case-studies/test-center.md docs/case-studies/axivion.md \
                          tests README.md \
-                         CONTRIBUTING.md SECURITY.md
+                         CONTRIBUTING.md SECURITY.md THIRD_PARTY_LICENSES.md
 FILE_PATTERNS          = *.h *.cpp *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/mainpage.md

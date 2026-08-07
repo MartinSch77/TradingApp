@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unit tests for the multi-source decision engine (DES-DOM-DEC).
 
 #include "domain/DecisionEngine.h"
@@ -328,7 +331,7 @@ private slots:
         // than decided on nothing.
         ScreenerRow broken = row(QStringLiteral("GOLD"), trend(120, 1.002, 0.999));
         broken.ok = false;
-        ScreenerRow empty = row(QStringLiteral("OIL"), {});
+        const ScreenerRow empty = row(QStringLiteral("OIL"), {});
         m.screenerRows = {broken, empty, row(QStringLiteral("SPX500"), trend(120, 1.004, 1.001))};
         const QList<DecisionRow> filtered = computeDecisionRows(m);
         QCOMPARE(filtered.size(), 1);
@@ -354,7 +357,7 @@ private slots:
         QVERIFY(regimeOf(28.0) < 0.0);      // elevated
         QVERIFY(regimeOf(40.0) < regimeOf(28.0));   // panic presses harder
         // No VIX at all is not a calm market: it is no reading.
-        MarketSnapshot noVix;
+        const MarketSnapshot noVix;
         QCOMPARE(marketRegime(noVix).tilt, 0.0);
 
         // Event risk trims conviction rather than flipping direction — a scheduled
@@ -379,7 +382,7 @@ private slots:
         // The prompt is what a model reads before naming a trade, so what it OMITS
         // matters as much as what it says. Each of these is a state the app really
         // reaches, and each has to produce a prompt a reader can trust.
-        MarketSnapshot m;
+        const MarketSnapshot m;
 
         // No candidates at all: a prompt that still says so rather than an empty
         // string a model would answer at random.

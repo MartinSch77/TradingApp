@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Performance benchmarks over the domain hot paths (REQ-N-006). QBENCHMARK
 // reports wall-clock per iteration in the JUnit output and on the console —
 // run them from the Debug AND the release build (./build_all.sh release) to

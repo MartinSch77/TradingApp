@@ -34,7 +34,11 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Qt 6.11.1 lives under ~/Qt on this machine; allow overriding via -DCMAKE_PREFIX_PATH.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent)
+# Quick/Qml/QuickWidgets carry the declarative cockpit (REQ-F-038). QuickWidgets is what
+# lets it be ONE PAGE of this Widgets application rather than a second executable — the same
+# domain and service libraries behind two presentations, which is the point of the exercise.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
+                                    Qml Quick QuickWidgets)
 
 qt_standard_project_setup()
 
@@ -185,6 +189,53 @@ qt_add_executable(TradingApp
     src/ui/ScreenerDialog.h
     src/ui/ChartView.cpp
     src/ui/ChartView.h
+    src/ui/CockpitModel.cpp
+    src/ui/CockpitModel.h
+    src/ui/CockpitPanel.cpp
+    src/ui/CockpitPanel.h
+)
+
+# The cockpit's QML as a proper module rather than loose files, so the types resolve by URI
+# (TradingApp.Cockpit) and qmllint can check them against that module. Theme.qml is a
+# `pragma Singleton`, which qt_add_qml_module registers for us.
+# QTP0001 NEW puts the module under the standard ':/qt/qml/' resource prefix, which is the
+# URL CockpitPanel loads. Left unset, Qt warns and the prefix is the legacy one.
+qt_policy(SET QTP0001 NEW)
+
+# OUTPUT_DIRECTORY is NOT optional here, and the reason is a genuine collision: this target
+# writes its executable to the build ROOT (RUNTIME_OUTPUT_DIRECTORY below), so the file
+# `build/TradingApp` already exists — and the module's default output would be the DIRECTORY
+# `build/TradingApp/Cockpit/`. CMake fails with "Not a directory" while configuring. Putting
+# the module under build/qml/ sidesteps the clash between an executable and a module sharing
+# one name.
+# QT_RESOURCE_ALIAS per file, because qt_add_qml_module keeps the SOURCE subdirectory in the
+# resource alias: without these the files land at
+# qrc:/qt/qml/TradingApp/Cockpit/src/quick/qml/Main.qml, and loading the documented
+# .../Cockpit/Main.qml fails with "No such file or directory" — measured, and caught by
+# CockpitPanel::ready() rather than by an empty window.
+set_source_files_properties(src/quick/qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
+set_source_files_properties(src/quick/qml/MarketCard.qml
+    PROPERTIES QT_RESOURCE_ALIAS MarketCard.qml)
+set_source_files_properties(src/quick/qml/ConfluenceMeter.qml
+    PROPERTIES QT_RESOURCE_ALIAS ConfluenceMeter.qml)
+# QT_QML_SINGLETON_TYPE is REQUIRED as well as the file's own `pragma Singleton`: CMake does
+# not parse the QML, so without this the generated qmldir says "Theme 1.0 Theme.qml" instead
+# of "singleton Theme 1.0 Theme.qml". The failure is quiet and misleading — every Theme.*
+# colour resolves to an invalid value, so the cockpit renders black-on-white with no error
+# at all, and a function on the singleton raises "is not a function". Measured.
+set_source_files_properties(src/quick/qml/Theme.qml PROPERTIES
+    QT_RESOURCE_ALIAS Theme.qml
+    QT_QML_SINGLETON_TYPE TRUE)
+
+qt_add_qml_module(TradingApp
+    URI TradingApp.Cockpit
+    VERSION 1.0
+    OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/qml/TradingApp/Cockpit
+    QML_FILES
+        src/quick/qml/Main.qml
+        src/quick/qml/MarketCard.qml
+        src/quick/qml/ConfluenceMeter.qml
+        src/quick/qml/Theme.qml
 )
 
 target_link_libraries(TradingApp PRIVATE
@@ -193,6 +244,11 @@ target_link_libraries(TradingApp PRIVATE
     Qt6::Widgets
     Qt6::Charts
     Qt6::Concurrent
+    # The declarative cockpit (REQ-F-038). QuickWidgets hosts it inside the existing
+    # QMainWindow, so this stays one executable over one set of tested libraries.
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickWidgets
 )
 
 # Put the binary directly in the build dir root for convenience.

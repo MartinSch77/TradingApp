@@ -21,6 +21,7 @@
 #include "services/OllamaAdvisor.h"
 #include "ui/BotSimPanel.h"
 #include "ui/HeavyweightsPanel.h"
+#include "ui/CockpitPanel.h"
 #include "ui/TradeScriptPanel.h"
 #include "ui/TradeGauge.h"
 
@@ -1208,6 +1209,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_scriptButton);
     header->addWidget(m_botButton);
     header->addWidget(m_heavyButton);
+    header->addWidget(m_cockpitButton);
     header->addWidget(m_closedButton);
     header->addStretch();
     header->addWidget(m_clockLabel);
@@ -1267,6 +1269,90 @@ void MainWindow::updateClock()
                      .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
 }
 
+// The declarative cockpit (REQ-F-038): built on first use, fed, raised — the same pattern as
+// the heavyweight and decision windows, so there is one way to open a window here.
+//
+// Note what this function does NOT do: it wires no order path, no BUY/SELL, no SL/TP editor.
+// The cockpit is read-only by construction and this is the place someone would be tempted to
+// change that, so the omission is deliberate and documented (REQ-N-005).
+void MainWindow::openCockpit()
+{
+    if (m_cockpitPanel == nullptr) {
+        m_cockpitPanel = new trading::ui::CockpitPanel(this);
+        if (!m_cockpitPanel->ready()) {
+            // A QQuickWidget whose component failed shows an empty rectangle, which reads as
+            // "no data yet" rather than "broken". Say it out loud instead.
+            onLog(tr("the Qt Quick cockpit did not load — see the QML errors above"), true);
+        }
+    }
+    pushToCockpit();
+    m_cockpitPanel->show();
+    m_cockpitPanel->raise();
+}
+
+// Everything the cockpit shows, from the books this window already holds. Called on open and
+// whenever a reference series arrives, so the view cannot sit on a stale snapshot.
+void MainWindow::pushToCockpit()
+{
+    if (m_cockpitPanel == nullptr) {
+        return;
+    }
+    trading::ui::CockpitModel *model = m_cockpitPanel->model();
+    const QString symbol = m_client->config().symbol;
+
+    // SIMULATION comes from the ONE place every mode question reads, so the banner cannot
+    // disagree with the rest of the application.
+    model->setSimulation(!m_client->config().hasCredentials());
+
+    const trading::IndexReads reads =
+        trading::indexReads(symbol, trading::readInputsFor(symbol, m_referenceSeries,
+                                                           m_referenceVolumes,
+                                                           m_intradayBySymbol));
+    trading::LeadInputs in;
+    in.symbol = symbol;
+    in.reads = reads;
+    in.vixValid = m_vixValid;
+    in.vix = m_vix;
+    in.eventRisk = trading::marketRegime(marketSnapshot()).eventRisk;
+    in.compositeDir = m_lastSignalDir;
+    in.compositeConfidence = m_lastSignalConf;
+    model->setSignal(symbol, trading::leadSignal(in), reads);
+
+    // The market cards: the four reference reads a trader watches beside the instrument.
+    // Each carries the AGE of its own series, so a stale card says so rather than looking
+    // current — the rule REQ-F-038 states and tst_cockpitmodel pins.
+    QList<trading::ui::CockpitCard> cards;
+    const auto cardFor = [this](const QString &label, const QString &ticker) {
+        trading::ui::CockpitCard card;
+        card.symbol = label;
+        const QList<double> series = m_referenceSeries.value(ticker);
+        if (series.size() < 2 || series.constFirst() <= 0.0) {
+            // Absent, not zero: no series means no reading, and the card renders an em dash.
+            card.freshness = trading::ui::Freshness::Absent;
+            card.ageMs = -1;
+            return card;
+        }
+        card.price = series.constLast();
+        card.changePct = ((series.constLast() - series.constFirst()) / series.constFirst())
+                         * 100.0;
+        // The reference sweep runs on its own timer; treat a series we hold as live within a
+        // bar and lagging beyond it rather than inventing a per-ticker timestamp we do not
+        // record.
+        card.ageMs = 0;
+        card.freshness = trading::ui::Freshness::Live;
+        return card;
+    };
+    cards.append(cardFor(QStringLiteral("SPX500"), QStringLiteral("SP.24-7")));
+    cards.append(cardFor(QStringLiteral("NSDQ100"), QStringLiteral("NSDQ100.24-7")));
+    cards.append(cardFor(QStringLiteral("VIX"), QStringLiteral("^VIX")));
+    cards.append(cardFor(QStringLiteral("US10Y"), QStringLiteral("^TNX")));
+    model->setCards(cards);
+
+    // The probability stays UNCALIBRATED until the ledger has the samples. Passing the real
+    // counts rather than a placeholder is the point: the view reports the shortfall.
+    model->setCalibration(0, trading::kMinSamplesPerBucket, 0.0);
+}
+
 void MainWindow::pushBooksToHeavyPanel()
 {
     if (m_heavyPanel == nullptr) {
@@ -1277,6 +1363,22 @@ void MainWindow::pushBooksToHeavyPanel()
     m_heavyPanel->setVolumeSeries(m_referenceVolumes);
     m_heavyPanel->setSymbolSeries(m_intradayBySymbol);
     m_heavyPanel->setReferenceSeries(m_referenceSeries);
+}
+
+// One header button, since eight of them differ only in text, name, tooltip and slot.
+// Extracted when adding the cockpit button pushed buildHeaderButtons past the metrics
+// ratchet's 100-nloc limit (108) — the fix for "this function is too long" is to stop
+// repeating a five-line pattern eight times, not to raise the limit.
+QPushButton *MainWindow::makeHeaderButton(QWidget *central, const QString &text,
+                                          const QString &objectName, const QString &tip,
+                                          void (MainWindow::*slot)())
+{
+    auto *button = new QPushButton(text, central);
+    button->setObjectName(objectName);   // REQ-N-007: the Squish map addresses by name
+    button->setFocusPolicy(Qt::NoFocus); // don't swallow the b/s trade shortcuts
+    button->setToolTip(tip);
+    static_cast<void>(connect(button, &QPushButton::clicked, this, slot));
+    return button;
 }
 
 void MainWindow::buildHeaderButtons(QWidget *central)
@@ -1302,28 +1404,22 @@ void MainWindow::buildHeaderButtons(QWidget *central)
     }));
 
     // Leverage screener: ranks every instrument by max leverage with a buy/sell call.
-    m_screenerButton = new QPushButton(QStringLiteral("Screener…"), central);
-    m_screenerButton->setObjectName(QStringLiteral("screenerButton"));
-    m_screenerButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
-    m_screenerButton->setToolTip(QStringLiteral(
-        "Rank every tradable instrument by its maximum leverage, each with a BUY/SELL "
-        "signal from the same ensemble as the live panel. Double-click a row to trade it."));
-    static_cast<void>(
-        connect(m_screenerButton, &QPushButton::clicked, this, &MainWindow::openScreener));
+    m_screenerButton = makeHeaderButton(central, QStringLiteral("Screener…"),
+                                     QStringLiteral("screenerButton"),
+                                     QStringLiteral("Rank every tradable instrument by its maximum leverage, each with a BUY/SELL "
+        "signal from the same ensemble as the live panel. Double-click a row to trade it."),
+                                     &MainWindow::openScreener);
 
     // Closed trades: the same window the closed-trades panel's "All trades…" button
     // opens, reachable from the header too — the history of the app's own instruments
     // is a top-level question, not a detail of the summary panel.
-    m_closedButton = new QPushButton(QStringLiteral("Closed trades…"), central);
-    m_closedButton->setObjectName(QStringLiteral("closedButton"));
-    m_closedButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
-    m_closedButton->setToolTip(QStringLiteral(
-        "Every closed trade over a selectable 7–13-week lookback, restricted to the "
+    m_closedButton = makeHeaderButton(central, QStringLiteral("Closed trades…"),
+                                     QStringLiteral("closedButton"),
+                                     QStringLiteral("Every closed trade over a selectable 7–13-week lookback, restricted to the "
         "instruments this app trades (untick the filter in the window to see the whole "
         "account): side, leverage, invest, open/close rate, eToro's own net P/L and "
-        "rollover fees, plus estimated open/close spread costs."));
-    static_cast<void>(
-        connect(m_closedButton, &QPushButton::clicked, this, &MainWindow::openClosedTrades));
+        "rollover fees, plus estimated open/close spread costs."),
+                                     &MainWindow::openClosedTrades);
 
     // Decision window: alternative sources + AI + algorithm → one final call.
     m_decisionButton = new QPushButton(QStringLiteral("Decision…"), central);
@@ -1337,20 +1433,22 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         connect(m_decisionButton, &QPushButton::clicked, this, &MainWindow::openDecision));
 
     // Trade script: load a file of conditional orders, dry-run it, arm it.
-    m_scriptButton = new QPushButton(QStringLiteral("Script…"), central);
-    m_scriptButton->setObjectName(QStringLiteral("scriptButton"));
-    m_scriptButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
-    m_scriptButton->setToolTip(QStringLiteral(
-        "Scripted trading: load a text file of conditional orders (instrument, "
-        "BUY/SELL @ trigger, optional time window and signals+AI condition, amount, "
-        "SL/TP, leverage). Loading only shows a dry run; arming places the entries "
-        "as broker-side limit orders."));
-    static_cast<void>(
-        connect(m_scriptButton, &QPushButton::clicked, this, &MainWindow::openScript));
+    m_scriptButton = makeHeaderButton(central, QStringLiteral("Script…"),
+                                     QStringLiteral("scriptButton"),
+                                     QStringLiteral("Load, dry-run and arm a trade script (REQ-F-028)."),
+                                     &MainWindow::openScript);
 
     // The index heavyweights (REQ-F-035): the ten biggest constituents of each index,
     // as an EARLY read on where SPX500 and NSDQ100 may go. Its own window, because it
     // is a market view rather than a per-instrument one — and it costs no new feed.
+    m_cockpitButton = makeHeaderButton(
+        central, QStringLiteral("Cockpit (QML)…"), QStringLiteral("cockpitButton"),
+        QStringLiteral("The same evidence in a Qt Quick view (REQ-F-038): market cards "
+                       "with their freshness, the nine independent reads as shape-first "
+                       "ticks, and the evidence score.\nRead-only — no order can be "
+                       "placed from there."),
+        &MainWindow::openCockpit);
+
     m_heavyButton = new QPushButton(QStringLiteral("Heavyweights…"), central);
     m_heavyButton->setObjectName(QStringLiteral("heavyButton"));
     m_heavyButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
@@ -4510,6 +4608,11 @@ void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &c
     // so a stale one would be worse than none.
     if ((m_heavyPanel != nullptr) && m_heavyPanel->isVisible()) {
         pushBooksToHeavyPanel();
+    }
+    // Same reasoning for the cockpit: it exists to show these series, so a stale one would
+    // be worse than none.
+    if ((m_cockpitPanel != nullptr) && m_cockpitPanel->isVisible()) {
+        pushToCockpit();
     }
 }
 

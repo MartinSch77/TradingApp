@@ -83,6 +83,10 @@ int main(int argc, char *argv[])
                 // (the constituent reads went dark when the feed stopped serving equity
                 // bars). A QA capture that cannot show the regression is not QA.
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openHeavyPanel"));
+                // The Qt Quick cockpit too (REQ-F-038): a QQuickWidget whose component
+                // failed renders an empty rectangle, so a capture set that omitted it could
+                // not show the difference between "loaded and empty" and "did not load".
+                static_cast<void>(QMetaObject::invokeMethod(&window, "openCockpit"));
             });
         }
         const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")

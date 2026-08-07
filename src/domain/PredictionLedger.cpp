@@ -29,9 +29,8 @@ struct Resolved {
 // (BotConfig::minSamples): enough that a hit rate is not one lucky afternoon, small
 // enough to be reachable in a few sessions of scanning.
 constexpr qint32 kMinSamplesPerHorizon = 40;
-// A calibration BAND needs fewer, because it is a narrower question — but "fewer" is
-// still not "one", and a band below this reports itself untrustworthy.
-constexpr qint32 kMinSamplesPerBucket = 15;
+// kMinSamplesPerBucket now lives in the header: the cockpit view states the threshold it is
+// short of, and two definitions of the same floor would eventually disagree.
 // The strength bands. Deliberately wide: five bands over 100 points keeps each one
 // populated in weeks rather than years, and a calibration curve nobody can fill is a
 // curve nobody can use.

@@ -75,3 +75,10 @@ tradingapp_add_test(tst_ollamaadvisor tst_ollamaadvisor.cpp MockHttpServer.cpp M
 tradingapp_add_test(tst_positionsmodel tst_positionsmodel.cpp
     ../src/ui/PositionsModel.cpp ../src/ui/PositionsModel.h)
 target_link_libraries(tst_positionsmodel PRIVATE Qt6::Widgets)
+
+# --- the declarative cockpit's data, tested WITHOUT rendering (REQ-F-038) -----
+# Same reason as above: the ui layer is not a library, so the view-model is compiled
+# directly. Deliberately NO Quick/QuickWidgets dependency — the whole design point is
+# that every claim the QML makes is checkable headless, with no window and no GPU.
+tradingapp_add_test(tst_cockpitmodel tst_cockpitmodel.cpp
+    ../src/ui/CockpitModel.cpp ../src/ui/CockpitModel.h)

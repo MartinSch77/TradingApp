@@ -39,6 +39,14 @@
 //     minutes, and that comparison is the difference between a measurement and a boast.
 namespace trading {
 
+// The sample floor a calibration BAND must clear before a probability may be printed at all.
+// Public because the VIEW has to state the threshold it is short of — "UNCALIBRATED, 3 of 15"
+// is the honest message, and hardcoding 15 in the presentation layer would be a second source
+// of truth that drifts from this one. Deliberately fewer than the per-horizon floor, because
+// a band is a narrower question — but "fewer" is still not "one", and a band below this
+// reports itself untrustworthy.
+inline constexpr qint32 kMinSamplesPerBucket = 15;
+
 // The horizons the ledger scores at. Minutes, because that is the scale at which a CFD
 // with a spread can be traded at all — a seconds-scale forecast would be measuring a
 // cost this app cannot avoid.

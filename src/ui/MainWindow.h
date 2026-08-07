@@ -22,6 +22,7 @@
 
 namespace trading::ui {
 class HeavyweightsPanel;
+class CockpitPanel;
 }
 
 class AiAdvisor;
@@ -124,6 +125,13 @@ private slots:
     [[nodiscard]] trading::AiProposal localPickFor(const QString &symbol) const;
 
 private:
+    // One header button — several of them differ only in text, name, tooltip and slot.
+    // NOT in a `private slots:` block: moc cannot parse the member-function-pointer
+    // parameter there and fails with "Parse error at \"void\"".
+    [[nodiscard]] QPushButton *makeHeaderButton(QWidget *central, const QString &text,
+                                                const QString &objectName, const QString &tip,
+                                                void (MainWindow::*slot)());
+
     // Construct + gate the two autonomous runners — the trade script (REQ-F-028)
     // and the paper-trading bot simulation (REQ-F-029). Kept out of the
     // constructor so the ctor stays within its metrics baseline, like
@@ -147,6 +155,10 @@ private slots:
     void onReferenceVolumeSeries(const QString &ticker, const trading::VolumeSeries &bars);
     // The heavyweight window: lazily built, fed and raised (mirrors openDecision).
     void openHeavyPanel();
+    // The declarative cockpit (REQ-F-038): same pattern — built on first use, fed, raised.
+    // Read-only; it has no order path and is not given one.
+    void openCockpit();
+    void pushToCockpit();
     // Every book the heavyweight window's reads need, from the one place that knows them.
     void pushBooksToHeavyPanel();
     void updateConfluenceSignal();
@@ -421,6 +433,8 @@ private:
     // the reference series the confluence reads already fetch.
     QPushButton *m_heavyButton = nullptr;
     trading::ui::HeavyweightsPanel *m_heavyPanel = nullptr;
+    QPushButton *m_cockpitButton = nullptr;
+    trading::ui::CockpitPanel *m_cockpitPanel = nullptr;
     QList<ScreenerRow> m_screenerRows;  // latest scan results, unsorted (arrival order)
     QGroupBox *m_tradeBox = nullptr;       // "Trade <symbol>" panel
     QLabel *m_tradeHours = nullptr;        // approx. trading hours (local) under the title

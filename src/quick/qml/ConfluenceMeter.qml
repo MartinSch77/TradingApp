@@ -1,0 +1,131 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import QtQuick
+import TradingApp.Cockpit
+
+// The confluence meter: nine discrete ticks, one per independent read (REQ-F-038, REQ-F-035).
+//
+// NOT a gauge arc showing "6/8". Two reasons, and both are correctness rather than taste:
+//
+//  1. A filled-vs-unfilled arc is a two-slice donut, and the number is the chart. It also
+//     cannot express the fact this application is built around — how many reads could be
+//     MEASURED at all.
+//  2. There are exactly nine discrete reads, so nine discrete marks is the honest form.
+//
+// State is encoded by GLYPH first and colour second. The measured reason: the status good and
+// critical steps sit at CVD dE 4.1 under deuteranopia — indistinguishable — so a row of
+// green/amber/grey dots would be unreadable for a red-green-colourblind trader. Shape is not.
+Rectangle {
+    id: meter
+
+    // [{ glyph, label, state, detail }] — already judged in C++.
+    required property var ticks
+    required property string agreement
+    required property string evidence
+    required property string probability
+
+    implicitWidth: 300
+    implicitHeight: 220
+    color: Theme.panel
+    radius: Theme.radius
+    border.width: 1
+    border.color: Theme.gridline
+
+    function tickColor(state) {
+        if (state === "agrees")
+            return Theme.up;
+        if (state === "disagrees")
+            return Theme.down;
+        return Theme.inkMuted;
+    }
+
+    Column {
+        anchors.fill: parent
+        anchors.margins: Theme.gap
+        spacing: 6
+
+        Text {
+            text: qsTr("Confluence")
+            color: Theme.inkSecondary
+            font.pixelSize: 12
+            font.bold: true
+        }
+
+        // The nine ticks in a row — the hero mark.
+        Row {
+            spacing: 5
+
+            Repeater {
+                model: meter.ticks
+
+                Text {
+                    required property var modelData
+                    text: modelData.glyph
+                    color: meter.tickColor(modelData.state)
+                    font.pixelSize: 18
+                }
+            }
+        }
+
+        // Agreement AND unmeasurability, because they are different facts.
+        Text {
+            text: meter.agreement
+            color: Theme.ink
+            font.pixelSize: 14
+            font.bold: true
+        }
+
+        Text {
+            text: meter.evidence
+            color: Theme.inkSecondary
+            font.pixelSize: 12
+            width: meter.width - (2 * Theme.gap)
+            wrapMode: Text.WordWrap
+        }
+
+        // The probability line, which says UNCALIBRATED rather than inventing a number.
+        Text {
+            text: meter.probability
+            color: meter.probability.indexOf("UNCALIBRATED") === 0 ? Theme.warn : Theme.ink
+            font.pixelSize: 12
+            font.family: "monospace"
+        }
+
+        Rectangle {
+            width: meter.width - (2 * Theme.gap)
+            height: 1
+            color: Theme.gridline
+        }
+
+        // The per-read list: glyph, name and its own number. Identity never rests on colour,
+        // because the state is spelled out here in words.
+        Repeater {
+            model: meter.ticks
+
+            Row {
+                required property var modelData
+                spacing: 6
+
+                Text {
+                    text: modelData.glyph
+                    color: meter.tickColor(modelData.state)
+                    font.pixelSize: 11
+                }
+
+                Text {
+                    text: modelData.label
+                    color: Theme.inkSecondary
+                    font.pixelSize: 11
+                }
+
+                Text {
+                    text: modelData.state === "unmeasurable" ? qsTr("unmeasurable") : ""
+                    color: Theme.inkMuted
+                    font.pixelSize: 11
+                    font.italic: true
+                }
+            }
+        }
+    }
+}

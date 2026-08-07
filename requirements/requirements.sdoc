@@ -403,6 +403,22 @@ Every score shall be reported beside BASELINES computed on exactly the same reso
 The regime label shall be measured or UNKNOWN, never guessed, and its precedence shall be explicit: a scheduled release outranks a volatility reading, which outranks the trend-versus-range question, because at that width the horizon's own noise swamps either answer.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-038
+VERIFICATION: T/A
+TITLE: A second, declarative front end over the same tested logic — read-only by construction
+STATEMENT: >>>
+The application shall offer a second presentation of its evidence, built declaratively, over the SAME domain and service layers the existing desktop interface uses — not a reimplementation. The point is to demonstrate that the layering is real: if a second front end can be built without touching the domain, the domain was genuinely independent of its presentation, and if it cannot, the claim was decoration.
+
+That second front end shall be READ-ONLY BY CONSTRUCTION, and this is a safety requirement rather than a scoping convenience. It shall have no route to an order endpoint, exactly as the bot simulation has none: amount, leverage, stop-loss and take-profit entry, and the double-press confirmation of REQ-N-005, remain in the existing interface, which is the surface that has been GUI-tested, object-name-gated and audited. A declarative view added for presentation shall not become a second place where money can move, because that would double the surface needing that scrutiny while halving the attention paid to each.
+
+The data it presents shall be prepared by a SEPARATELY TESTABLE component rather than computed inside the declarative markup. What a view shows is a claim about the system, so it shall be verifiable by an automated test that does not require rendering: a screenshot proves that something was drawn, never that it was right. Every number the view displays shall therefore come from that component, and the component shall be tested directly.
+
+Three display rules follow from requirements already stated elsewhere, and the view shall not be permitted to soften any of them. An input that could not be measured shall be shown AS unmeasurable and shall never be rendered as a zero or a neutral midpoint (REQ-F-035). A strength on the 0..100 evidence scale shall never be presented as a probability, and where a measured probability does not exist the view shall say UNCALIBRATED rather than print a number (REQ-F-037). And every quantity derived from a market feed shall carry its FRESHNESS: a value whose quote is stale shall be visibly distinguished from a live one, and a value that cannot be obtained shall be shown as absent rather than as its last known reading, because a dashboard that renders a stale price in the same style as a live one misleads silently and continuously.
+
+Identity in that view shall not rest on colour alone. Where a state is encoded by colour it shall also be encoded by shape, glyph or text, so that the view remains readable without colour discrimination — the up/down convention of the domain is precisely the pair that red-green colour blindness cannot separate.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

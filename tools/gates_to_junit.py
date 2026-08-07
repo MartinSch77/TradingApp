@@ -52,6 +52,7 @@ FILE_GATES = [
     ("gcc-analyzer.txt", "gcc-fanalyzer", "seven-analyzers"),
     ("clazy.txt", "clazy", "seven-analyzers"),
     ("pmd-cpd.txt", "pmd-cpd-clones", "clones"),
+    ("qmllint.txt", "qmllint", "qml"),
     ("codespell.txt", "codespell", "spelling"),
     ("object-names.txt", "gui-object-names", "gui-testability"),
     ("sanitize-asan-ubsan.txt", "asan-ubsan", "sanitizers"),

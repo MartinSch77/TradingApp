@@ -237,6 +237,75 @@ if ($hasCl) {
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# qmllint - Qt's own QML static analysis over the declarative cockpit (REQ-F-038).
+#
+# Without this the Quick surface would be the one part of the application no analyzer
+# looks at, and its characteristic defects (unqualified access inside a delegate, a
+# property that does not exist on the target type) only surface at run time, in a
+# binding, on a window nobody had open.
+#
+# -i <qmldir>: qmllint needs the generated MODULE to resolve TradingApp.Cockpit types and
+# the Theme singleton. Without it every cross-file reference reports as unknown, which is
+# noise rather than signal.
+$qmllintN = 0
+$qmllintLog = Join-Path $Out 'qmllint.txt'
+$qmllintBin = $null
+# Beside qmake6 first, then the Qt kits by explicit path. NOT a -Recurse over ~\Qt: that
+# walks a multi-gigabyte install to find a file whose location is known.
+$qmllintCandidates = @()
+$qmakeCmd = Get-Command qmake6 -ErrorAction SilentlyContinue
+if ($qmakeCmd) { $qmllintCandidates += (Join-Path (Split-Path -Parent $qmakeCmd.Source) 'qmllint.exe') }
+$qmllintCandidates += @(Get-ChildItem -Path (Join-Path $env:USERPROFILE 'Qt') -Directory `
+    -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'bin\qmllint.exe' } })
+foreach ($candidate in $qmllintCandidates) {
+    if ($candidate -and (Test-Path $candidate)) { $qmllintBin = $candidate; break }
+}
+$qmldirFile = Get-ChildItem -Path (Join-Path $Root $BuildDir) -Filter 'qmldir' -Recurse `
+    -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like '*Cockpit*' } |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $qmllintBin) {
+    Write-Stage 'qmllint'
+    # Said out loud rather than skipped quietly: no qmllint means the QML is UNCHECKED,
+    # which is not the same as clean.
+    Write-Skip 'qmllint not found (it ships with the Qt kit) - the QML is unchecked'
+    Write-TextFile $qmllintLog ''
+} elseif (-not $qmldirFile) {
+    Write-Stage 'qmllint'
+    Write-Skip "no generated qmldir under $BuildDir - build the app first"
+    Write-TextFile $qmllintLog ''
+} else {
+    Write-Stage "qmllint ($(& $qmllintBin --version))"
+    $qmlFiles = @(Get-ChildItem -Path (Join-Path $Root 'src\quick\qml') -Filter '*.qml' `
+        -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    $raw = @(& $qmllintBin -i $qmldirFile @qmlFiles 2>&1)
+    $rows = @()
+    foreach ($line in $raw) {
+        # Normalised to the pipe template every other tool here emits, so the merged CSV
+        # and the Axivion import treat qmllint exactly like cppcheck.
+        #
+        # The path group is LAZY and anchored on the ":line:col:" tail. A greedy or
+        # [^:]+ group would take the drive letter of "C:\path\File.qml" as the filename
+        # and the rest as the line number - the awk in static_analysis.sh matches the
+        # same way, for the same reason.
+        if ("$line" -match '^(?<sev>Warning|Error): (?<file>.+?):(?<line>\d+):\d+: (?<msg>.*)$') {
+            $severity = if ($matches['sev'] -eq 'Error') { 'error' } else { 'warning' }
+            $message = $matches['msg']
+            $rule = 'qmllint'
+            if ($message -match '^(?<text>.*) \[(?<rule>[a-z-]+)\]$') {
+                $rule = $matches['rule']; $message = $matches['text']
+            }
+            $file = $matches['file'].Replace("$Root\", '').Replace('\', '/')
+            $rows += "$file|$($matches['line'])|$severity|$rule|$message"
+        }
+    }
+    Write-TextFile $qmllintLog (($rows -join "`n"))
+    $qmllintN = Get-LineCount $qmllintLog
+    Write-Host "qmllint findings: $qmllintN (analysis-results\qmllint.txt)"
+}
+
 # codespell
 # ---------------------------------------------------------------------------
 $codespellN = 0
@@ -294,7 +363,7 @@ Invoke-Python -Arguments @((Join-Path $Root 'tools\merge_findings.py'), $Out) | 
 Invoke-Python -Arguments @((Join-Path $Root 'tools\record_tool_versions.py'), $Out) |
     Out-Null
 
-$total = $cppcheckN + $tidyN + $csaN + $cpdN + $msvcN + $codespellN
+$total = $cppcheckN + $tidyN + $csaN + $cpdN + $msvcN + $codespellN + $qmllintN
 Write-Host ""
 Write-Host "TOTAL findings: $total" -ForegroundColor $(if ($total -eq 0) { 'Green' } else { 'Yellow' })
 # The lizard metrics are reported separately: their violations are ratcheted

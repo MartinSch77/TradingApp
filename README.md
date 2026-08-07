@@ -112,7 +112,8 @@ gaps, and every artefact is newer than the newest source.
   and design tags, and `tools/trace_report.py` **fails the build on a hard gap** — so a
   new behaviour that nothing verifies cannot land.
 - **Seven analyzers at zero**, gated: cppcheck, clang-tidy, Clang Static Analyzer,
-  `g++ -fanalyzer`, clazy, PMD CPD (the clone gate) and codespell. Every disabled check
+  `g++ -fanalyzer`, clazy, PMD CPD (the clone gate), qmllint (the QML of the Qt Quick
+  cockpit is analysed too, not just the C++) and codespell. Every disabled check
   carries a written reason *and* the measured hit count that justifies it.
 - **Three sanitizers**: ASan+UBSan, TSan and valgrind.
 - **Coverage at decision level**, not just lines: MC/DC via Coco and clang, with GUI

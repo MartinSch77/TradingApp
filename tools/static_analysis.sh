@@ -306,6 +306,62 @@ if ! python3 "$ROOT/tools/merge_findings.py" "$OUT"; then
     exit 1
 fi
 
+echo "== qmllint (Qt QML static analysis) =="
+# The QML of the declarative cockpit (REQ-F-038) is analysed like the C++ is. Without this
+# the Quick surface would be the one part of the application no analyzer looks at — and its
+# characteristic defects (unqualified access in a delegate, a property that does not exist on
+# the target type) are exactly the kind that only appear at run time, in a binding, on a
+# window nobody had open.
+#
+# -i <qmldir>: qmllint needs the MODULE to resolve TradingApp.Cockpit types and the Theme
+# singleton. Without it every cross-file reference is reported as unknown, which is noise
+# rather than signal. The qmldir is generated into the build tree by qt_add_qml_module.
+QMLLINT_N=0
+QMLLINT_BIN=""
+for candidate in "$(dirname "$(command -v qmake6 2>/dev/null || echo /nonexistent)")/qmllint" \
+    "$HOME"/Qt/*/gcc_64/bin/qmllint "$HOME"/Qt/*/gcc_arm64/bin/qmllint; do
+    [ -x "$candidate" ] && QMLLINT_BIN="$candidate" && break
+done
+QML_DIR_FILE="$(find "$ROOT/$BUILD_DIR" -name qmldir -path '*Cockpit*' 2>/dev/null | head -1)"
+if [ -z "$QMLLINT_BIN" ]; then
+    # Said out loud rather than skipped silently: no qmllint means the QML is UNCHECKED,
+    # which is not the same as clean.
+    echo "SKIPPED: qmllint not found (it ships with the Qt kit) — the QML is unchecked" >&2
+    : > "$OUT/qmllint.txt"
+elif [ -z "$QML_DIR_FILE" ]; then
+    echo "SKIPPED: no generated qmldir under $BUILD_DIR — build the app first" >&2
+    : > "$OUT/qmllint.txt"
+else
+    # Normalised to the pipe template every other tool here emits, so the merged CSV and the
+    # Axivion import treat qmllint exactly like cppcheck.
+    "$QMLLINT_BIN" -i "$QML_DIR_FILE" "$ROOT"/src/quick/qml/*.qml 2>&1 |
+        awk -v root="$ROOT/" '
+            # qmllint writes: "Warning: <path>:<line>:<col>: <message> [<rule>]".
+            # The path is matched by anchoring on the ":line:col:" TAIL rather than by
+            # splitting on ":" — a Windows path starts "C:\\", so a split would yield the
+            # drive letter as the filename and the rest as the line number. The shared
+            # PowerShell counterpart has the same shape for the same reason.
+            /^(Warning|Error):/ {
+                line = $0
+                severity = /^Error:/ ? "error" : "warning"
+                sub(/^(Warning|Error): /, "", line)
+                if (!match(line, /:[0-9]+:[0-9]+: /))
+                    next                     # a note or a continuation, not a finding
+                file = substr(line, 1, RSTART - 1)
+                split(substr(line, RSTART + 1, RLENGTH - 2), pos, ":")
+                rest = substr(line, RSTART + RLENGTH)
+                rule = "qmllint"
+                if (match(rest, / \[[a-z-]+\]$/)) {
+                    rule = substr(rest, RSTART + 2, RLENGTH - 3)
+                    rest = substr(rest, 1, RSTART - 1)
+                }
+                sub(root, "", file)
+                printf "%s|%s|%s|%s|%s\n", file, pos[1], severity, rule, rest
+            }' > "$OUT/qmllint.txt"
+    QMLLINT_N=$(grep -c . "$OUT/qmllint.txt" || true)
+fi
+echo "qmllint findings: $QMLLINT_N (analysis-results/qmllint.txt)"
+
 # --- tool identification, for the report -------------------------------------
 # The verdicts above name the FINDING COUNT but not the tool that produced it: those
 # versions were echoed to this log and nowhere else, so the qualification bundle could not
@@ -316,7 +372,7 @@ fi
 python3 "$ROOT/tools/record_tool_versions.py" "$OUT" ||
     echo "WARNING: tool identity was not recorded — the report will omit that table" >&2
 
-TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N + OBJ_N))
+TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N + OBJ_N + QMLLINT_N))
 echo "TOTAL findings: $TOTAL"
 # The lizard metrics are reported separately: their violations are ratcheted
 # against a recorded baseline, so a nonzero count is expected — the gate is the

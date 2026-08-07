@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Martin Schuler
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import TradingApp.Cockpit
 
@@ -60,9 +62,11 @@ Rectangle {
                 model: meter.ticks
 
                 Text {
+                    id: tickGlyph
+
                     required property var modelData
-                    text: modelData.glyph
-                    color: meter.tickColor(modelData.state)
+                    text: tickGlyph.modelData.glyph
+                    color: meter.tickColor(tickGlyph.modelData.state)
                     font.pixelSize: 18
                 }
             }
@@ -104,23 +108,26 @@ Rectangle {
             model: meter.ticks
 
             Row {
+                id: readRow
+
                 required property var modelData
                 spacing: 6
 
                 Text {
-                    text: modelData.glyph
-                    color: meter.tickColor(modelData.state)
+                    text: readRow.modelData.glyph
+                    color: meter.tickColor(readRow.modelData.state)
                     font.pixelSize: 11
                 }
 
                 Text {
-                    text: modelData.label
+                    text: readRow.modelData.label
                     color: Theme.inkSecondary
                     font.pixelSize: 11
                 }
 
                 Text {
-                    text: modelData.state === "unmeasurable" ? qsTr("unmeasurable") : ""
+                    text: readRow.modelData.state === "unmeasurable"
+                          ? qsTr("unmeasurable") : ""
                     color: Theme.inkMuted
                     font.pixelSize: 11
                     font.italic: true

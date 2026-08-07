@@ -136,7 +136,7 @@ else
 fi
 
 # 4. Analyzers: every output present, and every one of them empty.
-ANALYZERS=(cppcheck clang-tidy clazy gcc-analyzer clang-analyzer pmd-cpd codespell)
+ANALYZERS=(cppcheck clang-tidy clazy gcc-analyzer clang-analyzer pmd-cpd qmllint codespell)
 ANALYSIS_TOTAL=0
 MISSING_ANALYZER=0
 for a in "${ANALYZERS[@]}"; do

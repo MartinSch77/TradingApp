@@ -104,6 +104,11 @@ _TOOLS = {
     # Windows counterpart of gcc-analyzer: MSVC /analyze, normalized to the
     # same GCC-style lines by tools/msvc_analyze.py. Absent on Linux runs.
     'msvc-analyze': ('msvc-analyze.txt', _GCC_STYLE),
+    # The QML of the declarative cockpit (REQ-F-038), analysed by Qt's own qmllint and
+    # normalised to the pipe template in tools/static_analysis.sh. Without this the Quick
+    # surface would be the only part of the application whose findings never reach the
+    # dashboard, so a QML defect would be invisible next to the C++ ones.
+    'qmllint': ('qmllint.txt', _PIPE),
     'codespell': ('codespell.txt', _PIPE),
     'sonarqube': ('sonarqube.txt', _PIPE),
     # Coverity Scan defects, exported from the cloud service and normalized by

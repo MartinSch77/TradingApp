@@ -87,6 +87,17 @@ if (-not $SkipBuild) {
         Write-Error "build failed"
         exit 1
     }
+    # The second front end too, when Qt Graphs is installed. Named explicitly rather than
+    # building 'all', which would also build the 30 test executables into the archive tree.
+    # A failure here is NOT fatal - it means this kit has no Qt Graphs - but it is said out
+    # loud, because an archive without it has no candlestick chart at all.
+    if (Invoke-Native -FilePath 'cmake' -Arguments @(
+                '--build', $Build, '--target', 'TradingCockpit',
+                '--config', 'Release', '-j', (Get-JobCount))) {
+        Write-Host '  (TradingCockpit built - the Qt Quick front end will travel too)'
+    } else {
+        Write-Warning 'no Qt Graphs here, so TradingCockpit is NOT in this archive'
+    }
 }
 
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }

@@ -4,9 +4,11 @@
 #ifndef TRADINGAPP_UI_COCKPITMODEL_H
 #define TRADINGAPP_UI_COCKPITMODEL_H
 
+#include "domain/Candles.h"
 #include "domain/IndexConfluence.h"
 #include "domain/LeadSignal.h"
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -91,6 +93,27 @@ struct CockpitCard {
 // cannot accidentally render Absent as 0.00.
 [[nodiscard]] QVariantMap cardToVariant(const CockpitCard &card);
 
+// One market card built from a reference series, and the ONE place that judgement is made.
+//
+// Both front ends call this rather than each computing "last versus first, unless the series
+// is too short". Two copies of a rule are two answers waiting to diverge, and the answer here
+// decides whether a card shows a number or an em dash — the difference between reporting a
+// market and reporting a missing feed.
+[[nodiscard]] CockpitCard cardFromSeries(const QString &label, const QList<double> &series);
+
+// The four references a trader watches beside the instrument, in a fixed order, from a book
+// keyed by Yahoo TICKER. Fixed because a card that moves between refreshes is unreadable.
+[[nodiscard]] QList<CockpitCard> referenceCards(
+    const QHash<QString, QList<double>> &referenceSeries);
+
+// One candle as Qt Graphs' CustomSeries sees it — a QVariantMap the delegate reads by name.
+//
+// `up` is computed HERE rather than in the delegate as `close >= open`. The QML would get
+// the same answer today, but the tie rule (flat bar counts as up) is a decision this project
+// made once and pinned with a test; recomputing it in a binding is how two answers to one
+// question start to exist. The series itself adds `index`.
+[[nodiscard]] QVariantMap candleToVariant(const trading::Candle &candle);
+
 // The view-model the QML binds to. Assembly only — every rule lives in the functions above.
 class CockpitModel : public QObject
 {
@@ -102,11 +125,21 @@ class CockpitModel : public QObject
     Q_PROPERTY(QString probability READ probability NOTIFY changed)
     Q_PROPERTY(QString instrument READ instrument NOTIFY changed)
     Q_PROPERTY(bool simulation READ simulation NOTIFY changed)
+    // The price chart. `candleNote` is non-empty exactly when there is nothing to draw, so
+    // the QML has one thing to test and cannot render an empty axis as a quiet market.
+    Q_PROPERTY(QVariantList candles READ candles NOTIFY changed)
+    Q_PROPERTY(double candleMin READ candleMin NOTIFY changed)
+    Q_PROPERTY(double candleMax READ candleMax NOTIFY changed)
+    Q_PROPERTY(QString candleNote READ candleNote NOTIFY changed)
+    Q_PROPERTY(QString candleSpan READ candleSpan NOTIFY changed)
 
 public:
     explicit CockpitModel(QObject *parent = nullptr);
 
     void setCards(const QList<CockpitCard> &cards);
+    // The bars to draw. Already filtered by `candlesFrom` — this only prepares them for the
+    // delegate and fits the axis to the WICKS.
+    void setCandles(const QList<trading::Candle> &candles);
     void setSignal(const QString &instrument, const trading::LeadSignal &signal,
                    const trading::IndexReads &reads);
     void setCalibration(qint32 samples, qint32 minSamples, double hitRate);
@@ -121,6 +154,11 @@ public:
     [[nodiscard]] QString probability() const { return m_probability; }
     [[nodiscard]] QString instrument() const { return m_instrument; }
     [[nodiscard]] bool simulation() const { return m_simulation; }
+    [[nodiscard]] QVariantList candles() const { return m_candles; }
+    [[nodiscard]] double candleMin() const { return m_candleMin; }
+    [[nodiscard]] double candleMax() const { return m_candleMax; }
+    [[nodiscard]] QString candleNote() const { return m_candleNote; }
+    [[nodiscard]] QString candleSpan() const { return m_candleSpan; }
 
 Q_SIGNALS:
     void changed();
@@ -133,6 +171,18 @@ private:
     QString m_probability;
     QString m_instrument;
     bool m_simulation = true;   // safe default: claim simulation until told otherwise
+    QVariantList m_candles;
+    double m_candleMin = 0.0;
+    double m_candleMax = 0.0;
+    // Non-empty until real bars arrive, so a cockpit opened before the first fetch says so
+    // rather than presenting an empty frame.
+    QString m_candleNote;
+    QString m_candleSpan;
+
+    // How many candles are drawn. 120 across a ~940-pixel plot leaves each body about five
+    // pixels wide, which is where the hollow interior becomes visible inside its one-pixel
+    // border; a full 339-bar session leaves three, and every candle then reads as solid.
+    static constexpr qsizetype kMaxDrawnCandles = 120;
 };
 
 } // namespace trading::ui

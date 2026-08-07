@@ -82,27 +82,79 @@ Rectangle {
             Item { Layout.fillWidth: true }
         }
 
-        // Evidence column. The chart belongs beside this and is the next piece of work
-        // (QCustomSeries); leaving the space empty is honest until it exists.
+        // The price and the evidence side by side — the chart says what happened, the meter
+        // says how many independent reads agree about what happens next.
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Theme.gap
 
-            Rectangle {
+            // The chart is loaded THROUGH A LOADER so that its absence degrades instead of
+            // taking the whole cockpit with it.
+            //
+            // PriceChart needs Qt Graphs, and Qt Graphs cannot be linked into a process that
+            // also links Qt Charts — the two declare seventeen identically-named classes, so
+            // the QML type registration goes ambiguous and every Graphs type stops resolving.
+            // TradingApp's Widgets UI is built on Qt Charts, so inside THAT process this
+            // Loader fails; declared inline instead, the failure would propagate and the
+            // entire cockpit would render as a blank rectangle (measured — that is exactly
+            // what happened). The standalone TradingCockpit binary links Graphs and not
+            // Charts, and there the chart loads.
+            Loader {
+                id: chartLoader
+
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: Theme.panel
-                radius: Theme.radius
-                border.width: 1
-                border.color: Theme.gridline
 
-                Text {
-                    anchors.centerIn: parent
-                    text: qsTr("price chart — QCustomSeries candlesticks go here")
-                    color: Theme.inkMuted
-                    font.pixelSize: 12
-                    font.italic: true
+                // setSource WITH initial properties, not a plain `source:`. PriceChart
+                // declares its four inputs `required` — deliberately, so a missing injection
+                // fails loudly instead of drawing an empty axis — and a Loader driven by
+                // `source:` alone constructs the component with nothing set, which trips
+                // exactly that guard ("Required property candles was not initialized") and
+                // makes a working chart look like a missing module. The initial values
+                // satisfy construction; the bindings below take over immediately after, so
+                // the chart still follows the model.
+                Component.onCompleted: chartLoader.setSource("PriceChart.qml", {
+                    candles: root.cockpit.candles,
+                    axisMin: root.cockpit.candleMin,
+                    axisMax: root.cockpit.candleMax,
+                    note: root.cockpit.candleNote,
+                    span: root.cockpit.candleSpan
+                })
+
+                onStatusChanged: {
+                    if (chartLoader.status === Loader.Ready) {
+                        chartLoader.item.candles = Qt.binding(() => root.cockpit.candles);
+                        chartLoader.item.axisMin = Qt.binding(() => root.cockpit.candleMin);
+                        chartLoader.item.axisMax = Qt.binding(() => root.cockpit.candleMax);
+                        chartLoader.item.note = Qt.binding(() => root.cockpit.candleNote);
+                        chartLoader.item.span = Qt.binding(() => root.cockpit.candleSpan);
+                    }
+                }
+
+                // Said out loud, with the reason and the way to see the chart. An empty panel
+                // would read as "no data", which is a different and wrong claim.
+                Rectangle {
+                    anchors.fill: parent
+                    visible: chartLoader.status === Loader.Error
+                    color: Theme.panel
+                    radius: Theme.radius
+                    border.width: 1
+                    border.color: Theme.gridline
+
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - (4 * Theme.gap)
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        color: Theme.inkMuted
+                        font.pixelSize: 12
+                        text: qsTr("Candlestick chart not available in this window.\n\n"
+                                 + "It is drawn with Qt Graphs (CustomSeries), and Qt Graphs "
+                                 + "cannot share a process with Qt Charts — which this "
+                                 + "application's Widgets views use. Run the standalone "
+                                 + "TradingCockpit binary to see it.")
+                    }
                 }
             }
 

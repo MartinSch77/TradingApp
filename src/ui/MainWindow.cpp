@@ -304,10 +304,7 @@ MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdv
     static_cast<void>(
         connect(m_client, &EtoroClient::screenerFinished, this, &MainWindow::onScreenerFinished));
     connectInstrumentFeeds();
-    static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCloses, this,
-                              [this](const QString &symbol, const QList<double> &closes) {
-                                  static_cast<void>(m_intradayBySymbol.insert(symbol, closes));
-                              }));
+    connectSeriesFeeds();
     connectWorkerResults();
 
     static_cast<void>(connect(m_buyButton, &QPushButton::clicked, this, &MainWindow::onBuyClicked));
@@ -1318,35 +1315,15 @@ void MainWindow::pushToCockpit()
     in.compositeConfidence = m_lastSignalConf;
     model->setSignal(symbol, trading::leadSignal(in), reads);
 
+    // The price chart. An instrument whose sweep has not answered yet has NO entry here, and
+    // the model then states "no bars" rather than drawing an axis through zero.
+    model->setCandles(m_candlesBySymbol.value(symbol));
+
     // The market cards: the four reference reads a trader watches beside the instrument.
-    // Each carries the AGE of its own series, so a stale card says so rather than looking
-    // current — the rule REQ-F-038 states and tst_cockpitmodel pins.
-    QList<trading::ui::CockpitCard> cards;
-    const auto cardFor = [this](const QString &label, const QString &ticker) {
-        trading::ui::CockpitCard card;
-        card.symbol = label;
-        const QList<double> series = m_referenceSeries.value(ticker);
-        if (series.size() < 2 || series.constFirst() <= 0.0) {
-            // Absent, not zero: no series means no reading, and the card renders an em dash.
-            card.freshness = trading::ui::Freshness::Absent;
-            card.ageMs = -1;
-            return card;
-        }
-        card.price = series.constLast();
-        card.changePct = ((series.constLast() - series.constFirst()) / series.constFirst())
-                         * 100.0;
-        // The reference sweep runs on its own timer; treat a series we hold as live within a
-        // bar and lagging beyond it rather than inventing a per-ticker timestamp we do not
-        // record.
-        card.ageMs = 0;
-        card.freshness = trading::ui::Freshness::Live;
-        return card;
-    };
-    cards.append(cardFor(QStringLiteral("SPX500"), QStringLiteral("SP.24-7")));
-    cards.append(cardFor(QStringLiteral("NSDQ100"), QStringLiteral("NSDQ100.24-7")));
-    cards.append(cardFor(QStringLiteral("VIX"), QStringLiteral("^VIX")));
-    cards.append(cardFor(QStringLiteral("US10Y"), QStringLiteral("^TNX")));
-    model->setCards(cards);
+    // The rule lives in CockpitModel so the standalone TradingCockpit gives the same answer —
+    // two copies of "last versus first, unless the series is too short" would eventually
+    // disagree about whether a card shows a number or an em dash.
+    model->setCards(trading::ui::referenceCards(m_referenceSeries));
 
     // The probability stays UNCALIBRATED until the ledger has the samples. Passing the real
     // counts rather than a placeholder is the point: the view reports the shortfall.
@@ -2599,6 +2576,27 @@ void MainWindow::applyUiScale()
 // Everything computed OFF the GUI thread reports back here: the AI advisor and the three
 // QtConcurrent futures (Monte-Carlo outlook, the per-row plan verdicts, one instrument's
 // plan). Out of the constructor so its wiring list stays within the metrics budget.
+// The two intraday SERIES feeds. Their own function beside connectInstrumentFeeds() and
+// connectWorkerResults(), because the constructor is on the metrics ratchet and this is the
+// third group of connections it holds.
+void MainWindow::connectSeriesFeeds()
+{
+    static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCloses, this,
+                              [this](const QString &symbol, const QList<double> &closes) {
+                                  static_cast<void>(m_intradayBySymbol.insert(symbol, closes));
+                              }));
+    // The candles of the SAME sweep, kept per symbol so switching instruments shows that
+    // instrument's session rather than whichever one answered last (REQ-F-038).
+    static_cast<void>(connect(m_feeds, &MarketFeeds::intradayCandles, this,
+                              [this](const QString &symbol,
+                                     const QList<trading::Candle> &candles) {
+                                  static_cast<void>(m_candlesBySymbol.insert(symbol, candles));
+                                  if (symbol == m_client->config().symbol) {
+                                      pushToCockpit();
+                                  }
+                              }));
+}
+
 void MainWindow::connectWorkerResults()
 {
     setupRunners();  // same reason this function exists: ctor metrics budget

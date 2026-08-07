@@ -36,12 +36,16 @@ public:
     // True when the QML actually loaded. A QQuickWidget with a failed component shows an
     // empty rectangle, which would look like "no data" rather than "broken" — so the caller
     // is told and can say so out loud.
-    [[nodiscard]] bool ready() const { return m_ready; }
+    // Asked of the view, never cached. A bool captured at construction is a second copy of
+    // state the QQuickWidget already owns, and it goes stale the moment the source is
+    // reloaded — so the panel could report "ready" about a component that had since failed.
+    // (clang-tidy's cppcoreguidelines-prefer-member-initializer pointed at the cached flag;
+    // the fix is to remove the duplicate rather than to move its assignment.)
+    [[nodiscard]] bool ready() const;
 
 private:
     CockpitModel *m_model = nullptr;
     QQuickWidget *m_view = nullptr;
-    bool m_ready = false;
 };
 
 } // namespace trading::ui

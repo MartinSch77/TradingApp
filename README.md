@@ -86,6 +86,22 @@ The application is a real Qt 6 program rather than a demo: Qt Widgets, Qt Charts
 Qt Network, Qt Concurrent, Model/View and Qt Test all carry weight, and the layering is
 enforced by the linker so the domain cannot reach a widget or a socket.
 
+It ships **two front ends over one domain**, which is how that layering claim gets tested
+rather than asserted. `TradingApp` is the Qt Widgets interface and the only place an order
+can be placed. `TradingCockpit` is Qt Quick end to end — the same `CockpitModel`, the same
+QML, the same `trading_domain` and `trading_services` — and it is read-only *by
+construction*: it never constructs a broker client, so there is no order path to forget to
+guard. Its price chart is drawn with **Qt Graphs `CustomSeries`** (new in Qt 6.11), and up
+and down bars differ in **fill** as well as colour, because green-red is the worst possible
+pair for deuteranopia.
+
+That candlestick view is also why there are two binaries rather than two windows: Qt Charts
+and Qt Graphs declare seventeen classes with identical names in one namespace, so a process
+linking both resolves no Qt Graphs QML type at all — and does so *silently*, rendering an
+empty view with no error. The Widgets cockpit panel therefore loads the chart through a
+`Loader` and states the reason where it cannot appear, instead of showing an empty frame
+that would read as "no data".
+
 More unusually, it is built with **all four licensed Qt quality tools** wired into one
 pipeline, and each is documented as a case study — problem, configuration, what it
 found, the correction, the measurable result:

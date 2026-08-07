@@ -4,6 +4,7 @@
 #ifndef TRADINGAPP_SERVICES_MARKETFEEDS_H
 #define TRADINGAPP_SERVICES_MARKETFEEDS_H
 
+#include "domain/Candles.h"
 #include "domain/IndexConfluence.h"
 #include "domain/Models.h"
 
@@ -96,6 +97,9 @@ signals:
     // Yahoo intraday close series (1-minute bars) for one tradable instrument —
     // the independent session-momentum source of the decision composite.
     void intradayCloses(const QString &symbol, const QList<double> &closes);
+    // The same bars as OHLC candles, for the cockpit's price chart (REQ-F-038). Already
+    // filtered by domain/Candles: a bar that could not be drawn honestly is not here.
+    void intradayCandles(const QString &symbol, const QList<trading::Candle> &candles);
     // Fetch failures, throttled to one line per feed per 10 minutes: these are
     // public web feeds that hiccup routinely (the panels keep their last
     // reading), but a feed that is DOWN must not fail silently — the user

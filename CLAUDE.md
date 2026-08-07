@@ -46,6 +46,10 @@ tools/common.sh                # sourced, not run: host arch -> Qt kit dir
                                # (gcc_64 / gcc_arm64), aqt host+arch, AppImage
                                # arch, LLVM toolset. Run it to print what a
                                # machine resolves to
+build/TradingCockpit           # the SECOND front end: Qt Quick + Qt Graphs, read-only,
+                               # QCustomSeries candlesticks. Same domain/services/view-model
+                               # as TradingApp; separate binary because Charts and Graphs
+                               # cannot coexist (see below). TRADINGAPP_SHOT grabs it too
 tools/package_appimage.sh      # downloads/TradingApp-<ver>-<arch>.AppImage
                                # (x86_64 or aarch64 — the host's)
 tools/build_android.sh [--abi android_arm64_v8a] [--run]   # APK -> downloads/;
@@ -316,6 +320,27 @@ publish_release; refuses to publish on a red pipeline).
   regularly overtaken. (3) The model supplies DIRECTION only: it can never exceed
   the stake/exposure/leverage/ruin limits, and `paperLeverageWithAi` honours a
   model's caution but never its ambition.
+- QT CHARTS AND QT GRAPHS CANNOT SHARE A PROCESS. They declare seventeen classes with
+  identical names in one namespace (QValueAxis, QAbstractAxis, QLineSeries, QBarSeries,
+  QPieSeries, QXYSeries…), so linking both makes qmltyperegistrar ambiguous and EVERY
+  Qt Graphs QML type stops resolving — "ValueAxis is not a type", the component is
+  unavailable, and the cockpit renders as a blank white rectangle with no other symptom.
+  Measured with a two-target probe: identical source, only the link line differs;
+  instantiation order changes nothing. Hence TWO binaries over one `trading_cockpit`
+  library: `TradingApp` (Widgets + Qt Charts, cockpit panel with the chart degraded to a
+  stated note via a `Loader`) and `TradingCockpit` (Qt Quick + Qt Graphs, no Charts, the
+  real QCustomSeries candlesticks). `find_package(Qt6 COMPONENTS Graphs)` is deliberately
+  NOT followed by a link — the module loads as a QML plugin at run time. A static
+  `qt_add_qml_module` also needs its plugin target named on the link line
+  (`trading_cockpitplugin`); `qt_import_qml_plugins` does not help, it scans the target's
+  OWN QML files and both executables have none.
+- The candlestick chart encodes direction by FILL first (hollow up / solid down) and colour
+  second, and `kMaxDrawnCandles` (120) is part of that guarantee, not a performance knob: a
+  full 339-bar session leaves each body ~3 px, which a 1 px border fills completely, so
+  every candle reads as solid and the fill channel carries nothing. Truncation is STATED
+  ("last 120 of 344 one-minute bars"). `domain/Candles` drops a bar whole unless all four
+  values are present, positive and consistent — the four Yahoo arrays have INDEPENDENT gaps,
+  the same trap `yahooBars` exists for — and fits the axis to the WICKS, never the bodies.
 - Monte-Carlo/plan building stay off the GUI thread (QtConcurrent); the
   positions table stays model/view, allocation-free per tick (REQ-N-006).
 - ONE Axivion run at a time (flock in `axivion/start_analysis.sh`); no

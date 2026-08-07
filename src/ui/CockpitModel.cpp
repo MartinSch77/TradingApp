@@ -97,7 +97,7 @@ QString cockpitAgreementText(const QList<ReadTick> &ticks)
             ++unmeasurable;
         }
     }
-    const qint32 total = static_cast<qint32>(ticks.size());
+    const auto total = static_cast<qint32>(ticks.size());
     QString text = QStringLiteral("%1 of %2 agree").arg(agreeing).arg(total);
     if (unmeasurable > 0) {
         // Always appended when nonzero. "6 of 9" and "6 of 9 with 3 unmeasurable" are
@@ -157,7 +157,100 @@ QVariantMap cardToVariant(const CockpitCard &card)
     return out;
 }
 
-CockpitModel::CockpitModel(QObject *parent) : QObject(parent) {}
+CockpitCard cardFromSeries(const QString &label, const QList<double> &series)
+{
+    CockpitCard card;
+    card.symbol = label;
+    if ((series.size() < 2) || (series.constFirst() <= 0.0)) {
+        // Absent, not zero: no series means no reading, and the card renders an em dash.
+        // A single point is also absent — a change needs two.
+        card.freshness = Freshness::Absent;
+        card.ageMs = -1;
+        return card;
+    }
+    card.price = series.constLast();
+    card.changePct = ((series.constLast() - series.constFirst()) / series.constFirst()) * 100.0;
+    // The reference sweep runs on its own timer and this project does not record a per-ticker
+    // timestamp, so a series we hold is reported as live rather than given an invented age.
+    // Inventing one would be the exact failure the freshness field exists to prevent.
+    card.ageMs = 0;
+    card.freshness = Freshness::Live;
+    return card;
+}
+
+QList<CockpitCard> referenceCards(const QHash<QString, QList<double>> &referenceSeries)
+{
+    // Label, then the Yahoo ticker it is keyed by. The two differ on purpose: SP.24-7 is this
+    // application's symbol for the S&P future and is not a ticker anyone would recognise on a
+    // card.
+    return {
+        cardFromSeries(QStringLiteral("SPX500"),
+                       referenceSeries.value(QStringLiteral("SP.24-7"))),
+        cardFromSeries(QStringLiteral("NSDQ100"),
+                       referenceSeries.value(QStringLiteral("NSDQ100.24-7"))),
+        cardFromSeries(QStringLiteral("VIX"), referenceSeries.value(QStringLiteral("^VIX"))),
+        cardFromSeries(QStringLiteral("US10Y"), referenceSeries.value(QStringLiteral("^TNX"))),
+    };
+}
+
+QVariantMap candleToVariant(const trading::Candle &candle)
+{
+    QVariantMap out;
+    out[QStringLiteral("open")] = candle.open;
+    out[QStringLiteral("high")] = candle.high;
+    out[QStringLiteral("low")] = candle.low;
+    out[QStringLiteral("close")] = candle.close;
+    out[QStringLiteral("up")] = candle.up();
+    return out;
+}
+
+CockpitModel::CockpitModel(QObject *parent) : QObject(parent)
+{
+    setCandles({});   // start in the stated "no bars yet" state rather than at a blank axis
+}
+
+void CockpitModel::setCandles(const QList<trading::Candle> &candles)
+{
+    // The tail only. See recentCandles: this is what keeps the hollow-versus-solid body wide
+    // enough to READ, which is the chart's colour-blind guarantee rather than a preference.
+    const QList<trading::Candle> drawn = trading::recentCandles(candles, kMaxDrawnCandles);
+
+    m_candles.clear();
+    m_candles.reserve(drawn.size());
+    for (const trading::Candle &candle : drawn) {
+        m_candles.append(candleToVariant(candle));
+    }
+
+    // SAID, not silently truncated. A chart showing two hours of a six-hour session while
+    // labelled only "1-minute candles" is a claim about the session that is not true.
+    m_candleSpan = (drawn.size() < candles.size())
+                       ? tr("last %1 of %2 one-minute bars")
+                             .arg(drawn.size())
+                             .arg(candles.size())
+                       : tr("%n one-minute bar(s)", nullptr, static_cast<int>(drawn.size()));
+
+    // Fitted to the candles actually DRAWN, not to the whole series: an axis covering bars
+    // that are off-screen leaves the visible ones squashed into a band in the middle.
+    const std::optional<trading::CandleRange> range = trading::candleRange(drawn);
+    if (!range.has_value()) {
+        // SAID, not implied. An empty axis and a flat market look identical on screen, and
+        // the difference is whether the reader is looking at the market or at a broken feed.
+        m_candleMin = 0.0;
+        m_candleMax = 0.0;
+        m_candleNote = tr("no bars — waiting for the first intraday series");
+        m_candleSpan.clear();
+        Q_EMIT changed();
+        return;
+    }
+    // 4% of the session span on each side. The axis is fitted to the WICKS (candleRange
+    // reads low/high, never the bodies), so the extremes stay inside the frame instead of
+    // sitting on it.
+    const trading::CandleRange padded = trading::paddedRange(*range, 0.04);
+    m_candleMin = padded.low;
+    m_candleMax = padded.high;
+    m_candleNote.clear();
+    Q_EMIT changed();
+}
 
 void CockpitModel::setCards(const QList<CockpitCard> &cards)
 {
@@ -173,10 +266,13 @@ void CockpitModel::setSignal(const QString &instrument, const trading::LeadSigna
                              const trading::IndexReads &reads)
 {
     m_instrument = instrument;
-    const QList<ReadTick> ticks = cockpitTicks(reads, signal.dir);
+    // `read` rather than `ticks`: a local named `ticks` shadows the ticks() accessor, which
+    // cppcheck reports as shadowFunction — the same finding a local named `net` produced in
+    // PaperTrader. Harmless here, but the gate is zero and the rename costs nothing.
+    const QList<ReadTick> readTicks = cockpitTicks(reads, signal.dir);
     m_ticks.clear();
-    m_ticks.reserve(ticks.size());
-    for (const ReadTick &tick : ticks) {
+    m_ticks.reserve(readTicks.size());
+    for (const ReadTick &tick : readTicks) {
         QVariantMap entry;
         entry[QStringLiteral("glyph")] = tick.glyph;
         entry[QStringLiteral("label")] = tick.label;
@@ -184,7 +280,7 @@ void CockpitModel::setSignal(const QString &instrument, const trading::LeadSigna
         entry[QStringLiteral("detail")] = tick.detail;
         m_ticks.append(entry);
     }
-    m_agreement = cockpitAgreementText(ticks);
+    m_agreement = cockpitAgreementText(readTicks);
     m_evidence = cockpitEvidenceText(signal);
     Q_EMIT changed();
 }

@@ -235,6 +235,92 @@ private slots:
         // Every setter notifies, or a bound view would show stale data indefinitely.
         QCOMPARE(spy.count(), 4);
     }
+
+    //! @tstid TS-COCKPIT-006 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, scope=function)
+    //
+    // The price chart's empty state is STATED, never drawn. A fresh model has no bars, and
+    // an axis of 0..0 with no note would render as a flat line at zero — indistinguishable
+    // from a market that did not move. This is the same absent-is-not-zero discipline the
+    // cards apply to a missing price and the meter applies to an unmeasurable read.
+    void TS_COCKPIT_006_anEmptyChartSaysSoRatherThanDrawingAnAxisAtZero()
+    {
+        CockpitModel model;
+        QVERIFY(model.candles().isEmpty());
+        QVERIFY(!model.candleNote().isEmpty());     // it SAYS there are no bars
+
+        const QSignalSpy spy(&model, &CockpitModel::changed);
+        model.setCandles(trading::candlesFrom({100.0, 101.0}, {102.0, 103.0},
+                                              {99.0, 100.5}, {101.0, 100.5}));
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(model.candles().size(), qsizetype(2));
+        QVERIFY(model.candleNote().isEmpty());      // …and stops saying it once bars arrive
+
+        // The axis is fitted to the wicks and padded outwards, so no extreme sits on the frame.
+        QVERIFY(model.candleMin() < 99.0);
+        QVERIFY(model.candleMax() > 103.0);
+
+        // Direction crosses as a BOOLEAN decided in C++, not as two numbers for a binding to
+        // compare. `up` is what PriceChart.qml switches the hollow/solid body on, and the
+        // hollow-vs-solid fill — not the colour — is what a deuteranope actually reads.
+        const QVariantMap rising = model.candles().at(0).toMap();
+        const QVariantMap falling = model.candles().at(1).toMap();
+        QCOMPARE(rising.value(QStringLiteral("up")).toBool(), true);
+        QCOMPARE(falling.value(QStringLiteral("up")).toBool(), false);
+        QCOMPARE(rising.value(QStringLiteral("high")).toDouble(), 102.0);
+        QCOMPARE(falling.value(QStringLiteral("low")).toDouble(), 100.5);
+
+        // Going back to nothing restores the stated empty state rather than leaving the last
+        // session on screen — a chart that keeps showing old bars after the feed dies is the
+        // stale-price failure in another costume.
+        model.setCandles({});
+        QVERIFY(model.candles().isEmpty());
+        QVERIFY(!model.candleNote().isEmpty());
+    }
+
+    //! @tstid TS-COCKPIT-007 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, scope=function)
+    //
+    // A truncated chart SAYS it is truncated. The model draws only the most recent bars so
+    // the hollow/solid body stays wide enough to read, and a view that quietly showed two
+    // hours of a six-hour session under the label "1-minute candles" would be making a claim
+    // about the session that is not true. The axis must follow the same cut, or the visible
+    // bars are squashed into a band by extremes that are off-screen.
+    void TS_COCKPIT_007_aTruncatedChartSaysSoAndItsAxisFollowsTheVisibleBars()
+    {
+        // 200 bars climbing from 100, so the OLDEST are the lowest and would drag an
+        // un-cut axis far below anything on screen.
+        QList<double> opens;
+        QList<double> highs;
+        QList<double> lows;
+        QList<double> closes;
+        for (qint32 i = 0; i < 200; ++i) {
+            const double base = 100.0 + i;
+            opens.append(base);
+            highs.append(base + 2.0);
+            lows.append(base - 1.0);
+            closes.append(base + 1.0);
+        }
+
+        CockpitModel model;
+        model.setCandles(trading::candlesFrom(opens, highs, lows, closes));
+
+        // Fewer bars are drawn than were supplied, and both counts are stated.
+        QCOMPARE(model.candles().size(), qsizetype(120));
+        QVERIFY(model.candleSpan().contains(QStringLiteral("120")));
+        QVERIFY(model.candleSpan().contains(QStringLiteral("200")));
+
+        // The axis covers the DRAWN bars. The whole series would reach down to 99; the
+        // visible tail starts at bar 80, whose low is 179.
+        QVERIFY(model.candleMin() > 150.0);
+        QVERIFY(model.candleMax() > 300.0);
+
+        // A series that fits needs no "last N of M" — it says only how many bars there are.
+        model.setCandles(trading::candlesFrom({100.0}, {102.0}, {99.0}, {101.0}));
+        QVERIFY(!model.candleSpan().isEmpty());
+        QVERIFY(!model.candleSpan().contains(QStringLiteral("last")));
+    }
 };
 
 QTEST_MAIN(TestCockpitModel)

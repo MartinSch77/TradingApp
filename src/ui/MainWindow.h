@@ -4,6 +4,7 @@
 #ifndef TRADINGAPP_MAINWINDOW_H
 #define TRADINGAPP_MAINWINDOW_H
 
+#include "domain/Candles.h"
 #include "domain/DecisionEngine.h"
 #include "domain/Forecasting.h"
 #include "domain/Models.h"
@@ -303,6 +304,7 @@ private:
     // Wire the results of everything computed off the GUI thread (AI advisor + the three
     // QtConcurrent watchers). Called from the constructor; separate so its connection
     // list stays within the metrics budget.
+    void connectSeriesFeeds();
     void connectWorkerResults();
     // Live-refresh the open-trades P/L cells from the client's quote book, without
     // waiting for the next portfolio poll. EVERY row moves, each marked from its own
@@ -579,7 +581,9 @@ private:
     bool m_recoKickoff = false;                         // first scan fired once the app is live
     QHash<QString, WebRating> m_ratingBySymbol;         // latest web rating per instrument
     QHash<QString, QList<NewsHeadline>> m_newsBySymbol; // latest headlines per instrument
-    QHash<QString, QList<double>> m_intradayBySymbol;   // Yahoo 1-min session closes
+    QHash<QString, QList<double>> m_intradayBySymbol;
+    // OHLC for the cockpit's candlestick chart, from the same sweep as the closes above.
+    QHash<QString, QList<trading::Candle>> m_candlesBySymbol;   // Yahoo 1-min session closes
     QHash<QString, QList<double>> m_referenceSeries;    // volatility / term structure / yields / heavyweights
     // The same tickers' bars WITH volume, aligned — the session-VWAP and up/down-volume
     // reads (REQ-F-035). Absent for every ticker whose feed carries no volume.

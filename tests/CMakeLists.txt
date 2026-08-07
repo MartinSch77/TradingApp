@@ -48,6 +48,7 @@ tradingapp_add_test(tst_indexconfluence tst_indexconfluence.cpp)
 tradingapp_add_test(tst_leadsignal tst_leadsignal.cpp)
 tradingapp_add_test(tst_predictionledger tst_predictionledger.cpp)
 tradingapp_add_test(tst_decisionlog tst_decisionlog.cpp)
+tradingapp_add_test(tst_candles tst_candles.cpp)
 # The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
 # back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
 # and only an end-to-end round trip can show that they do.

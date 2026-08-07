@@ -8,15 +8,13 @@
 
 namespace trading::ui {
 
-CockpitPanel::CockpitPanel(QWidget *parent) : QDialog(parent)
+CockpitPanel::CockpitPanel(QWidget *parent)
+    : QDialog(parent), m_model(new CockpitModel(this)), m_view(new QQuickWidget(this))
 {
     setObjectName(QStringLiteral("cockpitPanel"));   // REQ-N-007: addressable by name
     setWindowTitle(tr("Market cockpit (Qt Quick)"));
     resize(1180, 700);
 
-    m_model = new CockpitModel(this);
-
-    m_view = new QQuickWidget(this);
     m_view->setObjectName(QStringLiteral("cockpitView"));
     m_view->setResizeMode(QQuickWidget::SizeRootObjectToView);
     // setInitialProperties, NOT a rootContext property. Measured: as a context property the
@@ -28,14 +26,17 @@ CockpitPanel::CockpitPanel(QWidget *parent) : QDialog(parent)
     m_view->setInitialProperties({{QStringLiteral("cockpit"), QVariant::fromValue(m_model)}});
     m_view->setSource(QUrl(QStringLiteral("qrc:/qt/qml/TradingApp/Cockpit/Main.qml")));
 
-    // Report a load failure rather than presenting an empty rectangle that reads as "no
-    // data". The status is checked once here, after setSource, because QQuickWidget loads
-    // synchronously for a qrc URL.
-    m_ready = (m_view->status() == QQuickWidget::Ready);
-
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_view);
+}
+
+// Report a load failure rather than presenting an empty rectangle that reads as "no data".
+// Out-of-line so the comdat coverage records stay unambiguous, per this project's rule for
+// header-inline functions that carry logic.
+bool CockpitPanel::ready() const
+{
+    return (m_view != nullptr) && (m_view->status() == QQuickWidget::Ready);
 }
 
 } // namespace trading::ui

@@ -99,6 +99,15 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         -DTRADINGAPP_WARNINGS_AS_ERRORS=ON \
         -DTRADINGAPP_SKIP_QT_DEPLOY=ON
     cmake --build "$BUILD" --target TradingApp -j"$JOBS"
+    # The second front end too, when Qt Graphs is present. Named explicitly rather than
+    # building `all`, which would also build the 30 test executables into the AppImage tree.
+    if cmake --build "$BUILD" --target TradingCockpit -j"$JOBS" 2>/dev/null; then
+        echo "  (TradingCockpit built — the Qt Quick front end will travel too)"
+    else
+        # Said out loud: an AppImage without it is missing the candlestick chart entirely,
+        # and that is a fact about the artefact rather than a build failure.
+        echo "  NOTE: no Qt Graphs here, so TradingCockpit is NOT in this AppImage" >&2
+    fi
 fi
 
 rm -rf "$APPDIR"
@@ -150,11 +159,24 @@ export EXTRA_QT_PLUGINS="tls;imageformats;iconengines;styles;platformthemes"
 # QT_QPA_PLATFORM=offscreen. Wayland is deliberately not bundled: it would
 # drag in the whole libwayland stack, and XWayland serves xcb fine.
 export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
+# The Qt plugin must be told where the QML is, or it bundles no QML modules at all and
+# TradingCockpit starts to a blank window inside the AppImage while working perfectly from
+# the build tree. Harmless when TradingCockpit was not built.
+export QML_SOURCES_PATHS="$ROOT/src/quick/qml"
 export OUTPUT="$OUT_DIR/TradingApp-$VERSION-$ARCH.AppImage"
 export VERSION
 
+LD_EXTRA=()
+if [ -x "$APPDIR/usr/bin/TradingCockpit" ]; then
+    # --executable so linuxdeploy resolves ITS dependencies too (Qt Quick, Qt Graphs);
+    # the desktop file names only TradingApp, and unnamed binaries are copied but not
+    # deployed — the AppImage would then hold a TradingCockpit that cannot start.
+    LD_EXTRA+=(--executable "$APPDIR/usr/bin/TradingCockpit")
+fi
+
 "$LD" --appdir "$APPDIR" \
     --plugin qt \
+    "${LD_EXTRA[@]}" \
     --desktop-file "$APPDIR/usr/share/applications/TradingApp.desktop" \
     --icon-file "$ROOT/packaging/tradingapp.png" \
     --output appimage

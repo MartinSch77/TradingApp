@@ -39,6 +39,26 @@ set(CMAKE_AUTOUIC ON)
 # domain and service libraries behind two presentations, which is the point of the exercise.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
                                     Qml Quick QuickWidgets)
+# Qt Graphs supplies CustomSeries (6.11), which draws the cockpit's candlesticks — but it is
+# found, NOT linked, and that is load-bearing.
+#
+# Qt Charts and Qt Graphs declare SEVENTEEN classes with the same names in the same namespace
+# (QValueAxis, QAbstractAxis, QLineSeries, QBarSeries, QPieSeries, QXYSeries and eleven more).
+# Linking both into one target makes qmltyperegistrar see two ::QValueAxis and fail to
+# register either — it warns "Multiple C++ types called QAbstractAxis found!" at BUILD time
+# and then, at RUN time, the QtGraphs QML types do not resolve: "ValueAxis is not a type",
+# PriceChart is unavailable, and the whole cockpit renders as a blank white rectangle with no
+# other symptom. Measured 2026-08-07; the blank window is what made it visible.
+#
+# Nothing here uses the Qt Graphs C++ API — only its QML types — so the module is loaded as a
+# QML plugin at run time from the Qt installation's own qml directory, and the deploy tools
+# pick it up from the `import QtGraphs` in PriceChart.qml. Do not "tidy" Qt6::Graphs onto the
+# link line: it builds, and it silently empties the cockpit.
+find_package(Qt6 QUIET COMPONENTS Graphs)
+if(NOT Qt6Graphs_FOUND)
+    message(WARNING "Qt Graphs not found — the cockpit's candlestick chart will not render. "
+                    "Install it with: aqt/maintenancetool -m qtgraphs")
+endif()
 
 qt_standard_project_setup()
 
@@ -131,6 +151,8 @@ qt_add_library(trading_domain STATIC
     src/domain/BotNet.h
     src/domain/LeadSignal.cpp
     src/domain/LeadSignal.h
+    src/domain/Candles.cpp
+    src/domain/Candles.h
     src/domain/IndexConfluence.cpp
     src/domain/IndexConfluence.h
     src/domain/PredictionLedger.cpp
@@ -189,8 +211,6 @@ qt_add_executable(TradingApp
     src/ui/ScreenerDialog.h
     src/ui/ChartView.cpp
     src/ui/ChartView.h
-    src/ui/CockpitModel.cpp
-    src/ui/CockpitModel.h
     src/ui/CockpitPanel.cpp
     src/ui/CockpitPanel.h
 )
@@ -218,6 +238,10 @@ set_source_files_properties(src/quick/qml/MarketCard.qml
     PROPERTIES QT_RESOURCE_ALIAS MarketCard.qml)
 set_source_files_properties(src/quick/qml/ConfluenceMeter.qml
     PROPERTIES QT_RESOURCE_ALIAS ConfluenceMeter.qml)
+set_source_files_properties(src/quick/qml/PriceChart.qml
+    PROPERTIES QT_RESOURCE_ALIAS PriceChart.qml)
+set_source_files_properties(src/quick/qml/CockpitWindow.qml
+    PROPERTIES QT_RESOURCE_ALIAS CockpitWindow.qml)
 # QT_QML_SINGLETON_TYPE is REQUIRED as well as the file's own `pragma Singleton`: CMake does
 # not parse the QML, so without this the generated qmldir says "Theme 1.0 Theme.qml" instead
 # of "singleton Theme 1.0 Theme.qml". The failure is quiet and misleading — every Theme.*
@@ -227,7 +251,19 @@ set_source_files_properties(src/quick/qml/Theme.qml PROPERTIES
     QT_RESOURCE_ALIAS Theme.qml
     QT_QML_SINGLETON_TYPE TRUE)
 
-qt_add_qml_module(TradingApp
+# The module is its OWN library rather than part of the executable, so BOTH front ends can
+# use it: the QQuickWidget panel inside TradingApp, and the standalone TradingCockpit built
+# below. It deliberately links Quick and NOT Qt Graphs — see the find_package comment at the
+# top; a Graphs link here would propagate into TradingApp, which links Qt Charts, and empty
+# the cockpit.
+qt_add_library(trading_cockpit STATIC
+    src/ui/CockpitModel.cpp
+    src/ui/CockpitModel.h
+)
+target_include_directories(trading_cockpit PUBLIC src)
+target_link_libraries(trading_cockpit PUBLIC trading_domain Qt6::Quick)
+
+qt_add_qml_module(trading_cockpit
     URI TradingApp.Cockpit
     VERSION 1.0
     OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/qml/TradingApp/Cockpit
@@ -235,6 +271,8 @@ qt_add_qml_module(TradingApp
         src/quick/qml/Main.qml
         src/quick/qml/MarketCard.qml
         src/quick/qml/ConfluenceMeter.qml
+        src/quick/qml/PriceChart.qml
+        src/quick/qml/CockpitWindow.qml
         src/quick/qml/Theme.qml
 )
 
@@ -249,12 +287,52 @@ target_link_libraries(TradingApp PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickWidgets
+    trading_cockpit
 )
 
 # Put the binary directly in the build dir root for convenience.
 set_target_properties(TradingApp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+# The cockpit's QML module is a static library now, shared by both front ends, and a STATIC
+# qt_add_qml_module puts its type registration in a SEPARATE plugin target. Linking only the
+# library leaves the plugin's initialiser as an unreferenced symbol in an archive, the linker
+# drops it, and the module is "not found" at run time — with the qmldir sitting right there in
+# the resources, which makes the error read like a path problem when it is a linking one.
+# qt_import_qml_plugins() does not help: it scans the TARGET's own QML files, and both
+# executables have none. The plugin is therefore named directly.
+target_link_libraries(TradingApp PRIVATE trading_cockpitplugin)
+
+# ---------------------------------------------------------------------------
+# TradingCockpit — the SECOND front end (REQ-F-038): Qt Quick end to end, over the same
+# domain and service libraries and the same CockpitModel and QML as the panel embedded in
+# TradingApp. It exists as its own process for a measured reason, not for tidiness: Qt Charts
+# and Qt Graphs declare seventeen identically-named classes, so a binary that links both
+# cannot resolve a single Qt Graphs QML type, and the cockpit's candlestick chart needs
+# Qt Graphs while the Widgets UI is built on Qt Charts. See the find_package comment above.
+#
+# It links trading_services for the read-only feeds and never constructs an EtoroClient, so
+# there is structurally no route to an order endpoint from this binary.
+#
+# Built only when Qt Graphs is present; the rest of the project does not depend on it.
+# ---------------------------------------------------------------------------
+if(Qt6Graphs_FOUND)
+    qt_add_executable(TradingCockpit src/quick/cockpit_main.cpp)
+    target_compile_definitions(TradingCockpit PRIVATE
+        TRADINGAPP_VERSION="${PROJECT_VERSION}")
+    target_link_libraries(TradingCockpit PRIVATE
+        trading_services
+        trading_cockpit
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+    )
+    set_target_properties(TradingCockpit PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    # See the note on TradingApp above: the static QML module's plugin must be named.
+    target_link_libraries(TradingCockpit PRIVATE trading_cockpitplugin)
+endif()
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics
@@ -352,6 +430,16 @@ if(NOT ANDROID AND NOT IOS)
         BUNDLE  DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+    # The second front end travels with the first when it was built. Same layers, same
+    # view-model, read-only — but it is the ONLY binary that can draw the candlestick chart
+    # (Qt Charts and Qt Graphs cannot share a process), so shipping one without the other
+    # would ship a feature nobody can reach.
+    if(TARGET TradingCockpit)
+        install(TARGETS TradingCockpit
+            BUNDLE  DESTINATION .
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        )
+    endif()
 
     # The licence texts travel INSIDE the artefact, not only beside it in the
     # release page. GPL-3.0-or-later requires the terms to reach whoever receives

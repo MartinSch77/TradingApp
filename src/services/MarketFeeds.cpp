@@ -100,6 +100,37 @@ QList<double> yahooCloses(const QJsonObject &chartResult, bool positiveOnly)
     return closes;
 }
 
+// The candles of a chart result: the SAME response the close series already comes from.
+//
+// Yahoo's quote object carries open/high/low/close as four sibling arrays, so a candlestick
+// chart costs no additional request — the same discipline REQ-F-022's opening-range and
+// relative-strength reads follow. The four arrays have INDEPENDENT gaps, which is why the
+// consistency rules live in domain/Candles rather than here: this function only hands over
+// the raw columns, and `candlesFrom` decides which bars may be drawn.
+trading::CandleColumns yahooOhlc(const QJsonObject &chartResult)
+{
+    const QJsonObject quote = chartResult.value(QStringLiteral("indicators"))
+                                  .toObject()
+                                  .value(QStringLiteral("quote"))
+                                  .toArray()
+                                  .first()
+                                  .toObject();
+    const auto column = [&quote](const char *name) {
+        const QJsonArray arr = quote.value(QLatin1StringView(name)).toArray();
+        QList<double> out;
+        out.reserve(arr.size());
+        for (const auto &v : arr) {   // QJsonValueConstRef, no conversion
+            // A null minute becomes 0.0 and is dropped by candlesFrom's drawable() test.
+            // Kept in place rather than skipped, because skipping here would shift this
+            // column against the other three — the misalignment yahooBars exists to avoid.
+            out.append(v.isDouble() ? v.toDouble() : 0.0);
+        }
+        return out;
+    };
+    return trading::CandleColumns{column("open"), column("high"), column("low"),
+                                  column("close")};
+}
+
 // The session change from the chart result's META block, as a two-point series
 // [previousClose, regularMarketPrice] — or empty when the meta cannot supply both.
 //
@@ -545,10 +576,19 @@ void MarketFeeds::fetchIntradaySeries()
                 reportFeedError(QStringLiteral("Intraday series"), netError);  // stays absent
                 return;
             }
-            const QList<double> closes =
-                yahooCloses(yahooChartResult(doc), /*positiveOnly=*/false);
+            const QJsonObject result = yahooChartResult(doc);
+            const QList<double> closes = yahooCloses(result, /*positiveOnly=*/false);
             if (!closes.isEmpty()) {
                 emit intradayCloses(symbol, closes);
+            }
+            // The candles ride the same response. Emitted separately rather than folded into
+            // the signal above, because the close series feeds the DECISION composite and the
+            // candles feed a CHART: a parse change on one must not be able to move the other.
+            const trading::CandleColumns ohlc = yahooOhlc(result);
+            const QList<trading::Candle> candles =
+                trading::candlesFrom(ohlc.opens, ohlc.highs, ohlc.lows, ohlc.closes);
+            if (!candles.isEmpty()) {
+                emit intradayCandles(symbol, candles);
             }
         });
     }

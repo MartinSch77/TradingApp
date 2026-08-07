@@ -452,6 +452,49 @@ def licensed_tools():
     return out
 
 
+def collect_tool_versions():
+    """analysis-results/tool-versions.json, or [] when the analysis stage never wrote it.
+
+    Written by tools/record_tool_versions.py. Absent on a tree where only some stages ran,
+    which is why the report treats it as optional rather than required.
+    """
+    path = ROOT / "analysis-results" / "tool-versions.json"
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text(**UTF8)).get("tools") or []
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return []
+
+
+def _artefact_verdict(artefact: str, absent: bool):
+    """(text, colour) for a tool's output file — its finding count, or why there is none.
+
+    Three states, deliberately distinct: the tool did not run, the artefact is missing, or
+    the artefact exists and has a count. Collapsing the first two into "0" is the failure
+    this whole report is built to avoid.
+    """
+    if absent:
+        return "not run", GREY
+    if not artefact:
+        return "—", GREY
+    path = ROOT / artefact
+    if not path.is_file():
+        return "no artefact", GREY
+    try:
+        findings = len([ln for ln in path.read_text(**UTF8, errors="replace").splitlines()
+                        if ln.strip()])
+    except OSError:
+        return "unreadable", GREY
+    # object-names.txt carries a human-readable success sentence rather than findings, the
+    # same special case tools/gates_to_junit.py handles — counting its lines would report a
+    # clean check as one finding.
+    if path.name == "object-names.txt":
+        findings = len([ln for ln in path.read_text(**UTF8, errors="replace").splitlines()
+                        if "has no objectName" in ln])
+    return (f"{findings} findings" if findings else "0 — pass"), (RED if findings else GREEN)
+
+
 def collect_axivion():
     """Latest dashboard version's issue counts per kind, or None when unreachable.
 
@@ -486,7 +529,54 @@ def collect_axivion():
     if not counts:
         return None
     return {"project": project, "version": version.get("index"),
-            "name": version.get("name", ""), "counts": counts}
+            "name": version.get("name", ""), "counts": counts,
+            "metrics": _axivion_system_metrics(base, token, project)}
+
+
+# The ABSOLUTE metric values, not just the violation counts. Axivion measures lines of
+# code, McCabe complexity, statement counts and comment lines and stores them against the
+# "System Entity" — the one entity per project that subsumes all others — but none of that
+# reached this report before, which showed verdicts without the sizes they were measured
+# over. A reader cannot judge "154,758 style violations" without knowing it is 21,292 lines.
+#
+# The three-step API is the documented one (Metrics API): getSystemEntity to find the
+# entity, getMetrics to enumerate what is stored against it, then queryMetricValueRange per
+# metric. Note the Suite only stores metrics for entities it kept, so an empty list here
+# means "not configured", never "zero" — and every failure path returns {} so a dashboard
+# that answers nothing degrades to "not run" rather than to a page of zeros.
+def _axivion_system_metrics(base: str, token: str, project: str) -> dict:
+    def get(path: str):
+        req = urllib.request.Request(f"{base}{path}",
+                                     headers={"Authorization": f"Basic {token}"})
+        with urllib.request.urlopen(req, timeout=8) as response:
+            return json.loads(response.read().decode("utf-8", "replace"))
+
+    try:
+        entities = get(f"/api/projects/{project}/getSystemEntity").get("entities") or []
+        if not entities:
+            return {}
+        entity = urllib.parse.quote(str(entities[0]["id"]))
+        listed = get(f"/api/projects/{project}/getMetrics?entity={entity}").get("metrics") or []
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError, KeyError):
+        return {}
+
+    out = {}
+    for metric in listed:
+        name = metric.get("name")
+        if not name:
+            continue
+        try:
+            payload = get(f"/api/projects/{project}/queryMetricValueRange"
+                          f"?start=latest&end=latest&entity={entity}"
+                          f"&metric={urllib.parse.quote(name)}")
+            values = payload.get("values") or []
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError):
+            continue
+        # A metric that exists but has no value in this version is None, and stays None:
+        # printing 0 for it would be a measurement this analysis never made.
+        out[name] = {"value": values[-1] if values else None,
+                     "label": metric.get("displayName") or name}
+    return out
 
 
 def collect_sanitizers():
@@ -898,6 +988,31 @@ def build_report(out_path, build_dir):
                      Paragraph(detail, rep.s["cell"])])
     rep.table(rows, [40 * mm, 20 * mm, 116 * mm])
 
+    # WHICH tool produced each verdict above, at what version, invoked how, writing where.
+    # The table above names counts; this one makes them traceable. Without it the bundle
+    # could report "cppcheck: 0" and be unable to say which cppcheck that was — the
+    # versions used to live only in the console log.
+    tools = collect_tool_versions()
+    if tools:
+        rep.h2("Tool reference — version, invocation, evidence")
+        rows = [["Tool + version", "Invocation", "Output artefact", "Result"]]
+        for entry in tools:
+            version = entry.get("version") or "unknown"
+            artefact = entry.get("artefact", "")
+            absent = version == "not installed"
+            values, colour = _artefact_verdict(artefact, absent)
+            rows.append([Paragraph(f"<b>{entry.get('tool','?')}</b><br/>{version}",
+                                   rep.s["cell"]),
+                         Paragraph(entry.get("invocation", ""), rep.s["cell"]),
+                         Paragraph(artefact, rep.s["cell"]),
+                         status_cell(values, colour)])
+        rep.table(rows, [40 * mm, 60 * mm, 48 * mm, 28 * mm])
+        rep.text("Recorded by tools/record_tool_versions.py into "
+                 "analysis-results/tool-versions.json during the analysis stage, so this "
+                 "table is reconstructible from the artefacts alone rather than from the "
+                 "console. \"not installed\" is reported as its own state: a check that did "
+                 "not run is not a check that found nothing.", "small")
+
     rep.h2("Axivion (MISRA C++ 2023 / CERT / CWE + architecture)")
     if axivion is None:
         rep.text("<b>not run.</b> The Axivion Suite is license-bound and its dashboard "
@@ -906,9 +1021,18 @@ def build_report(out_path, build_dir):
                  "the <b>axivion</b> stage of build_all — and regenerate this report to fill "
                  "this section in.")
     else:
+        # The CL note used to read "Axivion's own clone check is off". That was FALSE —
+        # C++CloneDetection is _active in axivion/rule_config.json and finds clones — and
+        # the row was additionally coloured as a hard gate, so a passing build showed red
+        # while the note claimed the check was not running. Two clone detectors run here at
+        # different thresholds: PMD CPD (>= 100 tokens) is the GATE and must be 0; Axivion's
+        # is informational and reported as such.
         kinds = [("AV", "Architecture violations", "layering rules — a hard gate"),
-                 ("CL", "Clones", "gated by PMD CPD here; Axivion's own clone check is off"),
-                 ("CY", "Cycles", "cyclic dependencies between components"),
+                 ("CL", "Clones",
+                  "Axivion's own clone check IS on (C++CloneDetection); the GATE is PMD CPD "
+                  "at &gt;= 100 tokens, which is separate and must be 0 — these are "
+                  "informational at Axivion's own threshold"),
+                 ("CY", "Cycles", "cyclic dependencies between components — informational"),
                  ("DE", "Dead code", "unreachable / unused (operator-new false positives known)"),
                  ("MV", "Metric violations", "complexity thresholds; lizard is the ratchet"),
                  ("SV", "Style violations", "MISRA C++ 2023 + CERT + CWE + imported tool logs")]
@@ -916,13 +1040,75 @@ def build_report(out_path, build_dir):
         for key, label, note in kinds:
             entry = axivion["counts"].get(key) or {}
             kind_total = entry.get("Total", 0)
-            hard = key in ("AV", "CL")
+            # AV alone is the hard gate. CL is NOT: the clone gate is PMD CPD, reported in
+            # the analyzer table above, and colouring Axivion's own clone count red would
+            # fail a build on a threshold this project does not gate on.
+            hard = key == "AV"
             colour = ((GREEN if kind_total == 0 else RED) if hard
                       else (GREY if kind_total == 0 else AMBER))
             rows.append([f"{key} — {label}", Paragraph(note, rep.s["cell"]),
                          status_cell(str(kind_total), colour),
                          f"+{entry.get('Added', 0)}", f"-{entry.get('Removed', 0)}"])
         rep.table(rows, [46 * mm, 74 * mm, 20 * mm, 18 * mm, 18 * mm])
+
+        # The ABSOLUTE measurements behind those verdicts. Without them a reader cannot
+        # judge any of the counts above: 154,758 style violations over 21,292 lines is a
+        # different statement from the same number over ten million.
+        # NOT named `metrics`: that name already holds the lizard data this function uses
+        # further down (metrics["worst"]), and shadowing it made the report die with
+        # KeyError 'worst' — the same class of defect cppcheck's shadowFunction check
+        # catches in the C++.
+        ax_metrics = axivion.get("metrics") or {}
+        if ax_metrics:
+            rep.h2("Axivion absolute metrics (System Entity, latest version)")
+            groups = [
+                ("Size", [("Metric.Lines.LOC.sum", "lines of code (total)"),
+                          ("Metric.Lines.LOC.cnt", "entities measured"),
+                          ("Metric.Lines.LOC.avg", "lines per entity (average)"),
+                          ("Metric.Lines.LOC.max", "largest entity (lines)"),
+                          ("Metric.Lines.Comment.sum", "comment lines (total)"),
+                          ("Metric.Number_Of_Statements.sum", "statements (total)"),
+                          ("Metric.Number_Of_Statements.max", "most statements in one entity")]),
+                ("Complexity", [("Metric.McCabe_Complexity.sum", "McCabe complexity (total)"),
+                                ("Metric.McCabe_Complexity.avg", "McCabe per routine (average)"),
+                                ("Metric.McCabe_Complexity.max", "worst routine (McCabe)"),
+                                ("Metric.McCabe_Complexity.cnt", "routines measured")]),
+                ("Findings as metrics", [("Metric.Violations.Style", "style violations"),
+                                         ("Metric.Violations.Clone", "clones"),
+                                         ("Metric.Violations.Cycle", "cyclic dependencies"),
+                                         ("Metric.Violations.Dead_Entity", "dead entities"),
+                                         ("Metric.Violations.Metric", "metric violations"),
+                                         ("Metric.Violations.Architecture",
+                                          "architecture violations")]),
+            ]
+            rows = [["Group", "Metric", "Value"]]
+            shown = set()
+            for group, items in groups:
+                for key, label in items:
+                    entry = ax_metrics.get(key)
+                    if entry is None:
+                        continue
+                    shown.add(key)
+                    value = entry["value"]
+                    # None means the metric exists but this version stored no value. It is
+                    # printed as "not measured", never as 0 — a 0 here would assert a
+                    # measurement that was not taken. Metric.Violations.Architecture is the
+                    # real case: the AV COUNT above is the evidence, not this row.
+                    if value is None:
+                        cell = status_cell("not measured", GREY)
+                    elif float(value).is_integer():
+                        cell = f"{int(value):,}"
+                    else:
+                        cell = f"{float(value):,.2f}"
+                    rows.append([group, Paragraph(label, rep.s["cell"]), cell])
+            rep.table(rows, [30 * mm, 96 * mm, 50 * mm])
+            rep.text(f"{len(ax_metrics)} metrics are stored against the System Entity; the "
+                     f"{len(shown)} above are the ones worth a verdict. Axivion counts "
+                     f"'lines of code' as empty + comment + code, so it does not match "
+                     f"gcov's line total, and its McCabe figures are its own — lizard's "
+                     f"ratchet above is a separate measurement with separate thresholds. "
+                     f"Two numbers that disagree here are two different definitions, not a "
+                     f"defect.", "small")
         rep.text(f"Dashboard version {axivion['version']} — {axivion['name']}. Added/removed "
                  f"are versus the previous version. The style-violation total is large by "
                  f"construction: MISRA C++ 2023 judges a Qt application, where every "

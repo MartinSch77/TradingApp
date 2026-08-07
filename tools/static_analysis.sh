@@ -306,6 +306,16 @@ if ! python3 "$ROOT/tools/merge_findings.py" "$OUT"; then
     exit 1
 fi
 
+# --- tool identification, for the report -------------------------------------
+# The verdicts above name the FINDING COUNT but not the tool that produced it: those
+# versions were echoed to this log and nowhere else, so the qualification bundle could not
+# answer "which cppcheck produced this zero?" from its artefacts. A shared Python tool
+# because the JSON quoting is fiddly in shell (a printf '%s' of ',\n' writes a literal
+# backslash-n and corrupted the document) and because static_analysis.ps1 calls the very
+# same script — one implementation, no drift.
+python3 "$ROOT/tools/record_tool_versions.py" "$OUT" ||
+    echo "WARNING: tool identity was not recorded — the report will omit that table" >&2
+
 TOTAL=$((CPPCHECK_N + TIDY_N + CLAZY_N + GCCA_N + CSA_N + CPD_N + CODESPELL_N + OBJ_N))
 echo "TOTAL findings: $TOTAL"
 # The lizard metrics are reported separately: their violations are ratcheted

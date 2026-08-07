@@ -97,8 +97,16 @@ publish_release; refuses to publish on a red pipeline).
   `misc-implicitlyVirtual` 16 (wants `virtual` on an `override`), `threadsafety`
   19 (getenv in `Config::load`, which runs before any thread exists), `findcasts`
   7 (a cast inventory). All informational, all in `tools/misra_cppcheck.sh`.
-- PMD CPD (≥ 100 tokens) is the only clone gate — the Axivion configuration here
-  is MISRA-only. Fix clones by extracting a helper; do not baseline them.
+- PMD CPD (≥ 100 tokens) is the only clone GATE. Fix clones by extracting a helper;
+  do not baseline them. But "the Axivion configuration here is MISRA-only" was WRONG
+  and is corrected: `C++CloneDetection` is `_active` in `axivion/rule_config.json`,
+  Axivion runs its own clone check at its own threshold, and it currently reports
+  **2 clones** (`Metric.Violations.Clone`). Those are INFORMATIONAL — PMD CPD at ≥ 100
+  tokens is what gates, and it is 0. `tools/make_report.py` used to print "Axivion's own
+  clone check is off" while colouring the row as a hard gate, so a passing build showed
+  red beside a note claiming the check was not running; both are fixed. The same config
+  also enables 133 CWE rules, so Axivion here is MISRA C++ 2023 + CERT/CWE + architecture,
+  not MISRA alone.
 - Downloadable builds: `tools/package_appimage.sh` (linuxdeploy; needs
   `-DTRADINGAPP_SKIP_QT_DEPLOY=ON`, since Qt's own Linux deploy step aborts on
   RUNPATH length inside an AppDir) and `tools/package_portable.ps1` (windeployqt

@@ -287,6 +287,13 @@ Write-TextFile (Join-Path $Out 'clazy.txt') ''
 # ---------------------------------------------------------------------------
 Invoke-Python -Arguments @((Join-Path $Root 'tools\merge_findings.py'), $Out) | Out-Null
 
+# Tool identity for the report: WHICH tool produced each verdict, at what version,
+# invoked how, writing where. The versions were written to the console and nowhere
+# else, so the qualification bundle could not answer that from its artefacts. The very
+# same Python tool the Linux script calls, so the two platforms cannot drift.
+Invoke-Python -Arguments @((Join-Path $Root 'tools\record_tool_versions.py'), $Out) |
+    Out-Null
+
 $total = $cppcheckN + $tidyN + $csaN + $cpdN + $msvcN + $codespellN
 Write-Host ""
 Write-Host "TOTAL findings: $total" -ForegroundColor $(if ($total -eq 0) { 'Green' } else { 'Yellow' })

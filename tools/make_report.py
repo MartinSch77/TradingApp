@@ -452,6 +452,41 @@ def licensed_tools():
     return out
 
 
+def collect_external_import():
+    """What the other analyzers contributed TO the Axivion dashboard, per provider.
+
+    analysis-results/external_findings.csv is the merged log (tools/merge_findings.py) that
+    axivion/external_import.py re-emits as Axivion style violations, one provider per tool.
+    Without this the report shows "seven analyzers: 0" and "Axivion: 154,758" as two
+    unrelated facts, when in truth the first feed the second — so a reader cannot tell
+    whether an analyzer's output reached the dashboard at all.
+
+    Returns (rows, providers_wired) where rows is [(provider, count)] for what actually
+    arrived. A provider that is wired but contributed nothing is NOT an error: with every
+    gated analyzer at zero there is correctly nothing to import.
+    """
+    path = ROOT / "analysis-results" / "external_findings.csv"
+    counts = {}
+    if path.is_file():
+        try:
+            with path.open(newline="", **UTF8) as handle:
+                for row in csv.reader(handle, delimiter=";"):
+                    if not row or row[0] == "tool":
+                        continue
+                    counts[row[0]] = counts.get(row[0], 0) + 1
+        except (OSError, csv.Error):
+            return [], []
+    wired = []
+    importer = ROOT / "axivion" / "external_import.py"
+    if importer.is_file():
+        try:
+            wired = sorted(set(re.findall(r"^\s*'([a-z0-9-]+)':\s*\('",
+                                          importer.read_text(**UTF8), re.M)))
+        except OSError:
+            wired = []
+    return sorted(counts.items(), key=lambda kv: -kv[1]), wired
+
+
 def collect_tool_versions():
     """analysis-results/tool-versions.json, or [] when the analysis stage never wrote it.
 
@@ -1012,6 +1047,34 @@ def build_report(out_path, build_dir):
                  "table is reconstructible from the artefacts alone rather than from the "
                  "console. \"not installed\" is reported as its own state: a check that did "
                  "not run is not a check that found nothing.", "small")
+
+    # Every analyzer above ALSO lands on the Axivion dashboard, one provider per tool, so
+    # the whole toolchain is triageable in one place. Stated explicitly because otherwise
+    # "seven analyzers: 0" and "Axivion: 154,758 style violations" read as two unrelated
+    # facts rather than one pipeline feeding the other.
+    imported, wired = collect_external_import()
+    if wired:
+        rep.h2("Other analyzers imported into the Axivion dashboard")
+        if imported:
+            rows = [["Provider", "Findings imported", "Arrives as"]]
+            for provider, count in imported:
+                rows.append([provider, status_cell(str(count), AMBER),
+                             Paragraph("Axivion style violation, provider "
+                                       f"<b>{provider}</b>", rep.s["cell"])])
+            rep.table(rows, [40 * mm, 32 * mm, 104 * mm])
+        else:
+            rep.text("<b>Nothing to import.</b> Every gated analyzer reported zero, so the "
+                     "merged log is empty — which is the intended state, not a broken "
+                     "import.", "small")
+        silent = [w for w in wired if w not in dict(imported)]
+        rep.text(f"axivion/external_import.py wires {len(wired)} providers via the Suite's "
+                 f"ImportExternalAnalysisOutput mechanism: {', '.join(wired)}. "
+                 f"{len(imported)} contributed on this run; the other {len(silent)} are "
+                 f"silent because their analyzer found nothing, is not installed on this "
+                 f"host, or needs a separate export step (sonarqube via tools/sonar_scan, "
+                 f"coverity via tools/coverity_findings.py). A silent provider is not a "
+                 f"failed import — but it is also not evidence, which is why the tool table "
+                 f"above states each one's own result.", "small")
 
     rep.h2("Axivion (MISRA C++ 2023 / CERT / CWE + architecture)")
     if axivion is None:

@@ -93,9 +93,13 @@ _TOOLS = {
     # and parameter count over threshold. Ratcheted against
     # tools/lizard_baseline.json, so these arrive as visible-but-known debt.
     'lizard': ('lizard.txt', _PIPE),
-    # Copy-paste detection (tools/cpd_scan.py). This project's Axivion
-    # configuration is MISRA-only, so clone findings (issue type CL) come from
-    # PMD CPD instead.
+    # Copy-paste detection (tools/cpd_scan.py) at >= 100 tokens — the clone GATE.
+    # NOT because Axivion has no clone check: C++CloneDetection is _active in
+    # rule_config.json and reports its own clones as issue type CL (2 at the time of
+    # writing). The two coexist deliberately — PMD CPD's threshold is the one this
+    # project gates on, Axivion's is informational. An earlier version of this comment
+    # claimed the Axivion configuration was "MISRA-only", which was wrong: it also runs
+    # 133 CWE rules and the clone check.
     'pmd-cpd': ('pmd-cpd.txt', _PIPE),
     # Windows counterpart of gcc-analyzer: MSVC /analyze, normalized to the
     # same GCC-style lines by tools/msvc_analyze.py. Absent on Linux runs.

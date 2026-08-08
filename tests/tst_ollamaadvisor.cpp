@@ -387,6 +387,40 @@ private slots:
                      R"json({"picks":[{"symbol":"SPX500","action":"BUY","confidence":80,)json"
                      R"json("rationality":"bullish trend intact"}]})json")).rationale,
                  QStringLiteral("bullish trend intact"));
+
+        // TRUNCATION SALVAGE (the live defect: a token-budget cut-off answered
+        // "...low volatilit" and parsed to nothing). The truncated inputs are built by
+        // CHOPPING a valid string at runtime, so the source stays brace-balanced — moc
+        // miscounts unbalanced braces inside a raw string literal and drops the class vtable.
+        //
+        // A keyed map whose FIRST pick completed and whose second was cut off mid-rationale
+        // recovers the complete one — key and all — instead of discarding the whole turn.
+        const QString keyedFull = QStringLiteral(
+            R"json({"picks": {"BTC": {"action": "BUY", "confidence": 90, "leverage": 2}, )json"
+            R"json("ETH": {"action": "SELL", "confidence": 85, "rationality": "strong down"}}})json");
+        const Answer cut = answerFromText(keyedFull.left(
+            keyedFull.indexOf(QStringLiteral("strong")) + 6));   // cut inside ETH's rationale
+        QCOMPARE(cut.picks.size(), 1);
+        QCOMPARE(cut.picks.at(0).symbol, QStringLiteral("BTC"));
+        QCOMPARE(cut.picks.at(0).action, QStringLiteral("BUY"));
+        QCOMPARE(cut.picks.at(0).leverage, 2);
+
+        // A truncated ARRAY likewise keeps the completed element and drops the partial one.
+        const QString arrFull = QStringLiteral(
+            R"json([{"symbol":"SOL","action":"BUY","confidence":70}, )json"
+            R"json({"symbol":"XRP","action":"SELL"}])json");
+        QCOMPARE(answerFromText(arrFull.left(arrFull.indexOf(QStringLiteral("XRP")) + 3))
+                     .picks.size(),
+                 1);
+
+        // But if NOT ONE pick completed (cut off inside the first object), there is
+        // nothing to salvage and it is honestly reported as no usable pick — never a guess.
+        const QString noneFull = QStringLiteral(
+            R"json({"picks": {"BTC": {"action": "BUY", "confidence": 90, )json"
+            R"json("rationality": "low volatility"}}})json");
+        const Answer nothing =
+            answerFromText(noneFull.left(noneFull.indexOf(QStringLiteral("volatil")) + 5));
+        QVERIFY(nothing.empty());
     }
 
     //! @tstid TS-OLLAMA-005 @design DES-SVC-OLLAMA

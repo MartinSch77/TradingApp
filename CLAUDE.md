@@ -350,7 +350,12 @@ publish_release; refuses to publish on a red pipeline).
   unambiguous match or nothing), the word/`x3`/`0.62` normalisations and the shape
   dispatcher in `picksFrom` (array / keyed map / alternative key / single object).
   Every one of those shapes is pinned by TS-OLLAMA-007 — a mis-parse is a SILENT
-  no-trade, which is the worst failure this feature can have. (2) A proposal is
+  no-trade, which is the worst failure this feature can have. (1b) A TRUNCATED answer (the token
+  budget cut the JSON off mid-generation, leaving a valid prefix without its closers — measured
+  on qwen2.5:1.5b, "...low volatilit") is SALVAGED by `repairTruncatedJson`: trim to the last
+  cleanly-closed container, re-balance the braces, recover the picks that DID complete (keys
+  and all for a keyed map). `num_predict` is 1500 so this is the exception. Only when not one
+  pick completed is it reported as no usable pick. (2) A proposal is
   judged by AGE (< one scan cycle), NOT by whether a newer scan overtook it —
   discarding overtaken answers silently disables the feature, since a CPU model is
   regularly overtaken. (3) The model supplies DIRECTION only: it can never exceed

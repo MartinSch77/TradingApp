@@ -191,9 +191,72 @@ QList<AiDecision> picksFromArray(const QJsonArray &arr)
     return picks;
 }
 
+// A best-effort repair of JSON the model truncated by running out of tokens. Small models
+// on a token budget stop mid-answer, and format:json cannot help once the daemon stops
+// emitting — the bytes it did produce are a valid PREFIX that is missing its closers.
+//
+// This trims to the last point where a container closed cleanly (so no half-written string
+// or key survives) and appends the closing braces/brackets still open there. A keyed map
+// {"picks":{"BTC":{…},"ETH":{…<cut>}} thus recovers the COMPLETE BTC pick, key and all, and
+// drops the incomplete ETH one — far better than discarding the whole answer. Returns empty
+// when not even one container closed (nothing to salvage).
+QByteArray repairTruncatedJson(const QString &text)
+{
+    const qsizetype start = text.indexOf(QLatin1Char('{'));
+    const qsizetype startArr = text.indexOf(QLatin1Char('['));
+    const qsizetype from =
+        (startArr >= 0 && (start < 0 || startArr < start)) ? startArr : start;
+    if (from < 0) {
+        return {};
+    }
+    const QString s = text.mid(from);
+    QList<QChar> stack;
+    QList<QChar> safeStack;
+    qsizetype safeLen = -1;
+    bool inStr = false;
+    bool esc = false;
+    for (qsizetype i = 0; i < s.size(); ++i) {
+        const QChar c = s.at(i);
+        if (inStr) {
+            if (esc) {
+                esc = false;
+            } else if (c == QLatin1Char('\\')) {
+                esc = true;
+            } else if (c == QLatin1Char('"')) {
+                inStr = false;
+            }
+            continue;
+        }
+        if (c == QLatin1Char('"')) {
+            inStr = true;
+        } else if ((c == QLatin1Char('{')) || (c == QLatin1Char('['))) {
+            stack.append(c);
+        } else if ((c == QLatin1Char('}')) || (c == QLatin1Char(']'))) {
+            if (!stack.isEmpty()) {
+                stack.removeLast();
+            }
+            safeLen = i + 1;      // a container just closed cleanly here
+            safeStack = stack;    // …with these still open
+        }
+    }
+    if (safeLen < 0) {
+        return {};                // nothing completed — no picks to recover
+    }
+    QString repaired = s.left(safeLen);
+    for (qsizetype i = safeStack.size() - 1; i >= 0; --i) {
+        repaired += (safeStack.at(i) == QLatin1Char('{')) ? QLatin1Char('}') : QLatin1Char(']');
+    }
+    return repaired.toUtf8();
+}
+
 QList<AiDecision> picksFrom(const QString &text)
 {
-    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayloadIn(text));
+    QJsonDocument doc = QJsonDocument::fromJson(jsonPayloadIn(text));
+    if (doc.isNull()) {
+        // The answer did not parse — most often a token-budget truncation. Try to salvage
+        // the complete picks from the valid prefix before giving up.
+        doc = QJsonDocument::fromJson(repairTruncatedJson(text));
+    }
     if (doc.isArray()) {
         return picksFromArray(doc.array());
     }
@@ -325,7 +388,11 @@ void OllamaAdvisor::requestDecision(const QString &evidencePrompt)
              // makes a small model's JSON far more reliable.
              {QStringLiteral("temperature"), 0.2},
              // Room for a LIST of picks, not just one (kMaxPicks × ~40 tokens).
-             {QStringLiteral("num_predict"), 700},
+             // Room for a LIST of picks WITH rationales. 700 truncated the JSON mid-answer
+             // on qwen2.5:1.5b (measured: a response cut off at "...low volatilit"), which
+             // parsed to nothing and wasted the model's whole turn. 1500 lets it close the
+             // structure; repairTruncatedJson salvages the complete picks if it still cuts off.
+             {QStringLiteral("num_predict"), 1500},
          }},
     };
 

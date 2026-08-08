@@ -158,9 +158,10 @@ QStringList consoleOpenTrades(const QList<PaperTrade> &open)
 QStringList consoleClosedTrades(const QList<PaperClosedTrade> &closed, qsizetype limit)
 {
     QStringList out;
-    out.append(QStringLiteral("  %1 %2 %3 %4 %5")
+    out.append(QStringLiteral("  %1 %2 %3 %4 %5 %6")
                    .arg(pad(QStringLiteral("instrument"), 14))
                    .arg(pad(QStringLiteral("side"), 6))
+                   .arg(pad(QStringLiteral("lev"), 4))
                    .arg(pad(QStringLiteral("net"), 10))
                    .arg(pad(QStringLiteral("reason"), 16))
                    .arg(QStringLiteral("closed")));
@@ -178,9 +179,10 @@ QStringList consoleClosedTrades(const QList<PaperClosedTrade> &closed, qsizetype
     for (qsizetype i = 0; i < shown; ++i) {
         const PaperClosedTrade &t = rows.at(i);
         out.append(
-            QStringLiteral("  %1 %2 %3 %4 %5")
+            QStringLiteral("  %1 %2 %3 %4 %5 %6")
                 .arg(pad(t.symbol, 14))
                 .arg(pad(t.isBuy ? QStringLiteral("▲ BUY") : QStringLiteral("▼ SELL"), 6))
+                .arg(pad(QStringLiteral("x%1").arg(t.leverage), 4))
                 .arg(pad(signedEur(t.netPnl), 10))
                 .arg(pad(closeReasonWord(t.reason), 16))
                 .arg(t.closeTime.toLocalTime().toString(QStringLiteral("MM-dd HH:mm"))));

@@ -141,6 +141,7 @@ private slots:
         PaperClosedTrade older;
         older.id = 1;
         older.symbol = QStringLiteral("OIL.24-7");
+        older.leverage = 5;
         older.netPnl = -71.35;
         older.reason = CloseReason::SignalFade;
         older.closeTime = QDateTime(QDate(2026, 8, 8), QTime(9, 27));
@@ -169,6 +170,7 @@ private slots:
         QVERIFY(oilRow.contains(QStringLiteral("-71.35")));
         QVERIFY(!closeReasonWord(CloseReason::SignalFade).isEmpty());
         QVERIFY(oilRow.contains(closeReasonWord(CloseReason::SignalFade)));
+        QVERIFY(oilRow.contains(QStringLiteral("x5")));   // the leverage is shown per row
 
         const QStringList none = consoleClosedTrades({}, 10);
         QVERIFY(std::any_of(none.cbegin(), none.cend(), [](const QString &l) {

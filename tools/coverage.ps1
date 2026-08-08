@@ -347,6 +347,11 @@ function Invoke-CocoCoverage {
             & (Join-Path $CocoDir 'cmcsexeimport.exe') -m $csmesFile -e $csexeFile -t $exe.BaseName
             if ($LASTEXITCODE -eq 0) { $imported++ }
         } else {
+            # A suite that writes no .csexe is skipped, not fatal. On Linux exactly four
+            # suites (tst_models/indicators/candles/confirmgate) do this deterministically —
+            # a candidate Coco bug, NOT build corruption (a clean rebuild reproduces it);
+            # see the long note in tools/coverage.sh. The merged figure is then a FLOOR.
+            # Whether Windows reproduces the same set is unverified.
             Write-Warning "no execution report for $($exe.BaseName) (expected $csexeFile)"
         }
     }

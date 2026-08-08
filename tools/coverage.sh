@@ -241,21 +241,32 @@ coco_run_one() {
     rm -f "$dir/$name.csexe"
     (cd "$dir" && QT_QPA_PLATFORM=offscreen "./$name" >/dev/null 2>&1) || true
     if [ ! -f "$dir/$name.csexe" ]; then
-        # A known unmapped failure, reported rather than hidden. Measured 2026-08-08: FOUR
-        # of the thirty-one do this consistently — tst_indicators, tst_models, and now
-        # tst_candles and tst_confirmgate, which were added without touching any of this
-        # machinery. The cause is still NOT identified, but the evidence has narrowed:
+        # A genuine, DETERMINISTIC Coco quirk, reported rather than hidden. Measured
+        # 2026-08-08: exactly four of the thirty-one suites write no execution report on exit
+        # — tst_models, tst_indicators, tst_candles, tst_confirmgate — while tst_money (and
+        # the rest) write a normal ~1.6 KB .csexe. Everything ruled out from the outside:
         #
-        #   * the Coco runtime IS linked in (52 coveragescanner symbols in tst_confirmgate
-        #     against 55 in tst_money, which works), so it is not a missing runtime;
-        #   * an explicit COVERAGESCANNER_ARGS --cs-exec=<path> produces nothing either, so
-        #     it is not the output path;
-        #   * all four are pure-DOMAIN suites that pass in milliseconds.
+        #   * NOT missing/stale instrumentation — each suite's .csmes is ~2.3 MB and contains
+        #     its instrumented target source (Candles.cpp, ConfirmGate.cpp, …);
+        #   * NOT linkage — identical to tst_money (tradingapp_add_test -> trading_services);
+        #   * NOT the runtime — both writers and non-writers carry the full ~52
+        #     __coveragescanner_* symbols;
+        #   * NOT the output path — an explicit COVERAGESCANNER_ARGS --cs-exec=<abspath>
+        #     yields nothing either;
+        #   * NOT a crash — all four exit 0 cleanly, writing no file at all;
+        #   * NOT incremental-build corruption — a CLEAN from-scratch instrumented rebuild
+        #     (rm -rf build-cov-coco) reproduces the SAME four exactly. This is the decisive
+        #     one: the behaviour is deterministic, not a stale-tree artefact.
         #
-        # The consequence is stated wherever these numbers appear: the merge is missing four
-        # suites, so the figures are a FLOOR, not a fiction. Most functions they cover are
-        # exercised by other suites in the same merge, but "most" is not "all" and the
-        # difference is unmeasured.
+        # The Coco atexit writer simply does not fire for these four binaries and the reason
+        # is not visible without Coco-internal tracing; it is a candidate Coco bug (a minimal
+        # from-scratch repro exists: identical suites, one writes, these do not).
+        #
+        # CONSEQUENCE, stated wherever the number appears: the merged unit figure is a FLOOR.
+        # For a file exercised ONLY by an affected suite — Candles.cpp (tst_candles) and
+        # ConfirmGate.cpp (tst_confirmgate) most clearly — its coverage is MISSING from the
+        # Coco report even though the tests run and pass. The code is tested; the report
+        # undercounts it. Do not read a low number on those files as untested code.
         echo "note: $name produced no execution report — skipped in the merge"
         return 0
     fi

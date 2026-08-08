@@ -46,6 +46,11 @@ tools/common.sh                # sourced, not run: host arch -> Qt kit dir
                                # (gcc_64 / gcc_arm64), aqt host+arch, AppImage
                                # arch, LLVM toolset. Run it to print what a
                                # machine resolves to
+build/TradingBot               # the CONSOLE front end for examining the bot (REQ-F-029):
+                               # static ANSI TUI, LLM-lead by default, links the SAME
+                               # BotSimRunner as the GUIs (split out of BotSimPanel).
+                               # P/L+invested header, SPX500/NSDQ100 heavyweight bars,
+                               # open/closed tables, keyboard-scrollable decision log
 build/TradingCockpit           # the SECOND front end: Qt Quick + Qt Graphs, read-only,
                                # QCustomSeries candlesticks. Same domain/services/view-model
                                # as TradingApp; separate binary because Charts and Graphs
@@ -162,6 +167,22 @@ publish_release; refuses to publish on a red pipeline).
   that are about the risk budget, the margin cap or the cash rule set
   `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
   TS-PAPER-031 owns the ceiling itself.
+- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100):
+  anything else is refused before every other check with code `not-focus`, and only focus
+  instruments are shown to the model. Measured on the ledger this removes the two failure
+  modes that dominated it — the model spending its one answer on a peripheral name
+  (`ai-other-pick`, 201 of 673 refusals) and the peripheral names it lost -197 EUR on
+  (OIL.24-7, USDOLLAR). Empty set = whole catalog (the tests that isolate the risk rules set
+  it empty).
+- LEAD mode FALLS BACK to the composite by default (`aiLeadFallbackToComposite`), and this is
+  what makes the bot trade: 442 of 673 ledger refusals were the 1.5B model simply not
+  answering (`ai-none`) while the composite held a direction. When the model gives no usable
+  answer for a focus instrument — no proposal, unparsable, or it named the other focus name —
+  the COMPOSITE leads (`paperAiGate`'s `leadFallback`). The model still leads WHEN IT SPEAKS;
+  an explicit HOLD is NEVER overridden (a HOLD is an opinion); a neutral composite opens
+  nothing (the fallback carries a direction, never invents one). Verified live: NSDQ100 went
+  from `REFUSED no side · ai-other-pick` to `REFUSED long · weekend · strength 48` — the
+  composite now leads and only the genuine weekend closure stops the trade.
 - The bot's DEFAULT decision source is the local model in LEAD mode
   (`BotConfig::aiMode`), bounded by every risk rule; a book saved earlier keeps the
   mode it was left in, because an upgrade must not change what a running experiment

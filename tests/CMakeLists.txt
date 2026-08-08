@@ -50,6 +50,11 @@ tradingapp_add_test(tst_predictionledger tst_predictionledger.cpp)
 tradingapp_add_test(tst_decisionlog tst_decisionlog.cpp)
 tradingapp_add_test(tst_candles tst_candles.cpp)
 tradingapp_add_test(tst_confirmgate tst_confirmgate.cpp)
+# The bot-console front end's text, compiled directly (the console layer is not a library),
+# with NO terminal dependency — every line it shows is checkable headless.
+tradingapp_add_test(tst_botconsoleview tst_botconsoleview.cpp
+    ../src/console/BotConsoleView.cpp ../src/console/BotConsoleView.h)
+target_include_directories(tst_botconsoleview PRIVATE ../src)
 # The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
 # back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
 # and only an end-to-end round trip can show that they do.

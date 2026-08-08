@@ -851,6 +851,22 @@ AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
                    const QList<AiProposal> &proposals, BotAiMode mode, const AiSource &source)
 {
     AiGate gate;
+    // In LEAD mode with fallback on, the model refusing to speak does not stop a trade — the
+    // COMPOSITE (every non-model signal) leads instead. Applied where lead mode would
+    // otherwise refuse for want of a model direction, but NOT over an explicit HOLD: a model
+    // that says HOLD has an opinion, and overriding it would be trading against the very
+    // read this mode is meant to follow.
+    const auto fallback = [&](const QString &whyIfNoComposite, const QString &codeIfNoComposite) {
+        AiGate out;
+        if ((mode == BotAiMode::Lead) && source.leadFallback && (compositeDir != 0)) {
+            out.allow = true;
+            out.dir = compositeDir;   // the composite carries the direction the model would not
+            return out;
+        }
+        out.why = whyIfNoComposite;
+        out.code = codeIfNoComposite;
+        return out;
+    };
     if (mode == BotAiMode::Off) {
         gate.allow = (compositeDir != 0);
         gate.dir = compositeDir;
@@ -865,14 +881,15 @@ AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
     if (!anyUsable) {
         // NOT one catch-all sentence. The four causes below call for four different actions,
         // and a log line exists so a person can reproduce the decision.
-        gate.why = noAnswerReason(source, &gate.code);
-        return gate;
+        QString code;
+        const QString why = noAnswerReason(source, &code);
+        return fallback(why, code);   // …unless the composite may lead in the model's absence
     }
     const PickMatch match = matchPick(symbol, proposals);
     if (match.index < 0) {
-        gate.why = match.why;
-        gate.code = match.code;
-        return gate;
+        // The model answered but named a different instrument (or an unresolvable one). In
+        // lead-with-fallback that is not a refusal for THIS instrument — the composite leads.
+        return fallback(match.why, match.code);
     }
     gate.pick = match.index;
     const AiProposal &proposal = proposals.at(gate.pick);

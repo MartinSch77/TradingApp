@@ -572,6 +572,69 @@ private slots:
         QCOMPARE(botAiModeWord(BotAiMode::Lead), QStringLiteral("lead"));
     }
 
+    //! @tstid TS-PAPER-035 @design DES-DOM-PAPER
+    // @relation(REQ-F-030, scope=function)
+    //
+    // LEAD-WITH-FALLBACK: the model leads WHEN IT SPEAKS, and the composite leads when it
+    // does not. This is what makes the bot actually trade — measured on its own ledger, 442
+    // of 673 refusals were the 1.5B model simply not answering while the composite had a
+    // direction the whole time.
+    void TS_PAPER_035_leadFallsBackToCompositeWhenTheModelAbstains()
+    {
+        AiProposal unusable;
+        unusable.ok = false;   // the model answered with nothing actionable
+        AiSource src;
+        src.configured = true;
+        src.asked = true;
+        src.received = 1;
+        src.ageMs = 1000;
+        src.maxAgeMs = 300000;
+        src.leadFallback = false;   // strict lead: a proposal or nothing
+
+        // WITHOUT fallback (the strict default): no model direction, no trade.
+        const AiGate strict = paperAiGate(QStringLiteral("SPX500"), /*compositeDir=*/1,
+                                          {unusable}, BotAiMode::Lead, src);
+        QVERIFY(!strict.allow);
+        QCOMPARE(strict.code, QStringLiteral("ai-unparsed"));
+
+        // WITH fallback: the composite's LONG leads instead, and the gate allows it.
+        AiSource fbSrc = src;
+        fbSrc.leadFallback = true;
+        const AiGate fb = paperAiGate(QStringLiteral("SPX500"), /*compositeDir=*/1,
+                                      {unusable}, BotAiMode::Lead, fbSrc);
+        QVERIFY(fb.allow);
+        QCOMPARE(fb.dir, 1);            // direction comes from the composite
+        QVERIFY(fb.code.isEmpty());
+
+        // A NEUTRAL composite (dir 0) still cannot manufacture a trade from nothing.
+        const AiGate neutral = paperAiGate(QStringLiteral("SPX500"), /*compositeDir=*/0,
+                                           {unusable}, BotAiMode::Lead, fbSrc);
+        QVERIFY(!neutral.allow);
+
+        // An explicit HOLD is NOT overridden: a model that says HOLD has an opinion.
+        AiProposal hold;
+        hold.ok = true;
+        hold.symbol = QStringLiteral("SPX500");
+        hold.resolvedSymbol = QStringLiteral("SPX500");   // matchPick keys on the RESOLVED name
+        hold.dir = 0;   // HOLD
+        const AiGate held = paperAiGate(QStringLiteral("SPX500"), /*compositeDir=*/1,
+                                        {hold}, BotAiMode::Lead, fbSrc);
+        QVERIFY(!held.allow);
+        QCOMPARE(held.code, QStringLiteral("ai-hold"));
+
+        // The model naming a DIFFERENT instrument falls back for THIS one rather than
+        // refusing it as ai-other-pick.
+        AiProposal other;
+        other.ok = true;
+        other.symbol = QStringLiteral("NSDQ100");
+        other.resolvedSymbol = QStringLiteral("NSDQ100");
+        other.dir = 1;
+        const AiGate otherPick = paperAiGate(QStringLiteral("SPX500"), /*compositeDir=*/-1,
+                                             {other}, BotAiMode::Lead, fbSrc);
+        QVERIFY(otherPick.allow);
+        QCOMPARE(otherPick.dir, -1);   // SPX500 follows ITS composite, not NSDQ100's pick
+    }
+
     //! @tstid TS-PAPER-012 @design DES-DOM-PAPER
     // @relation(REQ-F-029, scope=function)
     void TS_PAPER_012_riskBudgetNotATradeCountLimitsHowManyTradesRun()

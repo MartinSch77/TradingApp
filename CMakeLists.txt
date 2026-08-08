@@ -208,6 +208,8 @@ qt_add_executable(TradingApp
     src/ui/TradeScriptPanel.h
     src/ui/HeavyweightsPanel.cpp
     src/ui/HeavyweightsPanel.h
+    src/ui/BotSimRunner.cpp
+    src/ui/BotSimRunner.h
     src/ui/BotSimPanel.cpp
     src/ui/BotSimPanel.h
     src/ui/ScreenerDialog.h
@@ -345,6 +347,23 @@ if(Qt6Graphs_FOUND)
     # See the note on TradingApp above: the static QML module's plugin must be named.
     target_link_libraries(TradingCockpit PRIVATE trading_cockpitplugin)
 endif()
+
+# ---------------------------------------------------------------------------
+# TradingBot — the CONSOLE front end for examining the paper-trading bot (REQ-F-029).
+# Qt Core + services only, no widgets and no QML: it links the SAME BotSimRunner the GUI
+# apps drive (the reason that class was split out of BotSimPanel), so it measures the same
+# bot rather than a copy. A static ANSI TUI; no ncurses, so setup.sh gains no dependency.
+# ---------------------------------------------------------------------------
+qt_add_executable(TradingBot
+    src/console/bot_console_main.cpp
+    src/console/BotConsoleView.cpp
+    src/console/BotConsoleView.h
+    src/ui/BotSimRunner.cpp
+    src/ui/BotSimRunner.h
+)
+target_include_directories(TradingBot PRIVATE src)
+target_link_libraries(TradingBot PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+set_target_properties(TradingBot PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics

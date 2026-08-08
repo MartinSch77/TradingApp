@@ -111,6 +111,11 @@ struct AiSource {
     qsizetype usable = 0;      // …of which parsed into something actionable
     qint64 ageMs = -1;         // age of that answer; < 0 = never answered
     qint64 maxAgeMs = 0;       // the freshness bound it is judged against; 0 = unbounded
+    // POLICY, not answer-state, and colocated here ONLY to keep paperAiGate within its
+    // parameter budget (a sixth argument tripped the metrics ratchet): when true and the
+    // model leads but abstains, the COMPOSITE direction is used instead of refusing. See
+    // REQ-F-030 and BotConfig::aiLeadFallbackToComposite.
+    bool leadFallback = false;
 };
 
 // The gate takes the model's WHOLE answer, not one pick: a model that sees three
@@ -226,6 +231,25 @@ struct BotConfig {
     // below is what bites here: it does not ban the instrument, it makes the model pay
     // a higher price for repeating itself.
     QStringList reluctantSymbols{QStringLiteral("USDOLLAR"), QStringLiteral("OIL.24-7")};
+    // The instruments the bot is allowed to TRADE at all. Empty = the whole catalog (the
+    // historical behaviour, kept for the tests that measure the risk rules in isolation).
+    //
+    // Defaulted to the two index CFDs the bot is built to predict. This is the single most
+    // effective change measured against the bot's own ledger: of 673 refusals, 201 were
+    // `ai-other-pick` — the model naming a DIFFERENT instrument — and all three trades it
+    // ever took were the peripheral names (OIL.24-7, USDOLLAR) it then lost -197 EUR on.
+    // Restricting the universe removes both failure modes at once: the model can only pick
+    // from the focus set, and the losers cannot be opened. An instrument outside it is
+    // refused with `not-focus`.
+    QStringList focusSymbols{QStringLiteral("SPX500"), QStringLiteral("NSDQ100")};
+    // When the local model LEADS but abstains on a focus instrument (no answer, or it named
+    // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
+    // the volatility and yield reads, session phase: every signal the app computes without
+    // the model. This is what makes the bot trade rather than sit idle: 442 of 673 refusals
+    // were `ai-none`, a 1.5B model simply not answering, while the composite had an opinion
+    // the whole time. The model still LEADS when it speaks; the composite leads when it does
+    // not. Off restores strict lead (a proposal or nothing).
+    bool aiLeadFallbackToComposite = true;
     // For those: the expected move per HOUR at the chosen leverage, as a percentage of
     // the stake, must reach this…
     double reluctantMinHourlyMovePct = 1.0;

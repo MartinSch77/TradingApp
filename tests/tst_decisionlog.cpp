@@ -80,8 +80,19 @@ private slots:
         QVERIFY(refused.contains(QStringLiteral("short")));
         // The rule's own sentence survives, unedited: it is the part that explains.
         QVERIFY(refused.contains(QStringLiteral("only 4 of 9 reads agree, 5 required")));
-        // …and the timestamp is UTC and sortable, so the file can be read in order.
-        QVERIFY(refused.startsWith(QStringLiteral("2026-08-06T13:45:00")));
+        // The timestamp is the LOCAL clock and carries its OFFSET. Asserted as an instant
+        // rather than as a literal string, deliberately: this test runs both on a Berlin
+        // desktop and on a UTC CI runner, and a literal would pin the machine rather than
+        // the behaviour — passing in one place and failing in the other for no defect.
+        const QString stamp = refused.left(refused.indexOf(u' '));
+        const QDateTime parsed = QDateTime::fromString(stamp, Qt::ISODate);
+        QVERIFY(parsed.isValid());
+        QCOMPARE(parsed.toUTC(), moment());          // same instant, however it is rendered
+        // The offset is PRESENT: without it the line could not be told from the UTC lines
+        // already in an existing log, and the repeated hour at the autumn clock change
+        // would be ambiguous.
+        QVERIFY(stamp.contains(u'+') || stamp.contains(u'-'));
+        QVERIFY(!stamp.endsWith(u'Z'));
 
         // A trade carries the GEOMETRY beside the evidence, so a reader can check the
         // numbers against the reason rather than taking the reason on trust.

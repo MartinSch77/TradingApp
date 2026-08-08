@@ -89,8 +89,28 @@ struct AiGate {
     qint32 dir = 0;      // the direction to trade when allow (composite's, or the model's in Lead)
     qsizetype pick = -1; // index of the proposal that named this instrument, or -1
     QString why;
-    QString code;        // "ai-none" | "ai-hold" | "ai-unknown-symbol" | "ai-other-pick" |
-                         // "ai-disagree" | "composite-neutral" | "" when allowed
+    QString code;        // "ai-not-configured" | "ai-no-answer" | "ai-stale" | "ai-unparsed" |
+                         // "ai-hold" | "ai-unknown-symbol" | "ai-other-pick" | "ai-disagree" |
+                         // "composite-neutral" | "" when allowed.
+                         // The first four replace the old catch-all "ai-none": they are
+                         // stable, countable, and each names a different thing to go and fix.
+};
+
+// Why the model has (or has not) an answer to give, so a refusal can name the actual cause.
+//
+// WHY THIS EXISTS. `ai-none` used to be one sentence — "no AI proposal available" — covering
+// four entirely different situations: no model configured at all, a model that has not
+// answered yet, an answer too old to act on, and an answer whose picks all failed to parse.
+// A log line has to let someone REPRODUCE the decision, and those four call for four
+// different actions (configure a model, wait, look at why the scan is slow, look at what the
+// model actually said). One sentence for all four told the reader nothing.
+struct AiSource {
+    bool configured = false;   // a model is named at all (ollamaModel / OLLAMA_MODEL)
+    bool asked = false;        // a request has gone out this session
+    qsizetype received = 0;    // picks in the last answer
+    qsizetype usable = 0;      // …of which parsed into something actionable
+    qint64 ageMs = -1;         // age of that answer; < 0 = never answered
+    qint64 maxAgeMs = 0;       // the freshness bound it is judged against; 0 = unbounded
 };
 
 // The gate takes the model's WHOLE answer, not one pick: a model that sees three
@@ -98,7 +118,8 @@ struct AiGate {
 // to take all three (REQ-F-030) — the number of trades is limited by the risk
 // budget, never by how many opinions fit in the protocol.
 [[nodiscard]] AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
-                                 const QList<AiProposal> &proposals, BotAiMode mode);
+                                 const QList<AiProposal> &proposals, BotAiMode mode,
+                                 const AiSource &source = {});
 
 // Leverage for a trade the model is leading: never more than the risk-derived
 // `sized` value (the model cannot lever up past the risk budget — REQ-F-030), but

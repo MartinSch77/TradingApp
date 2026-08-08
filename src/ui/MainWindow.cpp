@@ -1333,7 +1333,7 @@ void MainWindow::pushToCockpit()
     // The rule lives in CockpitModel so the standalone TradingCockpit gives the same answer —
     // two copies of "last versus first, unless the series is too short" would eventually
     // disagree about whether a card shows a number or an em dash.
-    model->setCards(trading::ui::referenceCards(m_referenceSeries));
+    model->setCards(trading::ui::referenceCards(m_referenceSeries, m_intradayBySymbol));
 
     // The probability stays UNCALIBRATED until the ledger has the samples. Passing the real
     // counts rather than a placeholder is the point: the view reports the shortfall.

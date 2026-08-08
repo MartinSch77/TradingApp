@@ -264,7 +264,7 @@ def collect_coverage():
     # answer neither "are the domain decisions exercised" nor "does a user driving the real
     # window reach this code", and blending lets a well-covered domain hide an untouched UI.
     result = {"lines": None, "functions": None, "mcdc": None, "mcdc_rows": [],
-              "coco": {}, "coco_gui": {}}
+              "coco": {}, "coco_unit": {}, "coco_integration": {}, "coco_gui": {}}
     info = ROOT / "coverage" / "gcov" / "coverage.info"
     if info.is_file():
         found = hit = fnf = fnh = 0
@@ -294,7 +294,8 @@ def collect_coverage():
     # Coco writes its four levels as JSON precisely so this report can quote them
     # (tools/coverage.sh coco_stat_levels). Absent = Coco did not run here, which is a
     # licence question and is reported as one further down.
-    for key, folder in (("coco", "coco"), ("coco_gui", "coco-gui")):
+    for key, folder in (("coco", "coco"), ("coco_unit", "coco-unit"),
+                        ("coco_integration", "coco-integration"), ("coco_gui", "coco-gui")):
         summary = ROOT / "coverage" / folder / "summary.json"
         if not summary.is_file():
             continue
@@ -861,7 +862,11 @@ def build_report(out_path, build_dir):
     rows = [["Area", "Result", "Evidence"]]
 
     def add(area, ok, result, evidence, warn=False):
-        rows.append([area, status_cell(result, verdict_colour(ok, warn)),
+        # The area is a Paragraph, NOT a bare string. reportlab does not wrap a plain string
+        # in a table cell: it draws it at full width and lets it run over the neighbouring
+        # column, which is why "Coverage (Coco — unit + integration)" printed on top of its
+        # own status cell. Only the evidence column was wrapped, so only the labels collided.
+        rows.append([Paragraph(area, rep.s["cell"]), status_cell(result, verdict_colour(ok, warn)),
                      Paragraph(evidence, rep.s["cell"])])
 
     add("Tests", failed == 0,
@@ -917,25 +922,30 @@ def build_report(out_path, build_dir):
                     f"({data.get('covered', 0)}/{data.get('total', 0)})")
         return " · ".join(_lvl(n) for n in ("statement", "decision", "condition", "mcdc"))
 
+    # THREE Coco figures, never one. A blended number hides what is worth knowing: unit
+    # tests cover pure domain logic and can be near-total, integration tests drive the
+    # services against a mock server and are necessarily thinner, and the GUI suite reaches
+    # a different layer again. Averaged together, a strong domain figure conceals a weak
+    # services one — so each is reported on its own row, with its own source named.
+    for key, label, how in (
+            ("coco_unit", "Coverage (Coco — unit tests)",
+             "tools/coverage.sh coco → coverage/coco-unit; the domain layer, tested pure"),
+            ("coco_integration", "Coverage (Coco — integration tests)",
+             "tools/coverage.sh coco → coverage/coco-integration; the services layer driven "
+             "against the in-process mock server"),
+            ("coco_gui", "Coverage (Coco — GUI tests)",
+             "tools/coverage.sh coco-gui → coverage/coco-gui; instruments src/ui and measures "
+             "what the Squish workflows actually reach")):
+        data = coverage.get(key) or {}
+        if data:
+            add(label, True, "measured", _levels(data))
+        else:
+            add(label, False, "not run", f"not measured here — {how}", warn=True)
+    # The combined figure stays too, LAST and clearly marked, because the three above are the
+    # ones to read and a total is only useful for comparing whole runs.
     coco = coverage.get("coco") or {}
     if coco:
-        add("Coverage (Coco — unit + integration)", True, "measured", _levels(coco))
-    else:
-        add("Coverage (Coco — unit + integration)", False, "not run",
-            "no coverage/coco/summary.json — Coco measures statement/decision/condition "
-            "and MC/DC from the source, independently of the clang figure above",
-            warn=True)
-    # The GUI suite's coverage is its OWN row, never folded into the one above: they
-    # answer different questions and a merged number would answer neither.
-    coco_gui = coverage.get("coco_gui") or {}
-    if coco_gui:
-        add("Coverage (Coco — Squish GUI suite)", True, "measured", _levels(coco_gui))
-    else:
-        add("Coverage (Coco — Squish GUI suite)", False, "not run",
-            "no coverage/coco-gui/summary.json — tools/coverage.sh coco-gui instruments "
-            "src/ui and measures what the GUI workflows actually reach; reported apart "
-            "from the unit figure by design",
-            warn=True)
+        add("Coverage (Coco — all suites combined)", True, "measured", _levels(coco))
     add("Sanitizers", san_findings == 0,
         "CLEAN" if san_findings == 0 else f"{san_findings} FINDINGS",
         " · ".join(f"{name}: {n}" for name, n in sanitizers) or "not run")

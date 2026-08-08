@@ -179,18 +179,18 @@ CockpitCard cardFromSeries(const QString &label, const QList<double> &series)
     return card;
 }
 
-QList<CockpitCard> referenceCards(const QHash<QString, QList<double>> &referenceSeries)
+QList<CockpitCard> referenceCards(const QHash<QString, QList<double>> &byTicker,
+                                  const QHash<QString, QList<double>> &bySymbol)
 {
-    // Label, then the Yahoo ticker it is keyed by. The two differ on purpose: SP.24-7 is this
-    // application's symbol for the S&P future and is not a ticker anyone would recognise on a
-    // card.
+    // Each card says WHICH book it comes from, at the point of use. The futures are app
+    // SYMBOLS and the volatility/yield reads are Yahoo TICKERS; reading either from the
+    // other book yields nothing, silently, forever.
     return {
-        cardFromSeries(QStringLiteral("SPX500"),
-                       referenceSeries.value(QStringLiteral("SP.24-7"))),
+        cardFromSeries(QStringLiteral("SPX500"), bySymbol.value(QStringLiteral("SP.24-7"))),
         cardFromSeries(QStringLiteral("NSDQ100"),
-                       referenceSeries.value(QStringLiteral("NSDQ100.24-7"))),
-        cardFromSeries(QStringLiteral("VIX"), referenceSeries.value(QStringLiteral("^VIX"))),
-        cardFromSeries(QStringLiteral("US10Y"), referenceSeries.value(QStringLiteral("^TNX"))),
+                       bySymbol.value(QStringLiteral("NSDQ100.24-7"))),
+        cardFromSeries(QStringLiteral("VIX"), byTicker.value(QStringLiteral("^VIX"))),
+        cardFromSeries(QStringLiteral("US10Y"), byTicker.value(QStringLiteral("^TNX"))),
     };
 }
 
@@ -366,10 +366,30 @@ void CockpitModel::setTradeContext(bool hasCredentials, bool marketOpen, double 
     Q_EMIT changed();
 }
 
-void CockpitModel::setTicket(double amount, qint32 leverage)
+void CockpitModel::setInstruments(const QStringList &symbols)
+{
+    m_instruments = symbols;
+    Q_EMIT changed();
+}
+
+void CockpitModel::selectInstrument(const QString &symbol)
+{
+    if (symbol.isEmpty() || (symbol == m_instrument)) {
+        return;
+    }
+    // Disarm BEFORE asking for the switch. An arming that survived an instrument change
+    // would send the confirmed order against a different market.
+    cancelArm();
+    Q_EMIT instrumentRequested(symbol);
+}
+
+void CockpitModel::setTicket(double amount, qint32 leverage, double stopLoss,
+                             double takeProfit)
 {
     m_amount = amount;
     m_leverage = leverage;
+    m_stopLoss = stopLoss;
+    m_takeProfit = takeProfit;
     m_ticketBlocked =
         ticketBlockedReason(m_hasCredentials, m_marketOpen, m_amount, m_minAmount, m_maxAmount);
     // CHANGING THE ORDER DISARMS IT. The user confirmed a specific order; editing the amount
@@ -401,17 +421,23 @@ void CockpitModel::press(bool buy)
     }
     // The action string names the WHOLE order. Two presses that would send different orders
     // must never combine into one confirmation, so amount and leverage are part of it.
-    const QString action = QStringLiteral("%1 %2 at x%3")
-                               .arg(buy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
+    // The action names the WHOLE order — instrument, side, size, leverage AND both legs.
+    // Anything left out could change between the two presses without disarming, which is
+    // exactly the confirmation-harvesting this string exists to prevent.
+    const QString action = QStringLiteral("%1 %2 %3 at x%4 · SL %5 · TP %6")
+                               .arg(buy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
+                                    m_instrument)
                                .arg(m_amount, 0, 'f', 2)
-                               .arg(m_leverage);
+                               .arg(m_leverage)
+                               .arg(m_stopLoss, 0, 'f', 2)
+                               .arg(m_takeProfit, 0, 'f', 2);
     const trading::ConfirmDecision decision = trading::confirmPress(
         m_gate, action, QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
     m_gate = decision.next;
     m_ticketPrompt = decision.prompt;
     Q_EMIT changed();
     if (decision.commit) {
-        Q_EMIT placeRequested(buy, m_amount, m_leverage);
+        Q_EMIT placeRequested(buy, m_amount, m_leverage, m_stopLoss, m_takeProfit);
     }
 }
 

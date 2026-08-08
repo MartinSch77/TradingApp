@@ -185,6 +185,8 @@ private:
     [[nodiscard]] trading::CloseReason aiExitFor(const trading::PaperTrade &trade);
     // Is the model's current answer young enough to act on? Same bound as entries.
     [[nodiscard]] bool aiProposalsFresh() const;
+    // Why the model has (or has not) an answer — so a refusal names the cause.
+    [[nodiscard]] trading::AiSource aiSourceState() const;
     void onProposals(const QList<AiDecision> &picks, const QString &error);
     void considerEntriesForScan();
     // One line per scan: what the RECORD says about calls like the ones just made

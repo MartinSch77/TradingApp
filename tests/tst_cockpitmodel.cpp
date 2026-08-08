@@ -443,6 +443,67 @@ private slots:
         // rule OrderRequestValidator follows for every fact it was not given.
         QVERIFY(ticketBlockedReason(true, true, 9000.0, 0.0, 0.0).isEmpty());
     }
+
+    //! @tstid TS-COCKPIT-011 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, REQ-F-035, scope=function)
+    //
+    // THE REGRESSION: a card must read the book it is actually keyed in.
+    //
+    // The two books are keyed differently — VIX and the 10-year by Yahoo TICKER, the index
+    // futures by this application's own SYMBOL — and referenceCards looked the futures up in
+    // the ticker book. It missed every time, so the SPX500 and NSDQ100 cards showed an em
+    // dash permanently in BOTH front ends while the feed was working perfectly. The same
+    // shape as the futures-lead defect readInputsFor exists to prevent, and just as invisible:
+    // an em dash is exactly what a card correctly shows when a feed really is absent.
+    //
+    // The test fills each book with ONLY its own keys, so a lookup in the wrong one yields
+    // nothing and the assertion fails — which a single merged book could not detect.
+    void TS_COCKPIT_011_aCardReadsTheBookItIsKeyedIn()
+    {
+        const QHash<QString, QList<double>> byTicker{
+            {QStringLiteral("^VIX"), {14.0, 14.9}},
+            {QStringLiteral("^TNX"), {4.7, 4.66}},
+        };
+        const QHash<QString, QList<double>> bySymbol{
+            {QStringLiteral("SP.24-7"), {7700.0, 7760.0}},
+            {QStringLiteral("NSDQ100.24-7"), {25000.0, 24750.0}},
+        };
+
+        const QList<CockpitCard> cards = referenceCards(byTicker, bySymbol);
+        QCOMPARE(cards.size(), qsizetype(4));
+
+        // All four carry a READING. Before the fix the first two were Absent.
+        for (const CockpitCard &card : cards) {
+            QVERIFY2(card.freshness != Freshness::Absent,
+                     qPrintable(QStringLiteral("%1 has no reading").arg(card.symbol)));
+        }
+        QCOMPARE(cards.at(0).symbol, QStringLiteral("SPX500"));
+        QCOMPARE(cards.at(0).price, 7760.0);
+        QCOMPARE(cards.at(1).symbol, QStringLiteral("NSDQ100"));
+        QCOMPARE(cards.at(1).price, 24750.0);
+        QCOMPARE(cards.at(2).price, 14.9);
+        QCOMPARE(cards.at(3).price, 4.66);
+
+        // Direction is signed from the series, so a fall reads as a fall.
+        QCOMPARE(cardToVariant(cards.at(1)).value(QStringLiteral("dir")).toInt(), -1);
+        QCOMPARE(cardToVariant(cards.at(0)).value(QStringLiteral("dir")).toInt(), 1);
+
+        // Swapping the books is the mistake this signature exists to make visible: every
+        // card then loses its reading rather than silently keeping two of four.
+        //
+        // The two aliases are not decoration. Passing bySymbol/byTicker directly here trips
+        // clang-tidy's readability-suspicious-call-argument — which is a small vindication
+        // of the two-parameter signature, since the analyzer spots the swap from the
+        // parameter names alone. Naming the WRONGNESS at the call site keeps the gate at
+        // zero and says out loud that the swap is the point of these three lines.
+        const QHash<QString, QList<double>> &wrongBookForTickers = bySymbol;
+        const QHash<QString, QList<double>> &wrongBookForSymbols = byTicker;
+        const QList<CockpitCard> swapped =
+            referenceCards(wrongBookForTickers, wrongBookForSymbols);
+        for (const CockpitCard &card : swapped) {
+            QCOMPARE(card.freshness, Freshness::Absent);
+        }
+    }
 };
 
 QTEST_MAIN(TestCockpitModel)

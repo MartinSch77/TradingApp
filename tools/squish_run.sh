@@ -5,6 +5,10 @@
 # Run the Squish GUI suite — and never touch a real account doing it.
 #
 #   tools/squish_run.sh [build]                    # squish/suite_gui vs build/TradingApp
+#   tools/squish_run.sh --list-cases               # the names --case accepts
+#   tools/squish_run.sh --case tst_trade_panel_guards          # ONE case
+#   tools/squish_run.sh --case tst_startup_is_simulation --case tst_trade_panel_guards
+#   tools/squish_run.sh --skip-case tst_heavyweights_early_read  # all but one
 #   tools/squish_run.sh build --squish-dir ~/squish-for-qt-9.2.2
 #   tools/squish_run.sh --ai                       # opt into AI-assisted lookup
 #
@@ -38,12 +42,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # live wherever their owner installed them, and a hard-coded path is a script that
 # works on one machine.
 #   tools/squish_run.sh [build-dir] [--squish-dir DIR] [--ai]
+#                       [--case NAME]* [--skip-case NAME]* [--list-cases]
 #   SQUISH_DIR / SQUISH_PREFIX do the same job from the environment.
 BUILD_DIR="build"
 SQUISH_ARG=""
+SUITE_REL="$ROOT/squish/suite_gui"
+LIST_CASES=0
+# Selected test cases, by directory name. Repeatable, and --skip-case is its mirror. Without
+# these a single failing case could only be re-run by driving squishrunner and squishserver
+# by hand — which also loses the forced-SIMULATION environment this script sets, and that is
+# the one thing about a GUI run nobody should have to remember.
+CASE_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
     --squish-dir) SQUISH_ARG="${2:-}"; shift ;;
+    --case) CASE_ARGS+=(--testcase "$SUITE_REL/${2:-}"); shift ;;
+    --skip-case) CASE_ARGS+=(--skip-testcase "$SUITE_REL/${2:-}"); shift ;;
+    --list-cases) LIST_CASES=1 ;;
     --ai) SQUISH_AI=1 ;;
     -h | --help)
         sed -n '2,24p' "$0"
@@ -58,7 +73,15 @@ while [ $# -gt 0 ]; do
     shift
 done
 AUT="$ROOT/$BUILD_DIR/TradingApp"
-SUITE="$ROOT/squish/suite_gui"
+SUITE="$SUITE_REL"
+
+if [ "$LIST_CASES" = "1" ]; then
+    # The names --case takes, so nobody has to guess them from the directory listing.
+    for dir in "$SUITE"/tst_*; do
+        [ -d "$dir" ] && basename "$dir"
+    done
+    exit 0
+fi
 RESULTS="$ROOT/test-results/squish"
 SCRATCH="${TMPDIR:-/tmp}/tradingapp-squish"
 
@@ -153,9 +176,26 @@ if [ "${SQUISH_AI:-0}" = "1" ]; then
     fi
 fi
 
+# Extra environment for the AUT, as SQUISH's OWN mechanism rather than an export.
+#
+# This is what makes GUI coverage work, and getting it wrong is why it did not: Squish starts
+# the AUT through squishserver with a CONTROLLED environment, so a variable exported by the
+# caller never reaches the application. tools/coverage.sh exported COVERAGESCANNER_ARGS and
+# assumed the Coco runtime inside the AUT would see it "however the AUT was started"; it did
+# not, no .csexe was ever written, and coverage/coco-gui stayed empty while the suite itself
+# passed 62 of 62. `--envvar` is the documented per-run way in (the suite's own envvars file
+# is the same mechanism, and is why TRADINGAPP_FORCE_SIMULATION does arrive).
+ENV_ARGS=()
+if [ -n "${COVERAGESCANNER_ARGS:-}" ]; then
+    ENV_ARGS+=(--envvar "COVERAGESCANNER_ARGS=$COVERAGESCANNER_ARGS")
+    echo "coverage:  AUT will write $COVERAGESCANNER_ARGS"
+fi
+
 RC=0
 "$runner" --testsuite "$SUITE" \
     "${AI_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    "${CASE_ARGS[@]}" \
     --reportgen "junit,$RESULTS/squish-suite_gui.xml" \
     --reportgen "stdout" || RC=$?
 "$server" --stop >/dev/null 2>&1 || true

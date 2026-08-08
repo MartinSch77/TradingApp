@@ -37,6 +37,7 @@
 // that reason spelled out, and no order can be attempted at all.
 
 #include "domain/Candles.h"
+#include "domain/InstrumentCatalog.h"
 #include "domain/Models.h"
 #include "domain/IndexConfluence.h"
 #include "domain/LeadSignal.h"
@@ -90,7 +91,8 @@ void push(const Books &books, const QString &symbol, trading::ui::CockpitModel *
     model->setSignal(symbol, trading::leadSignal(in), reads);
 
     // The same four cards the Widgets cockpit shows, built by the same shared rule.
-    model->setCards(trading::ui::referenceCards(books.referenceSeries));
+    model->setCards(trading::ui::referenceCards(books.referenceSeries,
+                                                books.intradayBySymbol));
 
     // UNCALIBRATED with its real sample count, not a placeholder: this front end has no
     // ledger of its own, so the honest number of resolved samples here is zero and the view
@@ -174,13 +176,20 @@ void connectTrading(Session &session, QObject *ctx)
     // AUTHORISED, not yet correct: the gate says a human asked for this twice, and the
     // client's own validation is what decides whether it is sendable (REQ-N-009).
     QObject::connect(&model, &trading::ui::CockpitModel::placeRequested, ctx,
-                     [&client](bool buy, double amount, qint32 leverage) {
+                     [&client](bool buy, double amount, qint32 leverage, double stopLoss,
+                               double takeProfit) {
                          OrderRequest req;
                          req.isBuy = buy;
                          req.amount = amount;
                          req.leverage = leverage;
+                         req.stopLossAmount = stopLoss;
+                         req.takeProfitAmount = takeProfit;
                          client.openPosition(req);
                      });
+    // Switching instrument re-points the broker and the feeds, then re-pushes.
+    QObject::connect(&model, &trading::ui::CockpitModel::instrumentRequested, ctx,
+                     [&client](const QString &next) { client.setSymbol(next); });
+    model.setInstruments(trading::tradableSymbols());
     QObject::connect(&model, &trading::ui::CockpitModel::closeRequested, ctx,
                      [&client](const QString &positionId) {
                          client.closePosition(positionId);
@@ -275,7 +284,17 @@ int main(int argc, char *argv[])
     }
 
     client.start();
-    feeds.setTradableSymbols({symbol});
+    // THE WHOLE CATALOG, not just the instrument on screen — and this was a real defect.
+    //
+    // With only the selected symbol registered, the intraday sweep never fetched the futures
+    // proxies SP.24-7 and NSDQ100.24-7. Those two series are what the SPX500 and NSDQ100
+    // cards display AND what the futuresLead / futuresMomentum reads are computed from, so
+    // ONE missing symbol list produced two separate visible symptoms: two cards stuck on an
+    // em dash, and two of the nine reads permanently "unmeasurable". The Widgets window
+    // passes trading::tradableSymbols() here, and the cockpit must too or it is quietly
+    // measuring less than the application it claims to mirror.
+    feeds.setTradableSymbols(trading::tradableSymbols());
+    client.setTradableSymbols(trading::tradableSymbols());
     feeds.setCurrentSymbol(symbol);
     feeds.start(kRefreshMs);
     // start() only kicks off the slow single-value feeds (VIX, sentiment, the web quote).

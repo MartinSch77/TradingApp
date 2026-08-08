@@ -102,10 +102,19 @@ struct CockpitCard {
 // market and reporting a missing feed.
 [[nodiscard]] CockpitCard cardFromSeries(const QString &label, const QList<double> &series);
 
-// The four references a trader watches beside the instrument, in a fixed order, from a book
-// keyed by Yahoo TICKER. Fixed because a card that moves between refreshes is unreadable.
+// The four references a trader watches beside the instrument, in a fixed order. Fixed order
+// because a card that moves between refreshes is unreadable.
+//
+// TWO BOOKS, AND THEY ARE KEYED DIFFERENTLY — the same trap ReadInputs exists to make
+// unrepresentable, and this function fell straight into it. VIX and the 10-year are Yahoo
+// TICKERS (^VIX, ^TNX) and live in `byTicker`. The index futures are this application's own
+// SYMBOLS (SP.24-7, NSDQ100.24-7) and live in `bySymbol`. Looking the futures up in the
+// ticker book — which is what this did — misses every time, so the SPX500 and NSDQ100 cards
+// showed an em dash permanently in BOTH front ends while the feed was working perfectly.
+// Two named parameters instead of one, so the mistake is visible at the call site.
 [[nodiscard]] QList<CockpitCard> referenceCards(
-    const QHash<QString, QList<double>> &referenceSeries);
+    const QHash<QString, QList<double>> &byTicker,
+    const QHash<QString, QList<double>> &bySymbol);
 
 // One candle as Qt Graphs' CustomSeries sees it — a QVariantMap the delegate reads by name.
 //
@@ -163,6 +172,9 @@ class CockpitModel : public QObject
     Q_PROPERTY(double amount READ amount NOTIFY changed)
     Q_PROPERTY(int leverage READ leverage NOTIFY changed)
     Q_PROPERTY(QVariantList positions READ positions NOTIFY changed)
+    Q_PROPERTY(QStringList instruments READ instruments NOTIFY changed)
+    Q_PROPERTY(double stopLoss READ stopLoss NOTIFY changed)
+    Q_PROPERTY(double takeProfit READ takeProfit NOTIFY changed)
 
 public:
     explicit CockpitModel(QObject *parent = nullptr);
@@ -197,7 +209,13 @@ public:
     // untested copy of the service layer.
     void setTradeContext(bool hasCredentials, bool marketOpen, double minAmount,
                          double maxAmount);
-    void setTicket(double amount, qint32 leverage);
+    // The whole ticket in ONE call, SL/TP included. One setter rather than five, because
+    // every field is part of the armed action: a call that changed only the stop would have
+    // to disarm too, and five setters is five chances to forget that.
+    void setTicket(double amount, qint32 leverage, double stopLoss = 0.0,
+                   double takeProfit = 0.0);
+    // The instruments that can be selected, and which one is shown.
+    void setInstruments(const QStringList &symbols);
     // The open book. Already filtered by the host — a position the broker has confirmed
     // closed must not be here, for the same reason it leaves the Widgets table at once.
     void setPositions(const QList<Position> &positions, double markPrice);
@@ -208,6 +226,13 @@ public:
     [[nodiscard]] double amount() const { return m_amount; }
     [[nodiscard]] qint32 leverage() const { return m_leverage; }
     [[nodiscard]] QVariantList positions() const { return m_positions; }
+    [[nodiscard]] QStringList instruments() const { return m_instruments; }
+    [[nodiscard]] double stopLoss() const { return m_stopLoss; }
+    [[nodiscard]] double takeProfit() const { return m_takeProfit; }
+
+    // Switching instrument DISARMS, for the same reason editing the amount does: the order
+    // that was confirmed is not the order that would now be sent.
+    Q_INVOKABLE void selectInstrument(const QString &symbol);
 
     // ONE press of buy or sell. Returns nothing and places nothing by itself: on a valid
     // second press within the window it emits placeRequested, and the HOST sends the order.
@@ -225,7 +250,10 @@ Q_SIGNALS:
     // A human confirmed this, twice, just now. The host still validates it
     // (OrderRequestValidator, REQ-N-009) before anything is sent — this signal means
     // "authorised", never "correct".
-    void placeRequested(bool buy, double amount, qint32 leverage);
+    void placeRequested(bool buy, double amount, qint32 leverage, double stopLoss,
+                        double takeProfit);
+    // The user picked a different instrument; the host refetches and re-pushes.
+    void instrumentRequested(const QString &symbol);
     void closeRequested(const QString &positionId);
 
 private:
@@ -259,6 +287,9 @@ private:
     double m_minAmount = 0.0;
     double m_maxAmount = 0.0;
     QVariantList m_positions;
+    QStringList m_instruments;
+    double m_stopLoss = 0.0;      // 0 = no stop leg
+    double m_takeProfit = 0.0;    // 0 = no target leg
 
     // How many candles are drawn. 120 across a ~940-pixel plot leaves each body about five
     // pixels wide, which is where the hollow interior becomes visible inside its one-pixel

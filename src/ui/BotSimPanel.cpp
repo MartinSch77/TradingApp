@@ -997,7 +997,25 @@ void BotSimRunner::considerEntriesForScan()
 
 trading::AiGate BotSimRunner::gateFor(const trading::DecisionRow &row) const
 {
-    return trading::paperAiGate(row.symbol, row.dir, m_proposals, m_book.config().aiMode);
+    return trading::paperAiGate(row.symbol, row.dir, m_proposals, m_book.config().aiMode,
+                                aiSourceState());
+}
+
+// What is known about the model's answer, so a refusal can name the CAUSE rather than the
+// symptom. Assembled here because this is where the answer and its timing actually live.
+trading::AiSource BotSimRunner::aiSourceState() const
+{
+    trading::AiSource source;
+    // Asked of the advisor itself, not of a config field: the model name can also come
+    // from OLLAMA_MODEL, and the advisor is the one object that knows which won.
+    source.configured = (m_ai != nullptr) && m_ai->isConfigured();
+    source.asked = m_askedAt.isValid();
+    source.received = m_proposals.size();
+    source.usable = std::count_if(m_proposals.cbegin(), m_proposals.cend(),
+                                  [](const trading::AiProposal &p) { return p.ok; });
+    source.ageMs = m_askedAt.isValid() ? m_askedAt.msecsTo(QDateTime::currentDateTime()) : -1;
+    source.maxAgeMs = kProposalMaxAgeMs;
+    return source;
 }
 
 void BotSimRunner::considerEntries(const QList<trading::DecisionRow> &rows,
@@ -1182,8 +1200,26 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     };
     trading::BookState state = m_book.state();
     state.symbol = m_book.exposureFor(row.symbol);
-    // The AI gate first (REQ-F-030): in Off it just passes the composite's
-    // direction through, in Confirm it vetoes, in Lead it supplies the side.
+
+    // MARKET FIRST, and this ordering is the point rather than an optimisation.
+    //
+    // The AI gate used to run before anything else, so on a Saturday every closed
+    // instrument was refused as "no AI proposal available" — blaming the model for a market
+    // that was shut. Twenty-six identical lines, of which only the .24-7 ones were even
+    // capable of being traded, and nothing in the log said which was which. A refusal has to
+    // name the MOST FUNDAMENTAL obstacle, or the reader fixes the wrong thing: no amount of
+    // model configuration opens the cash equity market at the weekend.
+    //
+    // It is also the cheaper check, but that is a side benefit and not the reason.
+    if (m_tradeabilityKnown && !m_tradeable.contains(row.symbol)) {
+        return refuse(QStringLiteral("market-closed"),
+                      QStringLiteral("market closed for this instrument — the broker does not "
+                                     "list it as tradable right now"),
+                      trading::CandidateInput{});
+    }
+
+    // Then the AI gate (REQ-F-030): in Off it just passes the composite's direction
+    // through, in Confirm it vetoes, in Lead it supplies the side.
     const trading::AiGate gate = gateFor(row);
     if (!gate.allow) {
         // Only an instrument the model actually named earns its own line: "not

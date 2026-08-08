@@ -4,6 +4,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import TradingApp.Cockpit
 
 // The confluence meter: nine discrete ticks, one per independent read (REQ-F-038, REQ-F-035).
@@ -112,6 +113,25 @@ Rectangle {
 
                 required property var modelData
                 spacing: 6
+
+                // The NUMBER behind the read, on hover. Without it "unmeasurable" is a
+                // verdict with no evidence: a reader cannot tell a feed that is missing from
+                // one that returned something unusable, and those need different fixes.
+                HoverHandler {
+                    id: readHover
+                }
+
+                ToolTip.visible: readHover.hovered
+                ToolTip.text: readRow.modelData.state === "unmeasurable"
+                              ? qsTr("Not measurable right now: %1.\n\nAn unmeasurable read "
+                                   + "NEVER counts as agreement — a \"6 of 9\" built from "
+                                   + "absent feeds would be a lie.").arg(
+                                        readRow.modelData.detail !== ""
+                                        ? readRow.modelData.detail
+                                        : qsTr("the series it needs has not arrived"))
+                              : qsTr("%1: %2").arg(readRow.modelData.label).arg(
+                                    readRow.modelData.detail !== ""
+                                    ? readRow.modelData.detail : qsTr("measured"))
 
                 Text {
                     text: readRow.modelData.glyph

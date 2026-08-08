@@ -108,7 +108,25 @@ _TOOLS = {
     # normalised to the pipe template in tools/static_analysis.sh. Without this the Quick
     # surface would be the only part of the application whose findings never reach the
     # dashboard, so a QML defect would be invisible next to the C++ ones.
-    'qmllint': ('qmllint.txt', _PIPE),
+    #
+    # THE PROVIDER IS 'qmllint-cli', NOT 'qmllint', AND THE NAME IS NOT COSMETIC. Axivion
+    # Suite 7.12.3 SHIPS a built-in qmllint provider (lib/scripts/bauhaus/rules/axivion/
+    # analysis_control/external_formats.py) together with a QmlLintIntegration action.
+    # Registering a GenericFormat under the same name aborts the whole analysis before any
+    # rule runs:
+    #
+    #   ValueError: provider qmllint already registered.
+    #   Exception: Error while scheduling /Analysis/AnalysisControl/
+    #              ExternalAnalysisFormats/GenericFormat qmllint
+    #
+    # — i.e. one duplicated name takes down every other import too. A distinct name is the
+    # correct fix for THIS layer, which imports a file this project has already normalised
+    # to the pipe template; the Suite's own provider expects qmllint's native output and is
+    # a different thing. Using Axivion's QmlLintIntegration instead would be the tidier
+    # long-term answer — it would let the Suite run and parse qmllint itself, the same
+    # reasoning that says never to reimplement its report module — but that is a
+    # configuration change to make deliberately and verify, not a rename.
+    'qmllint-cli': ('qmllint.txt', _PIPE),
     'codespell': ('codespell.txt', _PIPE),
     'sonarqube': ('sonarqube.txt', _PIPE),
     # Coverity Scan defects, exported from the cloud service and normalized by

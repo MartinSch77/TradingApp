@@ -59,7 +59,13 @@ QString decisionLogHeader()
         "# was or was not traded. SIMULATED money on live prices; this file never means a\n"
         "# real order was placed.\n"
         "#\n"
-        "# <UTC timestamp>  <symbol>  TRADED|REFUSED  <side>  <detail>  — <reason>\n"
+        "# <local timestamp, with UTC offset>  <symbol>  TRADED|REFUSED  <side>  "
+        "<detail>  — <reason>\n"
+        "#\n"
+        "# The timestamp is the LOCAL clock of the machine that ran the bot, and it\n"
+        "# carries its offset (…+02:00) so the line stays unambiguous when the file is\n"
+        "# read elsewhere, and so the repeated hour at the autumn clock change can\n"
+        "# still be told apart. A line whose stamp ends in Z is an older UTC one.\n"
         "#\n"
         "# TRADED lines carry the geometry that was opened (stake, leverage, fill, stop,\n"
         "# target, opening cost). REFUSED lines carry the refusal CODE, which is stable and\n"
@@ -75,7 +81,25 @@ QString decisionLine(const DecisionNote &note)
     if (!note.isValid()) {
         return {};
     }
-    const QString stamp = note.at.toUTC().toString(Qt::ISODate);
+    // LOCAL time, and WITH its offset. Two decisions in one line:
+    //
+    // Local, because this file is the one artefact of the bot meant to be read by a person
+    // at the machine — "did it trade during this morning's move?" is answered by the clock
+    // on the wall, not by UTC arithmetic. (prediction-ledger.jsonl stays UTC: that one is
+    // read by code, and machine-readable records have no business drifting with a timezone.)
+    //
+    // With the offset, because a bare local timestamp is ambiguous in three separate ways:
+    // it cannot be told apart from the UTC lines already in an existing log, it does not say
+    // which zone produced it when the file is read on another machine, and at the autumn
+    // clock change the same wall-clock hour occurs twice — 02:30+02:00 and 02:30+01:00 are
+    // one hour apart and would otherwise be indistinguishable. The offset costs eight
+    // characters and removes all three.
+    //
+    // Derived from the system zone rather than a fixed offset, for the reason sessionPhaseFor
+    // already documents: Europe and the US shift their clocks on different days, so any
+    // hardcoded offset is wrong for part of the year.
+    const QDateTime local = note.at.toLocalTime();
+    const QString stamp = local.toOffsetFromUtc(local.offsetFromUtc()).toString(Qt::ISODate);
     const QString symbol = note.symbol.leftJustified(kSymbolWidth, u' ');
     const QString what = note.traded ? QStringLiteral("TRADED ") : QStringLiteral("REFUSED");
     const QString side = sideWord(note.dir, note.traded).leftJustified(7, u' ');

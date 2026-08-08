@@ -518,9 +518,40 @@ private slots:
             const AiGate h = paperAiGate(QStringLiteral("SPX500"), 1, {hold}, mode);
             QVERIFY(!h.allow);
             QVERIFY(h.why.contains(QStringLiteral("HOLD")));
-            const AiGate f = paperAiGate(QStringLiteral("SPX500"), 1, {failed}, mode);
+            // An unusable answer is refused — and the REASON names which of the four
+            // situations it is. "no AI proposal available" used to cover all four, which
+            // told a reader nothing: no model configured, no answer yet, an answer too old,
+            // and an answer that failed to parse call for four different fixes.
+            AiSource unparsed;
+            unparsed.configured = true;
+            unparsed.asked = true;
+            unparsed.received = 1;      // it answered…
+            unparsed.usable = 0;        // …with something unusable
+            unparsed.ageMs = 1000;
+            unparsed.maxAgeMs = 300000;
+            const AiGate f = paperAiGate(QStringLiteral("SPX500"), 1, {failed}, mode, unparsed);
             QVERIFY(!f.allow);
-            QVERIFY(f.why.contains(QStringLiteral("no AI proposal")));
+            QCOMPARE(f.code, QStringLiteral("ai-unparsed"));
+            QVERIFY(f.why.contains(QStringLiteral("none of them parsed")));
+
+            // No model at all is a DIFFERENT refusal, and names what to configure.
+            const AiSource absent;
+            const AiGate none = paperAiGate(QStringLiteral("SPX500"), 1, {failed}, mode, absent);
+            QCOMPARE(none.code, QStringLiteral("ai-not-configured"));
+            QVERIFY(none.why.contains(QStringLiteral("ollamaModel")));
+
+            // An answer past its freshness bound is a third, and carries the actual age —
+            // a CPU model that cannot keep up leaves every instrument un-evaluated, and the
+            // number is what makes that diagnosable rather than guessable.
+            AiSource stale;
+            stale.configured = true;
+            stale.asked = true;
+            stale.received = 2;
+            stale.ageMs = 600000;
+            stale.maxAgeMs = 300000;
+            const AiGate old = paperAiGate(QStringLiteral("SPX500"), 1, {failed}, mode, stale);
+            QCOMPARE(old.code, QStringLiteral("ai-stale"));
+            QVERIFY(old.why.contains(QStringLiteral("600 s")));
             const AiGate u = paperAiGate(QStringLiteral("SPX500"), 1, {unknown}, mode);
             QVERIFY(!u.allow);
             QVERIFY(u.why.contains(QStringLiteral("Bitcoin")));

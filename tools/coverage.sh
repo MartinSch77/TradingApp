@@ -241,13 +241,21 @@ coco_run_one() {
     rm -f "$dir/$name.csexe"
     (cd "$dir" && QT_QPA_PLATFORM=offscreen "./$name" >/dev/null 2>&1) || true
     if [ ! -f "$dir/$name.csexe" ]; then
-        # Two of the twenty-four (tst_indicators, tst_models) do this consistently, and
-        # the cause is NOT yet identified: the Coco runtime IS linked into them (82
-        # symbols incl. __coveragescanner_filename), their .csmes is the usual ~2 MB,
-        # they pass, and neither a COVERAGESCANNER_ARGS --cs-exec nor a command-line
-        # one produces a report. Reported rather than hidden — and the functions they
-        # cover are exercised by other suites in the same merge, so the numbers below
-        # are a floor, not a fiction.
+        # A known unmapped failure, reported rather than hidden. Measured 2026-08-08: FOUR
+        # of the thirty-one do this consistently — tst_indicators, tst_models, and now
+        # tst_candles and tst_confirmgate, which were added without touching any of this
+        # machinery. The cause is still NOT identified, but the evidence has narrowed:
+        #
+        #   * the Coco runtime IS linked in (52 coveragescanner symbols in tst_confirmgate
+        #     against 55 in tst_money, which works), so it is not a missing runtime;
+        #   * an explicit COVERAGESCANNER_ARGS --cs-exec=<path> produces nothing either, so
+        #     it is not the output path;
+        #   * all four are pure-DOMAIN suites that pass in milliseconds.
+        #
+        # The consequence is stated wherever these numbers appear: the merge is missing four
+        # suites, so the figures are a FLOOR, not a fiction. Most functions they cover are
+        # exercised by other suites in the same merge, but "most" is not "all" and the
+        # difference is unmeasured.
         echo "note: $name produced no execution report — skipped in the merge"
         return 0
     fi
@@ -421,9 +429,16 @@ run_coco_gui() {
     rm -f "$OUT/merged.csmes"
     # An instrumented binary writes its .csexe into its WORKING DIRECTORY, and under
     # Squish that directory is squishserver's, not ours (the same lesson coco_run_one
-    # records for the test binaries). Pin it instead of guessing: COVERAGESCANNER_ARGS
-    # is read by the Coco runtime inside the AUT itself, so the report lands where this
-    # mode can find it however the AUT was started.
+    # records for the test binaries). So the path is pinned with COVERAGESCANNER_ARGS.
+    #
+    # EXPORTING IT IS NOT ENOUGH, and an earlier comment here claiming it was — "read by the
+    # Coco runtime inside the AUT itself, so the report lands where this mode can find it
+    # however the AUT was started" — was wrong. Squish launches the AUT through squishserver
+    # with a CONTROLLED environment, so nothing exported here reaches the application. The
+    # measured result: the suite passed 62 of 62 and Coco wrote no .csexe at all, leaving
+    # coverage/coco-gui empty. squish_run.sh now forwards this through `squishrunner
+    # --envvar`, which is Squish's own way in and the same mechanism the suite's envvars file
+    # uses. The export below is what squish_run.sh reads.
     local csexe="$OUT/squish-gui.csexe"
     rm -f "$csexe"
     export COVERAGESCANNER_ARGS="--cs-exec=$csexe"
@@ -501,6 +516,69 @@ run_coco() {
         "--csv-excel=$OUT/functions.csv"
     coco_stat_levels "$OUT/merged.csmes" "$OUT/summary.json"
     echo "HTML: $OUT/index.html   (open $OUT/merged.csmes in coveragebrowser for MC/DC drill-down)"
+
+    # …and the SAME execution reports merged two more ways, so unit and integration can be
+    # read apart instead of only as one blended figure. No test is run twice: the .csexe
+    # files above are simply merged into different groupings.
+    #
+    # WHY SEPARATELY AT ALL. A blended number hides the thing worth knowing. Unit tests cover
+    # pure domain logic and can be near-total; integration tests drive the services against a
+    # mock server and are necessarily thinner. Averaged together, a strong domain figure
+    # conceals a weak services one — the same reason the GUI suite has never been merged into
+    # this figure.
+    coco_split_report "$BUILD" unit "TradingApp — UNIT tests only (domain layer)"
+    coco_split_report "$BUILD" integration \
+        "TradingApp — INTEGRATION tests only (services against the mock server)"
+}
+
+# The test binaries belonging to one group, derived from tests/CMakeLists.txt.
+#
+# From the CMakeLists rather than a second list here, deliberately: that file already
+# declares the split in its section comments and is the single description of the build. A
+# hand-kept copy in this script would drift the first time a test was added, and the failure
+# would be silent — a test quietly counted in the wrong group, or in neither.
+#
+# "integration" is the named section; "unit" is everything else, so a NEW section (the ui
+# model tests, the cockpit view-model) lands in unit rather than vanishing from both reports.
+coco_tests_in_group() {
+    local group="$1"
+    local integration
+    integration="$(sed -n '/^# --- integration tests/,/^# --- [a-z]/p' "$ROOT/tests/CMakeLists.txt" |
+        grep -oE 'tradingapp_add_test\([a-z_0-9]+' | cut -d'(' -f2)"
+    local all
+    all="$(grep -oE 'tradingapp_add_test\([a-z_0-9]+' "$ROOT/tests/CMakeLists.txt" |
+        cut -d'(' -f2 | sort -u)"
+    if [ "$group" = "integration" ]; then
+        printf '%s\n' "$integration" | sort -u
+    else
+        comm -23 <(printf '%s\n' "$all") <(printf '%s\n' "$integration" | sort -u)
+    fi
+}
+
+# One group's own report, merged from execution reports that already exist.
+coco_split_report() {
+    local BUILD="$1" group="$2" title="$3"
+    local OUT="$ROOT/coverage/coco-$group"
+    mkdir -p "$OUT"
+    rm -f "$OUT/merged.csmes"
+    local -a dbs=()
+    local name
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        [ -f "$BUILD/tests/$name.csmes" ] && dbs+=("$BUILD/tests/$name.csmes")
+    done < <(coco_tests_in_group "$group")
+    if [ "${#dbs[@]}" -eq 0 ]; then
+        # Named, not silently skipped: an empty group means the derivation above stopped
+        # matching the CMakeLists, which is a defect rather than an absence of coverage.
+        echo "no $group test databases found — check the section comments in tests/CMakeLists.txt" >&2
+        return 0
+    fi
+    "$COCO_DIR/bin/cmmerge" -o "$OUT/merged.csmes" "${dbs[@]}"
+    coco_report "$OUT/merged.csmes" "$title" \
+        "--html=$OUT/index.html" \
+        "--csv-excel=$OUT/functions.csv"
+    coco_stat_levels "$OUT/merged.csmes" "$OUT/summary.json"
+    echo "$group coverage (${#dbs[@]} suites): $OUT/index.html"
 }
 
 case "$MODE" in

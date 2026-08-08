@@ -813,8 +813,42 @@ PickMatch matchPick(const QString &symbol, const QList<AiProposal> &proposals)
 
 } // namespace
 
+// Why there is nothing to act on, in the reader's terms. Each answer names a DIFFERENT
+// thing to go and do about it, which is the entire reason this is not one sentence.
+QString noAnswerReason(const AiSource &source, QString *code)
+{
+    if (!source.configured) {
+        *code = QStringLiteral("ai-not-configured");
+        return QStringLiteral("no local model is configured — set ollamaModel in config.json "
+                              "or OLLAMA_MODEL, or switch TRADINGAPP_BOT_AI to off/confirm so "
+                              "the composite decides");
+    }
+    if (!source.asked || (source.ageMs < 0)) {
+        *code = QStringLiteral("ai-no-answer");
+        return QStringLiteral("the local model has not answered yet this session — it is "
+                              "configured, so either the first scan is still in flight or the "
+                              "service is not reachable");
+    }
+    if ((source.maxAgeMs > 0) && (source.ageMs > source.maxAgeMs)) {
+        *code = QStringLiteral("ai-stale");
+        return QStringLiteral("the model's last answer is %1 s old, past the %2 s bound — a "
+                              "CPU model that cannot keep up with the scan cycle leaves every "
+                              "instrument un-evaluated")
+            .arg(source.ageMs / 1000)
+            .arg(source.maxAgeMs / 1000);
+    }
+    if (source.received > 0) {
+        *code = QStringLiteral("ai-unparsed");
+        return QStringLiteral("the model answered with %1 pick(s) and none of them parsed — "
+                              "see the SIM AI lines for the raw reply")
+            .arg(source.received);
+    }
+    *code = QStringLiteral("ai-no-answer");
+    return QStringLiteral("the model answered with no picks at all");
+}
+
 AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
-                   const QList<AiProposal> &proposals, BotAiMode mode)
+                   const QList<AiProposal> &proposals, BotAiMode mode, const AiSource &source)
 {
     AiGate gate;
     if (mode == BotAiMode::Off) {
@@ -829,8 +863,9 @@ AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
     const bool anyUsable = std::any_of(proposals.cbegin(), proposals.cend(),
                                        [](const AiProposal &p) { return p.ok; });
     if (!anyUsable) {
-        gate.why = QStringLiteral("no AI proposal available");
-        gate.code = QStringLiteral("ai-none");
+        // NOT one catch-all sentence. The four causes below call for four different actions,
+        // and a log line exists so a person can reproduce the decision.
+        gate.why = noAnswerReason(source, &gate.code);
         return gate;
     }
     const PickMatch match = matchPick(symbol, proposals);

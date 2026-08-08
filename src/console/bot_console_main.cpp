@@ -190,16 +190,13 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
                                                                     runner.armed()));
         line(QString());
 
-        // The two focused indices and their megacaps.
-        for (const auto &pair : {std::pair{kIndexA, kIndexB}}) {
-            for (const QString &idx : {pair.first, pair.second}) {
-                for (const QString &row :
-                     trading::console::consoleHeavyBars(idx, heavyMovesFor(idx, snapshot), 12)) {
-                    line(row);
-                }
-                line(QString());
-            }
+        // The two focused indices and their megacaps, SIDE BY SIDE.
+        for (const QString &row : trading::console::consoleHeavyBarsSideBySide(
+                 kIndexA, heavyMovesFor(kIndexA, snapshot),
+                 kIndexB, heavyMovesFor(kIndexB, snapshot), 10)) {
+            line(row);
         }
+        line(QString());
 
         line(QStringLiteral("  OPEN"));
         for (const QString &row : trading::console::consoleOpenTrades(runner.book().openTrades())) {
@@ -212,7 +209,8 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
             line(row);
         }
         line(QString());
-        line(QStringLiteral("  DECISIONS  (live; full history in the decision log file)"));
+        line(QStringLiteral("  DECISIONS  (live; full history: %1)")
+                 .arg(BotSimRunner::decisionLogPath()));
         log.setViewport(10);
         for (const QString &row : log.window(10)) {
             line(QStringLiteral("  ") + row);
@@ -257,7 +255,14 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("TradingBot"));
+    // The SAME organisation and application name the Widgets app (main.cpp) uses. This is
+    // load-bearing, not cosmetic: QStandardPaths::AppConfigLocation is built from these, and
+    // it is where Config::load reads the credentials AND where the bot's books
+    // (botsim.json, botsim-decisions.log, the experience log) live. A different name here
+    // gave the console its OWN empty book — it was examining a fresh 50k account, not the
+    // bot the GUI actually runs. Sharing the identity is what makes "examine the bot" true.
+    QCoreApplication::setOrganizationName(QStringLiteral("TradingApp"));
+    QCoreApplication::setApplicationName(QStringLiteral("eToro Trader"));
 
     const Config config = Config::load();
 

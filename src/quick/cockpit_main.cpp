@@ -242,7 +242,12 @@ void installShotHarness(QQmlApplicationEngine &engine, QObject *ctx)
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("TradingCockpit"));
+    // The SAME identity as the Widgets app (main.cpp), because Config::load and the bot
+    // books resolve through QStandardPaths::AppConfigLocation, which is built from these — a
+    // different name would read a different config directory and miss the user's credentials
+    // and books entirely.
+    QCoreApplication::setOrganizationName(QStringLiteral("TradingApp"));
+    QCoreApplication::setApplicationName(QStringLiteral("eToro Trader"));
     QCoreApplication::setApplicationVersion(QStringLiteral(TRADINGAPP_VERSION));
 
     const Config config = Config::load();

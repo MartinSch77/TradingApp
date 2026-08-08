@@ -7,6 +7,7 @@
 #include "services/EtoroClient.h"
 #include "domain/Forecasting.h"
 #include "domain/IndexConfluence.h"
+#include "domain/InstrumentCatalog.h"
 #include "domain/LeadSignal.h"
 #include "services/OllamaAdvisor.h"
 
@@ -379,7 +380,7 @@ void BotSimRunner::markAndExit()
         // live spread it must still cross and the instrument's own rollover table
         // (REQ-F-029). Unknown fees leave the carry rules silent rather than
         // guessing — the same policy the entry gate applies to an unknown spread.
-        ctx.spreadPct = (m_client != nullptr) ? m_client->spreadPctFor(trade.symbol) : 0.0;
+        ctx.spreadPct = effectiveSpreadPct(trade.symbol);
         ctx.fees = fees;
         ctx.feesKnown = fees.isValid();
         ctx.eurPerUsd = m_eurPerUsd;
@@ -414,8 +415,7 @@ bool BotSimRunner::harvestDayTarget()
     // and the carry rules apply.
     QList<trading::HarvestOption> options;
     for (const PaperTrade &trade : m_book.openTrades()) {
-        const double spreadPct =
-            (m_client != nullptr) ? m_client->spreadPctFor(trade.symbol) : 0.0;
+        const double spreadPct = effectiveSpreadPct(trade.symbol);
         if (spreadPct <= 0.0) {
             continue;
         }
@@ -438,8 +438,7 @@ bool BotSimRunner::harvestDayTarget()
 void BotSimRunner::closeTrade(const PaperTrade &trade, CloseReason reason)
 {
     const Mark mark = markFor(trade);
-    const double spreadPct =
-        (m_client != nullptr) ? m_client->spreadPctFor(trade.symbol) : 0.0;
+    const double spreadPct = effectiveSpreadPct(trade.symbol);
     const PaperClosedTrade done = m_book.close(trade.id, mark.rate, spreadPct, reason,
                                                QDateTime::currentDateTime());
     if (done.id == 0) {
@@ -470,7 +469,7 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     if (m_client == nullptr) {
         return sides;
     }
-    sides.spreadPct = m_client->spreadPctFor(symbol);
+    sides.spreadPct = effectiveSpreadPct(symbol);
     const QHash<qint64, Quote> &quotes = m_client->quotes();
     const auto it = quotes.constFind(instrumentId);
     if (it != quotes.constEnd() && it->isValid()) {
@@ -915,11 +914,13 @@ void BotSimRunner::onProposals(const QList<AiDecision> &picks, const QString &er
     // Map each pick's spelling onto a tradable instrument (models answer in prose as
     // happily as in symbols); an unresolvable pick is kept and refused later with
     // that reason, rather than silently dropped.
-    QStringList known;
-    known.reserve(m_pendingRows.size());
-    for (const trading::DecisionRow &row : m_pendingRows) {
-        known << row.symbol;
-    }
+    //
+    // Resolved against the whole CATALOG, not just this scan's decision rows. "Tradable
+    // here" means "an instrument this app lists", not "one that happened to be scored this
+    // cycle" — otherwise a crypto pick (BTCUSDT -> BTC) was annotated "not tradable here"
+    // whenever crypto had no row that scan, which is exactly the confusing output reported.
+    // Whether it is opened is still decided later by the focus, market and risk gates.
+    const QStringList known = trading::tradableSymbols();
     m_proposals.clear();
     for (const AiDecision &pick : picks) {
         m_proposals.append(normalizePick(pick, source, known));
@@ -971,6 +972,15 @@ trading::AiGate BotSimRunner::gateFor(const trading::DecisionRow &row) const
 
 // What is known about the model's answer, so a refusal can name the CAUSE rather than the
 // symptom. Assembled here because this is where the answer and its timing actually live.
+// The spread the cost model should use, with the crypto floor applied. All spread reads in
+// the runner go through here so eToro's ~1% crypto cost is charged consistently — see
+// trading::minSpreadPctFor. A wider real spread still wins (it is a floor).
+double BotSimRunner::effectiveSpreadPct(const QString &symbol) const
+{
+    const double raw = (m_client != nullptr) ? m_client->spreadPctFor(symbol) : 0.0;
+    return std::max(raw, trading::minSpreadPctFor(symbol));
+}
+
 trading::AiSource BotSimRunner::aiSourceState() const
 {
     trading::AiSource source;
@@ -1323,7 +1333,7 @@ void BotSimRunner::resetBooks()
         const PaperTrade trade = m_book.openTrades().constFirst();
         const Mark mark = markFor(trade);
         const double spreadPct =
-            (m_client != nullptr) ? m_client->spreadPctFor(trade.symbol) : 0.0;
+            effectiveSpreadPct(trade.symbol);
         static_cast<void>(m_book.close(trade.id, mark.rate, spreadPct, CloseReason::Reset, now));
     }
     m_book.reset();

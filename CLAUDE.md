@@ -172,7 +172,17 @@ publish_release; refuses to publish on a red pipeline).
   that are about the risk budget, the margin cap or the cash rule set
   `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
   TS-PAPER-031 owns the ceiling itself.
-- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100):
+- CRYPTO (BTC/ETH/SOL) is tradable, with eToro's real constraints modelled. The local model
+  answers with exchange pairs (BTCUSDT, ETH-USD, SOLUSDT); `matchProposalSymbol` strips the
+  fiat/quote suffix so they map to the bare eToro tickers — without it every crypto pick was
+  "not tradable here". They are their OWN correlation bucket (`crypto`), capped at x2
+  (`groupLeverageCap`, eToro's retail crypto ceiling; catalog ladder {1,2}), cost a ~1% round
+  trip modelled as a spread FLOOR (`minSpreadPctFor`, applied through the runner's ONE
+  `effectiveSpreadPct` choke-point), and are EXEMPT from the weekday-only weekend stop
+  (`tradesOnWeekend`, crypto is 24/7) while indices stay stopped. Proposals are resolved
+  against the whole catalog (`tradableSymbols()`), not just the scan's rows, so "not tradable
+  here" means "not in the catalog" (e.g. XRP), never "not scored this cycle".
+- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100 + BTC/ETH/SOL):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure
   modes that dominated it — the model spending its one answer on a peripheral name
@@ -365,6 +375,12 @@ publish_release; refuses to publish on a red pipeline).
   row comes back and is NAMED. Hiding it forever would tell someone they are flat while the
   risk is open. `trading::suppressClosedPositions` owns the rule; `positionClosed` carries
   the position id precisely so the window need not parse it out of a message string.
+- The TWO extra binaries (`TradingCockpit`, `TradingBot`) MUST set the SAME
+  `organizationName`/`applicationName` as the Widgets app — "TradingApp" / "eToro Trader" —
+  because `QStandardPaths::AppConfigLocation` (built from those) is where `Config::load` reads
+  credentials AND where the bot's books live (`botsim.json`, `botsim-decisions.log`, the
+  experience log). A distinct name gives the binary its OWN empty config dir: the console was
+  examining a fresh 50k account instead of the bot the GUI runs, until this was fixed.
 - QT CHARTS AND QT GRAPHS CANNOT SHARE A PROCESS. They declare seventeen classes with
   identical names in one namespace (QValueAxis, QAbstractAxis, QLineSeries, QBarSeries,
   QPieSeries, QXYSeries…), so linking both makes qmltyperegistrar ambiguous and EVERY

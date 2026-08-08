@@ -467,6 +467,56 @@ private slots:
         QVERIFY(matchProposalSymbol(QStringLiteral("Bitcoin"), known).isEmpty());
         QVERIFY(matchProposalSymbol(QString(), known).isEmpty());
         QVERIFY(matchProposalSymbol(QStringLiteral("SPX500"), {}).isEmpty());
+
+        // CRYPTO NORMALISATION — the live defect: the model answers with the exchange pair
+        // (BTCUSDT, ETH-USD, SOLUSDT) while eToro names crypto BTC/ETH/SOL. The quote suffix
+        // is stripped so the base matches; an unlisted base still finds nothing.
+        const QStringList crypto = {QStringLiteral("BTC"), QStringLiteral("ETH"),
+                                    QStringLiteral("SOL"), QStringLiteral("SPX500")};
+        QCOMPARE(matchProposalSymbol(QStringLiteral("BTCUSDT"), crypto), QStringLiteral("BTC"));
+        QCOMPARE(matchProposalSymbol(QStringLiteral("ETH-USD"), crypto), QStringLiteral("ETH"));
+        QCOMPARE(matchProposalSymbol(QStringLiteral("SOLUSDT"), crypto), QStringLiteral("SOL"));
+        QCOMPARE(matchProposalSymbol(QStringLiteral("btcusd"), crypto), QStringLiteral("BTC"));
+        // Only ONE suffix is stripped, so the bare ticker is untouched and still matches.
+        QCOMPARE(matchProposalSymbol(QStringLiteral("ETH"), crypto), QStringLiteral("ETH"));
+        // XRPUSDT has no catalog base here -> nothing, which is correct (not tradable).
+        QVERIFY(matchProposalSymbol(QStringLiteral("XRPUSDT"), crypto).isEmpty());
+    }
+
+    //! @tstid TS-PAPER-036 @design DES-DOM-PAPER
+    // @relation(REQ-F-030, REQ-F-031, scope=function)
+    //
+    // Crypto is its OWN correlation bucket, capped at x2, and costs ~1% — the three facts the
+    // user gave about eToro crypto, each pinned so a change to one is visible.
+    void TS_PAPER_036_cryptoIsItsOwnBucketCappedAndCosted()
+    {
+        // One bucket, so three crypto positions count as close to one bet in the risk budget.
+        QCOMPARE(correlationGroup(QStringLiteral("BTC")), QStringLiteral("crypto"));
+        QCOMPARE(correlationGroup(QStringLiteral("ETH")), QStringLiteral("crypto"));
+        QCOMPARE(correlationGroup(QStringLiteral("SOL")), QStringLiteral("crypto"));
+        // …distinct from the equity indices, so crypto risk does not hide inside the index bucket.
+        QVERIFY(correlationGroup(QStringLiteral("SPX500")) != correlationGroup(QStringLiteral("BTC")));
+
+        // eToro caps retail crypto at x2.
+        QCOMPARE(groupLeverageCap(QStringLiteral("crypto")), 2);
+
+        // The ~1% round-trip cost is modelled as a spread FLOOR for crypto and nothing for a
+        // non-crypto instrument.
+        QCOMPARE(minSpreadPctFor(QStringLiteral("BTC")), 1.0);
+        QCOMPARE(minSpreadPctFor(QStringLiteral("ETH")), 1.0);
+        QCOMPARE(minSpreadPctFor(QStringLiteral("SPX500")), 0.0);
+        QCOMPARE(minSpreadPctFor(QStringLiteral("NOT-LISTED")), 0.0);
+
+        // Crypto trades 24/7, so the weekday-only stop must NOT refuse it on a weekend, while
+        // an equity index is still stopped then.
+        QVERIFY(tradesOnWeekend(QStringLiteral("BTC")));
+        QVERIFY(!tradesOnWeekend(QStringLiteral("SPX500")));
+        BotDay day;
+        const QDateTime sat(QDate(2026, 8, 8), QTime(12, 0), QTimeZone::UTC);  // a Saturday
+        BotConfig weekdayOnly;
+        weekdayOnly.tradeWeekdaysOnly = true;
+        QCOMPARE(paperDayGate(day, sat, weekdayOnly, /*tradesWeekend=*/false), DayGate::Weekend);
+        QCOMPARE(paperDayGate(day, sat, weekdayOnly, /*tradesWeekend=*/true), DayGate::Open);
     }
 
     //! @tstid TS-PAPER-011 @design DES-DOM-PAPER

@@ -186,6 +186,8 @@ private:
     [[nodiscard]] bool aiProposalsFresh() const;
     // Why the model has (or has not) an answer — so a refusal names the cause.
     [[nodiscard]] trading::AiSource aiSourceState() const;
+    // Spread with the crypto cost floor applied (trading::minSpreadPctFor).
+    [[nodiscard]] double effectiveSpreadPct(const QString &symbol) const;
     // Focus + market obstacles, in order; empty code = neither applies.
     [[nodiscard]] QString preTradeRefusal(const QString &symbol, QString *why) const;
     void onProposals(const QList<AiDecision> &picks, const QString &error);

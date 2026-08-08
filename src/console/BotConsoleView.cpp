@@ -94,6 +94,32 @@ QStringList consoleHeavyBars(const QString &indexLabel, const QList<HeavyMove> &
     return out;
 }
 
+QStringList consoleHeavyBarsSideBySide(const QString &labelA, const QList<HeavyMove> &namesA,
+                                       const QString &labelB, const QList<HeavyMove> &namesB,
+                                       qsizetype width)
+{
+    const QStringList left = consoleHeavyBars(labelA, namesA, width);
+    const QStringList right = consoleHeavyBars(labelB, namesB, width);
+    // The left column is padded to a fixed cell width so the right column starts at the same
+    // place on every row, however many bars each side has. Visible width, not QString::size:
+    // the bar glyphs and box-drawing characters are one cell each (all single BMP code
+    // points), so size() is the cell count here.
+    qsizetype leftWidth = 0;
+    for (const QString &l : left) {
+        leftWidth = std::max(leftWidth, l.size());
+    }
+    leftWidth += 4;   // a gutter between the two columns
+
+    QStringList out;
+    const qsizetype rows = std::max(left.size(), right.size());
+    for (qsizetype i = 0; i < rows; ++i) {
+        const QString l = (i < left.size()) ? left.at(i) : QString();
+        const QString r = (i < right.size()) ? right.at(i) : QString();
+        out.append(QStringLiteral("  %1%2").arg(l.leftJustified(leftWidth, u' ')).arg(r));
+    }
+    return out;
+}
+
 QStringList consoleOpenTrades(const QList<PaperTrade> &open)
 {
     QStringList out;

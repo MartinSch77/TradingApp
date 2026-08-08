@@ -175,6 +175,45 @@ private slots:
             return l.contains(QStringLiteral("none closed"));
         }));
     }
+
+    //! @tstid TS-CON-005 @design DES-CON-BOT
+    // @relation(REQ-F-029, scope=function)
+    //
+    // The two indices are drawn SIDE BY SIDE: each output row carries a cell from BOTH
+    // columns, and the right column starts at the same offset on every row so a shorter
+    // column does not drag it out of alignment.
+    void TS_CON_005_indicesAreDrawnSideBySide()
+    {
+        const QList<HeavyMove> a{{QStringLiteral("NVDA"), 1.0, true},
+                                 {QStringLiteral("AAPL"), -0.5, true}};
+        const QList<HeavyMove> b{{QStringLiteral("MSFT"), 0.8, true}};   // shorter column
+
+        const QStringList rows = trading::console::consoleHeavyBarsSideBySide(
+            QStringLiteral("SPX500"), a, QStringLiteral("NSDQ100"), b, 8);
+
+        // Both titles are on the FIRST row — side by side, not stacked.
+        QVERIFY(rows.at(0).contains(QStringLiteral("SPX500")));
+        QVERIFY(rows.at(0).contains(QStringLiteral("NSDQ100")));
+        // The left index appears before the right on that row.
+        QVERIFY(rows.at(0).indexOf(QStringLiteral("SPX500"))
+                < rows.at(0).indexOf(QStringLiteral("NSDQ100")));
+
+        // The right column is aligned: its cell starts at the same absolute offset on every
+        // row. The title carries no indent while a data row is indented two spaces WITHIN its
+        // cell (the single-column format), so MSFT sits exactly two past the NSDQ100 title —
+        // which is the proof the cells line up rather than drift.
+        const qsizetype titleOffset = rows.at(0).indexOf(QStringLiteral("NSDQ100"));
+        const qsizetype msftRow = std::distance(
+            rows.cbegin(),
+            std::find_if(rows.cbegin(), rows.cend(),
+                         [](const QString &l) { return l.contains(QStringLiteral("MSFT")); }));
+        QVERIFY(msftRow < rows.size());
+        QCOMPARE(rows.at(msftRow).indexOf(QStringLiteral("MSFT")), titleOffset + 2);
+
+        // The left column still has its own rows past where the right ran out (NVDA, AAPL).
+        QVERIFY(std::any_of(rows.cbegin(), rows.cend(),
+                            [](const QString &l) { return l.contains(QStringLiteral("AAPL")); }));
+    }
 };
 
 QTEST_MAIN(TestBotConsoleView)

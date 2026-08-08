@@ -46,6 +46,16 @@ struct HeavyMove {
 [[nodiscard]] QStringList consoleHeavyBars(const QString &indexLabel,
                                            const QList<HeavyMove> &names, qsizetype width);
 
+// Two indices' heavyweight charts SIDE BY SIDE, so SPX500 and NSDQ100 read as a pair rather
+// than one stacked under the other. Each column is consoleHeavyBars; this pads the left column
+// to a fixed width and joins them line for line, so a shorter column does not drag the right
+// one out of alignment.
+[[nodiscard]] QStringList consoleHeavyBarsSideBySide(const QString &labelA,
+                                                     const QList<HeavyMove> &namesA,
+                                                     const QString &labelB,
+                                                     const QList<HeavyMove> &namesB,
+                                                     qsizetype width);
+
 // The open book, one STABLE row per position keyed by id, so a trade does not jump rows
 // between refreshes (the user asked for a static screen; a table that reshuffles is the
 // opposite). Marked P/L and its carry cost so far are shown, because a position that looks

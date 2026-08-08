@@ -721,9 +721,21 @@ qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
     return pick;
 }
 
-DayGate paperDayGate(const BotDay &day, const QDateTime &now, const BotConfig &cfg)
+bool tradesOnWeekend(const QString &symbol)
 {
-    if (cfg.tradeWeekdaysOnly && now.isValid() && (now.date().dayOfWeek() > kFriday)) {
+    const InstrumentSpec *spec = instrumentSpec(symbol);
+    return (spec != nullptr) && (spec->group == QStringLiteral("Crypto"));
+}
+
+DayGate paperDayGate(const BotDay &day, const QDateTime &now, const BotConfig &cfg,
+                     bool tradesWeekend)
+{
+    // The weekday-only stop keeps the bot out of the weekend gap for instruments that HAVE
+    // one — the equity indices. Crypto trades 24/7, so the stop must not apply to it, or the
+    // three crypto names the bot is meant to trade would be refused every Saturday and Sunday
+    // for a gap that does not exist.
+    if (cfg.tradeWeekdaysOnly && !tradesWeekend && now.isValid()
+        && (now.date().dayOfWeek() > kFriday)) {
         return DayGate::Weekend;
     }
     // Only money actually BOOKED counts. Open profit is not a made day — it can
@@ -740,17 +752,46 @@ DayGate paperDayGate(const BotDay &day, const QDateTime &now, const BotConfig &c
     return DayGate::Open;
 }
 
+double minSpreadPctFor(const QString &symbol)
+{
+    // eToro's crypto CFDs cost about 1% round trip (a ~1% spread, no separate commission),
+    // far more than an index CFD. The bot charges half the spread per side, so a 1% spread is
+    // a 1% round trip — the cost model must SEE that, or it would open crypto trades whose
+    // edge does not cover a cost it never charged. A FLOOR, not a fixed value: a real feed
+    // reporting a wider crypto spread still wins.
+    const InstrumentSpec *spec = instrumentSpec(symbol);
+    if ((spec != nullptr) && (spec->group == QStringLiteral("Crypto"))) {
+        return 1.0;
+    }
+    return 0.0;
+}
+
 QString matchProposalSymbol(const QString &proposalSymbol, const QStringList &known)
 {
-    const QString wanted = proposalSymbol.trimmed();
+    QString wanted = proposalSymbol.trimmed();
     if (wanted.isEmpty()) {
         return {};
+    }
+    // Crypto NORMALISATION. The local model answers with the exchange pair it was trained on —
+    // BTCUSDT, ETH-USD, SOLUSDT, XRPUSDT — while eToro (and this catalog) name crypto by the
+    // bare ticker: BTC, ETH, SOL. Without this the model's crypto picks were all "not tradable
+    // here", which is exactly the live failure reported. Strip a trailing fiat/quote suffix so
+    // the base can match; an unlisted base (XRP has no catalog entry) simply finds nothing,
+    // which is correct.
+    for (const QString &suffix : {QStringLiteral("-PERP"), QStringLiteral("PERP"),
+                                  QStringLiteral("-USDT"), QStringLiteral("USDT"),
+                                  QStringLiteral("-USDC"), QStringLiteral("USDC"),
+                                  QStringLiteral("-USD"), QStringLiteral("USD")}) {
+        if ((wanted.size() > suffix.size()) && wanted.endsWith(suffix, Qt::CaseInsensitive)) {
+            wanted.chop(suffix.size());
+            break;   // strip ONE suffix (BTCUSDT -> BTC, not BTC -> B)
+        }
     }
     const auto exact = std::find_if(known.cbegin(), known.cend(), [&wanted](const QString &symbol) {
         return symbol.compare(wanted, Qt::CaseInsensitive) == 0;
     });
     if (exact != known.cend()) {
-        return *exact;  // the model spelled it exactly
+        return *exact;  // the model spelled it exactly, or it did after crypto normalisation
     }
     // Chatty answers ("SPX500 composite", "buy GER40 now") still resolve — but only
     // while exactly ONE instrument is named. Two candidates in one answer is an
@@ -1147,6 +1188,11 @@ QString correlationGroup(const QString &symbol)
     if (spec->group == QStringLiteral("Forex")) {
         return QStringLiteral("fx");
     }
+    if (spec->group == QStringLiteral("Crypto")) {
+        // One bucket: BTC/ETH/SOL move together far more than with equities, so the
+        // portfolio-risk cap must treat three crypto positions as close to one bet.
+        return QStringLiteral("crypto");
+    }
     if (spec->group == QStringLiteral("Commodities")) {
         // Precious metals are one trade in practice (the same real-rate story);
         // energy and softs are not part of it.
@@ -1169,6 +1215,9 @@ qint32 groupLeverageCap(const QString &group)
     }
     if (group == QStringLiteral("metals")) {
         return 8;
+    }
+    if (group == QStringLiteral("crypto")) {
+        return 2;    // eToro caps retail crypto CFDs at x2 — the instrument ladder is {1,2}
     }
     // "commodity" (oil and softs, which gap on inventory numbers) and an
     // unclassified symbol both land on the careful ceiling, so they share the
@@ -1292,7 +1341,8 @@ EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
     // The DAY rule comes first: once the day's target or loss limit is booked, the
     // bot is done for the day — no instrument, no signal and no model changes that.
     // This is the emotionless part: it does not get to argue with its own limit.
-    if (const DayGate day = paperDayGate(book.day, in.now, cfg); day != DayGate::Open) {
+    if (const DayGate day = paperDayGate(book.day, in.now, cfg, tradesOnWeekend(in.symbol));
+        day != DayGate::Open) {
         verdict.why = dayGateWord(day);
         verdict.code = dayGateCode(day);
         return verdict;

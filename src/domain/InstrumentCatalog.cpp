@@ -103,6 +103,23 @@ const QList<InstrumentSpec> &instrumentCatalog()
         {QStringLiteral("OIL.24-7"), QStringLiteral("Commodities"),
          QStringLiteral("FX:USOIL"), QStringLiteral("CL=F"),  // WTI CFD stream
          QStringLiteral("US"), {1, 2, 5, 10}, 78.0},
+
+        // --- Crypto ---------------------------------------------------------
+        // eToro's own names are the bare tickers (BTC, ETH, SOL) — the local model tends to
+        // answer with the exchange pair (BTCUSDT, ETH-USD), which matchProposalSymbol now
+        // maps back. Leverage is {1, 2} because eToro caps retail crypto CFDs at x2, and the
+        // crypto correlation bucket + a 1% cost floor (see PaperTrader) reflect the rest of
+        // the real economics. Yahoo quotes crypto as BTC-USD; TradingView as the Coinbase
+        // spot pair.
+        {QStringLiteral("BTC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:BTCUSD"), QStringLiteral("BTC-USD"),
+         QStringLiteral("US"), {1, 2}, 68000.0},
+        {QStringLiteral("ETH"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ETHUSD"), QStringLiteral("ETH-USD"),
+         QStringLiteral("US"), {1, 2}, 2600.0},
+        {QStringLiteral("SOL"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:SOLUSD"), QStringLiteral("SOL-USD"),
+         QStringLiteral("US"), {1, 2}, 145.0},
     };
     return kCatalog;
 }

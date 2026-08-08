@@ -77,6 +77,16 @@ struct AiProposal {
 // proposal must mention exactly ONE known symbol, so a chatty "SPX500 composite"
 // still resolves while an ambiguous answer ("gold vs GoldMiners") or an unknown
 // instrument resolves to nothing — and nothing is what gets traded then.
+// The minimum spread (% of mid) the cost model should assume for an instrument, regardless
+// of what the feed reports. Non-zero only for crypto (eToro's ~1% round-trip cost); a floor,
+// so a wider real spread still wins. See the definition for why the bot must see it.
+[[nodiscard]] double minSpreadPctFor(const QString &symbol);
+
+// Whether an instrument trades on the weekend, so the weekday-only stop does not refuse it
+// then. True for crypto (BTC/ETH/SOL trade 24/7 at eToro); false for the equity indices and
+// everything else, which gap over a closed weekend.
+[[nodiscard]] bool tradesOnWeekend(const QString &symbol);
+
 [[nodiscard]] QString matchProposalSymbol(const QString &proposalSymbol,
                                           const QStringList &known);
 
@@ -241,7 +251,9 @@ struct BotConfig {
     // Restricting the universe removes both failure modes at once: the model can only pick
     // from the focus set, and the losers cannot be opened. An instrument outside it is
     // refused with `not-focus`.
-    QStringList focusSymbols{QStringLiteral("SPX500"), QStringLiteral("NSDQ100")};
+    QStringList focusSymbols{QStringLiteral("SPX500"), QStringLiteral("NSDQ100"),
+                             QStringLiteral("BTC"), QStringLiteral("ETH"),
+                             QStringLiteral("SOL")};
     // When the local model LEADS but abstains on a focus instrument (no answer, or it named
     // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
     // the volatility and yield reads, session phase: every signal the app computes without
@@ -439,7 +451,8 @@ struct HoldVerdict {
     QString why;
     QString code;            // "" | "ai-reversed" | "ai-close" | "ai-keep" | "ai-too-soon"
 };
-[[nodiscard]] DayGate paperDayGate(const BotDay &day, const QDateTime &now, const BotConfig &cfg);
+[[nodiscard]] DayGate paperDayGate(const BotDay &day, const QDateTime &now,
+                                  const BotConfig &cfg, bool tradesWeekend = false);
 
 // Why a simulated position closed. Recorded per trade: a strategy's exit mix is
 // the most informative part of the result (all stops = the geometry is too tight,

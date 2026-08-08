@@ -172,7 +172,7 @@ publish_release; refuses to publish on a red pipeline).
   that are about the risk budget, the margin cap or the cash rule set
   `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
   TS-PAPER-031 owns the ceiling itself.
-- CRYPTO (BTC/ETH/SOL) is tradable, with eToro's real constraints modelled. The local model
+- CRYPTO (BTC/ETH/SOL/XRP) is tradable, with eToro's real constraints modelled. The local model
   answers with exchange pairs (BTCUSDT, ETH-USD, SOLUSDT); `matchProposalSymbol` strips the
   fiat/quote suffix so they map to the bare eToro tickers — without it every crypto pick was
   "not tradable here". They are their OWN correlation bucket (`crypto`), capped at x2
@@ -182,7 +182,7 @@ publish_release; refuses to publish on a red pipeline).
   (`tradesOnWeekend`, crypto is 24/7) while indices stay stopped. Proposals are resolved
   against the whole catalog (`tradableSymbols()`), not just the scan's rows, so "not tradable
   here" means "not in the catalog" (e.g. XRP), never "not scored this cycle".
-- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100 + BTC/ETH/SOL):
+- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100 + BTC/ETH/SOL/XRP):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure
   modes that dominated it — the model spending its one answer on a peripheral name

@@ -253,7 +253,7 @@ struct BotConfig {
     // refused with `not-focus`.
     QStringList focusSymbols{QStringLiteral("SPX500"), QStringLiteral("NSDQ100"),
                              QStringLiteral("BTC"), QStringLiteral("ETH"),
-                             QStringLiteral("SOL")};
+                             QStringLiteral("SOL"), QStringLiteral("XRP")};
     // When the local model LEADS but abstains on a focus instrument (no answer, or it named
     // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
     // the volatility and yield reads, session phase: every signal the app computes without

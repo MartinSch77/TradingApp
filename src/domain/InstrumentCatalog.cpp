@@ -105,7 +105,7 @@ const QList<InstrumentSpec> &instrumentCatalog()
          QStringLiteral("US"), {1, 2, 5, 10}, 78.0},
 
         // --- Crypto ---------------------------------------------------------
-        // eToro's own names are the bare tickers (BTC, ETH, SOL) — the local model tends to
+        // eToro's own names are the bare tickers (BTC, ETH, SOL, XRP) — the local model tends to
         // answer with the exchange pair (BTCUSDT, ETH-USD), which matchProposalSymbol now
         // maps back. Leverage is {1, 2} because eToro caps retail crypto CFDs at x2, and the
         // crypto correlation bucket + a 1% cost floor (see PaperTrader) reflect the rest of
@@ -120,6 +120,9 @@ const QList<InstrumentSpec> &instrumentCatalog()
         {QStringLiteral("SOL"), QStringLiteral("Crypto"),
          QStringLiteral("COINBASE:SOLUSD"), QStringLiteral("SOL-USD"),
          QStringLiteral("US"), {1, 2}, 145.0},
+        {QStringLiteral("XRP"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:XRPUSD"), QStringLiteral("XRP-USD"),
+         QStringLiteral("US"), {1, 2}, 0.55},
     };
     return kCatalog;
 }

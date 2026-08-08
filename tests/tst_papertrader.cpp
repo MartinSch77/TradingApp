@@ -479,8 +479,11 @@ private slots:
         QCOMPARE(matchProposalSymbol(QStringLiteral("btcusd"), crypto), QStringLiteral("BTC"));
         // Only ONE suffix is stripped, so the bare ticker is untouched and still matches.
         QCOMPARE(matchProposalSymbol(QStringLiteral("ETH"), crypto), QStringLiteral("ETH"));
-        // XRPUSDT has no catalog base here -> nothing, which is correct (not tradable).
-        QVERIFY(matchProposalSymbol(QStringLiteral("XRPUSDT"), crypto).isEmpty());
+        // XRP is now listed, so its exchange pair maps too; a base with NO catalog entry
+        // (DOGE here) still resolves to nothing, which is correct.
+        const QStringList withXrp = {QStringLiteral("BTC"), QStringLiteral("XRP")};
+        QCOMPARE(matchProposalSymbol(QStringLiteral("XRPUSDT"), withXrp), QStringLiteral("XRP"));
+        QVERIFY(matchProposalSymbol(QStringLiteral("DOGEUSDT"), withXrp).isEmpty());
     }
 
     //! @tstid TS-PAPER-036 @design DES-DOM-PAPER
@@ -494,6 +497,7 @@ private slots:
         QCOMPARE(correlationGroup(QStringLiteral("BTC")), QStringLiteral("crypto"));
         QCOMPARE(correlationGroup(QStringLiteral("ETH")), QStringLiteral("crypto"));
         QCOMPARE(correlationGroup(QStringLiteral("SOL")), QStringLiteral("crypto"));
+        QCOMPARE(correlationGroup(QStringLiteral("XRP")), QStringLiteral("crypto"));
         // …distinct from the equity indices, so crypto risk does not hide inside the index bucket.
         QVERIFY(correlationGroup(QStringLiteral("SPX500")) != correlationGroup(QStringLiteral("BTC")));
 

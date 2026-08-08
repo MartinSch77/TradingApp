@@ -220,7 +220,8 @@ private:
         double ask = 0.0;
         double spreadPct = 0.0;
     };
-    [[nodiscard]] Sides sidesFor(const QString &symbol, qint64 instrumentId) const;
+    [[nodiscard]] Sides sidesFor(const QString &symbol, qint64 instrumentId,
+                                 const QList<double> &closes) const;
     void considerEntries(const QList<trading::DecisionRow> &rows, const QList<ScreenerRow> &scan);
     // One candidate, all the way from the AI gate to an opened simulated trade;
     // true = a trade was opened, and `skipCode` receives the countable reason when

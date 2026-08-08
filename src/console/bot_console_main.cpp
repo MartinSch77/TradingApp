@@ -196,6 +196,11 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
                  kIndexB, heavyMovesFor(kIndexB, snapshot), 10)) {
             line(row);
         }
+        // The one-line summarised constituent-lead: cap-weighted top-ten direction of each
+        // index, up or down together. The number and arrow come from the domain pulse.
+        line(trading::console::consoleConstituentLead(
+            trading::heavyweightPulse(kIndexA, snapshot).leadIndicator(),
+            trading::heavyweightPulse(kIndexB, snapshot).leadIndicator()));
         line(QString());
 
         line(QStringLiteral("  OPEN"));

@@ -9,6 +9,8 @@
 
 #include "domain/PaperTrader.h"
 
+#include "domain/InstrumentCatalog.h"
+
 #include <QtTest/QtTest>
 
 #include <numeric>
@@ -521,6 +523,41 @@ private slots:
         weekdayOnly.tradeWeekdaysOnly = true;
         QCOMPARE(paperDayGate(day, sat, weekdayOnly, /*tradesWeekend=*/false), DayGate::Weekend);
         QCOMPARE(paperDayGate(day, sat, weekdayOnly, /*tradesWeekend=*/true), DayGate::Open);
+    }
+
+    //! @tstid TS-PAPER-037 @design DES-DOM-PAPER
+    // @relation(REQ-F-030, REQ-F-031, scope=function)
+    //
+    // The wider crypto set the user added (AVAX, DOGE, DOT, LINK, SAND, TRX, BCH, LTC, BNB):
+    // each resolves from the model's exchange-pair spelling against the REAL catalog, inherits
+    // the crypto economics (own bucket, x2 cap, 1% cost floor, 24/7), and is in the DEFAULT
+    // focus set — or the bot would refuse it `not-focus` and never trade it. One assertion per
+    // property so a regression names exactly which coin and which rule broke.
+    void TS_PAPER_037_theWiderCryptoSetMapsAndInheritsCryptoEconomics()
+    {
+        const QStringList catalog = trading::tradableSymbols();
+        const BotConfig defaults;
+        // The model's spelling -> the eToro bare ticker (USDT/USD stripped by matchProposalSymbol).
+        const QList<QPair<QString, QString>> cases = {
+            {QStringLiteral("AVAXUSDT"), QStringLiteral("AVAX")},
+            {QStringLiteral("DOGEUSDT"), QStringLiteral("DOGE")},
+            {QStringLiteral("DOTUSDT"), QStringLiteral("DOT")},
+            {QStringLiteral("LINKUSDT"), QStringLiteral("LINK")},
+            {QStringLiteral("SANDUSDT"), QStringLiteral("SAND")},
+            {QStringLiteral("TRXUSDT"), QStringLiteral("TRX")},
+            {QStringLiteral("BCHUSDT"), QStringLiteral("BCH")},
+            {QStringLiteral("LTCUSD"), QStringLiteral("LTC")},
+            {QStringLiteral("BNBUSDT"), QStringLiteral("BNB")}};
+        for (const auto &[spelled, bare] : cases) {
+            QCOMPARE(matchProposalSymbol(spelled, catalog), bare);   // resolves against the catalog
+            QVERIFY2(catalog.contains(bare), qPrintable(bare));
+            QVERIFY2(defaults.focusSymbols.contains(bare), qPrintable(bare));   // in the focus set
+            QCOMPARE(correlationGroup(bare), QStringLiteral("crypto"));         // own bucket
+            QCOMPARE(minSpreadPctFor(bare), 1.0);                              // 1% cost floor
+            QVERIFY2(tradesOnWeekend(bare), qPrintable(bare));                  // 24/7
+        }
+        // The bucket cap is eToro's retail crypto ceiling for the whole set.
+        QCOMPARE(groupLeverageCap(QStringLiteral("crypto")), 2);
     }
 
     //! @tstid TS-PAPER-011 @design DES-DOM-PAPER

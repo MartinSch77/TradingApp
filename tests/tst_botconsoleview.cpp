@@ -216,6 +216,29 @@ private slots:
         QVERIFY(std::any_of(rows.cbegin(), rows.cend(),
                             [](const QString &l) { return l.contains(QStringLiteral("AAPL")); }));
     }
+
+    //! @tstid TS-CON-006 @design DES-CON-BOT
+    // @relation(REQ-F-029, REQ-F-035, scope=function)
+    //
+    // The summarised constituent-lead line lays the two indices' indicators out on ONE row,
+    // labelled, with the left padded to a fixed column so the right does not shift. The wording
+    // of each side is produced by the domain (HeavyweightPulse::leadIndicator); this only
+    // arranges the two given strings.
+    void TS_CON_006_theConstituentLeadIsOneLabelledLine()
+    {
+        const QString left = QStringLiteral("S&P 500 top-10 ▲ +0.42% (8/10 up)");
+        const QString right = QStringLiteral("Nasdaq-100 top-10 ▼ -0.19% (4/10 up)");
+        const QString line = trading::console::consoleConstituentLead(left, right, 40);
+
+        // One line, labelled, with the left indicator before the right.
+        QVERIFY(line.contains(QStringLiteral("Top-10 lead")));
+        QVERIFY(line.contains(left));
+        QVERIFY(line.contains(right));
+        QVERIFY(line.indexOf(left) < line.indexOf(right));
+        // The left is padded to the fixed column, so the right starts at least leftWidth past
+        // the left's start — the alignment guarantee, independent of the left's own length.
+        QVERIFY(line.indexOf(right) - line.indexOf(left) >= 40);
+    }
 };
 
 QTEST_MAIN(TestBotConsoleView)

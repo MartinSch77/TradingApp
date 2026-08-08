@@ -329,6 +329,16 @@ BotSimRunner::Mark BotSimRunner::markFor(const PaperTrade &trade) const
     // No per-tick quote yet: the last bulk snapshot's mid is better than not
     // marking at all, but it is not a live mark and the window says so.
     mark.rate = m_client->lastRateFor(trade.instrumentId);
+    if (mark.rate <= 0.0) {
+        // Crypto has no warm eToro rate here, so an open crypto position would otherwise
+        // never mark or exit off price. Fall back to its 1-minute candle close from the scan
+        // sweep (m_symbolSeries, keyed by app symbol) — the same source its entry was priced
+        // from. Deliberately still not a live mark (candle-derived, fromCandle semantics).
+        const QList<double> series = m_symbolSeries.value(trade.symbol);
+        if (!series.isEmpty() && (series.constLast() > 0.0)) {
+            mark.rate = series.constLast();
+        }
+    }
     mark.live = false;
     return mark;
 }
@@ -463,7 +473,8 @@ void BotSimRunner::closeTrade(const PaperTrade &trade, CloseReason reason)
     syncQuoteInterest();
 }
 
-BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrumentId) const
+BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrumentId,
+                                          const QList<double> &closes) const
 {
     Sides sides;
     if (m_client == nullptr) {
@@ -481,7 +492,16 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     // Most instruments have no per-tick quote (nothing is held in them), but the
     // tradeability poll keeps a mid AND a spread warm for every resolved one — so
     // widen the mid by that spread rather than pretending the fill is at the mid.
-    const double mid = m_client->lastRateFor(instrumentId);
+    double mid = m_client->lastRateFor(instrumentId);
+    // CRYPTO (and anything else the eToro id/rate path does not warm here) has no such mid:
+    // it never resolves a non-zero instrumentId in this build, so lastRateFor is 0. Fall back
+    // to the scan's own 1-minute candle close — which equals the eToro bid to the cent (see the
+    // candle-vs-rate note) — so a priced-and-tradable instrument is not refused `no-live-quote`
+    // purely for lacking an eToro rate row. Still widened by the effective spread, which for
+    // crypto is already the modelled 1% floor, so the fill is never at the untouched mid.
+    if ((mid <= 0.0) && !closes.isEmpty() && (closes.constLast() > 0.0)) {
+        mid = closes.constLast();
+    }
     if ((mid <= 0.0) || (sides.spreadPct <= 0.0)) {
         return sides;
     }
@@ -574,7 +594,7 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
                                                   const QDateTime &now) const
 {
     const qint64 id = m_client->instrumentIdFor(row.symbol);
-    const Sides sides = sidesFor(row.symbol, id);
+    const Sides sides = sidesFor(row.symbol, id, closes);
     trading::CandidateInput in;
     in.symbol = row.symbol;
     in.instrumentId = id;
@@ -635,7 +655,12 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     in.leadMeasured = signal.measured;
     in.leadUnknowns = signal.unknowns;
     in.opensLastHour = opensInLastHour(now);
-    in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol);
+    // A 24/7 instrument (crypto) is never "market closed", and the eToro tradeability set does
+    // not cover it here — so it would be wrongly excluded by the membership test. Its market is
+    // always open; whether it can actually be PRICED is still gated by sides.ok below, so this
+    // never opens a crypto trade for which there is no candle.
+    in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol)
+                    || trading::tradesOnWeekend(row.symbol);
     in.quoteLive = sides.ok && in.marketOpen;
     // What the fee table says holding it will cost — the entry prices the round
     // trip, not just the spread (REQ-F-032).

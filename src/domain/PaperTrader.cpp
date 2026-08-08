@@ -773,11 +773,11 @@ QString matchProposalSymbol(const QString &proposalSymbol, const QStringList &kn
         return {};
     }
     // Crypto NORMALISATION. The local model answers with the exchange pair it was trained on —
-    // BTCUSDT, ETH-USD, SOLUSDT, XRPUSDT — while eToro (and this catalog) name crypto by the
-    // bare ticker: BTC, ETH, SOL. Without this the model's crypto picks were all "not tradable
-    // here", which is exactly the live failure reported. Strip a trailing fiat/quote suffix so
-    // the base can match; an unlisted base (XRP has no catalog entry) simply finds nothing,
-    // which is correct.
+    // BTCUSDT, ETH-USD, SOLUSDT, BNBUSDT, LTCUSD — while eToro (and this catalog) name crypto by
+    // the bare ticker: BTC, ETH, SOL, BNB, LTC. Without this the model's crypto picks were all
+    // "not tradable here", which is exactly the live failure reported. Strip a trailing
+    // fiat/quote suffix so the base can match; a base with no catalog entry simply finds
+    // nothing, which is correct — "not tradable here" then means "not a catalog instrument".
     for (const QString &suffix : {QStringLiteral("-PERP"), QStringLiteral("PERP"),
                                   QStringLiteral("-USDT"), QStringLiteral("USDT"),
                                   QStringLiteral("-USDC"), QStringLiteral("USDC"),

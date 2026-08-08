@@ -200,19 +200,21 @@ QList<AiDecision> picksFromArray(const QJsonArray &arr)
 // {"picks":{"BTC":{…},"ETH":{…<cut>}} thus recovers the COMPLETE BTC pick, key and all, and
 // drops the incomplete ETH one — far better than discarding the whole answer. Returns empty
 // when not even one container closed (nothing to salvage).
-QByteArray repairTruncatedJson(const QString &text)
+// The last position in a JSON fragment at which a container closed CLEANLY, plus the
+// containers still open there — everything needed to trim a truncated answer back to a
+// valid prefix and re-balance it.
+struct SafeCut {
+    qsizetype len = -1;         // length of the cleanly-closed prefix, or -1 if none
+    QList<QChar> openStack;     // the containers still open at that cut, outermost first
+};
+
+// Scan a JSON fragment, tracking string/escape state so brackets inside strings do not
+// count, and record the LAST clean close and the open stack at that point. Split out of
+// repairTruncatedJson so neither function carries the whole state machine's complexity.
+SafeCut scanToSafeCut(const QString &s)
 {
-    const qsizetype start = text.indexOf(QLatin1Char('{'));
-    const qsizetype startArr = text.indexOf(QLatin1Char('['));
-    const qsizetype from =
-        (startArr >= 0 && (start < 0 || startArr < start)) ? startArr : start;
-    if (from < 0) {
-        return {};
-    }
-    const QString s = text.mid(from);
+    SafeCut cut;
     QList<QChar> stack;
-    QList<QChar> safeStack;
-    qsizetype safeLen = -1;
     bool inStr = false;
     bool esc = false;
     for (qsizetype i = 0; i < s.size(); ++i) {
@@ -235,16 +237,31 @@ QByteArray repairTruncatedJson(const QString &text)
             if (!stack.isEmpty()) {
                 stack.removeLast();
             }
-            safeLen = i + 1;      // a container just closed cleanly here
-            safeStack = stack;    // …with these still open
+            cut.len = i + 1;          // a container just closed cleanly here
+            cut.openStack = stack;    // …with these still open
         }
     }
-    if (safeLen < 0) {
+    return cut;
+}
+
+QByteArray repairTruncatedJson(const QString &text)
+{
+    const qsizetype start = text.indexOf(QLatin1Char('{'));
+    const qsizetype startArr = text.indexOf(QLatin1Char('['));
+    const qsizetype from =
+        (startArr >= 0 && (start < 0 || startArr < start)) ? startArr : start;
+    if (from < 0) {
+        return {};
+    }
+    const QString s = text.mid(from);
+    const SafeCut cut = scanToSafeCut(s);
+    if (cut.len < 0) {
         return {};                // nothing completed — no picks to recover
     }
-    QString repaired = s.left(safeLen);
-    for (qsizetype i = safeStack.size() - 1; i >= 0; --i) {
-        repaired += (safeStack.at(i) == QLatin1Char('{')) ? QLatin1Char('}') : QLatin1Char(']');
+    QString repaired = s.left(cut.len);
+    for (qsizetype i = cut.openStack.size() - 1; i >= 0; --i) {
+        repaired +=
+            (cut.openStack.at(i) == QLatin1Char('{')) ? QLatin1Char('}') : QLatin1Char(']');
     }
     return repaired.toUtf8();
 }

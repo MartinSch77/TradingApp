@@ -39,17 +39,22 @@ Resolve these **before** cleaning:
 ## Phase 1 — clean
 
 ```bash
-./clean_all.sh
+./clean_all.sh --deep
 ```
 
-Do **not** pass `--deep` unless the user asks. `--deep` also removes
-`.axivion-cache/` and `.fslckout`, which forces Axivion to re-analyse from
-scratch and **loses the local finding history** — that history is what produces
-the delta in the Axivion PDF.
+`--deep` is the standing choice for this pipeline (set 2026-08-08 on the user's
+instruction). Beyond the generated build/analysis trees, it also removes
+`.axivion-cache/` and `.fslckout`, so **Axivion re-analyses from scratch** — the
+run takes ~1 h instead of the incremental few minutes, and the Axivion PDF shows
+totals rather than a delta against the previous local run. That trade is accepted
+deliberately: a release build starts from a guaranteed-pristine tree, with no
+stale cache able to mask a finding. (If a release ever needs the Axivion *delta*
+specifically, drop `--deep` for that one run and say so in the release note.)
 
 Verify the trees are gone (`build`, `build-cov-*`, `build-san*`, `build_axivion`,
-`analysis-results`, `test-results`, `downloads`). `clean_all.sh` is the only
-thing that should delete them; do not hand-remove others.
+`analysis-results`, `test-results`, `downloads`) **and** that `.axivion-cache/`
+and `.fslckout` are gone. `clean_all.sh` is the only thing that should delete
+them; do not hand-remove others.
 
 ## Phase 2 — build everything
 

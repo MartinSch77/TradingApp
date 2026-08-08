@@ -1335,6 +1335,11 @@ void MainWindow::pushToCockpit()
     // disagree about whether a card shows a number or an em dash.
     model->setCards(trading::ui::referenceCards(m_referenceSeries, m_intradayBySymbol));
 
+    // The 13-week closed history and the economic calendar — the same books the closed-trades
+    // window and the event row already hold, surfaced in the cockpit too (REQ-F-038).
+    model->setClosedHistory(m_closedTrades, 13);
+    model->setEvents(m_eventList);
+
     // The probability stays UNCALIBRATED until the ledger has the samples. Passing the real
     // counts rather than a placeholder is the point: the view reports the shortfall.
     model->setCalibration(0, trading::kMinSamplesPerBucket, 0.0);

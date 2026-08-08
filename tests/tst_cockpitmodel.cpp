@@ -504,6 +504,101 @@ private slots:
             QCOMPARE(card.freshness, Freshness::Absent);
         }
     }
+
+    //! @tstid TS-COCKPIT-012 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, scope=function)
+    //
+    // The 13-week closed history the user asked to see: net kept, count, win rate and fees,
+    // BOUNDED to the window so an old book cannot inflate it, and dropping trades with no
+    // valid close time rather than dating them to the epoch.
+    void TS_COCKPIT_012_theClosedHistoryIsBoundedToItsWindow()
+    {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const auto daysAgo = [now](int d) {
+            return QDateTime::fromMSecsSinceEpoch(now - qint64(d) * 24 * 3600 * 1000);
+        };
+
+        ClosedTrade recentWin;
+        recentWin.symbol = QStringLiteral("SPX500");
+        recentWin.isBuy = true;
+        recentWin.netProfit = 120.0;
+        recentWin.fees = 5.0;
+        recentWin.closeTime = daysAgo(3);
+
+        ClosedTrade recentLoss = recentWin;
+        recentLoss.symbol = QStringLiteral("NSDQ100");
+        recentLoss.netProfit = -40.0;
+        recentLoss.closeTime = daysAgo(10);
+
+        ClosedTrade tooOld = recentWin;         // 200 days ago — outside 13 weeks
+        tooOld.netProfit = 9999.0;
+        tooOld.closeTime = daysAgo(200);
+
+        ClosedTrade noDate = recentWin;         // no close time — not dated into the window
+        noDate.netProfit = 5555.0;
+        noDate.closeTime = QDateTime();
+
+        const QList<ClosedTrade> all{recentWin, recentLoss, tooOld, noDate};
+        const QString text = closedHistoryText(all, now, 13);
+        // Only the two in-window trades count: net 120 - 40 = +80, 2 trades, 50% win.
+        QVERIFY(text.contains(QStringLiteral("+80.00")));
+        QVERIFY(text.contains(QStringLiteral("2 trades")));
+        QVERIFY(text.contains(QStringLiteral("50")));
+        // The old 9999 and the undated 5555 are excluded.
+        QVERIFY(!text.contains(QStringLiteral("9999")));
+        QVERIFY(!text.contains(QStringLiteral("5555")));
+
+        const QVariantList rows = closedHistoryRows(all, now, 13, 8);
+        QCOMPARE(rows.size(), qsizetype(2));
+        // Newest first: the 3-days-ago SPX500 win above the 10-days-ago NSDQ100 loss.
+        QCOMPARE(rows.at(0).toMap().value(QStringLiteral("symbol")).toString(),
+                 QStringLiteral("SPX500"));
+        QVERIFY(rows.at(0).toMap().value(QStringLiteral("net")).toString().startsWith(u'+'));
+        QCOMPARE(rows.at(1).toMap().value(QStringLiteral("dir")).toInt(), 1);
+
+        // An empty book says so rather than reporting a fake zero.
+        QVERIFY(closedHistoryText({}, now, 13).contains(QStringLiteral("no closed trades")));
+    }
+
+    //! @tstid TS-COCKPIT-013 @design DES-UI-COCKPIT
+    // @relation(REQ-F-038, REQ-F-034, scope=function)
+    //
+    // The economic calendar shows what is AHEAD, soonest first, with impact as text and a
+    // high-impact flag as a second channel — these are the releases the bot sits out.
+    void TS_COCKPIT_013_theCalendarShowsUpcomingEventsSoonestFirst()
+    {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const auto inHours = [now](double h) {
+            return QDateTime::fromMSecsSinceEpoch(now + qint64(h * 3600 * 1000));
+        };
+
+        EconomicEvent past;
+        past.when = inHours(-2);                // already happened — dropped
+        past.title = QStringLiteral("Old CPI");
+        past.impact = QStringLiteral("High");
+
+        EconomicEvent soon;
+        soon.when = inHours(1);
+        soon.title = QStringLiteral("FOMC Statement");
+        soon.country = QStringLiteral("USD");
+        soon.impact = QStringLiteral("High");
+
+        EconomicEvent later;
+        later.when = inHours(30);
+        later.title = QStringLiteral("Jobless Claims");
+        later.impact = QStringLiteral("Medium");
+
+        const QVariantList rows = calendarRows({later, past, soon}, now, 6);
+        QCOMPARE(rows.size(), qsizetype(2));    // the past one is gone
+        // Soonest first: FOMC (1h) before Jobless Claims (30h).
+        QCOMPARE(rows.at(0).toMap().value(QStringLiteral("title")).toString(),
+                 QStringLiteral("FOMC Statement"));
+        // High impact carries a flag as well as the word, so it is not colour-only.
+        QCOMPARE(rows.at(0).toMap().value(QStringLiteral("high")).toBool(), true);
+        QCOMPARE(rows.at(1).toMap().value(QStringLiteral("high")).toBool(), false);
+        QVERIFY(rows.at(0).toMap().value(QStringLiteral("impact")).toString()
+                    == QStringLiteral("High"));
+    }
 };
 
 QTEST_MAIN(TestCockpitModel)

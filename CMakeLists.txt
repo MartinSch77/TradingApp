@@ -250,6 +250,8 @@ set_source_files_properties(src/quick/qml/TradeTicket.qml
     PROPERTIES QT_RESOURCE_ALIAS TradeTicket.qml)
 set_source_files_properties(src/quick/qml/OpenPositions.qml
     PROPERTIES QT_RESOURCE_ALIAS OpenPositions.qml)
+set_source_files_properties(src/quick/qml/HistoryCalendar.qml
+    PROPERTIES QT_RESOURCE_ALIAS HistoryCalendar.qml)
 # QT_QML_SINGLETON_TYPE is REQUIRED as well as the file's own `pragma Singleton`: CMake does
 # not parse the QML, so without this the generated qmldir says "Theme 1.0 Theme.qml" instead
 # of "singleton Theme 1.0 Theme.qml". The failure is quiet and misleading — every Theme.*
@@ -286,6 +288,7 @@ qt_add_qml_module(trading_cockpit
         src/quick/qml/CockpitWindow.qml
         src/quick/qml/TradeTicket.qml
         src/quick/qml/OpenPositions.qml
+        src/quick/qml/HistoryCalendar.qml
         src/quick/qml/Theme.qml
 )
 

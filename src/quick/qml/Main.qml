@@ -203,5 +203,13 @@ Rectangle {
                 }
             }
         }
+
+        // The record and the road ahead: the 13-week closed history and the economic
+        // calendar, side by side beneath the live view. Read-only evidence — neither trades.
+        HistoryCalendar {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 150
+            cockpit: root.cockpit
+        }
     }
 }

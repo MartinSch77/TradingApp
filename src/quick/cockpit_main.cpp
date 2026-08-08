@@ -43,6 +43,7 @@
 #include "domain/LeadSignal.h"
 #include "domain/PredictionLedger.h"
 #include "services/Config.h"
+#include "services/EconomicCalendar.h"
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
 #include "ui/CockpitModel.h"
@@ -301,9 +302,10 @@ int main(int argc, char *argv[])
     // The two SERIES sweeps are separate calls — MainWindow drives them from its own timers —
     // so this front end has to drive them too, and on its own timer, or the cockpit would sit
     // permanently at "no bars" while every other panel filled in.
-    const auto sweepSeries = [&feeds] {
+    const auto sweepSeries = [&feeds, &client] {
         feeds.fetchIntradaySeries();
         feeds.fetchReferenceSeries();
+        client.fetchClosedTrades(13);   // the 13-week history, refreshed with the sweep
     };
     auto *seriesTimer = new QTimer(&app);
     QObject::connect(seriesTimer, &QTimer::timeout, &app, sweepSeries);

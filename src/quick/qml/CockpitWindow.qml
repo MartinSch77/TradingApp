@@ -15,7 +15,7 @@ Window {
     required property var cockpit
 
     width: 1280
-    height: 760
+    height: 900
     visible: true
     color: Theme.surface
     title: qsTr("TradingApp — market cockpit (Qt Quick · Qt Graphs)")

@@ -16,7 +16,7 @@ CockpitPanel::CockpitPanel(QWidget *parent)
     // Tall enough for the whole evidence column — ticket, the nine-read meter AND the open
     // book. At 700 the book was squeezed to nothing, and an open-trades panel you cannot see
     // is the one panel that must never be missing.
-    resize(1180, 860);
+    resize(1180, 980);
 
     m_view->setObjectName(QStringLiteral("cockpitView"));
     m_view->setResizeMode(QQuickWidget::SizeRootObjectToView);

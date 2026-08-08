@@ -4,6 +4,8 @@
 #include "ui/CockpitModel.h"
 
 #include <QDateTime>
+
+#include <algorithm>
 #include <QVariantMap>
 
 namespace trading::ui {
@@ -460,6 +462,114 @@ void CockpitModel::cancelArm()
 {
     m_gate = trading::ConfirmGate{};
     m_ticketPrompt.clear();
+    Q_EMIT changed();
+}
+
+QString closedHistoryText(const QList<ClosedTrade> &closed, qint64 nowMs, qint32 weeks)
+{
+    const qint64 cutoff = nowMs - (static_cast<qint64>(weeks) * 7 * 24 * 3600 * 1000);
+    double net = 0.0;
+    double fees = 0.0;
+    qint32 count = 0;
+    qint32 wins = 0;
+    for (const ClosedTrade &c : closed) {
+        // A trade with no valid close time is not dated into the window — the same
+        // absent-is-not-zero discipline the rest of the cockpit follows.
+        if (!c.closeTime.isValid() || (c.closeTime.toMSecsSinceEpoch() < cutoff)) {
+            continue;
+        }
+        net += c.netProfit;
+        fees += c.fees;
+        ++count;
+        if (c.netProfit > 0.0) {
+            ++wins;
+        }
+    }
+    if (count == 0) {
+        return QObject::tr("%1-week history: no closed trades yet").arg(weeks);
+    }
+    const double winRate = (100.0 * wins) / count;
+    return QObject::tr("%1-week net %2%3 EUR · %4 trades · %5%% win · %6 EUR fees")
+        .arg(weeks)
+        .arg(net >= 0.0 ? QStringLiteral("+") : QString())
+        .arg(net, 0, 'f', 2)
+        .arg(count)
+        .arg(winRate, 0, 'f', 0)
+        .arg(fees, 0, 'f', 2);
+}
+
+QVariantList closedHistoryRows(const QList<ClosedTrade> &closed, qint64 nowMs, qint32 weeks,
+                               qint32 limit)
+{
+    const qint64 cutoff = nowMs - (static_cast<qint64>(weeks) * 7 * 24 * 3600 * 1000);
+    QList<ClosedTrade> rows;
+    for (const ClosedTrade &c : closed) {
+        if (c.closeTime.isValid() && (c.closeTime.toMSecsSinceEpoch() >= cutoff)) {
+            rows.append(c);
+        }
+    }
+    std::sort(rows.begin(), rows.end(), [](const ClosedTrade &a, const ClosedTrade &b) {
+        return a.closeTime > b.closeTime;   // newest first
+    });
+    QVariantList out;
+    const qsizetype shown = (limit > 0) ? std::min<qsizetype>(limit, rows.size()) : rows.size();
+    for (qsizetype i = 0; i < shown; ++i) {
+        const ClosedTrade &c = rows.at(i);
+        QVariantMap m;
+        m[QStringLiteral("symbol")] = c.symbol;
+        m[QStringLiteral("side")] = c.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL");
+        m[QStringLiteral("dir")] = c.isBuy ? 1 : -1;   // sign as its own channel, not colour
+        m[QStringLiteral("net")] = QStringLiteral("%1%2")
+                                       .arg(c.netProfit >= 0.0 ? QStringLiteral("+") : QString())
+                                       .arg(c.netProfit, 0, 'f', 2);
+        m[QStringLiteral("closed")] = c.closeTime.toLocalTime().toString(
+            QStringLiteral("MM-dd HH:mm"));
+        out.append(m);
+    }
+    return out;
+}
+
+QVariantList calendarRows(const QList<EconomicEvent> &events, qint64 nowMs, qint32 limit)
+{
+    QList<EconomicEvent> upcoming;
+    for (const EconomicEvent &e : events) {
+        // UPCOMING only: the calendar is about what is ahead of the bot, not a log.
+        if (e.when.isValid() && (e.when.toMSecsSinceEpoch() >= nowMs)) {
+            upcoming.append(e);
+        }
+    }
+    std::sort(upcoming.begin(), upcoming.end(),
+              [](const EconomicEvent &a, const EconomicEvent &b) { return a.when < b.when; });
+    QVariantList out;
+    const qsizetype shown =
+        (limit > 0) ? std::min<qsizetype>(limit, upcoming.size()) : upcoming.size();
+    for (qsizetype i = 0; i < shown; ++i) {
+        const EconomicEvent &e = upcoming.at(i);
+        QVariantMap m;
+        m[QStringLiteral("when")] = e.when.toLocalTime().toString(QStringLiteral("MM-dd HH:mm"));
+        m[QStringLiteral("title")] = e.title;
+        m[QStringLiteral("country")] = e.country;
+        m[QStringLiteral("impact")] = e.impact;   // text, so High is not colour-only
+        // A high-impact release is the one the bot SITS OUT (REQ-F-034), so it is worth a
+        // second visible channel: a marker the QML can show beside the word.
+        m[QStringLiteral("high")] = (e.impact.compare(QStringLiteral("High"),
+                                                      Qt::CaseInsensitive) == 0);
+        out.append(m);
+    }
+    return out;
+}
+
+void CockpitModel::setClosedHistory(const QList<ClosedTrade> &closed, qint32 weeks)
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_closedHistory = closedHistoryText(closed, now, weeks);
+    m_closedRows = closedHistoryRows(closed, now, weeks, 8);
+    Q_EMIT changed();
+}
+
+void CockpitModel::setEvents(const QList<EconomicEvent> &events)
+{
+    m_events = calendarRows(events, QDateTime::currentMSecsSinceEpoch(), 6);
     Q_EMIT changed();
 }
 

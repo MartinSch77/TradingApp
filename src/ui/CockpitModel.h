@@ -7,6 +7,7 @@
 #include "domain/Candles.h"
 #include "domain/ConfirmGate.h"
 #include "domain/IndexConfluence.h"
+#include "domain/Models.h"
 #include "domain/LeadSignal.h"
 
 #include <QHash>
@@ -148,6 +149,24 @@ struct TicketState {
 [[nodiscard]] QString ticketBlockedReason(bool hasCredentials, bool marketOpen, double amount,
                                           double minAmount, double maxAmount);
 
+// The last-N-weeks closed-trade summary the user asked to see in the cockpit — the same
+// question the Widgets closed-trades window answers, as one line: net kept, trade count, win
+// rate and the fees paid to get it. Pure and tested; `nowMs`/`weeks` bound the window so a
+// year-old book does not inflate a "last 13 weeks" figure.
+[[nodiscard]] QString closedHistoryText(const QList<ClosedTrade> &closed, qint64 nowMs,
+                                        qint32 weeks);
+
+// The recent closed trades as rows for the cockpit, newest first, within the same window.
+// Net carries its sign; an absent close time drops the row rather than dating it to the epoch.
+[[nodiscard]] QVariantList closedHistoryRows(const QList<ClosedTrade> &closed, qint64 nowMs,
+                                             qint32 weeks, qint32 limit);
+
+// The UPCOMING economic events, soonest first — the releases that move the indices the bot
+// watches. Past events are dropped (the calendar is about what is ahead), and impact travels
+// as text so a High-impact release is not distinguished by colour alone.
+[[nodiscard]] QVariantList calendarRows(const QList<EconomicEvent> &events, qint64 nowMs,
+                                        qint32 limit);
+
 // The view-model the QML binds to. Assembly only — every rule lives in the functions above.
 class CockpitModel : public QObject
 {
@@ -173,6 +192,9 @@ class CockpitModel : public QObject
     Q_PROPERTY(int leverage READ leverage NOTIFY changed)
     Q_PROPERTY(QVariantList positions READ positions NOTIFY changed)
     Q_PROPERTY(QStringList instruments READ instruments NOTIFY changed)
+    Q_PROPERTY(QString closedHistory READ closedHistory NOTIFY changed)
+    Q_PROPERTY(QVariantList closedRows READ closedRows NOTIFY changed)
+    Q_PROPERTY(QVariantList events READ events NOTIFY changed)
     Q_PROPERTY(double stopLoss READ stopLoss NOTIFY changed)
     Q_PROPERTY(double takeProfit READ takeProfit NOTIFY changed)
 
@@ -216,6 +238,11 @@ public:
                    double takeProfit = 0.0);
     // The instruments that can be selected, and which one is shown.
     void setInstruments(const QStringList &symbols);
+    // The closed-trade history over `weeks` (the user's 13-week view) and the economic
+    // calendar. Both read-only evidence, both fed by the host from the services it already
+    // drives.
+    void setClosedHistory(const QList<ClosedTrade> &closed, qint32 weeks);
+    void setEvents(const QList<EconomicEvent> &events);
     // The open book. Already filtered by the host — a position the broker has confirmed
     // closed must not be here, for the same reason it leaves the Widgets table at once.
     void setPositions(const QList<Position> &positions, double markPrice);
@@ -229,6 +256,9 @@ public:
     [[nodiscard]] QStringList instruments() const { return m_instruments; }
     [[nodiscard]] double stopLoss() const { return m_stopLoss; }
     [[nodiscard]] double takeProfit() const { return m_takeProfit; }
+    [[nodiscard]] QString closedHistory() const { return m_closedHistory; }
+    [[nodiscard]] QVariantList closedRows() const { return m_closedRows; }
+    [[nodiscard]] QVariantList events() const { return m_events; }
 
     // Switching instrument DISARMS, for the same reason editing the amount does: the order
     // that was confirmed is not the order that would now be sent.
@@ -290,6 +320,12 @@ private:
     QStringList m_instruments;
     double m_stopLoss = 0.0;      // 0 = no stop leg
     double m_takeProfit = 0.0;    // 0 = no target leg
+    QString m_closedHistory;
+    QVariantList m_closedRows;
+    QVariantList m_events;
+    // The lookback for the closed-trade summary; 13 weeks is the window the user asked for
+    // and the Widgets closed-trades view already offers.
+    static constexpr qint32 kHistoryWeeks = 13;
 
     // How many candles are drawn. 120 across a ~940-pixel plot leaves each body about five
     // pixels wide, which is where the hollow interior becomes visible inside its one-pixel

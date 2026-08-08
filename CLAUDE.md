@@ -144,7 +144,12 @@ publish_release; refuses to publish on a red pipeline).
   simulation without costs measures nothing. Those costs also DECIDE exits: close
   when the remaining upside no longer covers rollover-to-horizon + exit spread, and
   before the tripled weekend charge unless the position has earned it (a credit
-  never closes; unknown fees keep both rules silent). `TRADINGAPP_BOT_ARM=1` arms it at
+  never closes; unknown fees keep both rules silent). An ACTIVE keep from the model
+  (`ExitContext::aiBacksHold`, config `aiMayOverrideCarry`, default on) waives BOTH carry
+  closes so a conviction trade may ride overnight/over the weekend — but ONLY those two: the
+  stop/target barrier is checked first and never waived, the rollover is still CHARGED every
+  mark (hold through the rent, not escape it), and SILENCE never triggers it (the safe
+  default is to close before an unearned weekend charge — the mirror of silence-never-closes). `TRADINGAPP_BOT_ARM=1` arms it at
   startup for unattended runs, and the armed flag + AI mode are PERSISTED (an
   experiment that stops silently on restart looks like a working bot finding
   nothing). How many trades it holds is governed by the PORTFOLIO RISK BUDGET

@@ -250,6 +250,12 @@ struct BotConfig {
     // the whole time. The model still LEADS when it speaks; the composite leads when it does
     // not. Off restores strict lead (a proposal or nothing).
     bool aiLeadFallbackToComposite = true;
+    // Whether an ACTIVE keep from the model may override the automatic carry closes (the
+    // costs-beat-edge and unearned-weekend-charge rules), letting a conviction position ride
+    // overnight or over the weekend. On by default (the user's choice); the fees are still
+    // charged, and the stop still protects the downside. Off restores strict carry
+    // discipline — the bot closes anything that cannot out-earn its own rent.
+    bool aiMayOverrideCarry = true;
     // For those: the expected move per HOUR at the chosen leverage, as a percentage of
     // the stake, must reach this…
     double reluctantMinHourlyMovePct = 1.0;
@@ -841,6 +847,15 @@ struct ExitContext {
     InstrumentFees fees;     // per-unit per-night rollover (negative = a credit)
     bool feesKnown = false;
     double eurPerUsd = 0.0;  // 0 = unknown; the fee then stays in its own currency
+    // The local model currently, ACTIVELY wants this position kept (HoldOpinion::Hold), not
+    // merely silent about it. When true — and the config permits it — the carry exits are
+    // waived so a conviction trade may ride overnight or over the weekend (REQ-F-032). It
+    // overrides only the CARRY rules: the stop/target barrier is checked first and is never
+    // waived, and the rollover is still CHARGED — the AI can hold through the rent, not
+    // escape it. Silence never sets this: the safe default is to close before an unearned
+    // weekend charge, the same asymmetry as "silence must never close" in the other
+    // direction.
+    bool aiBacksHold = false;
 };
 
 // What is still to be won if the take-profit is reached, in EUR: notional × the

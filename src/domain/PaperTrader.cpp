@@ -1457,6 +1457,15 @@ CloseReason carryExit(const PaperTrade &trade, const ExitContext &ctx, const Bot
         return CloseReason::None;  // no target left to price the carry against
     }
 
+    // The model may KEEP a conviction position through carry it has not yet earned. This
+    // overrides ONLY the two economic carry closes below — the stop/target barrier was
+    // already checked (and never waived), and the rollover is still charged on every tick, so
+    // this lets the AI hold through the rent rather than escape it. Off by config, or when the
+    // model is merely silent (ctx.aiBacksHold is set only for an ACTIVE keep).
+    if (cfg.aiMayOverrideCarry && ctx.aiBacksHold) {
+        return CloseReason::None;
+    }
+
     // 1. Carry beats the edge: what is left to win, against what the rest of the
     //    intended holding time will cost (rollover nights + the exit spread). A
     //    trade that cannot out-earn its own rent is closed now rather than paid for

@@ -383,6 +383,11 @@ void BotSimRunner::markAndExit()
         ctx.fees = fees;
         ctx.feesKnown = fees.isValid();
         ctx.eurPerUsd = m_eurPerUsd;
+        // An ACTIVE keep from the model (not silence) lets a conviction trade ride through
+        // carry it has not earned — see ExitContext::aiBacksHold. The stop still protects it
+        // and the rollover is still charged.
+        ctx.aiBacksHold =
+            (m_holdOpinions.value(trade.id).opinion == trading::HoldOpinion::Hold);
         CloseReason reason = trading::paperCloseDecision(trade, ctx, m_book.config());
         if (reason == CloseReason::None) {
             reason = aiExitFor(trade);

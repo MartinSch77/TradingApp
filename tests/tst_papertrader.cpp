@@ -815,6 +815,39 @@ private slots:
         QCOMPARE(closeReasonWord(CloseReason::CostsExceedEdge),
                  QStringLiteral("carry beats the edge"));
         QCOMPARE(closeReasonWord(CloseReason::WeekendCarry), QStringLiteral("weekend carry"));
+
+        // THE AI CARRY OVERRIDE (REQ-F-032): an ACTIVE keep from the model lets a conviction
+        // position ride through carry it has not earned — but never through a stop, and only
+        // while the config permits it, and never on mere silence.
+        //
+        // Expensive carry that would otherwise close as CostsExceedEdge:
+        trading::ExitContext aiCtx = ctx;   // `dear` fees, still set on ctx above
+        aiCtx.fees = dear;
+        aiCtx.feesKnown = true;
+        QCOMPARE(paperCloseDecision(t, aiCtx, cfg), CloseReason::CostsExceedEdge);
+        aiCtx.aiBacksHold = true;           // the model actively wants it kept
+        QCOMPARE(paperCloseDecision(t, aiCtx, cfg), CloseReason::None);  // rides the carry
+
+        // The unearned WEEKEND charge, likewise waived by an active keep.
+        trading::ExitContext aiWknd = wknd;
+        aiWknd.fees = modest;
+        f.markRate = 5000.0;                // flat: has not earned the 45 EUR charge
+        f.openCost = 0.0;
+        QCOMPARE(paperCloseDecision(f, aiWknd, cfg), CloseReason::WeekendCarry);
+        aiWknd.aiBacksHold = true;
+        QCOMPARE(paperCloseDecision(f, aiWknd, cfg), CloseReason::None);
+
+        // The STOP is never overridden: the barrier is checked before the carry rules, so an
+        // AI-backed position that has hit its stop is still closed. The AI can hold through
+        // the rent, not through a loss.
+        trading::ExitContext aiHit = aiWknd;
+        aiHit.markRate = 4900.0;
+        QCOMPARE(paperCloseDecision(f, aiHit, cfg), CloseReason::StopLoss);
+
+        // Config OFF restores strict carry discipline even with the model backing it.
+        BotConfig strictCarry = cfg;
+        strictCarry.aiMayOverrideCarry = false;
+        QCOMPARE(paperCloseDecision(t, aiCtx, strictCarry), CloseReason::CostsExceedEdge);
     }
 
     //! @tstid TS-PAPER-014 @design DES-DOM-PAPER

@@ -515,7 +515,7 @@ private slots:
         // an equity index is still stopped then.
         QVERIFY(tradesOnWeekend(QStringLiteral("BTC")));
         QVERIFY(!tradesOnWeekend(QStringLiteral("SPX500")));
-        BotDay day;
+        const BotDay day;
         const QDateTime sat(QDate(2026, 8, 8), QTime(12, 0), QTimeZone::UTC);  // a Saturday
         BotConfig weekdayOnly;
         weekdayOnly.tradeWeekdaysOnly = true;

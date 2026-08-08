@@ -104,11 +104,10 @@ QStringList consoleHeavyBarsSideBySide(const QString &labelA, const QList<HeavyM
     // place on every row, however many bars each side has. Visible width, not QString::size:
     // the bar glyphs and box-drawing characters are one cell each (all single BMP code
     // points), so size() is the cell count here.
-    qsizetype leftWidth = 0;
-    for (const QString &l : left) {
-        leftWidth = std::max(leftWidth, l.size());
-    }
-    leftWidth += 4;   // a gutter between the two columns
+    const qsizetype leftWidth =
+        std::accumulate(left.cbegin(), left.cend(), qsizetype{0},
+                        [](qsizetype w, const QString &l) { return std::max(w, l.size()); })
+        + 4;   // + a gutter between the two columns
 
     QStringList out;
     const qsizetype rows = std::max(left.size(), right.size());

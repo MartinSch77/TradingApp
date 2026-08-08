@@ -142,6 +142,13 @@ struct AiSource {
 // Only applies in Lead; other modes keep the sized value. 0/absent = no request.
 [[nodiscard]] qint32 paperLeverageWithAi(qint32 sized, qint32 asked, BotAiMode mode);
 
+// The bot's default focus universe: the two headline indices plus EVERY crypto in the catalog
+// (group "Crypto"). Deriving the crypto side from the catalog rather than hand-listing each
+// ticker is the "map completely" pattern — a coin added to the catalog is automatically traded
+// and reachable through the ollama USDT->bare mapping, with no second edit. Non-crypto
+// peripherals (OIL, USDOLLAR, forex, thematic baskets) deliberately stay OUT of focus.
+[[nodiscard]] QStringList defaultFocusSymbols();
+
 // How bold the bot is. The defaults are deliberately aggressive (REQ-F-029 asks
 // for courage): a low confidence floor and a stake fraction that puts real
 // weight behind each call, because the experiment is about measuring many
@@ -251,14 +258,10 @@ struct BotConfig {
     // Restricting the universe removes both failure modes at once: the model can only pick
     // from the focus set, and the losers cannot be opened. An instrument outside it is
     // refused with `not-focus`.
-    QStringList focusSymbols{QStringLiteral("SPX500"), QStringLiteral("NSDQ100"),
-                             QStringLiteral("BTC"), QStringLiteral("ETH"),
-                             QStringLiteral("SOL"), QStringLiteral("XRP"),
-                             QStringLiteral("AVAX"), QStringLiteral("DOGE"),
-                             QStringLiteral("DOT"), QStringLiteral("LINK"),
-                             QStringLiteral("SAND"), QStringLiteral("TRX"),
-                             QStringLiteral("BCH"), QStringLiteral("LTC"),
-                             QStringLiteral("BNB")};
+    // Two indices + every catalog crypto, derived once (defaultFocusSymbols) so adding a coin
+    // to the catalog needs no second edit here. Empty = the whole catalog (kept for the tests
+    // that measure the risk rules in isolation).
+    QStringList focusSymbols = defaultFocusSymbols();
     // When the local model LEADS but abstains on a focus instrument (no answer, or it named
     // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
     // the volatility and yield reads, session phase: every signal the app computes without

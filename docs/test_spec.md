@@ -301,6 +301,12 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-PM-005 | U | The panel totals sum the columns AS SHOWN: invested adds the per-row Amount figures with their rounding (4000 + 1001 at 0.5 → 2000 + 501 = €2501, not €2500.50), and the P/L total sums the P/L column — snapshot figures while rows have no quote, live marks once they do, mixed totals flagged not-live until every row is marked. |
 | TS-PM-004 | U | The SL/TP cells state what the leg is worth, so their tooltip names the instrument rate that triggers it: "triggers when EURUSD trades at 1.1300", its distance from the open rate (0.0073 below 1.1373) and — once a quote exists — from the rate the trade closes at now (0.0100 below the bid 1.1400), plus the cell's own amount. A trailing stop says so; a leg that is off reads "No take-profit on this trade" instead of a trigger at zero. |
 
+## Lead gauge (tests/tst_leadgauge.cpp, DES-UI-LEADGAUGE, REQ-F-035) — headless ui-geometry unit test
+
+| ID | L | Case |
+|----|---|------|
+| TS-GAUGE-001 | U | The diverging-bar gauge's only numeric claim — the bar geometry `leadGaugeBar` — is signed, proportional and clamped: `>= 0` reaches right (up) and `< 0` left (down) with zero counted up; half of full-scale is half the track and a +1 %/−1 % pair reach equally far (magnitude, side separate); a move beyond full-scale clamps to the track end rather than overrunning the widget; a flat field is a zero-length bar; and degenerate inputs (zero full-scale or zero track) never divide by zero or draw off the track. |
+
 ## Event insight (tests/tst_eventinsight.cpp, DES-DOM-EVT, REQ-F-020)
 
 | ID | L | Case |

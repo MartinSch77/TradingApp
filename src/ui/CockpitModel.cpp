@@ -3,7 +3,10 @@
 
 #include "ui/CockpitModel.h"
 
+#include "domain/InstrumentCatalog.h"
+
 #include <QDateTime>
+#include <QTimer>
 
 #include <algorithm>
 #include <QVariantMap>
@@ -252,7 +255,7 @@ QVariantMap candleToVariant(const trading::Candle &candle)
     return out;
 }
 
-CockpitModel::CockpitModel(QObject *parent) : QObject(parent)
+CockpitModel::CockpitModel(QObject *parent) : QObject(parent), m_armTimer(new QTimer(this))
 {
     setCandles({});   // start in the stated "no bars yet" state rather than at a blank axis
     // The blocked sentence comes from the same function that computes it later, so a
@@ -260,6 +263,31 @@ CockpitModel::CockpitModel(QObject *parent) : QObject(parent)
     // same state. The defaults are the safe ones: no account, market shut.
     m_ticketBlocked =
         ticketBlockedReason(m_hasCredentials, m_marketOpen, m_amount, m_minAmount, m_maxAmount);
+
+    // The armed flash clears itself once the confirm window passes with no second press: after
+    // it, a further press only RE-ARMS (never commits), so a lingering "armed" border would
+    // look actionable when it is not — and is exactly why a manual Disarm control is redundant.
+    // Escape and any ticket edit still disarm immediately; this only handles the do-nothing case.
+    m_armTimer->setSingleShot(true);
+    connect(m_armTimer, &QTimer::timeout, this, [this] {
+        if (!m_gate.action.isEmpty()) {
+            m_gate = trading::ConfirmGate{};
+            m_ticketPrompt.clear();
+            Q_EMIT changed();
+        }
+    });
+}
+
+void CockpitModel::syncArmTimer()
+{
+    if (m_armTimer == nullptr) {
+        return;
+    }
+    if (m_gate.action.isEmpty()) {
+        m_armTimer->stop();
+    } else {
+        m_armTimer->start(trading::kConfirmWindowMs);
+    }
 }
 
 void CockpitModel::setCandles(const QList<trading::Candle> &candles)
@@ -319,6 +347,7 @@ void CockpitModel::setSignal(const QString &instrument, const trading::LeadSigna
                              const trading::IndexReads &reads)
 {
     m_instrument = instrument;
+    m_openingHours = trading::marketHoursText(instrument);   // exchange hours for the header
     // `read` rather than `ticks`: a local named `ticks` shadows the ticks() accessor, which
     // cppcheck reports as shadowFunction — the same finding a local named `net` produced in
     // PaperTrader. Harmless here, but the gate is zero and the rename costs nothing.
@@ -437,6 +466,7 @@ void CockpitModel::press(bool buy)
         m_gate, action, QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
     m_gate = decision.next;
     m_ticketPrompt = decision.prompt;
+    syncArmTimer();
     Q_EMIT changed();
     if (decision.commit) {
         Q_EMIT placeRequested(buy, m_amount, m_leverage, m_stopLoss, m_takeProfit);
@@ -452,6 +482,7 @@ void CockpitModel::pressClose(const QString &positionId)
         m_gate, action, QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
     m_gate = decision.next;
     m_ticketPrompt = decision.prompt;
+    syncArmTimer();
     Q_EMIT changed();
     if (decision.commit) {
         Q_EMIT closeRequested(positionId);
@@ -462,6 +493,7 @@ void CockpitModel::cancelArm()
 {
     m_gate = trading::ConfirmGate{};
     m_ticketPrompt.clear();
+    syncArmTimer();
     Q_EMIT changed();
 }
 

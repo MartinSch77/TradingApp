@@ -721,6 +721,20 @@ qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
     return pick;
 }
 
+QStringList defaultFocusSymbols()
+{
+    // The two headline indices, then every crypto in the catalog (group "Crypto"). Deriving the
+    // crypto side keeps focus in step with the catalog automatically: one catalog row makes a
+    // coin both mappable (ollama USDT->bare) and tradable, with no second edit here.
+    QStringList out{QStringLiteral("SPX500"), QStringLiteral("NSDQ100")};
+    for (const InstrumentSpec &spec : instrumentCatalog()) {
+        if (spec.group == QStringLiteral("Crypto")) {
+            out.append(spec.symbol);
+        }
+    }
+    return out;
+}
+
 bool tradesOnWeekend(const QString &symbol)
 {
     const InstrumentSpec *spec = instrumentSpec(symbol);
@@ -768,34 +782,46 @@ double minSpreadPctFor(const QString &symbol)
 
 QString matchProposalSymbol(const QString &proposalSymbol, const QStringList &known)
 {
-    QString wanted = proposalSymbol.trimmed();
+    const QString wanted = proposalSymbol.trimmed();
     if (wanted.isEmpty()) {
         return {};
     }
+    const auto matches = [&known](const QString &text) {
+        return std::find_if(known.cbegin(), known.cend(), [&text](const QString &symbol) {
+            return symbol.compare(text, Qt::CaseInsensitive) == 0;
+        });
+    };
+    // EXACT match FIRST, before any stripping — otherwise a catalog instrument whose own name
+    // ends in one of the crypto quote suffixes is broken by the strip below: EURUSD would be
+    // chopped to "EUR" and never resolve to itself. The strip is for the model's crypto PAIRS,
+    // not for real instrument names that happen to end the same way.
+    if (const auto hit = matches(wanted); hit != known.cend()) {
+        return *hit;
+    }
     // Crypto NORMALISATION. The local model answers with the exchange pair it was trained on —
     // BTCUSDT, ETH-USD, SOLUSDT, BNBUSDT, LTCUSD — while eToro (and this catalog) name crypto by
-    // the bare ticker: BTC, ETH, SOL, BNB, LTC. Without this the model's crypto picks were all
-    // "not tradable here", which is exactly the live failure reported. Strip a trailing
-    // fiat/quote suffix so the base can match; a base with no catalog entry simply finds
-    // nothing, which is correct — "not tradable here" then means "not a catalog instrument".
+    // the bare ticker: BTC, ETH, SOL, BNB, LTC. Strip ONE trailing fiat/quote suffix and try the
+    // bare base; a base with no catalog entry simply finds nothing, which is correct — "not
+    // tradable here" then means "not a catalog instrument".
+    QString base = wanted;
     for (const QString &suffix : {QStringLiteral("-PERP"), QStringLiteral("PERP"),
                                   QStringLiteral("-USDT"), QStringLiteral("USDT"),
                                   QStringLiteral("-USDC"), QStringLiteral("USDC"),
                                   QStringLiteral("-USD"), QStringLiteral("USD")}) {
-        if ((wanted.size() > suffix.size()) && wanted.endsWith(suffix, Qt::CaseInsensitive)) {
-            wanted.chop(suffix.size());
+        if ((base.size() > suffix.size()) && base.endsWith(suffix, Qt::CaseInsensitive)) {
+            base.chop(suffix.size());
             break;   // strip ONE suffix (BTCUSDT -> BTC, not BTC -> B)
         }
     }
-    const auto exact = std::find_if(known.cbegin(), known.cend(), [&wanted](const QString &symbol) {
-        return symbol.compare(wanted, Qt::CaseInsensitive) == 0;
-    });
-    if (exact != known.cend()) {
-        return *exact;  // the model spelled it exactly, or it did after crypto normalisation
+    if (base != wanted) {
+        if (const auto hit = matches(base); hit != known.cend()) {
+            return *hit;   // resolved after crypto normalisation
+        }
     }
-    // Chatty answers ("SPX500 composite", "buy GER40 now") still resolve — but only
-    // while exactly ONE instrument is named. Two candidates in one answer is an
-    // ambiguous instruction, and an ambiguous instruction must not open a trade.
+    // Chatty answers ("SPX500 composite", "buy GER40 now") still resolve — but only while
+    // exactly ONE instrument is named. Two candidates in one answer is an ambiguous
+    // instruction, and an ambiguous instruction must not open a trade. Matched on the ORIGINAL
+    // text so "buy BTCUSDT now" still finds BTC through the substring.
     QString single;
     for (const QString &symbol : known) {
         if (!wanted.contains(symbol, Qt::CaseInsensitive)) {

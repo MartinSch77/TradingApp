@@ -83,6 +83,10 @@ tradingapp_add_test(tst_positionsmodel tst_positionsmodel.cpp
     ../src/ui/PositionsModel.cpp ../src/ui/PositionsModel.h)
 target_link_libraries(tst_positionsmodel PRIVATE Qt6::Widgets)
 
+tradingapp_add_test(tst_leadgauge tst_leadgauge.cpp
+    ../src/ui/LeadGauge.cpp ../src/ui/LeadGauge.h)
+target_link_libraries(tst_leadgauge PRIVATE Qt6::Widgets)
+
 # --- the declarative cockpit's data, tested WITHOUT rendering (REQ-F-038) -----
 # Same reason as above: the ui layer is not a library, so the view-model is compiled
 # directly. Deliberately NO Quick/QuickWidgets dependency — the whole design point is

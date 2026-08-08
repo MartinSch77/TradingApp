@@ -486,6 +486,17 @@ private slots:
         const QStringList withXrp = {QStringLiteral("BTC"), QStringLiteral("XRP")};
         QCOMPARE(matchProposalSymbol(QStringLiteral("XRPUSDT"), withXrp), QStringLiteral("XRP"));
         QVERIFY(matchProposalSymbol(QStringLiteral("DOGEUSDT"), withXrp).isEmpty());
+
+        // REGRESSION (mapping audit): a catalog instrument whose OWN name ends in a quote suffix
+        // must resolve to ITSELF, not be chopped by the crypto strip. EURUSD ends in "USD"; with
+        // the strip running before the exact match it became "EUR" and matched nothing. Exact
+        // match now runs FIRST. A real crypto pair (BTCUSD -> BTC) still strips, and bare "EUR"
+        // is not a catalog instrument so it correctly finds nothing rather than EURUSD.
+        const QStringList withForex = {QStringLiteral("EURUSD"), QStringLiteral("BTC")};
+        QCOMPARE(matchProposalSymbol(QStringLiteral("EURUSD"), withForex),
+                 QStringLiteral("EURUSD"));
+        QCOMPARE(matchProposalSymbol(QStringLiteral("BTCUSD"), withForex), QStringLiteral("BTC"));
+        QVERIFY(matchProposalSymbol(QStringLiteral("EUR"), withForex).isEmpty());
     }
 
     //! @tstid TS-PAPER-036 @design DES-DOM-PAPER
@@ -547,7 +558,12 @@ private slots:
             {QStringLiteral("TRXUSDT"), QStringLiteral("TRX")},
             {QStringLiteral("BCHUSDT"), QStringLiteral("BCH")},
             {QStringLiteral("LTCUSD"), QStringLiteral("LTC")},
-            {QStringLiteral("BNBUSDT"), QStringLiteral("BNB")}};
+            {QStringLiteral("BNBUSDT"), QStringLiteral("BNB")},
+            {QStringLiteral("XLMUSDT"), QStringLiteral("XLM")},
+            {QStringLiteral("SUNUSDT"), QStringLiteral("SUN")},
+            {QStringLiteral("ADAUSDT"), QStringLiteral("ADA")},
+            {QStringLiteral("MATICUSDT"), QStringLiteral("MATIC")},
+            {QStringLiteral("EOSUSDT"), QStringLiteral("EOS")}};
         for (const auto &[spelled, bare] : cases) {
             QCOMPARE(matchProposalSymbol(spelled, catalog), bare);   // resolves against the catalog
             QVERIFY2(catalog.contains(bare), qPrintable(bare));

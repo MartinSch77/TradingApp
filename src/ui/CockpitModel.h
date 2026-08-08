@@ -15,6 +15,8 @@
 #include <QString>
 #include <QVariantList>
 
+class QTimer;
+
 // What the declarative cockpit shows, prepared in C++ so it can be TESTED (REQ-F-038).
 //
 // The QML is deliberately dumb: it binds to the properties below and computes nothing. That
@@ -177,6 +179,7 @@ class CockpitModel : public QObject
     Q_PROPERTY(QString evidence READ evidence NOTIFY changed)
     Q_PROPERTY(QString probability READ probability NOTIFY changed)
     Q_PROPERTY(QString instrument READ instrument NOTIFY changed)
+    Q_PROPERTY(QString openingHours READ openingHours NOTIFY changed)
     Q_PROPERTY(bool simulation READ simulation NOTIFY changed)
     // The price chart. `candleNote` is non-empty exactly when there is nothing to draw, so
     // the QML has one thing to test and cannot render an empty axis as a quiet market.
@@ -218,6 +221,8 @@ public:
     [[nodiscard]] QString evidence() const { return m_evidence; }
     [[nodiscard]] QString probability() const { return m_probability; }
     [[nodiscard]] QString instrument() const { return m_instrument; }
+    // The selected instrument's exchange opening hours, as a display line (crypto = 24/7).
+    [[nodiscard]] QString openingHours() const { return m_openingHours; }
     [[nodiscard]] bool simulation() const { return m_simulation; }
     [[nodiscard]] QVariantList candles() const { return m_candles; }
     [[nodiscard]] double candleMin() const { return m_candleMin; }
@@ -287,12 +292,17 @@ Q_SIGNALS:
     void closeRequested(const QString &positionId);
 
 private:
+    // Starts/stops the arm-expiry timer to match the gate: running while armed, stopped once
+    // the gate commits, cancels or clears. Kept in one place so press and pressClose agree.
+    void syncArmTimer();
+
     QVariantList m_cards;
     QVariantList m_ticks;
     QString m_agreement;
     QString m_evidence;
     QString m_probability;
     QString m_instrument;
+    QString m_openingHours;
     bool m_simulation = true;   // safe default: claim simulation until told otherwise
     QVariantList m_candles;
     double m_candleMin = 0.0;
@@ -305,6 +315,10 @@ private:
     // The REQ-N-005 gate, shared with the Widgets window through trading::confirmPress.
     trading::ConfirmGate m_gate;
     QString m_ticketPrompt;
+    // Clears the armed flash when the confirm window passes with no second press, so the
+    // armed state never LINGERS looking actionable (a further press would only re-arm). This
+    // is what makes a manual "disarm" control unnecessary.
+    QTimer *m_armTimer = nullptr;
     // Deliberately NOT given a literal default here. It is computed in the constructor by
     // ticketBlockedReason from the safe defaults below, so the sentence a blocked ticket
     // shows has exactly ONE source. A hand-written default was a second copy of that rule

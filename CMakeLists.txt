@@ -208,6 +208,8 @@ qt_add_executable(TradingApp
     src/ui/TradeScriptPanel.h
     src/ui/HeavyweightsPanel.cpp
     src/ui/HeavyweightsPanel.h
+    src/ui/LeadGauge.cpp
+    src/ui/LeadGauge.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
     src/ui/BotSimPanel.cpp

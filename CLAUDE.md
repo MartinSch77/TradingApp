@@ -172,10 +172,15 @@ publish_release; refuses to publish on a red pipeline).
   that are about the risk budget, the margin cap or the cash rule set
   `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
   TS-PAPER-031 owns the ceiling itself.
-- CRYPTO (BTC/ETH/SOL/XRP/AVAX/DOGE/DOT/LINK/SAND/TRX/BCH/LTC/BNB — 13 coins) is tradable, with
-  eToro's real constraints modelled. The local model answers with exchange pairs (BTCUSDT,
-  ETH-USD, SOLUSDT, LTCUSD); `matchProposalSymbol` strips the fiat/quote suffix so they map to
-  the bare eToro tickers — without it every crypto pick was "not tradable here". Every crypto
+- CRYPTO is tradable — a CATALOG-DRIVEN set (BTC/ETH/SOL/XRP + ~24 more, `cryptoInstruments()` in
+  InstrumentCatalog; grow it with one row per coin). The "map completely" pattern: eToro names crypto
+  by the BARE ticker, the model answers with the pair (`^.*USDT$` etc.), `matchProposalSymbol` strips
+  ONE quote suffix, and the bare ticker matches the catalog. Focus AUTO-DERIVES every catalog crypto
+  (`defaultFocusSymbols` = SPX500 + NSDQ100 + all group=="Crypto"), so a coin added to the catalog is
+  mappable AND traded with no second edit. Pricing still needs a Yahoo `<ticker>-USD` feed, so a coin
+  with no such feed resolves by name but shows "no prices" and is safely refused. A trailing
+  quote suffix is stripped exact-match FIRST (so a real instrument ending in USD — EURUSD — is
+  never chopped to EUR; the mapping audit found and fixed that). Every crypto
   economic keys off the catalog `group == "Crypto"`, so a new coin inherits all of them from its
   catalog entry alone: their OWN correlation bucket (`crypto`), capped at x2 (`groupLeverageCap`,
   eToro's retail crypto ceiling; catalog ladder {1,2}), a ~1% round trip modelled as a spread
@@ -194,7 +199,7 @@ publish_release; refuses to publish on a red pipeline).
   1% floor). `candidateFor` also treats a 24/7 instrument as `marketOpen` (`tradesOnWeekend`),
   since the eToro tradeable set does not cover it — but `sides.ok` still gates, so a crypto with
   no candle is still honestly refused. A candle-derived mark is NOT flagged live (fromCandle).
-- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100 + all 13 crypto):
+- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default `defaultFocusSymbols()` = SPX500 + NSDQ100 + every catalog crypto):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure
   modes that dominated it — the model spending its one answer on a peripheral name

@@ -56,12 +56,15 @@
 #include <QTimer>
 
 #include <functional>
+#include <memory>
 
 namespace {
 
-// How the feeds are refreshed. The cockpit is a monitoring surface rather than an execution
-// one, so this is deliberately the slow cadence — the reference sweep is nineteen tickers.
-constexpr qint32 kRefreshMs = 30000;
+// How often the series sweep runs. The confluence recomputes from the reference series, so it
+// is only ever as live as this sweep — tightened from 30 s to 15 s so the meter feels real-time
+// (Issue 5) while still being gentle on the nineteen-ticker reference fetch. Fast price ticks
+// (quotesUpdated) also re-push between sweeps, so cards and marks move on every quote.
+constexpr qint32 kRefreshMs = 15000;
 
 // Everything the cockpit shows, assembled from the feeds as they arrive.
 //
@@ -146,20 +149,20 @@ void connectFeeds(const MarketFeeds &feeds, QObject *ctx, Books &books,
 // references is an argument-order defect waiting to happen. The same answer ReadInputs and
 // OrderContext give elsewhere in this codebase.
 struct Session {
-    EtoroClient &client;
-    trading::ui::CockpitModel &model;
-    Books &books;
-    QString symbol;
-    const Config &config;
+    EtoroClient *client;
+    trading::ui::CockpitModel *model;
+    Books *books;
+    std::shared_ptr<QString> symbol;   // SHARED with main's currentSymbol — see the note there
+    const Config *config;
 };
 
 void connectTrading(Session &session, QObject *ctx)
 {
-    EtoroClient &client = session.client;
-    trading::ui::CockpitModel &model = session.model;
-    Books &books = session.books;
-    const QString symbol = session.symbol;
-    const Config &config = session.config;
+    EtoroClient &client = *session.client;
+    trading::ui::CockpitModel &model = *session.model;
+    Books &books = *session.books;
+    const std::shared_ptr<QString> symbol = session.symbol;   // the shared current instrument
+    const Config &config = *session.config;
     // The ticket's own preconditions, refreshed as the account answers. `marketOpen` comes
     // from the broker's tradeability poll rather than from a clock: this application has
     // already measured that an instrument's own exchange hours and its tradeability can
@@ -171,7 +174,7 @@ void connectTrading(Session &session, QObject *ctx)
     refreshTicketContext(false);   // shut until the broker says otherwise
     QObject::connect(&client, &EtoroClient::tradeabilityUpdated, ctx,
                      [refreshTicketContext, symbol](const QSet<QString> &tradeable) {
-                         refreshTicketContext(tradeable.contains(symbol));
+                         refreshTicketContext(tradeable.contains(*symbol));
                      });
 
     // AUTHORISED, not yet correct: the gate says a human asked for this twice, and the
@@ -187,9 +190,8 @@ void connectTrading(Session &session, QObject *ctx)
                          req.takeProfitAmount = takeProfit;
                          client.openPosition(req);
                      });
-    // Switching instrument re-points the broker and the feeds, then re-pushes.
-    QObject::connect(&model, &trading::ui::CockpitModel::instrumentRequested, ctx,
-                     [&client](const QString &next) { client.setSymbol(next); });
+    // The switch itself is wired in main(), where the shared symbol, the feeds and the calendar
+    // all are; here we only publish the choices the QML selector offers.
     model.setInstruments(trading::tradableSymbols());
     QObject::connect(&model, &trading::ui::CockpitModel::closeRequested, ctx,
                      [&client](const QString &positionId) {
@@ -201,9 +203,18 @@ void connectTrading(Session &session, QObject *ctx)
     // candle close matched the bid exactly.
     QObject::connect(&client, &EtoroClient::portfolioUpdated, ctx,
                      [&model, &books, symbol](const QList<Position> &positions) {
-                         const QList<trading::Candle> bars = books.candlesBySymbol.value(symbol);
+                         const QList<trading::Candle> bars =
+                             books.candlesBySymbol.value(*symbol);
                          const double mark = bars.isEmpty() ? 0.0 : bars.constLast().close;
                          model.setPositions(positions, mark);
+                     });
+
+    // (Issue 3) The 13-week closed history behind the cockpit's "Closed" panel. The sweep
+    // FETCHES it (fetchClosedTrades) but the result signal was never connected, so the panel
+    // stayed empty. Mirrors MainWindow::onClosedTrades -> setClosedHistory.
+    QObject::connect(&client, &EtoroClient::closedTradesReady, ctx,
+                     [&model](const QList<ClosedTrade> &closed) {
+                         model.setClosedHistory(closed, 13);
                      });
 }
 
@@ -241,6 +252,19 @@ void installShotHarness(QQmlApplicationEngine &engine, QObject *ctx)
 
 int main(int argc, char *argv[])
 {
+    // WSL has no usable GPU passthrough here, so Mesa's default Zink (OpenGL-on-Vulkan) path
+    // probes for a Vulkan device that does not exist, prints the libEGL / "ZINK: failed to
+    // choose pdev" warnings, and falls back to software rendering anyway. Force the software
+    // rasteriser up front on WSL so that fallback is CLEAN and silent; a machine with a real
+    // GPU is left untouched, and an explicit LIBGL_ALWAYS_SOFTWARE from the user always wins.
+    // This must run before the QGuiApplication constructor, which initialises the graphics
+    // stack — after it, the driver is already chosen.
+    if (qEnvironmentVariableIsSet("WSL_DISTRO_NAME")
+        && !qEnvironmentVariableIsSet("LIBGL_ALWAYS_SOFTWARE")) {
+        qputenv("LIBGL_ALWAYS_SOFTWARE", "1");
+        qputenv("GALLIUM_DRIVER", "llvmpipe");
+    }
+
     QGuiApplication app(argc, argv);
     // The SAME identity as the Widgets app (main.cpp), because Config::load and the bot
     // books resolve through QStandardPaths::AppConfigLocation, which is built from these — a
@@ -251,7 +275,11 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QStringLiteral(TRADINGAPP_VERSION));
 
     const Config config = Config::load();
-    const QString symbol = config.symbol;
+    // The current instrument, held in a SHARED cell so every feed handler, the trade wiring and
+    // the calendar observe a switch. It used to be a const copy captured by value into each
+    // lambda, which is exactly why selecting a new instrument changed nothing — every lambda
+    // kept rendering the original symbol. Updating *currentSymbol is now seen everywhere.
+    const auto currentSymbol = std::make_shared<QString>(config.symbol);
 
     trading::ui::CockpitModel model;
     Books books;
@@ -266,14 +294,42 @@ int main(int argc, char *argv[])
     // Every arrival re-pushes the whole picture rather than patching one field. The books are
     // small and the cost is nothing; a partial update that drifts out of step with the rest is
     // a cockpit showing two different moments at once.
-    const auto republish = [&books, &model, symbol, &config] {
-        push(books, symbol, &model, !config.hasCredentials());
+    const auto republish = [&books, &model, currentSymbol, &config] {
+        push(books, *currentSymbol, &model, !config.hasCredentials());
     };
 
     connectFeeds(feeds, &app, books, republish);
 
-    Session session{client, model, books, symbol, config};
+    Session session{&client, &model, &books, currentSymbol, &config};
     connectTrading(session, &app);
+
+    // (Issue 4) The economic calendar — constructed, scoped to the instrument, wired and
+    // started. The cockpit did NONE of this before (it #included the header but never made the
+    // object), so the calendar panel was permanently "none scheduled". Mirrors MainWindow.
+    EconomicCalendar calendar;
+    calendar.setInstrument(*currentSymbol);
+    QObject::connect(&calendar, &EconomicCalendar::eventsUpdated, &app,
+                     [&model](const QList<EconomicEvent> &events) { model.setEvents(events); });
+    calendar.start();
+
+    // (Issue 1) Switching instrument, in ONE place with everything it must re-point: the shared
+    // symbol, the broker, the feeds' current symbol, the calendar's instrument, and an
+    // immediate re-push so cards/chart/confluence/opening-hours repaint against the new symbol.
+    // Previously only client.setSymbol ran, so the display never moved off the first instrument.
+    QObject::connect(&model, &trading::ui::CockpitModel::instrumentRequested, &app,
+                     [&client, &feeds, &calendar, currentSymbol, republish](const QString &next) {
+                         *currentSymbol = next;
+                         client.setSymbol(next);
+                         feeds.setCurrentSymbol(next);
+                         calendar.setInstrument(next);
+                         republish();
+                     });
+
+    // (Issue 5) Confluence as live as the data allows: re-push on every fast price tick, not
+    // only on the series sweep, so the cards and marks move on each quote. The reads themselves
+    // recompute from the reference series, so the confluence is only ever as fresh as that
+    // sweep — which is why its cadence is tightened (kRefreshMs) rather than left at 30 s.
+    QObject::connect(&client, &EtoroClient::quotesUpdated, &app, republish);
 
     QQmlApplicationEngine engine;
     // setInitialProperties, not a context property: as a context property the model resolved
@@ -301,7 +357,7 @@ int main(int argc, char *argv[])
     // measuring less than the application it claims to mirror.
     feeds.setTradableSymbols(trading::tradableSymbols());
     client.setTradableSymbols(trading::tradableSymbols());
-    feeds.setCurrentSymbol(symbol);
+    feeds.setCurrentSymbol(*currentSymbol);
     feeds.start(kRefreshMs);
     // start() only kicks off the slow single-value feeds (VIX, sentiment, the web quote).
     // The two SERIES sweeps are separate calls — MainWindow drives them from its own timers —

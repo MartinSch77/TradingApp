@@ -178,20 +178,12 @@ Rectangle {
                 onClicked: ticket.cockpit.press(false)
             }
 
-            // "Cancel" alone, sitting beside BUY and SELL, reads as "cancel an order" —
-            // which this cannot do; the cockpit has no resting orders. It abandons the
-            // half-finished CONFIRMATION, and now says so.
-            Button {
-                objectName: "cockpitCancel"
-                text: qsTr("Disarm")
-                enabled: ticket.cockpit.ticketArmed
-                onClicked: ticket.cockpit.cancelArm()
-
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Abandon the pending confirmation. This does NOT cancel "
-                                 + "an order — nothing has been sent yet. The first press of "
-                                 + "BUY or SELL only arms; the second sends.")
-            }
+            // No "Disarm" button: sitting beside BUY and SELL it read as "cancel an ORDER" —
+            // which this cannot do (the cockpit has no resting orders) — and it was only ever
+            // needed because the armed state used to linger. It no longer does: the arming
+            // clears itself once the confirm window passes (CockpitModel's arm timer), Escape
+            // abandons it immediately (Keys.onEscapePressed below), and editing any field
+            // disarms too. So there is nothing left for a dedicated button to do.
         }
 
         // The prompt and the blocking reason, always visible. An arming nobody can see is

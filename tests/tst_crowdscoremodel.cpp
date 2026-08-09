@@ -35,7 +35,7 @@ private slots:
     void TS_CROWD_008_viewModelShapesTheResult()
     {
         CrowdScoreModel model;
-        QSignalSpy spy(&model, &CrowdScoreModel::changed);
+        const QSignalSpy spy(&model, &CrowdScoreModel::changed);
         QVERIFY(!model.hasData());
 
         const CrowdScoreConfig cfg;

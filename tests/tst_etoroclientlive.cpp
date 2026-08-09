@@ -754,11 +754,24 @@ private slots:
         //    deliberately old, frozen stamp must end up as not-tradable.
         QSignalSpy tradable(&client, &EtoroClient::tradeabilityUpdated);
         quoteStamp = QDateTime::currentDateTimeUtc().addSecs(qint64{-4} * 3600);
-        QTest::qWait(2500);
-        if (!tradable.isEmpty()) {
-            const auto openSet = tradable.last().at(0).value<QSet<QString>>();
-            QVERIFY(!openSet.contains(QStringLiteral("SPX500")));
-        }
+        // The inference runs on the client's own tick (sparingly, every ~60th), so the old
+        // fixed wait asserted on whatever straggler happened to arrive — nothing natively (a
+        // vacuous pass), a fail-open republication under valgrind (the measured flake).
+        // Trigger the check itself, then wait for ITS verdict: a stamp four hours old and
+        // not advancing is what "closed" looks like — whether this is the baseline poll (the
+        // age rule) or a later one (the not-advancing rule) — and scanning EVERY emission
+        // keeps the deliberately fail-open republisher from racing the assertion.
+        client.refreshTradeability();
+        const auto sawClosed = [&tradable]() {
+            for (qsizetype i = 0; i < tradable.count(); ++i) {
+                if (!tradable.at(i).at(0).value<QSet<QString>>().contains(
+                        QStringLiteral("SPX500"))) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(sawClosed(), kWaitMs);
     }
     //! @tstid TS-CLI-029 @design DES-SVC-CLIENT
     // @relation(REQ-N-003, scope=function)

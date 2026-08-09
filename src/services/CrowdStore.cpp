@@ -13,6 +13,8 @@
 #include <QUuid>
 #include <QVariant>
 
+#include <algorithm>
+
 using trading::crowd::CrowdScoreResult;
 using trading::crowd::Freshness;
 using trading::crowd::ScoreComponent;
@@ -190,14 +192,16 @@ bool CrowdStore::migrate()
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_scores_instrument_time"
                        " ON crowd_scores(instrument, computed_at)"),
     };
-    for (const QString &statement : statements) {
-        if (!query.exec(statement)) {
-            m_lastError = query.lastError().text();
-            return false;
-        }
+    const auto failed = std::find_if(statements.cbegin(), statements.cend(),
+                                     [&query](const QString &statement) {
+                                         return !query.exec(statement);
+                                     });
+    if (failed != statements.cend()) {
+        m_lastError = query.lastError().text();
+        return false;
     }
-    query.prepare(QStringLiteral(
-        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('crowd_schema_version', ?)"));
+    static_cast<void>(query.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('crowd_schema_version', ?)")));
     query.addBindValue(QString::number(kSchemaVersion));
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -217,13 +221,13 @@ qint32 CrowdStore::upsert(const QList<Observation> &observations)
         return 0;
     }
     QSqlDatabase db = QSqlDatabase::database(m_connectionName);
-    db.transaction();
+    static_cast<void>(db.transaction());
     QSqlQuery query(db);
-    query.prepare(QStringLiteral(
+    static_cast<void>(query.prepare(QStringLiteral(
         "INSERT OR IGNORE INTO observations"
         " (instrument, source, source_name, series_id, event_time, received_time,"
         "  value, unit, valid, quality, schema_version)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")));
     qint32 inserted = 0;
     for (const Observation &obs : observations) {
         if (!obs.valid) {
@@ -247,7 +251,7 @@ qint32 CrowdStore::upsert(const QList<Observation> &observations)
         // INSERT OR IGNORE affects 1 row when it inserted, 0 when the unique key already existed.
         inserted += (query.numRowsAffected() > 0) ? 1 : 0;
     }
-    db.commit();
+    static_cast<void>(db.commit());
     return inserted;
 }
 
@@ -267,7 +271,7 @@ QList<Observation> CrowdStore::observationsReceivedSince(const QString &instrume
         sql += QStringLiteral(" AND received_time >= ?");
     }
     sql += QStringLiteral(" ORDER BY received_time DESC");
-    query.prepare(sql);
+    static_cast<void>(query.prepare(sql));
     if (!instrument.isEmpty()) {
         query.addBindValue(instrument);
     }
@@ -289,10 +293,10 @@ Observation CrowdStore::latest(const QString &instrument, Source source,
         return {};
     }
     QSqlQuery query(QSqlDatabase::database(m_connectionName));
-    query.prepare(QStringLiteral("SELECT %1 FROM observations"
+    static_cast<void>(query.prepare(QStringLiteral("SELECT %1 FROM observations"
                                  " WHERE instrument = ? AND source = ? AND series_id = ?"
                                  " ORDER BY received_time DESC LIMIT 1")
-                      .arg(kColumns));
+                      .arg(kColumns)));
     query.addBindValue(instrument);
     query.addBindValue(sourceToString(source));
     query.addBindValue(seriesId);
@@ -323,9 +327,9 @@ QList<double> CrowdStore::seriesValuesBefore(const QString &instrument, Source s
         return out;
     }
     QSqlQuery query(QSqlDatabase::database(m_connectionName));
-    query.prepare(QStringLiteral("SELECT value FROM observations"
+    static_cast<void>(query.prepare(QStringLiteral("SELECT value FROM observations"
                                  " WHERE instrument = ? AND source = ? AND series_id = ?"
-                                 " AND received_time < ? ORDER BY received_time ASC"));
+                                 " AND received_time < ? ORDER BY received_time ASC")));
     query.addBindValue(instrument);
     query.addBindValue(sourceToString(source));
     query.addBindValue(seriesId);
@@ -345,10 +349,10 @@ bool CrowdStore::saveScore(const QString &instrument, const CrowdScoreResult &re
         return false;
     }
     QSqlQuery query(QSqlDatabase::database(m_connectionName));
-    query.prepare(QStringLiteral(
+    static_cast<void>(query.prepare(QStringLiteral(
         "INSERT OR IGNORE INTO crowd_scores"
         " (instrument, computed_at, score, direction, confidence, coverage, version,"
-        "  components_json, warnings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+        "  components_json, warnings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")));
     query.addBindValue(instrument);
     query.addBindValue(toUtcIso(computedAtUtc));
     query.addBindValue(result.score);
@@ -373,9 +377,9 @@ CrowdScoreResult CrowdStore::latestScore(const QString &instrument) const
         return out;
     }
     QSqlQuery query(QSqlDatabase::database(m_connectionName));
-    query.prepare(QStringLiteral(
+    static_cast<void>(query.prepare(QStringLiteral(
         "SELECT score, direction, confidence, coverage, version, components_json, warnings_json"
-        " FROM crowd_scores WHERE instrument = ? ORDER BY computed_at DESC LIMIT 1"));
+        " FROM crowd_scores WHERE instrument = ? ORDER BY computed_at DESC LIMIT 1")));
     query.addBindValue(instrument);
     if (query.exec() && query.next()) {
         out.score = query.value(0).toDouble();

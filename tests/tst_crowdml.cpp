@@ -7,6 +7,8 @@
 
 #include <QtTest/QtTest>
 
+#include <numeric>
+
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -246,10 +248,9 @@ private slots:
             const int valStart = val.first().toInt();
             QCOMPARE(valStart, previousValEnd + 1); // contiguous, ordered, non-overlapping
             previousValEnd = val.last().toInt();
-            int maxTrain = -1;
-            for (const auto &index : train) {
-                maxTrain = qMax(maxTrain, index.toInt());
-            }
+            const int maxTrain = std::accumulate(
+                train.begin(), train.end(), -1,
+                [](int acc, const QJsonValue &v) { return qMax(acc, v.toInt()); });
             // Purged: horizon 5 + embargo 2 rows fall between the last usable training row
             // and the block — on contiguous daily rows exactly 7 of them, every fold.
             QCOMPARE(maxTrain, valStart - 8);

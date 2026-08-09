@@ -6,6 +6,8 @@
 #include "services/CrowdStore.h"
 
 #include <QDir>
+
+#include <algorithm>
 #include <QFile>
 #include <QProcess>
 
@@ -157,12 +159,12 @@ QList<QHash<QString, QString>> readCsv(const QString &path)
 const QHash<QString, QString> *rowForDay(const QList<QHash<QString, QString>> &rows,
                                          const QString &day)
 {
-    for (const auto &row : rows) {
-        if (row.value(QStringLiteral("decision_time")).startsWith(day)) {
-            return &row;
-        }
-    }
-    return nullptr;
+    const auto it = std::find_if(rows.cbegin(), rows.cend(),
+                                 [&day](const QHash<QString, QString> &row) {
+                                     return row.value(QStringLiteral("decision_time"))
+                                         .startsWith(day);
+                                 });
+    return it == rows.cend() ? nullptr : &*it;
 }
 
 QByteArray fileBytes(const QString &path)

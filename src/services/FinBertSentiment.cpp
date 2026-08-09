@@ -11,7 +11,9 @@
 #ifdef TRADINGAPP_HAS_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
 
+#include <algorithm>
 #include <array>
+#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -186,9 +188,7 @@ HeadlineSentiment FinBertSentiment::scoreText(const QString &text)
     try {
         std::vector<int64_t> tokenIds;
         tokenIds.reserve(static_cast<size_t>(ids.size()));
-        for (const qint32 id : ids) {
-            tokenIds.push_back(id);
-        }
+        std::copy(ids.cbegin(), ids.cend(), std::back_inserter(tokenIds));
         std::vector<int64_t> ones(tokenIds.size(), 1);
         std::vector<int64_t> zeros(tokenIds.size(), 0);
         const std::array<int64_t, 2> shape{1, static_cast<int64_t>(tokenIds.size())};
@@ -218,19 +218,16 @@ HeadlineSentiment FinBertSentiment::scoreText(const QString &text)
             return out;
         }
         // Softmax over the logits row — probabilities the labels file gives meaning to.
-        auto maxLogit = static_cast<double>(row[0]);
-        for (const float v : row) {
-            maxLogit = std::max(maxLogit, static_cast<double>(v));
-        }
+        const auto maxLogit =
+            static_cast<double>(*std::max_element(row.begin(), row.end()));
         double sum = 0.0;
         for (const float v : row) {
             const double e = std::exp(static_cast<double>(v) - maxLogit);
             out.probabilities.append(e);
             sum += e;
         }
-        for (double &p : out.probabilities) {
-            p /= sum;
-        }
+        std::transform(out.probabilities.begin(), out.probabilities.end(),
+                       out.probabilities.begin(), [sum](double p) { return p / sum; });
         out.labels = m_labels;
         out.net = out.probabilities.at(m_positive) - out.probabilities.at(m_negative);
         out.ok = true;

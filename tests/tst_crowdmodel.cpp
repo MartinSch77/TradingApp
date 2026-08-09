@@ -7,6 +7,8 @@
 
 #include <QtTest/QtTest>
 
+#include <numeric>
+
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -187,10 +189,8 @@ private slots:
             }
             const CrowdPrediction prediction = model.predict(byName);
             QVERIFY2(prediction.ok, qPrintable(prediction.error));
-            double sum = 0.0;
-            for (const double p : prediction.probabilities) {
-                sum += p;
-            }
+            const double sum = std::accumulate(prediction.probabilities.cbegin(),
+                                               prediction.probabilities.cend(), 0.0);
             QVERIFY(qAbs(sum - 1.0) < 0.02);
             if (prediction.topClass == row.value(QStringLiteral("label"))) {
                 ++agreed;

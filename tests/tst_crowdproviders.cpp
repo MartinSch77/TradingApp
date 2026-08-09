@@ -19,6 +19,8 @@
 #include <QTimeZone>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using trading::crowd::CftcCotProvider;
 using trading::crowd::FredProvider;
 using trading::crowd::IgSentimentProvider;
@@ -323,11 +325,13 @@ private slots:
         got.clear();
         provider.refresh(QStringLiteral("SPX500"), now.addSecs(60));
         QTRY_COMPARE_WITH_TIMEOUT(got.size(), 1, kWaitMs);
-        qint32 logins = 0;
-        for (const MockHttpServer::Recorded &request : server.requests()) {
-            logins += (request.method == QByteArrayLiteral("POST")) ? 1 : 0;
-        }
-        QCOMPARE(logins, 1);
+        const auto &recorded = server.requests();
+        const auto logins =
+            std::count_if(recorded.cbegin(), recorded.cend(),
+                          [](const MockHttpServer::Recorded &request) {
+                              return request.method == QByteArrayLiteral("POST");
+                          });
+        QCOMPARE(logins, qsizetype(1));
         QCOMPARE(server.requests().size(), 3);
     }
 

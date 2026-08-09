@@ -53,7 +53,7 @@ private slots:
 
         // An invalid observation is Absent, and reports age -1 rather than a fabricated 0 —
         // absent is not zero.
-        Observation missing;
+        const Observation missing;
         QCOMPARE(missing.freshness(now, 7200), Freshness::Absent);
         QCOMPARE(missing.ageSeconds(now), qint64(-1));
 

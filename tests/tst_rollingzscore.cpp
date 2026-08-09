@@ -29,11 +29,11 @@ private slots:
         const QList<double> history = {2.0, 4.0, 6.0, 8.0};
         const auto atMean = zScore(5.0, history, 3);
         QVERIFY(atMean.has_value());
-        QVERIFY(qAbs(*atMean) < 1e-9);
+        QVERIFY(qAbs(atMean.value_or(999.0)) < 1e-9);
         // …and one population-stddev above is z +1.
         const auto oneUp = zScore(5.0 + std::sqrt(5.0), history, 3);
         QVERIFY(oneUp.has_value());
-        QVERIFY(qAbs(*oneUp - 1.0) < 1e-9);
+        QVERIFY(qAbs(oneUp.value_or(999.0) - 1.0) < 1e-9);
 
         // The rolling class scores each value against the window BEFORE it, and evicts beyond its
         // size — so a value never sees itself or anything later.

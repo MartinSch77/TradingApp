@@ -6,6 +6,8 @@
 #include <QRandomGenerator>
 #include <QTimeZone>
 
+#include <numeric>
+
 namespace trading::crowd {
 
 namespace {
@@ -17,11 +19,9 @@ namespace {
 // the deterministic-PRNG-for-reproducibility choice SonarCloud flags and this repo accepts.
 quint32 seedFor(const QString &instrument, const QDate &day)
 {
-    auto seed = static_cast<quint32>(day.toJulianDay());
-    for (const QChar ch : instrument) {
-        seed = (seed * 31U) + ch.unicode();
-    }
-    return seed;
+    return std::accumulate(instrument.cbegin(), instrument.cend(),
+                           static_cast<quint32>(day.toJulianDay()),
+                           [](quint32 seed, QChar ch) { return (seed * 31U) + ch.unicode(); });
 }
 
 } // namespace

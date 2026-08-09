@@ -52,7 +52,7 @@ CrowdCollector::CrowdCollector(const Config &cfg, const QString &storePath,
     ig->setCredentials(cfg.igApiKey, cfg.igIdentifier, cfg.igPassword);
     ig->setDemoAccount(cfg.igDemo);
     m_providers = {cot, fred, ig};
-    for (CrowdHttpProvider *provider : std::as_const(m_providers)) {
+    for (const CrowdHttpProvider *provider : std::as_const(m_providers)) {
         const QString name = provider->name();
         static_cast<void>(connect(provider, &CrowdHttpProvider::observationsReady, this,
                                   &CrowdCollector::ingest));

@@ -4,6 +4,7 @@
 #include "domain/RollingZScore.h"
 
 #include <cmath>
+#include <numeric>
 
 namespace trading::crowd {
 
@@ -12,10 +13,7 @@ std::optional<double> zScore(double value, const QList<double> &history, int min
     if (history.size() < minSamples) {
         return std::nullopt;
     }
-    double sum = 0.0;
-    for (const double sample : history) {
-        sum += sample;
-    }
+    const double sum = std::accumulate(history.cbegin(), history.cend(), 0.0);
     const double mean = sum / static_cast<double>(history.size());
     double squares = 0.0;
     for (const double sample : history) {

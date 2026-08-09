@@ -78,7 +78,20 @@ CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, OllamaAdvi
     auto *scoreBox = new QGroupBox(QStringLiteral("Transparent crowd score (the baseline)"),
                                    this);
     scoreBox->setObjectName(QStringLiteral("crowdScoreBox"));
-    auto *scoreLayout = new QVBoxLayout(scoreBox);
+    // Parentless, installed via setLayout below: the unconditional ownership transfer is
+    // also what lets the static analyzer see the layout cannot leak on any path.
+    auto *scoreLayout = new QVBoxLayout;
+    for (const QString &instrument : CrowdCollector::instruments()) {
+        auto *scoreLabel = new QLabel(scoreBox);
+        scoreLabel->setObjectName(QStringLiteral("crowdScoreLabel_") + instrument);
+        scoreLabel->setWordWrap(true);
+        scoreLabel->setText(instrument + QStringLiteral(": no score computed yet"));
+        scoreLayout->addWidget(scoreLabel);
+        m_scoreLabels.insert(instrument, scoreLabel);
+    }
+    scoreBox->setLayout(scoreLayout);
+    layout->addWidget(scoreBox);
+
     auto *modelBox = new QGroupBox(QStringLiteral("Trained model (evidence only)"), this);
     modelBox->setObjectName(QStringLiteral("crowdModelBox"));
     auto *modelLayout = new QVBoxLayout(modelBox);
@@ -87,13 +100,6 @@ CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, OllamaAdvi
     m_modelStatusLabel->setWordWrap(true);
     modelLayout->addWidget(m_modelStatusLabel);
     for (const QString &instrument : CrowdCollector::instruments()) {
-        auto *scoreLabel = new QLabel(scoreBox);
-        scoreLabel->setObjectName(QStringLiteral("crowdScoreLabel_") + instrument);
-        scoreLabel->setWordWrap(true);
-        scoreLabel->setText(instrument + QStringLiteral(": no score computed yet"));
-        scoreLayout->addWidget(scoreLabel);
-        m_scoreLabels.insert(instrument, scoreLabel);
-
         auto *predictionLabel = new QLabel(modelBox);
         predictionLabel->setObjectName(QStringLiteral("crowdPredictionLabel_") + instrument);
         predictionLabel->setWordWrap(true);
@@ -101,7 +107,6 @@ CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, OllamaAdvi
         modelLayout->addWidget(predictionLabel);
         m_predictionLabels.insert(instrument, predictionLabel);
     }
-    layout->addWidget(scoreBox);
     layout->addWidget(modelBox);
 
     // The optional local-model explanation (REQ-F-045): WORDS about the evidence above,

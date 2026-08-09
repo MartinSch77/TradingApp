@@ -31,7 +31,7 @@ private slots:
         const QDateTime now(QDate(2026, 8, 9), QTime(18, 0), QTimeZone::UTC);
         const ProviderResult scan = provider.fetch(QStringLiteral("SPX500"), now);
         QVERIFY(!scan.observations.isEmpty());
-        const qint32 rows = static_cast<qint32>(scan.observations.size());
+        const auto rows = static_cast<qint32>(scan.observations.size());
 
         // First upsert writes every valid observation.
         QCOMPARE(store.upsert(scan.observations), rows);

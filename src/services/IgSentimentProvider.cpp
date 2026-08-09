@@ -11,19 +11,21 @@ namespace trading::crowd {
 
 namespace {
 
-// IG's client-sentiment marketId for an app instrument. Empty = not covered. These are the
-// documented ids for IG's index CFD markets; they are verified live the first time credentials
-// are present — an id IG does not know is answered 404 and surfaces as a NAMED providerError,
-// never as silent wrong data.
+// IG's client-sentiment marketId for an app instrument. Empty = not covered. VERIFIED LIVE
+// on 2026-08-09 against the account's own market details (GET /markets/{epic} answers the
+// sentiment marketId): US500 for "US 500", USTECH for "US Tech 100". The epic family names
+// (SPTRD, NASDAQ) are NOT sentiment ids — measured: they answer HTTP 200 with 0.0/0.0, not a
+// 404, which is why the unusable-percentage guard below matters: silent zeros would have
+// read as "nobody is positioned" forever.
 QString igMarketId(const QString &instrument)
 {
     if (instrument.startsWith(QStringLiteral("SPX500"))
         || instrument.startsWith(QStringLiteral("SP.24-7"))) {
-        return QStringLiteral("SPTRD");    // IG "US 500"
+        return QStringLiteral("US500");    // IG "US 500" (live: 40/60 long/short that day)
     }
     if (instrument.startsWith(QStringLiteral("NSDQ100"))
         || instrument.startsWith(QStringLiteral("NQ"))) {
-        return QStringLiteral("NASDAQ");   // IG "US Tech 100"
+        return QStringLiteral("USTECH");   // IG "US Tech 100"
     }
     return {};
 }
@@ -142,7 +144,17 @@ void IgSentimentProvider::fetchSentiment(const QString &instrument, const QStrin
             [this, instrument, now](bool ok, const QJsonDocument &doc) {
                 const QJsonValue pctLong =
                     doc.object().value(QStringLiteral("longPositionPercentage"));
-                if (!ok || !pctLong.isDouble()) {
+                // 0.0/0.0 is IG's EMPTY record, not a measurement (measured live: an unknown
+                // marketId answers HTTP 200 with both percentages 0.0 — a market where nobody
+                // is positioned on either side does not exist). Storing it would read as the
+                // most extreme contrarian signal there is.
+                const bool emptyRecord =
+                    pctLong.toDouble() <= 0.0
+                    && doc.object()
+                               .value(QStringLiteral("shortPositionPercentage"))
+                               .toDouble()
+                           <= 0.0;
+                if (!ok || !pctLong.isDouble() || emptyRecord) {
                     // A failed or unparsable answer also drops the session: the next refresh
                     // logs in again rather than riding tokens the server may have rejected.
                     m_cst.clear();

@@ -53,7 +53,7 @@ QByteArray fredBody(const QByteArray &value)
 QByteArray igSentimentBody()
 {
     return R"({"longPositionPercentage":62.5,"shortPositionPercentage":37.5,)"
-           R"("marketId":"SPTRD"})";
+           R"("marketId":"US500"})";
 }
 
 // The mock IG: POST /session answers the session tokens as HEADERS (how the real API does it);
@@ -383,7 +383,7 @@ private slots:
                              QByteArrayLiteral("X-SECURITY-TOKEN: test-xst-token")},
                             0};
                 }
-                return {200, R"({"marketId":"SPTRD"})", {}, 0};
+                return {200, R"({"marketId":"US500"})", {}, 0};
             });
             QVERIFY(server.listen(QHostAddress::LocalHost));
             IgSentimentProvider provider;
@@ -396,6 +396,37 @@ private slots:
             const QString detail = errors.at(0).at(0).toString();
             QVERIFY(!detail.contains(QStringLiteral("SECRET-IG-KEY")));
             QVERIFY(!detail.contains(QStringLiteral("secret-pass")));
+        }
+
+        // (d) IG's EMPTY record — 0.0/0.0 WITH the fields present — is refused the same way
+        // (measured live 2026-08-09: an unknown marketId answers HTTP 200 with exactly this
+        // shape). Stored, it would read as the most extreme contrarian signal there is.
+        {
+            MockHttpServer server([](const QByteArray &method,
+                                     const QString &path) -> MockHttpServer::Response {
+                if ((method == QByteArrayLiteral("POST"))
+                    && path.contains(QStringLiteral("/session"))) {
+                    return {200, "{}",
+                            {QByteArrayLiteral("CST: test-cst-token"),
+                             QByteArrayLiteral("X-SECURITY-TOKEN: test-xst-token")},
+                            0};
+                }
+                return {200,
+                        R"({"marketId":"US500","longPositionPercentage":0.0,)"
+                        R"("shortPositionPercentage":0.0})",
+                        {},
+                        0};
+            });
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            IgSentimentProvider provider;
+            provider.setCredentials(QStringLiteral("k"), QStringLiteral("u"),
+                                    QStringLiteral("p"));
+            provider.setEndpointBaseForTesting(server.baseUrl());
+            const QSignalSpy errors(&provider, &IgSentimentProvider::providerError);
+            provider.refresh(QStringLiteral("SPX500"), QDateTime::currentDateTimeUtc());
+            QTRY_COMPARE_WITH_TIMEOUT(errors.count(), 1, kWaitMs);
+            QVERIFY(provider.fetch(QStringLiteral("SPX500"), QDateTime::currentDateTimeUtc())
+                        .observations.isEmpty());
         }
     }
 };

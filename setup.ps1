@@ -44,7 +44,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'update', 'status', 'android', 'squish')]
+    [ValidateSet('install', 'update', 'status', 'android', 'ml', 'squish')]
     [string]$Mode = 'install',
 
     # Qt version installed by aqt when no usable kit is found.
@@ -301,6 +301,18 @@ function Show-Status {
         $line = $show | Where-Object { $_ -like 'Version:*' } | Select-Object -First 1
         if ($line) { Report 'reportlab' 'ok' ($line -replace '^Version:\s*', '') }
         else { Report 'reportlab' 'MISSING' 'PDF report stage skips (pip install reportlab)' }
+    }
+
+    # Offline crowd-model training env (REQ-F-041): optional by design — the trainer
+    # exits 3 ("skipped") without it, and the app itself never needs it.
+    $mlPy = Join-Path (Get-MlVenvDir) 'Scripts\python.exe'
+    if (Test-Path $mlPy) {
+        $show = & $mlPy -m pip show onnxmltools 2>$null
+        $line = $show | Where-Object { $_ -like 'Version:*' } | Select-Object -First 1
+        if ($line) { Report 'ml env' 'ok' (Get-MlVenvDir) }
+        else { Report 'ml env' 'manual' 'venv present but incomplete: .\setup.ps1 ml' }
+    } else {
+        Report 'ml env' 'missing' 'optional: .\setup.ps1 ml (offline crowd-model training)'
     }
 
     $qt = Resolve-QtPrefix -Quiet
@@ -567,6 +579,48 @@ See cocoSetupInstructions.txt for the licence steps.
 '@ | Write-Host
 }
 
+# ---------------------------------------------------------------------------
+# Offline crowd-model training environment (REQ-F-041) — OPTIONAL by design.
+# A venv of its own, because the app must keep building, running and testing
+# WITHOUT any of it: tools\ml\train_crowd_model.py exits 3 ("skipped") when
+# this mode was never run. Counterpart of `./setup.sh ml`.
+# ---------------------------------------------------------------------------
+
+function Get-MlVenvDir {
+    if ($env:ML_VENV_DIR) { return $env:ML_VENV_DIR }
+    return (Join-Path $env:USERPROFILE '.local\tradingapp-ml')
+}
+
+function Install-MlEnv {
+    $venv = Get-MlVenvDir
+    Write-Stage "Crowd-model training environment ($venv)"
+    $venvPy = Join-Path $venv 'Scripts\python.exe'
+    if (-not (Test-Path $venvPy)) {
+        $py = Get-Python
+        if (-not $py) { Write-Warning 'no Python interpreter found - run .\setup.ps1 install first'; return }
+        & $py.Exe @($py.Args + @('-m', 'venv', $venv))
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Write-Warning "venv creation failed under $venv"; return }
+    }
+    & $venvPy -m pip install --quiet --upgrade pip
+    & $venvPy -m pip install --quiet -r (Join-Path $Root 'tools\ml\requirements.txt')
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'pip install failed - see tools\ml\requirements.txt'; return }
+    # The import check is a temp FILE, not a -c one-liner: PowerShell 5.1 strips
+    # embedded double quotes from native command lines (docs\windows.md).
+    $probe = Join-Path $env:TEMP 'tradingapp-ml-probe.py'
+    @'
+import numpy, onnx, onnxmltools, onnxruntime, skl2onnx, sklearn, xgboost
+print("ml env:", "numpy", numpy.__version__, "| scikit-learn", sklearn.__version__,
+      "| xgboost", xgboost.__version__, "| onnxruntime", onnxruntime.__version__)
+'@ | Set-Content -Path $probe -Encoding UTF8
+    & $venvPy $probe
+    Remove-Item $probe -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'the ml environment does not import cleanly'; return }
+    Write-Host ''
+    Write-Host 'Train offline with (see docs/crowd-ai.md, Phase 4):'
+    Write-Host '  python tools\ml\crowd_dataset.py build ...        # stdlib-only, no venv needed'
+    Write-Host "  $venvPy tools\ml\train_crowd_model.py --dataset dataset.csv --manifest manifest.json --out-dir ml-out"
+}
+
 switch ($Mode) {
     'install' {
         Install-WingetPackages
@@ -610,6 +664,7 @@ switch ($Mode) {
         Show-Status
     }
     'android' { Install-Android }
+    'ml' { Install-MlEnv }
     'squish' { Show-SquishStatus }
     'status' {
         Show-Status

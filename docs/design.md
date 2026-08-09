@@ -77,6 +77,12 @@ Architecture overview diagrams: see @ref architecture (PlantUML).
 | DES-UI-SCRIPT | Trade-script runner + window: entries executed as broker-side limit orders (REQ-F-027 machinery) with the load→ARM two-step commitment, dry-run logging while disarmed, cancel-on-disarm/expiry/signal-flip, exposure-cap gate shared with manual orders | `TradeScriptPanel.h/.cpp` | REQ-F-028 |
 | DES-UI-ROOT | Composition root, platform selection (WSL/xcb), QA screenshot hooks | `main.cpp` | REQ-N-001 |
 
+## Offline ML training pipeline (`tools/ml/` — development-time only, NEVER a runtime dependency)
+
+| ID | Element | Implementation | satisfies |
+|----|---------|----------------|-----------|
+| DES-ML-TRAIN | The OFFLINE Phase 4 crowd training pipeline (REQ-F-041). `crowd_dataset.py` — STDLIB-ONLY on purpose, so the honesty rules are testable everywhere — reads the SQLite store the app writes and joins every series to a decision time AS OF ITS RECEIVED TIME (the COT Friday-release discipline), z-scores each datum against only the values received BEFORE it, keeps missing as an EMPTY cell beside a 0/1 `_measured` marker (never zero), labels LONG/NO_TRADE/SHORT from the forward return over a configurable horizon with a cost DEAD ZONE (rows whose horizon outruns the price history are DROPPED), emits a byte-DETERMINISTIC CSV + versioned, append-only feature manifest (columns match BY NAME), and computes PURGED WALK-FORWARD folds — training rows whose label window + embargo reach into a validation block are purged. `train_crowd_model.py` REFUSES with exit 3 ("skipped"), writing nothing, on a too-small or one-class dataset or a machine without the optional `./setup.sh ml` venv (the guards run BEFORE the heavy imports); otherwise fits logistic-regression + XGBoost per fold with TRAIN-median imputation, reports every fold beside baselines on identical rows (majority class, always-NO_TRADE, the REQ-F-040 crowd-score sign), refits on the full record and exports ONNX carrying feature names, imputation medians, class order and manifest version as metadata — written only after onnxruntime reproduced the trained model's own probabilities (both models verified before either file exists) | `tools/ml/crowd_dataset.py`, `tools/ml/train_crowd_model.py`, `tools/ml/requirements.txt`, `setup.sh` / `setup.ps1` (`ml` mode) | REQ-F-041 |
+
 ## Deployment / build design
 
 | ID | Element | Implementation | satisfies |

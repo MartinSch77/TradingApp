@@ -53,6 +53,13 @@ tradingapp_add_test(tst_crowdscoremodel tst_crowdscoremodel.cpp
 # Phase 3 — real network-backed providers (REQ-F-039), driven against the in-process mock HTTP
 # server: valid parse, malformed/empty, network error, 429 rate-limit retry, no-key unavailable.
 tradingapp_add_test(tst_crowdproviders tst_crowdproviders.cpp MockHttpServer.cpp MockHttpServer.h)
+# Phase 4 — the OFFLINE training pipeline (REQ-F-041): the C++ CrowdStore writes real SQLite
+# fixtures, the Python tools (tools/ml/) read them, and the leakage/label/split/refusal rules
+# are asserted on the files that come back — the same cross-language contract discipline as
+# TS-NET-004. The model-fitting test skips without the optional `./setup.sh ml` environment.
+tradingapp_add_test(tst_crowdml tst_crowdml.cpp)
+target_compile_definitions(tst_crowdml PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE

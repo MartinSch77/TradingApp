@@ -1,7 +1,8 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 3 — first real providers (CFTC COT, FRED/VIX)** (REQ-F-039, REQ-F-040). This
-document is updated per phase; it describes what exists today and what is deliberately deferred.
+Status: **Phase 4 — the offline training pipeline (`tools/ml/`)** (REQ-F-039, REQ-F-040,
+REQ-F-041). This document is updated per phase; it describes what exists today and what is
+deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -25,7 +26,7 @@ providers  ──▶  **normalized Observation**  ──▶  **CrowdStore (SQLit
                                         features ─▶ Crowd Score (Phase 2)
                                                        │
                                                        ▼
-                                     trained model (ONNX, Phase 4–5)
+                          trained model (ONNX — **trained offline in Phase 4**, inference Phase 5)
                                                        │
                                                        ▼
                               deterministic risk checks ─▶ paper proposal ─▶ Qt UI
@@ -144,6 +145,58 @@ a hard 500 (retried), a 429 (`Retry-After`, retried), the IG session handshake a
 no-key/unavailable and no-leak paths (`tst_crowdproviders`, TS-CROWD-009…014). No test touches
 the real network.
 
+## Phase 4 components — the offline training pipeline (REQ-F-041)
+
+| Layer | File | Responsibility |
+|---|---|---|
+| tools | `tools/ml/crowd_dataset.py` | dataset build (as-of joins, labels, manifest) + purged walk-forward splits + price fetch — **stdlib-only** |
+| tools | `tools/ml/train_crowd_model.py` | logistic-regression + XGBoost baselines, fold evaluation beside named baselines, ONNX export |
+| tools | `tools/ml/requirements.txt` | the optional venv's pinned floors, provisioned by `./setup.sh ml` |
+
+Python is an **offline development-time tool, never a runtime dependency**: the app builds, runs
+and passes its tests with none of this installed, and nothing the pipeline produces places a
+trade. The dataset/split half is deliberately **stdlib-only** (sqlite3, csv, json), so the rules
+that make the dataset honest are testable on every machine; only the model-fitting half needs
+the optional environment (`./setup.sh ml`, Windows `.\setup.ps1 ml`, venv at
+`~/.local/tradingapp-ml`, override with `ML_VENV_DIR`) and **exits 3 ("skipped") writing
+nothing** without it — the same convention as every licence-bound stage.
+
+**The dataset build** reads the very SQLite store the app writes (so the schema contract between
+the languages is pinned by a test that drives both, TS-ML-001) and joins every series — the
+Phase 2 score's four families plus both COT legs and the VIX level — to each decision time **as
+of its received time**: the COT report about a Tuesday, released Friday, is absent from
+Wednesday's row. Per-series z-scores are normalized only against values received *before* the
+datum (the Phase 2 past-only rule); a missing series is an **empty cell beside a 0/1 `_measured`
+marker**, never a zero. Labels are **LONG / NO_TRADE / SHORT** from the forward return over a
+configurable horizon (default 5 rows) with a **dead zone** representing the round-trip cost
+(default 0.25%): a move that would not clear its own cost is a NO_TRADE — staying out is an
+outcome the model is taught, not a failure — and rows whose horizon outruns the price history
+are dropped, never invented. Outputs carry no wall-clock, so the same inputs give
+**byte-identical files**; the versioned feature manifest is **append-only** and consumers match
+columns **by name**. Prices come from a `date,close` CSV (`fetch-prices` pulls daily closes from
+the same keyless Yahoo chart API the app already uses; a proper historical backfill must set
+`received_time` to the official publication schedule, which the CFTC provider already computes).
+
+**Validation is purged walk-forward**: contiguous validation blocks over the time-ordered tail,
+training only on earlier rows, and any training row whose **label window + embargo** reaches
+into the block is **purged** — forward-return labels overlap in time, and a random split would
+let the model see the future and report a fiction. Every fold's numbers sit beside **named
+baselines on identical rows**: the training block's majority class, always-NO_TRADE, and the
+transparent Phase 2 crowd-score sign — so "the model beats the baseline" is measured, never
+felt. The trainer refuses (exit 3) a dataset below `--min-samples` or with one label class,
+imputes missing values with the **training fold's** medians (the `_measured` flags keep absence
+representable), and writes `training-report.json` with per-fold and mean metrics plus the
+library versions.
+
+**The export** refits both models on the full record (the report keeps the honest walk-forward
+numbers) and writes `crowd-logreg.onnx` + `crowd-xgb.onnx` carrying, as ONNX metadata, the
+feature names in order, the **imputation medians a consumer must apply**, the class order and
+the manifest version — the Phase 5 C++ inference contract. Each graph is run through
+onnxruntime and compared to the trained model's own probabilities **before anything reaches
+disk**; a disagreement is a reported failure and no file. Verified end to end on this machine:
+walk-forward balanced accuracy 0.91 (XGBoost) / 0.81 (logistic regression) against 0.50
+(majority) on a constructed learnable fixture, parity ≤ 1e-6 (`tst_crowdml`, TS-ML-001…005).
+
 ## Configuration
 
 Provider credentials are read from environment variables or the **git-ignored**
@@ -174,11 +227,13 @@ API is offered; no commercial dataset, credential or personal datum is ever comm
 - **Phase 3** — CFTC COT, FRED/VIX and IG Client Sentiment **done** (above). Still deferred
   within the phase: a market-data provider (Alpha Vantage / Twelve Data — or reusing the app's
   existing keyless Yahoo feed), which needs a key or a design decision before it can be wired.
-- **Phase 4** — the offline Python training pipeline (`tools/ml/`): dataset build, LONG/NO_TRADE/
-  SHORT labels, logistic-regression + XGBoost baselines, purged walk-forward validation, ONNX
-  export. Python stays an **offline** tool, never a runtime dependency of the C++ app.
+- **Phase 4** — the offline Python training pipeline (`tools/ml/`) **done** (above): dataset
+  build, LONG/NO_TRADE/SHORT labels, logistic-regression + XGBoost baselines, purged
+  walk-forward validation, ONNX export. Python stays an **offline** tool, never a runtime
+  dependency of the C++ app.
 - **Phase 5** — ONNX Runtime inference in C++ behind a mock-able interface (optional; the app
-  builds without it).
+  builds without it), reading the exported models' own metadata (feature names, imputation
+  medians, class order) so the two sides cannot drift apart silently.
 - **Phase 6** — FinBERT text→sentiment features.
 - **Phase 7** — the Crowd & AI dashboard and optional Ollama *explanations* (never prices,
   probabilities, stops or sizing).

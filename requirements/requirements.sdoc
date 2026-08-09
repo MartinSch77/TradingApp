@@ -461,6 +461,22 @@ Missing data shall never be treated as zero: a component that could not be measu
 A Qt view-model shall expose the score for presentation WITHOUT computing any of it, so the number a view shows is the number the rule produced. It shall be usable with mock data and shall carry direction and freshness by words, not by colour alone.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-041
+VERIFICATION: T
+TITLE: Offline training pipeline for the crowd model
+STATEMENT: >>>
+The crowd subsystem's trained model shall come from an OFFLINE training pipeline that is a development-time tool and NEVER a runtime dependency: the application shall build, run and pass its tests with none of the pipeline's libraries installed, and nothing the pipeline produces shall place a trade — a trained model remains paper or advisory evidence behind the deterministic risk rules that already exist.
+
+The pipeline shall assemble its dataset from the SAME raw observation store the application writes (REQ-F-039), joining every observation to a decision time AS OF ITS RECEIVED TIME: a datum enters a row only when its received (publication) time is at or before the row's decision time, so a publication-lagged datum — the Commitments-of-Traders report is about a Tuesday but released the Friday after — can never inform a decision dated before its release. A missing datum shall stay missing (a named absence with a measured/not-measured marker), never a zero; per-series normalization shall be computed only from values received BEFORE the datum it normalizes; and the dataset shall carry a stable, versioned feature manifest whose names are append-only, so the trainer, the exported model and any later consumer agree on columns BY NAME rather than by position.
+
+Labels shall be three classes — LONG, NO_TRADE and SHORT — derived from the instrument's FORWARD return over a configurable horizon with a DEAD ZONE representing the round-trip cost of taking the trade: a move that would not clear its own cost labels NO_TRADE, so that "do not trade" is learned as an outcome rather than treated as a failure; and a row whose horizon runs past the available price history shall be DROPPED, never labelled by invention.
+
+Validation shall be PURGED WALK-FORWARD: a model is evaluated only on data strictly later than everything it trained on, and a training row whose LABEL WINDOW reaches into the evaluation block — extended by a configurable embargo — is PURGED, because forward-return labels overlap in time and a random split would let the model see the future and report a fiction. Every reported result shall sit beside NAMED BASELINES computed on the identical evaluation rows — at least the majority class and the transparent crowd score of REQ-F-040 — so "the model beats the baseline" is a measured claim, never an impression.
+
+The trained baseline models (a logistic regression and a gradient-boosted-trees classifier) shall be exported to the ONNX exchange format carrying, as embedded metadata, the feature names in order, the imputation values a consumer must apply, the class order and the manifest version; and the exported artifact shall be verified to reproduce the trained model's own probabilities before it is kept — an export that disagrees with its source shall be deleted and reported, never shipped. The dataset build, labelling and split logic shall run on the Python standard library alone, so the leakage and labelling rules are testable on every machine the project supports; the fitting and export step may require the optional, setup-provisioned environment and shall REFUSE with the project's "skipped" exit code — writing nothing — when that environment is absent, when the dataset is too small, or when the labels hold fewer than two classes, rather than emit a model that means nothing.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

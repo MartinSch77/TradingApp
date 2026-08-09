@@ -28,6 +28,8 @@
 #   ./setup.sh android   SDK + NDK + system image + a Qt kit per ABI (~6 GB)
 #   ./setup.sh ollama    local LLM runtime + a small model (~2.4 GB), which is
 #                        what the bot simulation's proposal source uses (REQ-F-030)
+#   ./setup.sh ml        Python venv for the OFFLINE crowd-model training pipeline
+#                        (REQ-F-041, tools/ml/) — the app itself never needs it
 #
 # NOT installable here — LICENSE-BOUND, so they are detected and reported, and
 # the stages that need them SKIP with a message instead of failing (exit 3 =
@@ -252,6 +254,34 @@ ollama_install() {
     echo "Then open 'Bot sim…' and pick confirm or lead next to \"Local model\"."
 }
 
+# The OPTIONAL offline crowd-model training environment (REQ-F-041): a venv of its own,
+# because the app itself must keep building, running and testing WITHOUT any of it —
+# tools/ml/train_crowd_model.py exits 3 ("skipped") when this was never run.
+ML_VENV_DIR="${ML_VENV_DIR:-$HOME/.local/tradingapp-ml}"
+
+ml_install() {
+    echo "== Crowd-model training environment ($ML_VENV_DIR) =="
+    have python3 || { echo "python3 is required (apt-get install python3 python3-venv)" >&2; return 1; }
+    if [ ! -x "$ML_VENV_DIR/bin/python3" ]; then
+        python3 -m venv "$ML_VENV_DIR" ||
+            { echo "venv creation failed — is python3-venv installed?" >&2; return 1; }
+    fi
+    "$ML_VENV_DIR/bin/pip" install --quiet --upgrade pip || return 1
+    "$ML_VENV_DIR/bin/pip" install --quiet -r "$ROOT/tools/ml/requirements.txt" ||
+        { echo "pip install failed — see tools/ml/requirements.txt" >&2; return 1; }
+    "$ML_VENV_DIR/bin/python3" - <<'PYCHECK' || return 1
+import numpy, onnx, onnxmltools, onnxruntime, skl2onnx, sklearn, xgboost
+print("ml env:", "numpy", numpy.__version__, "| scikit-learn", sklearn.__version__,
+      "| xgboost", xgboost.__version__, "| onnxruntime", onnxruntime.__version__)
+PYCHECK
+    echo
+    echo "Train offline with (see docs/crowd-ai.md, Phase 4):"
+    echo "  tools/ml/crowd_dataset.py build --store … --instrument SPX500 --prices … \\"
+    echo "      --out dataset.csv --manifest manifest.json     # stdlib-only, no venv needed"
+    echo "  $ML_VENV_DIR/bin/python3 tools/ml/train_crowd_model.py \\"
+    echo "      --dataset dataset.csv --manifest manifest.json --out-dir ml-out"
+}
+
 status() {
     echo "== host =="
     report "arch" "$(host_arch)" "$(uname -sr)"
@@ -371,6 +401,13 @@ status() {
         report "ollama" "manual" "installed but not running: ${OLLAMA_DIR:-$HOME/.local/ollama}/bin/ollama serve &"
     else
         report "ollama" "missing" "./setup.sh ollama (optional: the bot's local-LLM proposals)"
+    fi
+    # Offline crowd-model training (REQ-F-041): optional by design — the app never needs it.
+    if [ -x "${ML_VENV_DIR:-$HOME/.local/tradingapp-ml}/bin/python3" ] &&
+        "${ML_VENV_DIR:-$HOME/.local/tradingapp-ml}/bin/python3" -c 'import sklearn, xgboost, skl2onnx, onnxmltools, onnxruntime' >/dev/null 2>&1; then
+        report "ml env" "ok" "${ML_VENV_DIR:-$HOME/.local/tradingapp-ml} (tools/ml/train_crowd_model.py)"
+    else
+        report "ml env" "missing" "./setup.sh ml (optional: offline crowd-model training; the trainer skips without it)"
     fi
     [ -f "$ROOT/apiKeyEtoro.json" ] &&
         report "api keys" "ok" "apiKeyEtoro.json present" ||
@@ -644,11 +681,14 @@ android)
 ollama)
     ollama_install
     ;;
+ml)
+    ml_install
+    ;;
 squish)
     squish_status
     ;;
 *)
-    echo "usage: $0 [install|update|status|android|ollama|squish]" >&2
+    echo "usage: $0 [install|update|status|android|ollama|ml|squish]" >&2
     exit 2
     ;;
 esac

@@ -238,9 +238,11 @@ public:
                          double maxAmount);
     // The whole ticket in ONE call, SL/TP included. One setter rather than five, because
     // every field is part of the armed action: a call that changed only the stop would have
-    // to disarm too, and five setters is five chances to forget that.
-    void setTicket(double amount, qint32 leverage, double stopLoss = 0.0,
-                   double takeProfit = 0.0);
+    // to disarm too, and five setters is five chances to forget that. Q_INVOKABLE because the
+    // QML ticket editor is the caller — without it every edit is a silent TypeError and the
+    // ticket controls read as dead.
+    Q_INVOKABLE void setTicket(double amount, qint32 leverage, double stopLoss = 0.0,
+                               double takeProfit = 0.0);
     // The instruments that can be selected, and which one is shown.
     void setInstruments(const QStringList &symbols);
     // The closed-trade history over `weeks` (the user's 13-week view) and the economic

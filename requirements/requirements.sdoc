@@ -505,6 +505,20 @@ A DASHBOARD view shall present what the subsystem knows, honestly: per-provider 
 The dashboard is EVIDENCE ONLY: it shall state that the signals are experimental and not financial advice, it shall offer no trading affordance, and nothing in the loop or the view shall reach an order path — the deterministic risk rules and the double-press gate remain the only route to a real order. Optional local-LLM EXPLANATIONS of the evidence — words only, never prices, probabilities, stops or sizing — remain DEFERRED within this phase until they can be built with their own tests.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-044
+VERIFICATION: T
+TITLE: Local text-sentiment features for the social family
+STATEMENT: >>>
+The application shall be able to turn the news HEADLINES it already fetches into the crowd subsystem's SOCIAL-family observations using a LOCAL text-sentiment classifier — a financial-domain BERT model exported to the ONNX format — so that the fourth family of the crowd score and of the training dataset can run on measured data without any social-network API, key, or scraping.
+
+The capability shall be DOUBLY OPTIONAL: it requires the build-time inference runtime of REQ-F-042 AND a model directory the user provisions with the offline exporter tool — under the model's OWN licence terms, which the tool shall name rather than accept silently. Absent either, the feature shall report itself unavailable in words and nothing else changes: the headlines keep flowing to the panels that already show them, and no sentiment is invented.
+
+Text shall be encoded with the model's OWN vocabulary, faithfully: WordPiece tokenization with greedy longest-match subwords, unknown words mapped to the unknown token, the classifier's framing tokens, and truncation at a stated maximum — a tokenizer mismatched to its model scores noise with confidence, which is worse than scoring nothing. The meaning of the answered classes shall come from a labels file exported BESIDE the model, never from an assumed column order, and a label set that does not name positive and negative shall be REFUSED.
+
+The published sentiment shall be the NET (probability of positive minus probability of negative) over the scored headlines, stored as a NORMAL observation of the social family — event time quantized to the hour so the idempotent store is not flooded by every news poll — and entering the score, the dataset and the model features by the same rules as every other series. Failures shall be recoverable and named: a missing model directory, a malformed vocabulary, a label set without meaning, an empty headline set and a runtime error mid-score shall each produce an unavailable state or an error result while the application carries on. The output is EVIDENCE ONLY, with no route to an order.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

@@ -62,6 +62,7 @@ CrowdCollector::CrowdCollector(const Config &cfg, const QString &storePath,
                                   }));
     }
     loadModelIfPresent();
+    loadFinBertIfPresent();
     static_cast<void>(connect(&m_timer, &QTimer::timeout, this, &CrowdCollector::refreshNow));
 }
 
@@ -98,7 +99,7 @@ QStringList CrowdCollector::instruments()
 QList<CollectorProviderStatus> CrowdCollector::providerStatuses() const
 {
     QList<CollectorProviderStatus> statuses;
-    statuses.reserve(m_providers.size());
+    statuses.reserve(m_providers.size() + 1);
     for (const CrowdHttpProvider *provider : m_providers) {
         CollectorProviderStatus status;
         status.name = provider->name();
@@ -107,6 +108,13 @@ QList<CollectorProviderStatus> CrowdCollector::providerStatuses() const
                                         QStringLiteral("no refresh yet"));
         statuses.append(status);
     }
+    // The local text-sentiment scorer reports beside the network providers: it feeds the same
+    // store, and "not configured" must be readable in the same place.
+    CollectorProviderStatus finbert;
+    finbert.name = QStringLiteral("FinBERT");
+    finbert.configured = m_finbert.ready();
+    finbert.detail = m_details.value(finbert.name, m_finbert.status());
+    statuses.append(finbert);
     return statuses;
 }
 
@@ -155,6 +163,36 @@ QHash<QString, double> CrowdCollector::modelFeaturesFor(const QString &instrumen
     // to drift. The model imputes them with its own embedded medians and the prediction
     // carries the count, so the gap stays visible.
     return out;
+}
+
+void CrowdCollector::scoreHeadlines(const QString &instrument, const QStringList &headlines)
+{
+    if (!m_finbert.ready()) {
+        return;   // honestly absent — the FinBERT status row carries the reason
+    }
+    const SocialSentiment sentiment = m_finbert.scoreHeadlines(headlines);
+    if (!sentiment.ok) {
+        noteProviderIssue(QStringLiteral("FinBERT"), sentiment.error);
+        return;
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    Observation obs;
+    obs.instrument = instrument;
+    obs.source = Source::Social;
+    obs.sourceName = QStringLiteral("FinBERT");
+    obs.seriesId = QStringLiteral("NET-SENTIMENT");
+    // Quantized to the HOUR: news is re-polled far more often than sentiment meaningfully
+    // moves, and the store's dedup key turns the repeats into no-ops instead of a flood.
+    obs.eventTime = QDateTime(now.date(), QTime(now.time().hour(), 0), QTimeZone::UTC);
+    obs.receivedTime = now;
+    obs.value = sentiment.net;
+    obs.unit = QStringLiteral("net");
+    obs.valid = true;
+    m_details.insert(QStringLiteral("FinBERT"),
+                     QStringLiteral("net %1 over %2 headline(s)")
+                         .arg(sentiment.net, 0, 'f', 3)
+                         .arg(sentiment.scored));
+    ingest({obs});
 }
 
 void CrowdCollector::ingest(const QList<trading::crowd::Observation> &observations)
@@ -211,6 +249,24 @@ void CrowdCollector::loadModelIfPresent()
     }
     if (!path.isEmpty()) {
         static_cast<void>(m_model.load(path));
+    }
+}
+
+void CrowdCollector::loadFinBertIfPresent()
+{
+    // TRADINGAPP_FINBERT_DIR names the exported model directory explicitly; without it, the
+    // app config dir's finbert/ is checked. Absent is not an error — the status row says so.
+    QString dir = qEnvironmentVariable("TRADINGAPP_FINBERT_DIR");
+    if (dir.isEmpty()) {
+        const QString fallback =
+            QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+            + QStringLiteral("/finbert");
+        if (QFileInfo::exists(fallback + QStringLiteral("/model.onnx"))) {
+            dir = fallback;
+        }
+    }
+    if (!dir.isEmpty()) {
+        static_cast<void>(m_finbert.load(dir));
     }
 }
 

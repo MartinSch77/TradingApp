@@ -344,6 +344,15 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-DASH-002 | I | The model input matches the trainer's names and keeps missing missing: a mock-fed series is measured with value and age; a series nothing has fed carries ONLY its `_measured = 0` marker (no invented value or z); the price-context features are deliberately absent (the model's own embedded medians impute them, counted); and every emitted name is declared by a pipeline-built manifest — the BY-NAME contract with the exported model. |
 | TS-DASH-003 | I | Statuses are honest words and an issue is named, never a crash: three providers report, exactly the keyless one (CFTC-COT) configured on a machine without credentials — the other two are "not configured", not errors; a noted provider failure appears as a named detail beside the others and emits statusChanged; and with no model file the model is not ready with a status that SAYS why (no model loaded, or the missing-runtime remedy on a stub build). |
 
+## Local text sentiment — Phase 6 (tests/tst_finbert.cpp, DES-SVC-FINBERT, REQ-F-044) — driven against the ~1 kB bert-shaped fixture, never the real model
+
+| ID | L | Case |
+|----|---|------|
+| TS-FB-001 | U | WordPiece encodes faithfully or refuses the vocabulary: lowercase, punctuation split off, greedy LONGEST subword match with the ## continuation ("Profits up, UP." → [CLS] profit ##s up , up . [SEP]); a word the vocabulary cannot begin is [UNK] WHOLE; truncation cuts the BODY and keeps the [CLS]/[SEP] framing well-formed; and a vocabulary missing a required special token refuses to encode anything rather than approximate. |
+| TS-FB-002 | I | Every missing piece is a NAMED refusal, never a guess: no model loaded scores nothing with a reason; a stub build names the remedy; then in order — no model.onnx, no vocab.txt beside it, no labels.txt, labels without positive/negative, and an unreadable graph — each refusal names its piece and nothing half-loads. |
+| TS-FB-003 | I | The runner scores text through a real graph with LABELLED meaning (fixture; skips without runtime or ml env): a clearly positive text nets > 0.5 and a negative one nets negative, with the label order from labels.txt; an unknown word contributes NOTHING; the batch reduction reports the net over the SCORED count; an empty batch and an empty text are named errors — never a zero sentiment. |
+| TS-FB-004 | I | The collector turns headlines into ONE social observation or honestly nothing: with a model directory (TRADINGAPP_FINBERT_DIR) FinBERT reports configured, a news batch becomes one hour-quantized NET-SENTIMENT row (re-scoring in the same hour is an idempotent no-op), and the social family turns MEASURED in the model features with the net value; without a directory the status row says not configured and headlines are a silent no-op — no observation, no crash, no invented sentiment. |
+
 ## Crowd model in-process inference — Phase 5 (tests/tst_crowdinference.cpp, tst_crowdmodel.cpp; DES-DOM-CROWDINFER / DES-SVC-CROWDMODEL, REQ-F-042)
 
 | ID | L | Case |

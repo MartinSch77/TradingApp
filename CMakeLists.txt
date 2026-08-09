@@ -171,6 +171,8 @@ qt_add_library(trading_domain STATIC
     src/domain/CrowdScore.h
     src/domain/CrowdInference.cpp
     src/domain/CrowdInference.h
+    src/domain/WordPieceTokenizer.cpp
+    src/domain/WordPieceTokenizer.h
 )
 target_include_directories(trading_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trading_domain PUBLIC Qt6::Core)
@@ -213,6 +215,8 @@ qt_add_library(trading_services STATIC
     src/services/CrowdModel.h
     src/services/CrowdCollector.cpp
     src/services/CrowdCollector.h
+    src/services/FinBertSentiment.cpp
+    src/services/FinBertSentiment.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain

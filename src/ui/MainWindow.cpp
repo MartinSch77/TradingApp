@@ -4719,6 +4719,16 @@ void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &c
 void MainWindow::onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines)
 {
     static_cast<void>(m_newsBySymbol.insert(symbol, headlines));
+    // The crowd subsystem's social family (REQ-F-044): the same headlines, scored by the
+    // optional local sentiment model — a silent no-op while no model is provisioned.
+    if (trading::crowd::CrowdCollector::instruments().contains(symbol)) {
+        QStringList titles;
+        titles.reserve(headlines.size());
+        for (const NewsHeadline &headline : headlines) {
+            titles.append(headline.title);
+        }
+        m_crowdCollector->scoreHeadlines(symbol, titles);
+    }
     rebuildRecommendations();  // refresh the hover reasoning with the fresh headlines
     rebuildDecision();
     if (symbol == m_client->config().symbol) {

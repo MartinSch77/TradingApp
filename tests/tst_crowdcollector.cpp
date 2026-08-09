@@ -20,13 +20,16 @@ using namespace crowdtest;
 // exactly the path the providers' observationsReady signal feeds.
 namespace {
 
-// A collector over a fresh store, with every optional credential deterministically ABSENT —
-// the environment must not leak a real key into "the unconfigured provider is unavailable".
+// A collector over a fresh store, with every optional credential and model deterministically
+// ABSENT — neither a real key in the environment nor a model installed in this machine's app
+// config dir may leak into "the unconfigured provider is unavailable". The model paths are
+// pointed at nowhere EXPLICITLY, because unsetting them would fall back to the config dir.
 struct CleanCollector {
     explicit CleanCollector(const QString &storePath)
     {
         qunsetenv("TRADINGAPP_FRED_API_KEY");
-        qunsetenv("TRADINGAPP_CROWD_MODEL");
+        qputenv("TRADINGAPP_CROWD_MODEL", "/nonexistent/crowd-model.onnx");
+        qputenv("TRADINGAPP_FINBERT_DIR", "/nonexistent/finbert");
         collector = std::make_unique<CrowdCollector>(Config{}, storePath);
     }
     std::unique_ptr<CrowdCollector> collector;
@@ -147,10 +150,11 @@ private slots:
         CleanCollector clean(dir.filePath(QStringLiteral("crowd.db")));
         CrowdCollector &collector = *clean.collector;
 
-        // Three providers; only the keyless CFTC one is configured on a machine with no
-        // credentials — the other two are honestly "not configured", not errors.
+        // Three network providers plus the local FinBERT scorer; only the keyless CFTC one is
+        // configured on a machine with no credentials and no model — everything else is
+        // honestly "not configured", not an error.
         const QList<CollectorProviderStatus> statuses = collector.providerStatuses();
-        QCOMPARE(statuses.size(), 3);
+        QCOMPARE(statuses.size(), 4);
         int configured = 0;
         for (const CollectorProviderStatus &status : statuses) {
             QVERIFY(!status.name.isEmpty());

@@ -1,8 +1,8 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 7 — the Crowd & AI dashboard and the collection loop** (REQ-F-039 … REQ-F-043;
-Phase 6, the text-sentiment features, is deliberately taken later). This document is updated
-per phase; it describes what exists today and what is deliberately deferred.
+Status: **Phase 6 — local text-sentiment features** (REQ-F-039 … REQ-F-044; Phase 6 was
+deliberately taken after Phase 7). This document is updated per phase; it describes what
+exists today and what is deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -248,8 +248,9 @@ failure — every keyed provider is optional, and the subsystem runs without any
 | `TRADINGAPP_IG_DEMO` | `igDemo` (bool) | IG demo account (`demo-api.ig.com`) | 3 (done) |
 | `TRADINGAPP_ALPHA_VANTAGE_API_KEY` | — | Alpha Vantage (prices/news) | 3 |
 | `TRADINGAPP_TWELVE_DATA_API_KEY` | — | Twelve Data (prices) | 3 |
-| `TRADINGAPP_FINNHUB_API_KEY` | — | Finnhub social sentiment | 6 |
-| `TRADINGAPP_REDDIT_CLIENT_ID` / `_SECRET` | — | Reddit | 6 |
+| `TRADINGAPP_FINBERT_DIR` | — | local text-sentiment model directory (no key — a local model) | 6 (done) |
+| `TRADINGAPP_FINNHUB_API_KEY` | — | Finnhub social sentiment (alternative social source) | deferred |
+| `TRADINGAPP_REDDIT_CLIENT_ID` / `_SECRET` | — | Reddit (alternative social source) | deferred |
 
 To **opt in** to IG sentiment, add `igApiKey`, `igIdentifier` and `igPassword` to your
 git-ignored `apiKeyEtoro.json` (or export the environment variables). Leave them out and the
@@ -281,6 +282,35 @@ and the collector holds no broker object — there is no route from here to an o
 local-LLM **explanations** (words only, never prices, probabilities, stops or sizing) remain
 deferred within the phase until they can be built with their own tests.
 
+## Phase 6 components — local text sentiment for the social family (REQ-F-044)
+
+| Layer | File | Responsibility |
+|---|---|---|
+| domain | `src/domain/WordPieceTokenizer.{h,cpp}` | faithful BERT WordPiece encoding (pure, testable everywhere) |
+| services | `src/services/FinBertSentiment.{h,cpp}` | the ONNX text classifier: load, score, labelled meaning |
+| tools | `tools/ml/export_finbert.py` | offline exporter: model.onnx + vocab.txt + labels.txt |
+
+The **social family runs on measured data now**: the news headlines the app already fetches are
+scored by a LOCAL financial-domain BERT classifier (default `ProsusAI/finbert`) and become
+normal `NET-SENTIMENT` observations — no social-network API, no key, no scraping. The
+capability is **doubly optional**: it needs the Phase 5 ONNX Runtime build AND a model
+directory provisioned offline by `tools/ml/export_finbert.py` (which names the model's own
+licence terms before fetching, and skips with exit 3 naming the install command when the
+exporter stack — `optimum`, `optimum-onnx`, CPU `torch` — is absent; those are deliberately
+NOT in requirements.txt). The app finds the directory via `TRADINGAPP_FINBERT_DIR` or
+`finbert/` in its config dir; absent either piece, the dashboard's FinBERT row says
+"not configured" and headlines keep flowing to the panels that already show them.
+
+Three honesty rules: tokenization is **faithful to the model's own vocabulary** (WordPiece:
+greedy longest-match, unknown words to `[UNK]` whole, `[CLS]`/`[SEP]` framing surviving
+truncation — a mismatched tokenizer scores noise with confidence); the class meaning comes
+from a **labels file exported beside the model**, never an assumed column order, and a label
+set without positive/negative is refused; and the published number is the **net**
+(P positive − P negative) over the scored batch, stored with its **event time quantized to the
+hour** so the idempotent store turns every news re-poll into a no-op instead of a flood. The
+tests drive a ~1 kB BERT-shaped fixture (`tests/make_finbert_fixture.py`), never the real
+400 MB model (`tst_finbert`, TS-FB-001…004).
+
 ## Deferred to later phases
 
 - **Phase 3** — CFTC COT, FRED/VIX and IG Client Sentiment **done** (above). Still deferred
@@ -293,7 +323,8 @@ deferred within the phase until they can be built with their own tests.
 - **Phase 5** — ONNX Runtime inference in C++ behind a mock-able interface **done** (above):
   optional at build time, the exported models' own metadata (feature names, imputation medians,
   class order) driving the inference so the two sides cannot drift apart silently.
-- **Phase 6** — FinBERT text→sentiment features (deliberately taken after Phase 7).
+- **Phase 6** — local text-sentiment features **done** (above; taken after Phase 7). Still
+  deferred: the keyed social APIs (Finnhub, Reddit) as alternative sources.
 - **Phase 7** — the dashboard and collection loop **done** (above). Still deferred within the
   phase: the optional Ollama *explanations* (never prices, probabilities, stops or sizing),
   and a real options-family provider (`PUT-CALL` still has only the mock — the score's options

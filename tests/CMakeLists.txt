@@ -73,6 +73,12 @@ target_compile_definitions(tst_crowdmodel PRIVATE
 tradingapp_add_test(tst_crowdcollector tst_crowdcollector.cpp CrowdFixtures.cpp CrowdFixtures.h)
 target_compile_definitions(tst_crowdcollector PRIVATE
     TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Phase 6 — local text sentiment (REQ-F-044): tokenizer rules everywhere; the runner and the
+# collector hook against the tiny bert-shaped fixture (make_finbert_fixture.py), never the
+# real 400 MB model.
+tradingapp_add_test(tst_finbert tst_finbert.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_finbert PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE

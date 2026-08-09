@@ -9,6 +9,7 @@
 #include "services/Config.h"
 #include "services/CrowdModel.h"
 #include "services/CrowdStore.h"
+#include "services/FinBertSentiment.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -76,6 +77,11 @@ public:
                                                           const QDateTime &nowUtc) const;
 
 public slots:
+    // Turn a poll's news headlines into ONE social-family observation (REQ-F-044): the local
+    // text-sentiment model's NET over the batch, event time quantized to the HOUR so the
+    // idempotent store is not flooded by every news refresh. A silent no-op without a loaded
+    // model — the status row says why, and no sentiment is ever invented.
+    void scoreHeadlines(const QString &instrument, const QStringList &headlines);
     // Store a batch of observations (the providers' observationsReady feeds this; tests drive
     // it directly with mock-fetched batches) and recompute for the instruments it touched.
     void ingest(const QList<trading::crowd::Observation> &observations);
@@ -93,10 +99,12 @@ signals:
 
 private:
     void loadModelIfPresent();
+    void loadFinBertIfPresent();
 
     CrowdStore m_store;
     QList<CrowdHttpProvider *> m_providers;   // owned through QObject parenting
     OnnxCrowdModel m_model;
+    FinBertSentiment m_finbert;
     QTimer m_timer;
     QHash<QString, QString> m_details;        // provider name -> status words
 };

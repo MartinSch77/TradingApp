@@ -336,6 +336,14 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-ML-004 | I | The trainer REFUSES rather than pretends, and the guards run BEFORE the optional imports so the refusals hold on machines without the ML stack: a dataset below the sample floor exits 3 (the project's "skipped" code) with NOTHING written — the out directory never appears — and an all-NO_TRADE (one-class) record likewise, naming the class. |
 | TS-ML-005 | I | The full pipeline over a LEARNABLE record (price direction follows the volatility regime; SKIPPED without the optional `./setup.sh ml` environment, like every licence-bound stage): exit 0; walk-forward means for BOTH models beside the three named baselines on identical rows; the model beats the majority baseline OUT-OF-SAMPLE (measured, not asserted); and both ONNX exports exist only because both reproduced their trained model's probabilities (the parity figure is in the report). |
 
+## Crowd collection loop & dashboard — Phase 7 (tests/tst_crowdcollector.cpp, DES-SVC-CROWDCOLLECT, REQ-F-043) — no network; driven through ingest() with the deterministic mock
+
+| ID | L | Case |
+|----|---|------|
+| TS-DASH-001 | I | Ingest stores idempotently and recomputes the persisted score: a week of the deterministic mock's batches lands in the store, re-ingesting the same day's fetch stores NOTHING new (the dedup key — a poll loop cannot grow the record), every ingest emits a score whose past-only z's build up over the accumulated days (coverage > 0), and the score is PERSISTED so the dashboard shows it again after a restart. |
+| TS-DASH-002 | I | The model input matches the trainer's names and keeps missing missing: a mock-fed series is measured with value and age; a series nothing has fed carries ONLY its `_measured = 0` marker (no invented value or z); the price-context features are deliberately absent (the model's own embedded medians impute them, counted); and every emitted name is declared by a pipeline-built manifest — the BY-NAME contract with the exported model. |
+| TS-DASH-003 | I | Statuses are honest words and an issue is named, never a crash: three providers report, exactly the keyless one (CFTC-COT) configured on a machine without credentials — the other two are "not configured", not errors; a noted provider failure appears as a named detail beside the others and emits statusChanged; and with no model file the model is not ready with a status that SAYS why (no model loaded, or the missing-runtime remedy on a stub build). |
+
 ## Crowd model in-process inference — Phase 5 (tests/tst_crowdinference.cpp, tst_crowdmodel.cpp; DES-DOM-CROWDINFER / DES-SVC-CROWDMODEL, REQ-F-042)
 
 | ID | L | Case |

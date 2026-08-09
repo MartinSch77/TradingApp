@@ -211,6 +211,8 @@ qt_add_library(trading_services STATIC
     src/services/IgSentimentProvider.h
     src/services/CrowdModel.cpp
     src/services/CrowdModel.h
+    src/services/CrowdCollector.cpp
+    src/services/CrowdCollector.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain
@@ -269,6 +271,8 @@ qt_add_executable(TradingApp
     src/ui/LeadGauge.h
     src/ui/CrowdScoreModel.cpp
     src/ui/CrowdScoreModel.h
+    src/ui/CrowdDashboardWindow.cpp
+    src/ui/CrowdDashboardWindow.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
     src/ui/BotSimPanel.cpp

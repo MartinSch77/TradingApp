@@ -68,6 +68,11 @@ tradingapp_add_test(tst_crowdinference tst_crowdinference.cpp)
 tradingapp_add_test(tst_crowdmodel tst_crowdmodel.cpp CrowdFixtures.cpp CrowdFixtures.h)
 target_compile_definitions(tst_crowdmodel PRIVATE
     TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Phase 7 — the collection loop (REQ-F-043), driven through ingest() with the deterministic
+# mock's batches; no network, refreshNow() is never called here.
+tradingapp_add_test(tst_crowdcollector tst_crowdcollector.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_crowdcollector PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE

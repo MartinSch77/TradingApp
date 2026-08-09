@@ -493,6 +493,18 @@ Every failure shall be recoverable and named: a missing file, an unreadable grap
 The output is EVIDENCE ONLY: this requirement wires no prediction to any trading decision. Any later consumer remains paper or advisory behind the deterministic risk rules that already exist, and the probabilities remain subject to the measurement discipline of REQ-F-037 before anyone treats them as calibrated.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-043
+VERIFICATION: T
+TITLE: Crowd & AI dashboard with a collection loop
+STATEMENT: >>>
+The application shall RUN the crowd subsystem it has so far only built and tested: a COLLECTION LOOP that periodically asks every CONFIGURED provider for the focus instruments, persists the observations into the raw store — idempotently, so a repeated fetch can never grow the record — recomputes and persists the transparent crowd score of REQ-F-040, and, when an exported model is present, scores it in-process through the optional inference seam of REQ-F-042. An unconfigured provider shall be shown as UNAVAILABLE in words and asked nothing; a provider failure shall become a named status beside the others, never a crash and never invented data.
+
+A DASHBOARD view shall present what the subsystem knows, honestly: per-provider state in words (configured, unavailable, or the last issue), the crowd score with its direction in words, confidence, coverage, per-family contributions and warnings — missing families NAMED, never zeroed — and the model verdict: its availability and readiness in words, and when it scores, the class probabilities LABELLED from the model's own embedded metadata beside the COUNT of imputed inputs, because a prediction made mostly of fill-ins is a weaker claim than one made of measurements. Model inputs the collector cannot compute in-process — the price-context features — shall be left MISSING for the model's own embedded imputation and counted as such, never fabricated in a second implementation that could drift from the trainer's.
+
+The dashboard is EVIDENCE ONLY: it shall state that the signals are experimental and not financial advice, it shall offer no trading affordance, and nothing in the loop or the view shall reach an order path — the deterministic risk rules and the double-press gate remain the only route to a real order. Optional local-LLM EXPLANATIONS of the evidence — words only, never prices, probabilities, stops or sizing — remain DEFERRED within this phase until they can be built with their own tests.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

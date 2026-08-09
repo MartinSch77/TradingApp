@@ -1,7 +1,8 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 5 — optional in-process inference** (REQ-F-039 … REQ-F-042). This document is
-updated per phase; it describes what exists today and what is deliberately deferred.
+Status: **Phase 7 — the Crowd & AI dashboard and the collection loop** (REQ-F-039 … REQ-F-043;
+Phase 6, the text-sentiment features, is deliberately taken later). This document is updated
+per phase; it describes what exists today and what is deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -255,6 +256,31 @@ git-ignored `apiKeyEtoro.json` (or export the environment variables). Leave them
 provider simply reports itself unavailable — nothing else changes. No scraping where no public
 API is offered; no commercial dataset, credential or personal datum is ever committed.
 
+## Phase 7 components — the dashboard and the collection loop (REQ-F-043)
+
+| Layer | File | Responsibility |
+|---|---|---|
+| services | `src/services/CrowdCollector.{h,cpp}` | the collection loop: providers → store → score → optional model |
+| ui | `src/ui/CrowdDashboardWindow.{h,cpp}` | the dashboard view (computes nothing; "Crowd…" button in the main window) |
+
+The subsystem now **runs**: `CrowdCollector` owns the three real providers, asks the
+**configured** ones for SPX500/NSDQ100 every 30 minutes (crowd data is slow-moving), persists
+observations idempotently into `crowd.db` beside the bot's books, recomputes and persists the
+transparent crowd score, and — when an exported model is present (`TRADINGAPP_CROWD_MODEL`, or
+`crowd-model.onnx` in the app config dir) — scores it through the Phase 5 seam. An unconfigured
+provider is shown **unavailable in words** and asked nothing; a provider failure becomes a named
+status, never a crash. The model inputs the collector cannot compute in-process — the four
+price-context features — are **left missing on purpose**: recomputing them in C++ would be a
+second implementation of the trainer's arithmetic, free to drift, so the model imputes them
+with its own embedded medians and the dashboard shows the count ("N inputs imputed").
+
+The dashboard is **evidence only**: provider states, the score's own headline with its warnings
+(missing families named), the model verdict with labelled probabilities and the imputation
+count, and a disclaimer that is part of the layout. No trading affordance exists in the window,
+and the collector holds no broker object — there is no route from here to an order. Optional
+local-LLM **explanations** (words only, never prices, probabilities, stops or sizing) remain
+deferred within the phase until they can be built with their own tests.
+
 ## Deferred to later phases
 
 - **Phase 3** — CFTC COT, FRED/VIX and IG Client Sentiment **done** (above). Still deferred
@@ -267,6 +293,8 @@ API is offered; no commercial dataset, credential or personal datum is ever comm
 - **Phase 5** — ONNX Runtime inference in C++ behind a mock-able interface **done** (above):
   optional at build time, the exported models' own metadata (feature names, imputation medians,
   class order) driving the inference so the two sides cannot drift apart silently.
-- **Phase 6** — FinBERT text→sentiment features.
-- **Phase 7** — the Crowd & AI dashboard and optional Ollama *explanations* (never prices,
-  probabilities, stops or sizing).
+- **Phase 6** — FinBERT text→sentiment features (deliberately taken after Phase 7).
+- **Phase 7** — the dashboard and collection loop **done** (above). Still deferred within the
+  phase: the optional Ollama *explanations* (never prices, probabilities, stops or sizing),
+  and a real options-family provider (`PUT-CALL` still has only the mock — the score's options
+  input runs unmeasured on real data).

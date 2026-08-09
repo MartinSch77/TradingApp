@@ -1,8 +1,7 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 4 — the offline training pipeline (`tools/ml/`)** (REQ-F-039, REQ-F-040,
-REQ-F-041). This document is updated per phase; it describes what exists today and what is
-deliberately deferred.
+Status: **Phase 5 — optional in-process inference** (REQ-F-039 … REQ-F-042). This document is
+updated per phase; it describes what exists today and what is deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -26,7 +25,7 @@ providers  ──▶  **normalized Observation**  ──▶  **CrowdStore (SQLit
                                         features ─▶ Crowd Score (Phase 2)
                                                        │
                                                        ▼
-                          trained model (ONNX — **trained offline in Phase 4**, inference Phase 5)
+              trained model (ONNX — **trained offline in Phase 4, loaded in-process in Phase 5**)
                                                        │
                                                        ▼
                               deterministic risk checks ─▶ paper proposal ─▶ Qt UI
@@ -197,6 +196,40 @@ disk**; a disagreement is a reported failure and no file. Verified end to end on
 walk-forward balanced accuracy 0.91 (XGBoost) / 0.81 (logistic regression) against 0.50
 (majority) on a constructed learnable fixture, parity ≤ 1e-6 (`tst_crowdml`, TS-ML-001…005).
 
+## Phase 5 components — optional in-process inference (REQ-F-042)
+
+| Layer | File | Responsibility |
+|---|---|---|
+| domain | `src/domain/CrowdInference.{h,cpp}` | the pure contract: metadata parse, by-name assembly + counted imputation, probability shaping |
+| services | `src/services/CrowdModel.{h,cpp}` | the `ICrowdModel` seam + `OnnxCrowdModel` (ONNX Runtime, or an honest stub) |
+
+The app can now **load and score the very files the pipeline exports** — behind a seam,
+`ICrowdModel`, mirroring the provider seam, so consumers and tests run on a double and never
+need the runtime. The dependency is **optional at build time**: CMake resolves ONNX Runtime
+from `ONNXRUNTIME_ROOT` (environment or cache), falling back to the directory `./setup.sh ml`
+provisions (`~/.local/onnxruntime`; the same mode installs it beside the training venv, on
+Windows `.\setup.ps1 ml` fetches the win-x64 build). Without it the **same class compiles as a
+stub**: `available()` is false and `status()` names the remedy — a visibly absent capability,
+never a broken-looking one, and never a build failure.
+
+**The model's own embedded metadata drives everything**, so the trainer and the consumer cannot
+drift apart silently: inputs are matched **by name** against the embedded feature list, a
+missing or non-finite input carries the trainer's **embedded median** — with the number of
+imputed features **reported**, because a prediction made mostly of fill-ins is a weaker claim —
+and the probability columns are labelled from the embedded class order, never by assumption. A
+model whose metadata is absent, unparsable or inconsistent is **refused with a reason**; so is
+an answer that does not form a probability distribution (repairing one would invent an
+opinion). Every failure — missing file, junk graph, a runtime error mid-score — is a named
+result while the app carries on, and a failed load leaves **no half-usable session**.
+
+Verified end to end on this machine (`tst_crowdmodel`, TS-INF-004/005): the pipeline's XGBoost
+export loads in-process and, scored over every dataset row with features assembled by name from
+the CSV, reproduces its fit — label agreement well above 0.7 on the learnable fixture — and a
+caller supplying **nothing** still gets an honest answer with every feature counted as imputed.
+The prediction is **evidence only**: nothing here wires it to a trade, and any later consumer
+stays paper/advisory behind the deterministic risk rules with the REQ-F-037 measurement
+discipline in front of any probability claim.
+
 ## Configuration
 
 Provider credentials are read from environment variables or the **git-ignored**
@@ -231,9 +264,9 @@ API is offered; no commercial dataset, credential or personal datum is ever comm
   build, LONG/NO_TRADE/SHORT labels, logistic-regression + XGBoost baselines, purged
   walk-forward validation, ONNX export. Python stays an **offline** tool, never a runtime
   dependency of the C++ app.
-- **Phase 5** — ONNX Runtime inference in C++ behind a mock-able interface (optional; the app
-  builds without it), reading the exported models' own metadata (feature names, imputation
-  medians, class order) so the two sides cannot drift apart silently.
+- **Phase 5** — ONNX Runtime inference in C++ behind a mock-able interface **done** (above):
+  optional at build time, the exported models' own metadata (feature names, imputation medians,
+  class order) driving the inference so the two sides cannot drift apart silently.
 - **Phase 6** — FinBERT text→sentiment features.
 - **Phase 7** — the Crowd & AI dashboard and optional Ollama *explanations* (never prices,
   probabilities, stops or sizing).

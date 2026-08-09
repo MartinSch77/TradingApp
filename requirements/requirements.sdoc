@@ -477,6 +477,22 @@ Validation shall be PURGED WALK-FORWARD: a model is evaluated only on data stric
 The trained baseline models (a logistic regression and a gradient-boosted-trees classifier) shall be exported to the ONNX exchange format carrying, as embedded metadata, the feature names in order, the imputation values a consumer must apply, the class order and the manifest version; and the exported artifact shall be verified to reproduce the trained model's own probabilities before it is kept — an export that disagrees with its source shall be deleted and reported, never shipped. The dataset build, labelling and split logic shall run on the Python standard library alone, so the leakage and labelling rules are testable on every machine the project supports; the fitting and export step may require the optional, setup-provisioned environment and shall REFUSE with the project's "skipped" exit code — writing nothing — when that environment is absent, when the dataset is too small, or when the labels hold fewer than two classes, rather than emit a model that means nothing.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-042
+VERIFICATION: T
+TITLE: Optional in-process inference for the trained crowd model
+STATEMENT: >>>
+The application shall be able to LOAD and RUN a crowd model exported by the offline pipeline (REQ-F-041) in-process, behind a SEAM — one interface with a test double — so that everything consuming a prediction is testable without the real runtime, mirroring the provider seam of REQ-F-039.
+
+The inference runtime shall be OPTIONAL AT BUILD TIME: on a machine without it the application shall configure, build, run and pass its tests identically, with the capability reporting itself UNAVAILABLE in words that name the remedy — never a build failure, never a crash, and never a silently absent feature a reader could mistake for a broken one. The runtime shall be provisioned by the same optional setup mode as the training environment, and no machine-specific path shall be committed.
+
+The model file's own EMBEDDED metadata shall drive the inference, so the trainer and the consumer cannot drift apart silently: input features shall be matched BY NAME against the metadata's ordered feature list, a missing or non-finite input shall be imputed with the EXACT value the trainer embedded for that feature — with the number of imputed features REPORTED alongside the answer, because a prediction made mostly of fill-ins is a weaker claim — and the class labels of the answered probabilities shall come from the metadata, never from an assumption about column order. A model whose metadata is absent, unparsable or inconsistent — imputation values not matching the feature list, no classes — shall be REFUSED with a stated reason rather than scored.
+
+Every failure shall be recoverable and named: a missing file, an unreadable graph, and a runtime error during scoring shall each produce an error result while the application carries on. An answer that does not form a probability distribution over the stated classes shall be refused rather than repaired.
+
+The output is EVIDENCE ONLY: this requirement wires no prediction to any trading decision. Any later consumer remains paper or advisory behind the deterministic risk rules that already exist, and the probabilities remain subject to the measurement discipline of REQ-F-037 before anyone treats them as calibrated.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

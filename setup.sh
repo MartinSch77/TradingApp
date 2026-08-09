@@ -258,6 +258,11 @@ ollama_install() {
 # because the app itself must keep building, running and testing WITHOUT any of it —
 # tools/ml/train_crowd_model.py exits 3 ("skipped") when this was never run.
 ML_VENV_DIR="${ML_VENV_DIR:-$HOME/.local/tradingapp-ml}"
+# The C++ runtime for the OPTIONAL in-app inference (REQ-F-042, Phase 5): resolved by CMake
+# from ONNXRUNTIME_ROOT (env or cache) falling back to this directory; absent, the inference
+# seam reports "unavailable" and the build is otherwise identical.
+ONNXRUNTIME_DIR="${ONNXRUNTIME_DIR:-$HOME/.local/onnxruntime}"
+ONNXRUNTIME_VERSION="${ONNXRUNTIME_VERSION:-1.28.0}"
 
 ml_install() {
     echo "== Crowd-model training environment ($ML_VENV_DIR) =="
@@ -274,6 +279,32 @@ import numpy, onnx, onnxmltools, onnxruntime, skl2onnx, sklearn, xgboost
 print("ml env:", "numpy", numpy.__version__, "| scikit-learn", sklearn.__version__,
       "| xgboost", xgboost.__version__, "| onnxruntime", onnxruntime.__version__)
 PYCHECK
+
+    # The C++ ONNX Runtime for the OPTIONAL in-app inference (REQ-F-042): provisioned beside
+    # the training environment rather than demanded of every build machine — a build without
+    # it stays green, the inference seam just reports itself unavailable.
+    if [ ! -f "$ONNXRUNTIME_DIR/include/onnxruntime_cxx_api.h" ]; then
+        local ort_arch ort_name
+        case "$(host_arch)" in
+        x86_64) ort_arch="x64" ;;
+        aarch64) ort_arch="aarch64" ;;
+        *)
+            echo "no ONNX Runtime build for $(host_arch) — the inference seam reports unavailable" >&2
+            return 0
+            ;;
+        esac
+        ort_name="onnxruntime-linux-$ort_arch-$ONNXRUNTIME_VERSION"
+        echo "-- downloading ONNX Runtime $ONNXRUNTIME_VERSION ($ort_arch, C++ runtime)"
+        curl --proto '=https' --tlsv1.2 -sSL -o "$HOME/.local/$ort_name.tgz" \
+            "https://github.com/microsoft/onnxruntime/releases/download/v$ONNXRUNTIME_VERSION/$ort_name.tgz" ||
+            { echo "download failed" >&2; return 1; }
+        tar -xzf "$HOME/.local/$ort_name.tgz" -C "$HOME/.local" || return 1
+        rm -f "$HOME/.local/$ort_name.tgz"
+        rm -rf "$ONNXRUNTIME_DIR"
+        mv "$HOME/.local/$ort_name" "$ONNXRUNTIME_DIR"
+    fi
+    echo "onnxruntime C++: $ONNXRUNTIME_DIR ($(cat "$ONNXRUNTIME_DIR/VERSION_NUMBER" 2>/dev/null || echo present))"
+    echo "   a build configured AFTER this picks it up (cmake -S . -B build, or ./build_all.sh)"
     echo
     echo "Train offline with (see docs/crowd-ai.md, Phase 4):"
     echo "  tools/ml/crowd_dataset.py build --store … --instrument SPX500 --prices … \\"

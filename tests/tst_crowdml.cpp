@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Martin Schuler
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "CrowdFixtures.h"
+
 #include "services/CrowdStore.h"
 
 #include <QtTest/QtTest>
@@ -21,173 +23,7 @@ using namespace trading::crowd;
 // walk-forward split, and the trainer's refusals — are asserted on the files that come back.
 // Only the dataset/split half (stdlib-only by design) is required everywhere; the model-fitting
 // half needs the optional `./setup.sh ml` environment and its test SKIPS without it.
-namespace {
-
-QString repoRoot()
-{
-    return QStringLiteral(TRADINGAPP_SOURCE_DIR);
-}
-
-QString datasetTool()
-{
-    return repoRoot() + QStringLiteral("/tools/ml/crowd_dataset.py");
-}
-
-QString trainerTool()
-{
-    return repoRoot() + QStringLiteral("/tools/ml/train_crowd_model.py");
-}
-
-// The one place each tool's invocation is spelled out — the tests vary only the paths and the
-// knob under test, so the shared part lives here rather than as five near-clones.
-QStringList buildToolArgs(const QString &store, const QString &prices, const QString &dataset,
-                          const QString &manifest, const QStringList &extra = {})
-{
-    return QStringList{datasetTool(), QStringLiteral("build"),
-                       QStringLiteral("--store"), store,
-                       QStringLiteral("--instrument"), QStringLiteral("SPX500"),
-                       QStringLiteral("--prices"), prices,
-                       QStringLiteral("--horizon-days"), QStringLiteral("5"),
-                       QStringLiteral("--out"), dataset,
-                       QStringLiteral("--manifest"), manifest}
-           + extra;
-}
-
-QStringList trainerArgs(const QString &dataset, const QString &manifest, const QString &outDir,
-                        const QStringList &extra = {})
-{
-    return QStringList{trainerTool(), QStringLiteral("--dataset"), dataset,
-                       QStringLiteral("--manifest"), manifest,
-                       QStringLiteral("--out-dir"), outDir}
-           + extra;
-}
-
-struct ToolRun {
-    bool started = false;
-    int exitCode = -1;
-    QString stdOut;
-    QString stdErr;
-};
-
-ToolRun runPython(const QString &python, const QStringList &arguments, int timeoutMs)
-{
-    QProcess process;
-    process.start(python, arguments);
-    ToolRun run;
-    run.started = process.waitForStarted(5000);
-    if (!run.started) {
-        return run;
-    }
-    if (!process.waitForFinished(timeoutMs)) {
-        process.kill();
-        return run;
-    }
-    run.exitCode = process.exitCode();
-    run.stdOut = QString::fromUtf8(process.readAllStandardOutput());
-    run.stdErr = QString::fromUtf8(process.readAllStandardError());
-    return run;
-}
-
-// The join reads (instrument, source, series, times, value); provider name and unit are part
-// of the stored row but never of an assertion, so the fixture fills them with constants.
-Observation makeObservation(Source source, const QString &series, const QDateTime &event,
-                            const QDateTime &received, double value)
-{
-    Observation obs;
-    obs.instrument = QStringLiteral("SPX500");
-    obs.source = source;
-    obs.sourceName = QStringLiteral("fixture");
-    obs.seriesId = series;
-    obs.eventTime = event;
-    obs.receivedTime = received;
-    obs.value = value;
-    obs.unit = QStringLiteral("unit");
-    obs.valid = true;
-    return obs;
-}
-
-void writePrices(const QString &path, const QDate &start, const QList<double> &closes)
-{
-    QFile file(path);
-    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    file.write("date,close\n");
-    for (qsizetype i = 0; i < closes.size(); ++i) {
-        file.write(QStringLiteral("%1,%2\n")
-                       .arg(start.addDays(i).toString(QStringLiteral("yyyy-MM-dd")))
-                       .arg(closes.at(i), 0, 'g', 10)
-                       .toUtf8());
-    }
-}
-
-// The dataset CSV carries no quoting (numbers, ISO stamps, label words), so a plain split reads
-// it; every row is keyed by column NAME — position is exactly what the manifest exists to avoid.
-QList<QHash<QString, QString>> readCsv(const QString &path)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return {};
-    }
-    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'),
-                                                                      Qt::SkipEmptyParts);
-    if (lines.isEmpty()) {
-        return {};
-    }
-    const QStringList header = lines.first().split(QLatin1Char(','));
-    QList<QHash<QString, QString>> rows;
-    for (qsizetype i = 1; i < lines.size(); ++i) {
-        const QStringList cells = lines.at(i).split(QLatin1Char(','));
-        QHash<QString, QString> row;
-        for (qsizetype c = 0; c < header.size() && c < cells.size(); ++c) {
-            row.insert(header.at(c), cells.at(c));
-        }
-        rows.append(row);
-    }
-    return rows;
-}
-
-const QHash<QString, QString> *rowForDay(const QList<QHash<QString, QString>> &rows,
-                                         const QString &day)
-{
-    for (const auto &row : rows) {
-        if (row.value(QStringLiteral("decision_time")).startsWith(day)) {
-            return &row;
-        }
-    }
-    return nullptr;
-}
-
-QByteArray fileBytes(const QString &path)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return {};
-    }
-    return file.readAll();
-}
-
-// A python able to run the FITTING half: the setup-provisioned venv first, the system
-// interpreter second (a developer may have installed the libraries globally). Empty when
-// neither can import the stack — the caller SKIPS, mirroring the licence-bound stages.
-QString mlPython()
-{
-    const QString venv = qEnvironmentVariable(
-        "ML_VENV_DIR", QDir::homePath() + QStringLiteral("/.local/tradingapp-ml"));
-    const QStringList candidates{venv + QStringLiteral("/bin/python3"),
-                                 venv + QStringLiteral("/Scripts/python.exe"),
-                                 QStringLiteral("python3")};
-    const QStringList probe{QStringLiteral("-c"),
-                            QStringLiteral("import numpy, sklearn, xgboost, skl2onnx, "
-                                           "onnxmltools, onnxruntime")};
-    for (const QString &candidate : candidates) {
-        const ToolRun run = runPython(candidate, probe, 60000);
-        if (run.started && run.exitCode == 0) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
-} // namespace
+using namespace crowdtest;
 
 class TestCrowdMl : public QObject
 {
@@ -233,7 +69,7 @@ private slots:
             closes.append(100.0 + i);
         }
         const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        writePrices(prices, start, closes);
+        QVERIFY(writePricesCsv(prices, start, closes));
 
         const QStringList zHistory{QStringLiteral("--z-min-history"), QStringLiteral("2")};
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
@@ -320,7 +156,7 @@ private slots:
             closes.append(i < 10 ? 100.0 : (i < 20 ? 104.0 : 100.0));
         }
         const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        writePrices(prices, start, closes);
+        QVERIFY(writePricesCsv(prices, start, closes));
 
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         const ToolRun run = runPython(
@@ -375,7 +211,7 @@ private slots:
             closes.append(100.0 + (i % 7));
         }
         const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        writePrices(prices, start, closes);
+        QVERIFY(writePricesCsv(prices, start, closes));
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         ToolRun run = runPython(
             QStringLiteral("python3"),
@@ -441,7 +277,7 @@ private slots:
             closes.append(i < 10 ? 100.0 : (i < 20 ? 104.0 : 100.0));
         }
         const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        writePrices(prices, start, closes);
+        QVERIFY(writePricesCsv(prices, start, closes));
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         const QString manifest = dir.filePath(QStringLiteral("manifest.json"));
         ToolRun run = runPython(QStringLiteral("python3"),
@@ -494,27 +330,8 @@ private slots:
         const QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
-        const QDate start(2025, 9, 1);
-        const int days = 270;
-        QList<double> closes{100.0};
-        {
-            CrowdStore store(storePath);
-            QVERIFY2(store.isOpen(), qPrintable(store.lastError()));
-            QList<Observation> observations;
-            for (int i = 0; i < days; ++i) {
-                const bool lowVol = (i / 10) % 2 == 0;
-                const QDateTime stamp(start.addDays(i), QTime(20, 5), QTimeZone::UTC);
-                observations.append(makeObservation(
-                    Source::Volatility, QStringLiteral("VIX"), stamp, stamp,
-                    (lowVol ? 10.0 : 30.0) + 0.1 * (i % 4)));
-                if (i < days - 1) {
-                    closes.append(closes.last() * (lowVol ? 1.01 : 0.99));
-                }
-            }
-            QCOMPARE(store.upsert(observations), days);
-        }
         const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        writePrices(prices, start, closes);
+        QVERIFY(writeRegimeFixture(storePath, prices, QDate(2025, 9, 1), 270));
 
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         const QString manifest = dir.filePath(QStringLiteral("manifest.json"));

@@ -615,6 +615,27 @@ print("ml env:", "numpy", numpy.__version__, "| scikit-learn", sklearn.__version
     & $venvPy $probe
     Remove-Item $probe -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { Write-Warning 'the ml environment does not import cleanly'; return }
+
+    # The C++ ONNX Runtime for the OPTIONAL in-app inference (REQ-F-042): provisioned beside
+    # the training environment. Without it the build stays green - the inference seam just
+    # reports itself unavailable. Counterpart of the setup.sh ml download.
+    $ortVersion = if ($env:ONNXRUNTIME_VERSION) { $env:ONNXRUNTIME_VERSION } else { '1.28.0' }
+    $ortDir = if ($env:ONNXRUNTIME_DIR) { $env:ONNXRUNTIME_DIR } else { Join-Path $env:USERPROFILE '.local\onnxruntime' }
+    if (-not (Test-Path (Join-Path $ortDir 'include\onnxruntime_cxx_api.h'))) {
+        $ortName = "onnxruntime-win-x64-$ortVersion"
+        $zip = Join-Path $env:TEMP "$ortName.zip"
+        Write-Host "-- downloading ONNX Runtime $ortVersion (win-x64, C++ runtime)"
+        Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$ortVersion/$ortName.zip" -OutFile $zip
+        $parent = Split-Path $ortDir -Parent
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        Expand-Archive -Path $zip -DestinationPath $parent -Force
+        Remove-Item $zip -ErrorAction SilentlyContinue
+        if (Test-Path $ortDir) { Remove-Item -Recurse -Force $ortDir }
+        Move-Item (Join-Path $parent $ortName) $ortDir
+    }
+    Write-Host "onnxruntime C++: $ortDir"
+    Write-Host '   a build configured AFTER this picks it up; RUNNING with inference needs'
+    Write-Host "   $ortDir\lib\onnxruntime.dll beside the executable or on PATH"
     Write-Host ''
     Write-Host 'Train offline with (see docs/crowd-ai.md, Phase 4):'
     Write-Host '  python tools\ml\crowd_dataset.py build ...        # stdlib-only, no venv needed'

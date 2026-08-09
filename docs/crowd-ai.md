@@ -1,8 +1,8 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **all seven phases complete, including the Phase 7 explanations** (REQ-F-039 …
-REQ-F-045; Phase 6 was deliberately taken after Phase 7). This document describes what exists
-today and what is deliberately deferred — see the deferred list at the end.
+Status: **all seven phases complete, plus Phase 8 — the crowd evidence reaches the paper
+bot** (REQ-F-039 … REQ-F-046; Phase 6 was deliberately taken after Phase 7). This document
+describes what exists today and what is deliberately deferred — see the list at the end.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -317,6 +317,19 @@ set without positive/negative is refused; and the published number is the **net*
 hour** so the idempotent store turns every news re-poll into a no-op instead of a flood. The
 tests drive a ~1 kB BERT-shaped fixture (`tests/make_finbert_fixture.py`), never the real
 400 MB model (`tst_finbert`, TS-FB-001…004).
+
+## Phase 8 — the crowd evidence reaches the paper bot (REQ-F-046)
+
+The data-flow diagram's last arrow is wired: the collection loop's findings reach the paper
+bot's model prompt as **evidence lines** beside the technical evidence it already reads — per
+focus instrument, the transparent score's own headline and, when the in-process model has
+answered, its **labelled** probabilities marked *experimental* and *uncalibrated* with the
+imputation count stated (`crowdEvidenceLine`, pure and tested; `BotSimRunner::setCrowdEvidence`
+appends it to the prompt). The line **gates, sizes and stops nothing** — no refusal code, no
+sizing rule and no exit rule reads it; the deterministic risk rules remain the only governor.
+Nothing measured means **no line** (never a neutral-looking zero), a cleared line removes the
+entry, and the console front end — which has no collection loop — passes nothing and behaves
+identically.
 
 ## Deferred to later phases
 

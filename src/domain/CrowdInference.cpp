@@ -165,4 +165,29 @@ CrowdPrediction crowdPredictionFrom(const CrowdModelMeta &meta,
     return out;
 }
 
+QString crowdEvidenceLine(const QString &instrument, const CrowdScoreResult &score,
+                          const CrowdPrediction &prediction)
+{
+    QStringList parts;
+    if (!score.isEmpty()) {
+        parts.append(QStringLiteral("score %1").arg(score.headline()));
+    }
+    if (prediction.ok) {
+        QStringList classes;
+        for (qsizetype i = 0; i < prediction.classes.size(); ++i) {
+            classes.append(QStringLiteral("%1 %2%")
+                               .arg(prediction.classes.at(i))
+                               .arg(prediction.probabilities.at(i) * 100.0, 0, 'f', 0));
+        }
+        parts.append(QStringLiteral("model (uncalibrated, %1 inputs imputed): %2")
+                         .arg(prediction.imputed)
+                         .arg(classes.join(QStringLiteral(" / "))));
+    }
+    if (parts.isEmpty()) {
+        return {};   // nothing measured is NO line — a neutral-looking zero would be a claim
+    }
+    return QStringLiteral("Crowd evidence %1 (experimental): %2")
+        .arg(instrument, parts.join(QStringLiteral("; ")));
+}
+
 } // namespace trading::crowd

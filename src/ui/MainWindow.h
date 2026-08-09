@@ -17,6 +17,8 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QList>
+#include "domain/CrowdInference.h"
+
 #include <QMainWindow>
 #include <QSet>
 #include <QSize>
@@ -442,6 +444,8 @@ private:
     BotSimDialog *m_botDialog = nullptr;
     QPushButton *m_botButton = nullptr;
     trading::crowd::CrowdCollector *m_crowdCollector = nullptr;
+    QHash<QString, trading::crowd::CrowdScoreResult> m_crowdScores;      // REQ-F-046 caches
+    QHash<QString, trading::crowd::CrowdPrediction> m_crowdPredictions;
     CrowdDashboardWindow *m_crowdDialog = nullptr;
     QPushButton *m_crowdButton = nullptr;
     // The index-heavyweight early read (REQ-F-035): a window of its own, fed from

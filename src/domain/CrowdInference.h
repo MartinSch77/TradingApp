@@ -4,6 +4,8 @@
 #ifndef TRADINGAPP_DOMAIN_CROWDINFERENCE_H
 #define TRADINGAPP_DOMAIN_CROWDINFERENCE_H
 
+#include "domain/CrowdScore.h"
+
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -69,6 +71,16 @@ struct CrowdPrediction {
 [[nodiscard]] CrowdPrediction crowdPredictionFrom(const CrowdModelMeta &meta,
                                                   const QList<double> &probabilities,
                                                   qint32 imputed);
+
+// The crowd subsystem's ONE line of bot evidence (REQ-F-046): the transparent score's own
+// headline and, when a model answered, its labelled probabilities with the imputation count —
+// marked EXPERIMENTAL and UNCALIBRATED, because the REQ-F-037 discipline says a probability
+// is measured, never asserted. Empty when nothing is measured: absent evidence is NO line,
+// never a neutral-looking zero. It informs the model like any other evidence line and gates,
+// sizes and stops NOTHING — the deterministic risk rules do not read it.
+[[nodiscard]] QString crowdEvidenceLine(const QString &instrument,
+                                        const CrowdScoreResult &score,
+                                        const CrowdPrediction &prediction);
 
 } // namespace trading::crowd
 

@@ -419,6 +419,29 @@ void MainWindow::setupRunners()
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
     static_cast<void>(connect(m_botRunner, &BotSimRunner::tradeOpened, this,
                               &MainWindow::onBotTradeOpened));
+    // The crowd evidence reaches the bot's prompt (REQ-F-046): one line per instrument,
+    // rebuilt whenever the score or the model's read changes — evidence beside the technical
+    // lines, gating and sizing nothing.
+    const auto pushCrowdEvidence = [this](const QString &instrument) {
+        m_botRunner->setCrowdEvidence(
+            instrument, trading::crowd::crowdEvidenceLine(
+                            instrument, m_crowdScores.value(instrument),
+                            m_crowdPredictions.value(instrument)));
+    };
+    static_cast<void>(connect(
+        m_crowdCollector, &trading::crowd::CrowdCollector::scoreUpdated, this,
+        [this, pushCrowdEvidence](const QString &instrument,
+                                  const trading::crowd::CrowdScoreResult &result) {
+            m_crowdScores.insert(instrument, result);
+            pushCrowdEvidence(instrument);
+        }));
+    static_cast<void>(connect(
+        m_crowdCollector, &trading::crowd::CrowdCollector::predictionUpdated, this,
+        [this, pushCrowdEvidence](const QString &instrument,
+                                  const trading::crowd::CrowdPrediction &prediction) {
+            m_crowdPredictions.insert(instrument, prediction);
+            pushCrowdEvidence(instrument);
+        }));
     // The local model is a SOURCE like any other, not just the bot's brain: its
     // picks show up in the signals panel and in the decision window (REQ-F-034).
     static_cast<void>(connect(m_botRunner, &BotSimRunner::proposalsUpdated, this,

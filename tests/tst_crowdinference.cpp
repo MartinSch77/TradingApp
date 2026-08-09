@@ -151,6 +151,44 @@ private slots:
         QVERIFY(!crowdPredictionFrom(meta, {0.2, std::nan(""), 0.5}, 0).ok);
         QVERIFY(!crowdPredictionFrom(CrowdModelMeta{}, {1.0}, 0).ok);
     }
+
+    //! @tstid TS-INF-006 @design DES-DOM-CROWDINFER
+    // @relation(REQ-F-046, scope=function)
+    void TS_INF_006_theBotEvidenceLineIsHonestWordsOrNoLineAtAll()
+    {
+        // Nothing measured is NO line — absent evidence must never read as a neutral zero.
+        QVERIFY(crowdEvidenceLine(QStringLiteral("SPX500"), CrowdScoreResult{},
+                                  CrowdPrediction{})
+                    .isEmpty());
+
+        // The score alone: the instrument, the experimental label and the score's own words.
+        CrowdScoreResult score;
+        score.score = -0.4;
+        score.direction = QStringLiteral("bearish");
+        score.confidence = 0.6;
+        score.coverage = 0.5;
+        const QString scoreOnly =
+            crowdEvidenceLine(QStringLiteral("SPX500"), score, CrowdPrediction{});
+        QVERIFY(scoreOnly.contains(QStringLiteral("SPX500")));
+        QVERIFY(scoreOnly.contains(QStringLiteral("experimental")));
+        QVERIFY(scoreOnly.contains(QStringLiteral("bearish")));
+
+        // With a model answer: labelled probabilities, the imputation count, and the word
+        // UNCALIBRATED — a probability is measured, never asserted. Never an instruction.
+        const CrowdModelMeta meta = crowdModelMetaFromProps(validProps());
+        const CrowdPrediction prediction = crowdPredictionFrom(meta, {0.2, 0.3, 0.5}, 4);
+        QVERIFY(prediction.ok);
+        const QString full = crowdEvidenceLine(QStringLiteral("NSDQ100"), score, prediction);
+        QVERIFY(full.contains(QStringLiteral("uncalibrated")));
+        QVERIFY(full.contains(QStringLiteral("4 inputs imputed")));
+        QVERIFY(full.contains(QStringLiteral("LONG 50%")));
+        QVERIFY(!full.contains(QStringLiteral("BUY")));
+        QVERIFY(!full.contains(QStringLiteral("SELL")));
+
+        // A prediction with no score still speaks — one measured half is evidence too.
+        QVERIFY(!crowdEvidenceLine(QStringLiteral("NSDQ100"), CrowdScoreResult{}, prediction)
+                     .isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestCrowdInference)

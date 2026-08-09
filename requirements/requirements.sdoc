@@ -531,6 +531,16 @@ The explanation is WORDS ONLY, enforced by construction rather than by trust: th
 Without a configured model the feature shall report itself unavailable in the established words; a transport failure, an empty answer and an unreadable answer shall each be a NAMED error result, never a blank that reads as "nothing to say". The parse shall be defensive in the way the proposal parse already is — a small model's JSON is approximate, and for prose the honest fallback is the prose itself — and one request shall be in flight at a time, sharing the advisor's existing discipline.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-046
+VERIFICATION: T
+TITLE: Crowd evidence reaches the paper bot, as evidence only
+STATEMENT: >>>
+The crowd subsystem's findings shall be able to reach the paper bot's decision model as EVIDENCE LINES beside the technical evidence it already reads: per focus instrument, the transparent score's own headline and — when the in-process model has answered — its probabilities LABELLED from the model's embedded metadata, marked EXPERIMENTAL and UNCALIBRATED with the imputation count stated, because a probability is measured, never asserted (REQ-F-037).
+
+The line shall GATE, SIZE and STOP nothing: no refusal code, no sizing rule, no exit rule and no risk cap reads it — it informs the model exactly like every other evidence line, and the deterministic risk rules remain the only governor of what the bot may do. Nothing measured shall mean NO line — absent evidence must never appear as a neutral-looking zero — and clearing an instrument's line shall remove it rather than leave a stale claim in every later prompt. The input is OPTIONAL: a front end without the collection loop passes nothing and behaves identically.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

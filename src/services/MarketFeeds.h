@@ -107,6 +107,13 @@ signals:
     void log(const QString &message, bool isError);
 
 private:
+    // One instrument's 1-minute chart over `range`, emitting its closes (unless candlesOnly)
+    // and candles. When the CURRENT day carries no candles — the instrument's market is closed,
+    // as the .24-7 futures are on a weekend — it retries ONCE with a wider range so the chart
+    // shows the LAST session instead of a blank frame; that retry is candles-only, because the
+    // decision composite's close series must stay the current session, not a multi-day one.
+    void fetchIntradayRange(const QString &symbol, const QString &ticker, const QString &range,
+                            bool candlesOnly);
     // The URL for one feed request: the real host + pathAndQuery, or the test
     // override + pathAndQuery when setEndpointBaseForTesting() was called.
     [[nodiscard]] QString feedUrl(const QString &host, const QString &pathAndQuery) const;

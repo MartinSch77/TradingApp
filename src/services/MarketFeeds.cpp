@@ -562,36 +562,52 @@ void MarketFeeds::fetchIntradaySeries()
         if (ticker.isEmpty()) {
             continue;
         }
-        QNetworkRequest req(QUrl(feedUrl(
-            QStringLiteral("https://query1.finance.yahoo.com"),
-            QStringLiteral("/v8/finance/chart/%1?interval=1m&range=1d")
-                .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
-        JsonHttp::setBrowserHeaders(req);
-        QNetworkReply *reply = m_nam->get(req);
-        m_http->handleReply(reply, [this, symbol](bool ok, qint32 /*status*/,
-                                                  const QJsonDocument &doc,
-                                                  const QByteArray & /*raw*/,
-                                                  const QString &netError) {
-            if (!ok || !doc.isObject()) {
-                reportFeedError(QStringLiteral("Intraday series"), netError);  // stays absent
-                return;
-            }
-            const QJsonObject result = yahooChartResult(doc);
-            const QList<double> closes = yahooCloses(result, /*positiveOnly=*/false);
-            if (!closes.isEmpty()) {
-                emit intradayCloses(symbol, closes);
-            }
-            // The candles ride the same response. Emitted separately rather than folded into
-            // the signal above, because the close series feeds the DECISION composite and the
-            // candles feed a CHART: a parse change on one must not be able to move the other.
-            const trading::CandleColumns ohlc = yahooOhlc(result);
-            const QList<trading::Candle> candles =
-                trading::candlesFrom(ohlc.opens, ohlc.highs, ohlc.lows, ohlc.closes);
-            if (!candles.isEmpty()) {
-                emit intradayCandles(symbol, candles);
-            }
-        });
+        fetchIntradayRange(symbol, ticker, QStringLiteral("1d"), /*candlesOnly=*/false);
     }
+}
+
+void MarketFeeds::fetchIntradayRange(const QString &symbol, const QString &ticker,
+                                     const QString &range, bool candlesOnly)
+{
+    QNetworkRequest req(QUrl(feedUrl(
+        QStringLiteral("https://query1.finance.yahoo.com"),
+        QStringLiteral("/v8/finance/chart/%1?interval=1m&range=%2")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker)), range))));
+    JsonHttp::setBrowserHeaders(req);
+    QNetworkReply *reply = m_nam->get(req);
+    m_http->handleReply(reply, [this, symbol, ticker, range, candlesOnly](
+                                   bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                   const QByteArray & /*raw*/, const QString &netError) {
+        if (!ok || !doc.isObject()) {
+            reportFeedError(QStringLiteral("Intraday series"), netError);  // stays absent
+            return;
+        }
+        const QJsonObject result = yahooChartResult(doc);
+        const QList<double> closes = yahooCloses(result, /*positiveOnly=*/false);
+        // The close series feeds the DECISION composite, so it stays the CURRENT session and is
+        // only emitted from the primary (1d) request — never from the wider fallback below.
+        if (!candlesOnly && !closes.isEmpty()) {
+            emit intradayCloses(symbol, closes);
+        }
+        // The candles feed a CHART. Parsed from the SAME response but emitted separately, so a
+        // parse change on one cannot move the other.
+        const trading::CandleColumns ohlc = yahooOhlc(result);
+        const QList<trading::Candle> candles =
+            trading::candlesFrom(ohlc.opens, ohlc.highs, ohlc.lows, ohlc.closes);
+        if (!candles.isEmpty()) {
+            emit intradayCandles(symbol, candles);
+            return;
+        }
+        // Fall back ONLY when the session is TRULY empty — no closes AND no candles — which is a
+        // CLOSED market: the .24-7 futures (ES=F, CL=F, NQ=F, GC=F) return an empty 1-minute
+        // series on a weekend or holiday, and that is what left their chart blank. Retry ONCE
+        // with a wider range so the chart shows the LAST session's candles. Candles only (see
+        // above), and only from the primary request, so it can never recurse. An instrument that
+        // returned closes but no drawable candles is NOT closed and must not trigger this.
+        if ((range == QStringLiteral("1d")) && closes.isEmpty()) {
+            fetchIntradayRange(symbol, ticker, QStringLiteral("5d"), /*candlesOnly=*/true);
+        }
+    });
 }
 
 void MarketFeeds::fetchReferenceSeries()

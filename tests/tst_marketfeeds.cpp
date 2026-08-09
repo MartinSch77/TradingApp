@@ -355,6 +355,41 @@ private slots:
         QCOMPARE(server.requests().size(), 1);  // one mapped instrument, one request
     }
 
+    //! @tstid TS-FEED-015 @design DES-SVC-FEEDS
+    // @relation(REQ-F-022, scope=function)
+    void TS_FEED_015_aClosedSessionFallsBackToTheLastSessionsCandles()
+    {
+        // A closed market (a weekend for the .24-7 futures) answers range=1d with a valid but
+        // EMPTY 1-minute series, which left their candle chart blank. The fetch must fall back
+        // ONCE to a wider range and draw the LAST session's candles. Here 1d is empty and 5d
+        // carries one bar.
+        const QByteArray ohlc5d =
+            R"({"chart":{"result":[{"timestamp":[1000],"indicators":{"quote":[{)"
+            R"("open":[10.0],"high":[12.0],"low":[9.0],"close":[11.0]}]}}]}})";
+        MockHttpServer server([&ohlc5d](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("range=1d"))) {
+                return MockHttpServer::Response{200, yahooChartBody("", ""), {}};   // empty session
+            }
+            return MockHttpServer::Response{200, ohlc5d, {}};                       // 5d has a bar
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        feeds.setTradableSymbols({QStringLiteral("SP.24-7")});   // Yahoo ES=F
+        QSignalSpy candles(&feeds, &MarketFeeds::intradayCandles);
+        const QSignalSpy closes(&feeds, &MarketFeeds::intradayCloses);
+        feeds.fetchIntradaySeries();
+
+        // The fallback fires: exactly one 1d and one 5d request (no recursion), and the 5d bar
+        // is emitted as a candle for the same app symbol.
+        QTRY_COMPARE_WITH_TIMEOUT(candles.count(), 1, kWaitMs);
+        QCOMPARE(requestCount(server, QStringLiteral("range=1d")), 1);
+        QCOMPARE(requestCount(server, QStringLiteral("range=5d")), 1);
+        QCOMPARE(candles.at(0).at(0).toString(), QStringLiteral("SP.24-7"));
+        // Candles only: the decision composite's close series is NOT fed the wider range.
+        QCOMPARE(closes.count(), 0);
+    }
+
     //! @tstid TS-FEED-009 @design DES-SVC-FEEDS
     // @relation(REQ-F-020, scope=function)
     void TS_FEED_009_feedErrorLogThrottled()

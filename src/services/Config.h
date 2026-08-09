@@ -38,6 +38,15 @@ struct Config {
     QString ollamaHost = QStringLiteral("http://localhost:11434");
     QString ollamaModel;                                  // e.g. "llama3.2" or "qwen2.5:7b"
 
+    // Optional IG Client Sentiment credentials (REQ-F-039, Phase 3). All three are needed
+    // before the provider makes a single call; anything missing means the provider reports
+    // itself unavailable and the app carries on — the feature is opt-in, never required.
+    // They live in the git-ignored apiKeyEtoro.json (or TRADINGAPP_IG_* env), never in git.
+    QString igApiKey;
+    QString igIdentifier;                                 // the IG account username
+    QString igPassword;
+    bool igDemo = false;                                  // true = demo-api.ig.com
+
     // The bot's daily stopping rules (REQ-F-031), in EUR of BOOKED net. The target
     // is what the day aims at, the limit what it refuses to lose; reaching either
     // stops opening for that day. Configurable because "how much per day" is a

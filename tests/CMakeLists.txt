@@ -50,6 +50,9 @@ tradingapp_add_test(tst_crowdscore tst_crowdscore.cpp)
 tradingapp_add_test(tst_crowdscorebuilder tst_crowdscorebuilder.cpp)
 tradingapp_add_test(tst_crowdscoremodel tst_crowdscoremodel.cpp
     ../src/ui/CrowdScoreModel.cpp ../src/ui/CrowdScoreModel.h)
+# Phase 3 — real network-backed providers (REQ-F-039), driven against the in-process mock HTTP
+# server: valid parse, malformed/empty, network error, 429 rate-limit retry, no-key unavailable.
+tradingapp_add_test(tst_crowdproviders tst_crowdproviders.cpp MockHttpServer.cpp MockHttpServer.h)
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE

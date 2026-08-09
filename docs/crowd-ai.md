@@ -1,7 +1,7 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 2 — transparent Crowd Score** (REQ-F-039, REQ-F-040). This document is updated
-per phase; it describes what exists today and what is deliberately deferred.
+Status: **Phase 3 — first real providers (CFTC COT, FRED/VIX)** (REQ-F-039, REQ-F-040). This
+document is updated per phase; it describes what exists today and what is deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -93,28 +93,87 @@ a freshness-weighted **confidence**, per-factor **contributions**, warnings and 
 is persisted with its input snapshot in the separate `crowd_scores` table. It is **not** a
 probability and it does not trade — it is the transparent baseline a model must beat.
 
-## Configuration (for later phases — no keys are used in Phase 1 or 2)
+## Phase 3 components — the first real providers
 
-Provider credentials will be read from environment variables (never source, logs or fixtures).
-Missing keys are a recoverable "unavailable", not a failure. Planned names:
+The mock is now joined by three **real** network-backed providers. They share a small base,
+`CrowdHttpProvider`, that carries the one async-HTTP pattern the rest of the app already uses —
+`QNetworkAccessManager` + `JsonHttp`, which retries an idempotent GET on 429/5xx with backoff and
+honours `Retry-After`, all off the GUI thread. A concrete provider therefore adds only its URL
+and its parse; neither reimplements the networking nor is a clone of the other. `refresh()` is the
+non-blocking network call; it emits `observationsReady` and caches the result for `fetch()`, and a
+failed fetch or an unparsable body emits `providerError` while the app carries on.
 
-| Variable | Provider | Phase |
-|---|---|---|
-| *(none)* | CFTC COT, FRED/VIX — free, no key | 3 |
-| `TRADINGAPP_ALPHA_VANTAGE_API_KEY` | Alpha Vantage (prices/news) | 3 |
-| `TRADINGAPP_TWELVE_DATA_API_KEY` | Twelve Data (prices) | 3 |
-| `TRADINGAPP_IG_API_KEY` | IG Client Sentiment | 3 |
-| `TRADINGAPP_FINNHUB_API_KEY` | Finnhub social sentiment | 6 |
-| `TRADINGAPP_REDDIT_CLIENT_ID` / `_SECRET` | Reddit | 6 |
+- **`CftcCotProvider`** — the flagship, because it is free, keyless and has decades of history. It
+  reads the CFTC *Traders in Financial Futures* report from the official public Socrata JSON API
+  (`publicreporting.cftc.gov/resource/gpe5-46if.json`) and turns the latest release for an index's
+  E-mini future into two `InstitutionalPositioning` observations — asset-manager net and
+  leveraged-fund net (long − short) contracts. It honours the **publication lag**: `eventTime` is
+  the Tuesday the report is *about*, `receivedTime` is the following Friday it was *released*, so a
+  datum is never treated as known before it was. This series (`COT-ASSET-MGR-NET`) is exactly the
+  institutional input the Phase 2 Crowd Score already consumes, so the score can now run on real
+  institutional data.
+- **`FredProvider`** — reads the CBOE volatility index close (`VIXCLS`) from FRED
+  (`api.stlouisfed.org`) into a `Volatility` observation. FRED requires a **free** key, taken only
+  from `TRADINGAPP_FRED_API_KEY`; without it the provider reports itself *unavailable* and makes no
+  call. The key is only ever a request parameter — never source, never a log, never a fixture, and
+  never interpolated into an error string (a test pins that last guarantee). A missing print (`"."`
+  on a holiday) is a named error, never a zero VIX.
+- **`IgSentimentProvider`** — the retail-positioning family (the one the Crowd Score reads
+  **contrarian**): the percentage of IG clients positioned long in a market, from IG's official
+  REST API. Strictly **optional** — it needs an IG account, and all three credentials (API key,
+  identifier, password) must be present before it makes a single call; anything missing means
+  `isConfigured()` is false, `refresh()` returns silently and the app carries on. IG authenticates
+  per **session**: `POST /session` (VERSION 2) answers the `CST` and `X-SECURITY-TOKEN` response
+  *headers*, which every later request carries; the provider logs in once and reuses the tokens
+  until they age out (~6 h), and the login POST is never auto-retried (it is not idempotent),
+  while the sentiment GET keeps the shared base's retry. No credential is ever committed, logged
+  or interpolated into an error string — tests pin the wire shape (key and tokens as headers, the
+  identifier in the login body, nothing in a URL) and the no-leak guarantee.
 
-The first, licence-safe providers are **CFTC Commitments of Traders** and **FRED** (including the
-volatility index) — both free, both with long public history. No scraping where no public API is
-offered; no commercial dataset, credential or personal datum is ever committed.
+**Licences.** CFTC data is a US-government public-domain work (no key, no redistribution limit).
+FRED data is redistributed under its published terms; the personal API key is never committed.
+IG Client Sentiment is fetched over IG's official documented REST API on the user's own account
+and is not redistributed; use is subject to IG's own terms, which is one reason the provider is
+opt-in. All three are documented JSON APIs — no scraping, and no commercial dataset, credential
+or personal datum is ever committed. Alpha Vantage and Twelve Data need keys and are deferred
+within Phase 3 until their credentials and licence acceptance are in place.
+
+The providers are driven in tests against the in-process `MockHttpServer` via
+`setEndpointBaseForTesting` — valid parse, the UTC lag, unknown instrument, empty/malformed body,
+a hard 500 (retried), a 429 (`Retry-After`, retried), the IG session handshake and reuse, and the
+no-key/unavailable and no-leak paths (`tst_crowdproviders`, TS-CROWD-009…014). No test touches
+the real network.
+
+## Configuration
+
+Provider credentials are read from environment variables or the **git-ignored**
+`apiKeyEtoro.json` (the same layered mechanism as the eToro keys — JSON first, environment
+overrides; never source, logs or fixtures). Missing keys are a recoverable "unavailable", not a
+failure — every keyed provider is optional, and the subsystem runs without any of them.
+
+| Variable | `apiKeyEtoro.json` key | Provider | Phase |
+|---|---|---|---|
+| *(none)* | — | CFTC COT — free, no key | 3 (done) |
+| `TRADINGAPP_FRED_API_KEY` | — | FRED/VIX (free key) | 3 (done) |
+| `TRADINGAPP_IG_API_KEY` | `igApiKey` | IG Client Sentiment (optional) | 3 (done) |
+| `TRADINGAPP_IG_IDENTIFIER` | `igIdentifier` | IG account username | 3 (done) |
+| `TRADINGAPP_IG_PASSWORD` | `igPassword` | IG account password | 3 (done) |
+| `TRADINGAPP_IG_DEMO` | `igDemo` (bool) | IG demo account (`demo-api.ig.com`) | 3 (done) |
+| `TRADINGAPP_ALPHA_VANTAGE_API_KEY` | — | Alpha Vantage (prices/news) | 3 |
+| `TRADINGAPP_TWELVE_DATA_API_KEY` | — | Twelve Data (prices) | 3 |
+| `TRADINGAPP_FINNHUB_API_KEY` | — | Finnhub social sentiment | 6 |
+| `TRADINGAPP_REDDIT_CLIENT_ID` / `_SECRET` | — | Reddit | 6 |
+
+To **opt in** to IG sentiment, add `igApiKey`, `igIdentifier` and `igPassword` to your
+git-ignored `apiKeyEtoro.json` (or export the environment variables). Leave them out and the
+provider simply reports itself unavailable — nothing else changes. No scraping where no public
+API is offered; no commercial dataset, credential or personal datum is ever committed.
 
 ## Deferred to later phases
 
-- **Phase 3** — real CFTC/FRED (and one market-data) providers with async networking, retry,
-  rate-limit handling and recorded fixtures.
+- **Phase 3** — CFTC COT, FRED/VIX and IG Client Sentiment **done** (above). Still deferred
+  within the phase: a market-data provider (Alpha Vantage / Twelve Data — or reusing the app's
+  existing keyless Yahoo feed), which needs a key or a design decision before it can be wired.
 - **Phase 4** — the offline Python training pipeline (`tools/ml/`): dataset build, LONG/NO_TRADE/
   SHORT labels, logistic-regression + XGBoost baselines, purged walk-forward validation, ONNX
   export. Python stays an **offline** tool, never a runtime dependency of the C++ app.

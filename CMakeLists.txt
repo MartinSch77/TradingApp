@@ -199,6 +199,14 @@ qt_add_library(trading_services STATIC
     src/services/CrowdStore.h
     src/services/CrowdScoreBuilder.cpp
     src/services/CrowdScoreBuilder.h
+    src/services/CrowdHttpProvider.cpp
+    src/services/CrowdHttpProvider.h
+    src/services/CftcCotProvider.cpp
+    src/services/CftcCotProvider.h
+    src/services/FredProvider.cpp
+    src/services/FredProvider.h
+    src/services/IgSentimentProvider.cpp
+    src/services/IgSentimentProvider.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain

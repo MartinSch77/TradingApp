@@ -1,8 +1,8 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 6 — local text-sentiment features** (REQ-F-039 … REQ-F-044; Phase 6 was
-deliberately taken after Phase 7). This document is updated per phase; it describes what
-exists today and what is deliberately deferred.
+Status: **all seven phases complete, including the Phase 7 explanations** (REQ-F-039 …
+REQ-F-045; Phase 6 was deliberately taken after Phase 7). This document describes what exists
+today and what is deliberately deferred — see the deferred list at the end.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -278,9 +278,16 @@ with its own embedded medians and the dashboard shows the count ("N inputs imput
 The dashboard is **evidence only**: provider states, the score's own headline with its warnings
 (missing families named), the model verdict with labelled probabilities and the imputation
 count, and a disclaimer that is part of the layout. No trading affordance exists in the window,
-and the collector holds no broker object — there is no route from here to an order. Optional
-local-LLM **explanations** (words only, never prices, probabilities, stops or sizing) remain
-deferred within the phase until they can be built with their own tests.
+and the collector holds no broker object — there is no route from here to an order.
+
+**Explanations (REQ-F-045, done).** The optional local model (the same REQ-F-030 Ollama
+machinery — no cloud, no key) can put the evidence the dashboard currently shows into plain
+words: the request carries the SHOWN text, the answer is **displayed and consumed by
+nothing** — no parser, no decision path — under a caveat that is part of the text, and the
+model is instructed to give no prices, targets, sizes, stops, probabilities or buy/sell
+instructions (the safety property is the wiring, not the instruction). Without a configured
+model the box is disabled with the remedy named; failures are named errors, never a blank
+(`tst_ollamaadvisor`, TS-OLLAMA-009).
 
 ## Phase 6 components — local text sentiment for the social family (REQ-F-044)
 
@@ -325,7 +332,9 @@ tests drive a ~1 kB BERT-shaped fixture (`tests/make_finbert_fixture.py`), never
   class order) driving the inference so the two sides cannot drift apart silently.
 - **Phase 6** — local text-sentiment features **done** (above; taken after Phase 7). Still
   deferred: the keyed social APIs (Finnhub, Reddit) as alternative sources.
-- **Phase 7** — the dashboard and collection loop **done** (above). Still deferred within the
-  phase: the optional Ollama *explanations* (never prices, probabilities, stops or sizing),
-  and a real options-family provider (`PUT-CALL` still has only the mock — the score's options
-  input runs unmeasured on real data).
+- **Phase 7** — the dashboard, collection loop and Ollama explanations **done** (above).
+  Still deferred: a real options-family provider — `PUT-CALL` has only the mock, so the
+  score's options input runs unmeasured on real data. CBOE was probed on 2026-08-09: the
+  daily put/call statistics have **no public JSON API** (the CDN answers 403, the statistics
+  page is a JS application), and scraping is not used where no API is offered — the family
+  stays deferred until a licensed source exists.

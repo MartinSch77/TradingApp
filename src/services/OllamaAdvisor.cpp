@@ -380,6 +380,83 @@ void OllamaAdvisor::checkAvailability()
     });
 }
 
+void OllamaAdvisor::requestExplanation(const QString &evidence)
+{
+    if (!isConfigured()) {
+        emit explanationReady({}, QStringLiteral("No Ollama model configured."));
+        return;
+    }
+    if (m_inFlight) {
+        emit explanationReady({},
+                              QStringLiteral("Ollama is still answering the previous request."));
+        return;
+    }
+    const QJsonObject body{
+        {QStringLiteral("model"), m_model},
+        // The instruction rides along, but the SAFETY property is the caller's wiring: the
+        // answer is displayed and consumed by nothing (REQ-F-045).
+        {QStringLiteral("system"),
+         QStringLiteral("You explain market evidence to a human reader in plain language. "
+                        "Answer ONLY with JSON of the form {\"explanation\": \"two to four "
+                        "sentences\"}. Do not give prices, targets, position sizes, stop "
+                        "levels, probabilities, or buy/sell instructions.")},
+        {QStringLiteral("prompt"), evidence},
+        {QStringLiteral("stream"), false},
+        {QStringLiteral("format"), QStringLiteral("json")},
+        {QStringLiteral("options"),
+         QJsonObject{{QStringLiteral("temperature"), 0.3},
+                     {QStringLiteral("num_predict"), 400}}},
+    };
+    QNetworkRequest req(QUrl(endpointBase() + QStringLiteral("/api/generate")));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setTransferTimeout(kGenerateTimeout);
+    m_inFlight = true;
+    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    m_http->handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
+                                      const QByteArray &raw, const QString &netError) {
+        m_inFlight = false;
+        if (!ok) {
+            emit explanationReady({}, QStringLiteral("Ollama request failed (HTTP %1): %2")
+                                          .arg(status)
+                                          .arg(netError.isEmpty()
+                                                   ? QString::fromUtf8(raw.left(200))
+                                                   : netError));
+            return;
+        }
+        const QString text = doc.object().value(QStringLiteral("response")).toString();
+        // Defensive, like the proposal parse — but for PROSE the honest fallback is the prose
+        // itself: unlike a trade proposal, a mis-parse here cannot cause an action.
+        QJsonDocument answer = QJsonDocument::fromJson(jsonPayloadIn(text));
+        if (!answer.isObject()) {
+            answer = QJsonDocument::fromJson(repairTruncatedJson(text));
+        }
+        QString words;
+        if (answer.isObject()) {
+            const QJsonObject object = answer.object();
+            for (const auto &key :
+                 {QStringLiteral("explanation"), QStringLiteral("summary"),
+                  QStringLiteral("text"), QStringLiteral("answer")}) {
+                if (words.isEmpty()) {
+                    words = object.value(key).toString().trimmed();
+                }
+            }
+            for (const auto &value : object) {   // a small model's key of the day
+                if (words.isEmpty() && value.isString()) {
+                    words = value.toString().trimmed();
+                }
+            }
+        } else if (!text.trimmed().startsWith(QLatin1Char('{'))) {
+            words = text.trimmed();
+        }
+        if (words.isEmpty()) {
+            emit explanationReady({}, QStringLiteral("%1 answered nothing readable: %2")
+                                          .arg(m_model, text.left(160).simplified()));
+            return;
+        }
+        emit explanationReady(words, QString());
+    });
+}
+
 void OllamaAdvisor::requestDecision(const QString &evidencePrompt)
 {
     if (!isConfigured()) {

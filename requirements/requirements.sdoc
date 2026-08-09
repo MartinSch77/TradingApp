@@ -519,6 +519,18 @@ Text shall be encoded with the model's OWN vocabulary, faithfully: WordPiece tok
 The published sentiment shall be the NET (probability of positive minus probability of negative) over the scored headlines, stored as a NORMAL observation of the social family — event time quantized to the hour so the idempotent store is not flooded by every news poll — and entering the score, the dataset and the model features by the same rules as every other series. Failures shall be recoverable and named: a missing model directory, a malformed vocabulary, a label set without meaning, an empty headline set and a runtime error mid-score shall each produce an unavailable state or an error result while the application carries on. The output is EVIDENCE ONLY, with no route to an order.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-045
+VERIFICATION: T
+TITLE: Local-LLM explanation of the crowd evidence, words only
+STATEMENT: >>>
+The crowd dashboard shall be able to ask the OPTIONAL local model (the REQ-F-030 machinery — no cloud, no key) to EXPLAIN the evidence it currently shows, in plain words a person can read beside the numbers. The request shall carry the SAME evidence the view presents, so the words are about what the user sees and nothing hidden.
+
+The explanation is WORDS ONLY, enforced by construction rather than by trust: the answered text shall be DISPLAYED and consumed by NOTHING — no parser reads numbers out of it, no decision path receives it, and the view shall label it as the words of a small local model whose numbers are not data. The model shall be instructed to give no prices, targets, sizes, stops, probabilities or buy/sell instructions, but the safety property is the wiring, not the instruction.
+
+Without a configured model the feature shall report itself unavailable in the established words; a transport failure, an empty answer and an unreadable answer shall each be a NAMED error result, never a blank that reads as "nothing to say". The parse shall be defensive in the way the proposal parse already is — a small model's JSON is approximate, and for prose the honest fallback is the prose itself — and one request shall be in flight at a time, sharing the advisor's existing discipline.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

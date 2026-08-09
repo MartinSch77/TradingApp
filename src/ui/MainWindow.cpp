@@ -4523,7 +4523,7 @@ void MainWindow::createCrowdButton(QWidget *central)
 void MainWindow::openCrowdDashboard()
 {
     if (m_crowdDialog == nullptr) {
-        m_crowdDialog = new CrowdDashboardWindow(m_crowdCollector, this);
+        m_crowdDialog = new CrowdDashboardWindow(m_crowdCollector, m_ollama, this);
     }
     m_crowdDialog->show();
     m_crowdDialog->raise();

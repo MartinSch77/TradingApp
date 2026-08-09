@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QHash>
 
+class OllamaAdvisor;
 class QLabel;
 class QPushButton;
 
@@ -28,17 +29,24 @@ class CrowdDashboardWindow : public QDialog
 
 public:
     explicit CrowdDashboardWindow(trading::crowd::CrowdCollector *collector,
-                                  QWidget *parent = nullptr);
+                                  OllamaAdvisor *ollama, QWidget *parent = nullptr);
 
 private slots:
     void onStatusChanged();
+    void onExplainClicked();
+    void onExplanationReady(const QString &explanation, const QString &error);
     void onScoreUpdated(const QString &instrument,
                         const trading::crowd::CrowdScoreResult &result);
     void onPredictionUpdated(const QString &instrument,
                              const trading::crowd::CrowdPrediction &prediction);
 
 private:
+    // The evidence the view currently shows, as one text — exactly what the explanation
+    // request carries (REQ-F-045: the words are about what the user sees).
+    [[nodiscard]] QString shownEvidence() const;
+
     trading::crowd::CrowdCollector *m_collector = nullptr;
+    OllamaAdvisor *m_ollama = nullptr;   // optional; null or unconfigured disables the button
     QLabel *m_disclaimerLabel = nullptr;
     QLabel *m_providersLabel = nullptr;
     QHash<QString, QLabel *> m_scoreLabels;       // per instrument
@@ -46,6 +54,8 @@ private:
     QLabel *m_modelStatusLabel = nullptr;
     QLabel *m_storeLabel = nullptr;
     QPushButton *m_refreshButton = nullptr;
+    QPushButton *m_explainButton = nullptr;
+    QLabel *m_explanationLabel = nullptr;
 };
 
 #endif // TRADINGAPP_UI_CROWDDASHBOARDWINDOW_H

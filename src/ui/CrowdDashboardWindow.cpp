@@ -4,6 +4,7 @@
 #include "ui/CrowdDashboardWindow.h"
 
 #include "services/CrowdCollector.h"
+#include "services/OllamaAdvisor.h"
 
 #include <QGroupBox>
 #include <QLabel>
@@ -49,8 +50,9 @@ QString predictionText(const CrowdPrediction &prediction)
 
 } // namespace
 
-CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, QWidget *parent)
-    : QDialog(parent), m_collector(collector)
+CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, OllamaAdvisor *ollama,
+                                           QWidget *parent)
+    : QDialog(parent), m_collector(collector), m_ollama(ollama)
 {
     setObjectName(QStringLiteral("crowdDashboardWindow"));
     setWindowTitle(QStringLiteral("Crowd & AI — evidence only"));
@@ -101,6 +103,32 @@ CrowdDashboardWindow::CrowdDashboardWindow(CrowdCollector *collector, QWidget *p
     }
     layout->addWidget(scoreBox);
     layout->addWidget(modelBox);
+
+    // The optional local-model explanation (REQ-F-045): WORDS about the evidence above,
+    // displayed and consumed by NOTHING — no parser, no decision path.
+    auto *explainBox = new QGroupBox(QStringLiteral("Local model's words (never data)"), this);
+    explainBox->setObjectName(QStringLiteral("crowdExplainBox"));
+    auto *explainLayout = new QVBoxLayout(explainBox);
+    m_explainButton = new QPushButton(QStringLiteral("Explain this evidence"), explainBox);
+    m_explainButton->setObjectName(QStringLiteral("crowdExplainButton"));
+    m_explanationLabel = new QLabel(explainBox);
+    m_explanationLabel->setObjectName(QStringLiteral("crowdExplanationLabel"));
+    m_explanationLabel->setWordWrap(true);
+    const bool haveModel = m_ollama != nullptr && m_ollama->isConfigured();
+    m_explainButton->setEnabled(haveModel);
+    m_explanationLabel->setText(
+        haveModel ? QStringLiteral("Ask %1 to put the evidence above into words.")
+                        .arg(m_ollama->model())
+                  : QStringLiteral("no local model configured (./setup.sh ollama, REQ-F-030)"));
+    explainLayout->addWidget(m_explainButton);
+    explainLayout->addWidget(m_explanationLabel);
+    layout->addWidget(explainBox);
+    if (haveModel) {
+        static_cast<void>(connect(m_explainButton, &QPushButton::clicked, this,
+                                  &CrowdDashboardWindow::onExplainClicked));
+        static_cast<void>(connect(m_ollama, &OllamaAdvisor::explanationReady, this,
+                                  &CrowdDashboardWindow::onExplanationReady));
+    }
 
     auto *storeLabel = new QLabel(this);
     storeLabel->setObjectName(QStringLiteral("crowdStoreLabel"));
@@ -159,4 +187,38 @@ void CrowdDashboardWindow::onPredictionUpdated(const QString &instrument,
     if (label != nullptr) {
         label->setText(instrument + QStringLiteral(": ") + predictionText(prediction));
     }
+}
+
+QString CrowdDashboardWindow::shownEvidence() const
+{
+    QStringList lines{QStringLiteral("Data providers:"), m_providersLabel->text(),
+                      QStringLiteral("Crowd score:")};
+    for (auto it = m_scoreLabels.constBegin(); it != m_scoreLabels.constEnd(); ++it) {
+        lines.append(it.value()->text());
+    }
+    lines.append(QStringLiteral("Trained model: ") + m_modelStatusLabel->text());
+    for (auto it = m_predictionLabels.constBegin(); it != m_predictionLabels.constEnd(); ++it) {
+        lines.append(it.value()->text());
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+void CrowdDashboardWindow::onExplainClicked()
+{
+    m_explainButton->setEnabled(false);
+    m_explanationLabel->setText(QStringLiteral("asking %1…").arg(m_ollama->model()));
+    m_ollama->requestExplanation(shownEvidence());
+}
+
+void CrowdDashboardWindow::onExplanationReady(const QString &explanation, const QString &error)
+{
+    m_explainButton->setEnabled(true);
+    if (!error.isEmpty()) {
+        m_explanationLabel->setText(error);
+        return;
+    }
+    // Displayed, never parsed: the caveat is part of the text so a screenshot carries it too.
+    m_explanationLabel->setText(
+        QStringLiteral("%1 says (words, not data — numbers in prose are not measurements): %2")
+            .arg(m_ollama->model(), explanation));
 }

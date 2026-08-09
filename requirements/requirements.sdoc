@@ -433,6 +433,20 @@ That second front end may be delivered as its own executable where a technical c
 The bars that chart draws shall be assembled by the separately testable component above, under the same absent-is-not-zero discipline as every other reading: a bar shall be drawn only when all four of its values are present and mutually consistent, an incomplete or contradictory bar shall be discarded whole rather than repaired into shape — repairing invents an extreme the market never printed, and one invented extreme moves the entire scale — and the vertical scale shall cover the extremes actually reached rather than the opening and closing levels, which would cut those extremes off at the frame.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-039
+VERIFICATION: T
+TITLE: Crowd sentiment and positioning data foundation
+STATEMENT: >>>
+The application shall be able to collect, normalize and store timestamped crowd-positioning, options, volatility, institutional-positioning, social and macro observations for its index instruments, as the FOUNDATION a later transparent crowd score and an offline-trained probability model rest on. This requirement is the data layer ONLY: no machine-learning model, no real-money execution and no directional trade follows from it — every downstream proposal remains paper or advisory and gated by the deterministic risk rules that already exist.
+
+Each observation shall be a NORMALIZED, immutable record carrying its instrument, the family it belongs to, the concrete provider that produced it, a source-specific series identifier, its value and unit, its schema version, and — decisively — TWO timestamps in UTC: the time the datum is ABOUT (its event time) and the time it became KNOWN (its received or publication time). The two shall be kept distinct and both stored, because a datum published after the period it describes — the weekly Commitments-of-Traders report describes a Tuesday but publishes the following Friday — must never be treated as known before it was; that is the single most important guard against a model that appears to predict the past. A record that could not be measured shall be marked NOT VALID and shall never be read as a zero, and its freshness shall be reported as live, stale or absent against a configured threshold, with absent remaining distinct from stale.
+
+Data shall be obtained through a provider SEAM: an interface with a mock — and, later, a recorded-fixture — implementation, so the whole subsystem builds, runs and is tested WITHOUT any paid subscription or network, and a missing credential shall be a recoverable "unavailable" state rather than a failure. The initial, licence-safe providers shall be the free public sources (the Commitments of Traders report and the Federal Reserve series including the volatility index); scraping shall not be used where no public API is offered, and no downloaded commercial dataset, credential or personal datum shall be committed. When a real provider is added its network access shall be asynchronous and shall never block the interface thread.
+
+Persistence shall keep the RAW observations separate from the features, labels, predictions and realized outcomes that later phases derive from them — never one oversized table — with a unique identity per datum (provider, series, instrument, event time) so that re-fetching the same observation is idempotent rather than a duplicate, and shall carry a schema version so it can be migrated deliberately.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

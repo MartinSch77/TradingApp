@@ -38,6 +38,12 @@ tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)
 tradingapp_add_test(tst_decisionengine tst_decisionengine.cpp)
 tradingapp_add_test(tst_tradeplan tst_tradeplan.cpp)
 tradingapp_add_test(tst_tradescript tst_tradescript.cpp)
+
+# Crowd Sentiment & AI subsystem — Phase 1 data foundation (REQ-F-039). The store test drives an
+# in-memory SQLite database; trading_services links Qt6::Sql, so it is available transitively.
+tradingapp_add_test(tst_crowdobservation tst_crowdobservation.cpp)
+tradingapp_add_test(tst_mockcrowdprovider tst_mockcrowdprovider.cpp)
+tradingapp_add_test(tst_crowdstore tst_crowdstore.cpp)
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE

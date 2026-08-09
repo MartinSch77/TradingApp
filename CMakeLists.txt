@@ -38,7 +38,7 @@ set(CMAKE_AUTOUIC ON)
 # lets it be ONE PAGE of this Widgets application rather than a second executable — the same
 # domain and service libraries behind two presentations, which is the point of the exercise.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
-                                    Qml Quick QuickWidgets QuickControls2)
+                                    Qml Quick QuickWidgets QuickControls2 Sql)
 # Qt Graphs supplies CustomSeries (6.11), which draws the cockpit's candlesticks — but it is
 # found, NOT linked, and that is load-bearing.
 #
@@ -163,6 +163,8 @@ qt_add_library(trading_domain STATIC
     src/domain/DecisionLog.h
     src/domain/PaperTrader.cpp
     src/domain/PaperTrader.h
+    src/domain/CrowdObservation.cpp
+    src/domain/CrowdObservation.h
 )
 target_include_directories(trading_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trading_domain PUBLIC Qt6::Core)
@@ -186,10 +188,16 @@ qt_add_library(trading_services STATIC
     src/services/OllamaAdvisor.h
     src/services/SimulationEngine.cpp
     src/services/SimulationEngine.h
+    src/services/CrowdProvider.h
+    src/services/MockCrowdProvider.cpp
+    src/services/MockCrowdProvider.h
+    src/services/CrowdStore.cpp
+    src/services/CrowdStore.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain
     Qt6::Network
+    Qt6::Sql
 )
 
 qt_add_executable(TradingApp

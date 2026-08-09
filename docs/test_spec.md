@@ -307,6 +307,15 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 |----|---|------|
 | TS-GAUGE-001 | U | The diverging-bar gauge's only numeric claim — the bar geometry `leadGaugeBar` — is signed, proportional and clamped: `>= 0` reaches right (up) and `< 0` left (down) with zero counted up; half of full-scale is half the track and a +1 %/−1 % pair reach equally far (magnitude, side separate); a move beyond full-scale clamps to the track end rather than overrunning the widget; a flat field is a zero-length bar; and degenerate inputs (zero full-scale or zero track) never divide by zero or draw off the track. |
 
+## Crowd sentiment data foundation — Phase 1 (tests/tst_crowdobservation.cpp, tst_mockcrowdprovider.cpp, tst_crowdstore.cpp; DES-DOM-CROWDOBS / DES-SVC-CROWDDATA, REQ-F-039) — headless
+
+| ID | L | Case |
+|----|---|------|
+| TS-CROWD-001 | U | The normalized observation carries identity, two-timestamp timing and quality: the dedup key is UTC-normalised (the same instant in another zone is the same datum) and distinguishes different event times; publication lag is representable (received > event); age is measured from receivedTime and freshness (live/stale/absent) from it against a threshold, with a future timestamp reading Live not Stale; an invalid observation is Absent with age −1, never a zero; and Quality is a composable bitfield, Ok by default. |
+| TS-CROWD-002 | U | The Source↔string mapping is a stable bijection over every family (the store persists the NAME, not the ordinal, so re-ordering the enum cannot silently repoint historical rows); an unknown name falls back to Market; the freshness words are live/stale/absent. |
+| TS-CROWD-003 | U | The offline MockCrowdProvider is REPRODUCIBLE (same instrument + UTC day → identical values, from a deterministic seed rather than Qt's per-process-randomised qHash), draws differently per instrument, spans the families the score will combine (each datum valid with both timestamps set), models the CFTC publication lag (COT received ≥ 2 days after its event), and its no-credentials path is a recoverable unavailable + empty + reason rather than a crash or an empty-but-available result. |
+| TS-CROWD-004 | U | The SQLite CrowdStore round-trips value and UTC times exactly, is idempotent (re-upserting the same day's fetch writes nothing new — the dedup key), skips an invalid observation rather than storing a zero, returns observations newest-received first, respects the received-since lower bound, and never leaks one instrument's rows into another instrument's query. |
+
 ## Event insight (tests/tst_eventinsight.cpp, DES-DOM-EVT, REQ-F-020)
 
 | ID | L | Case |

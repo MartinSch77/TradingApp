@@ -165,6 +165,10 @@ qt_add_library(trading_domain STATIC
     src/domain/PaperTrader.h
     src/domain/CrowdObservation.cpp
     src/domain/CrowdObservation.h
+    src/domain/RollingZScore.cpp
+    src/domain/RollingZScore.h
+    src/domain/CrowdScore.cpp
+    src/domain/CrowdScore.h
 )
 target_include_directories(trading_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trading_domain PUBLIC Qt6::Core)
@@ -193,6 +197,8 @@ qt_add_library(trading_services STATIC
     src/services/MockCrowdProvider.h
     src/services/CrowdStore.cpp
     src/services/CrowdStore.h
+    src/services/CrowdScoreBuilder.cpp
+    src/services/CrowdScoreBuilder.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain
@@ -218,6 +224,8 @@ qt_add_executable(TradingApp
     src/ui/HeavyweightsPanel.h
     src/ui/LeadGauge.cpp
     src/ui/LeadGauge.h
+    src/ui/CrowdScoreModel.cpp
+    src/ui/CrowdScoreModel.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
     src/ui/BotSimPanel.cpp

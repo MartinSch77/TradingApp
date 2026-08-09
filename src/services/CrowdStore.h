@@ -5,6 +5,7 @@
 #define TRADINGAPP_SERVICES_CROWDSTORE_H
 
 #include "domain/CrowdObservation.h"
+#include "domain/CrowdScore.h"
 
 #include <QDateTime>
 #include <QList>
@@ -30,7 +31,8 @@ class CrowdStore
 {
 public:
     // The schema version this build writes/expects. Bumped only alongside a migration.
-    static constexpr qint32 kSchemaVersion = 1;
+    // v1: observations. v2: crowd_scores (Phase 2 — the score result layer).
+    static constexpr qint32 kSchemaVersion = 2;
 
     explicit CrowdStore(const QString &path);
     ~CrowdStore();
@@ -58,6 +60,23 @@ public:
     [[nodiscard]] Observation latest(const QString &instrument, Source source,
                                      const QString &seriesId) const;
     [[nodiscard]] qint64 count() const;
+
+    // The historical VALUES of one series whose receivedTime is strictly BEFORE `beforeUtc`,
+    // oldest first — the past-only history a z-score is normalized against (Phase 2). Passing the
+    // observation's own receivedTime as `beforeUtc` excludes itself and everything later.
+    [[nodiscard]] QList<double> seriesValuesBefore(const QString &instrument, Source source,
+                                                   const QString &seriesId,
+                                                   const QDateTime &beforeUtc) const;
+
+    // Persist a computed Crowd Score result and its component snapshot (its input references), in
+    // the SEPARATE crowd_scores table — the raw observation layer is never mixed with it. Same
+    // (instrument, computed_at) is idempotent. Returns true when a new row was written.
+    bool saveScore(const QString &instrument, const trading::crowd::CrowdScoreResult &result,
+                   const QDateTime &computedAtUtc);
+    // The most recent stored score for an instrument, reconstructed from its row, or an empty
+    // result (isEmpty()) when there is none.
+    [[nodiscard]] trading::crowd::CrowdScoreResult latestScore(const QString &instrument) const;
+    [[nodiscard]] qint64 scoreCount() const;
 
 private:
     bool migrate();

@@ -3,12 +3,19 @@
 
 #include "services/CrowdStore.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTimeZone>
 #include <QUuid>
 #include <QVariant>
+
+using trading::crowd::CrowdScoreResult;
+using trading::crowd::Freshness;
+using trading::crowd::ScoreComponent;
 
 namespace trading::crowd {
 
@@ -63,6 +70,58 @@ Observation rowToObservation(const QSqlQuery &query)
     return obs;
 }
 
+Freshness freshnessFromWord(const QString &word)
+{
+    if (word == QStringLiteral("live")) {
+        return Freshness::Live;
+    }
+    if (word == QStringLiteral("stale")) {
+        return Freshness::Stale;
+    }
+    return Freshness::Absent;
+}
+
+QString componentsToJson(const QList<ScoreComponent> &components)
+{
+    QJsonArray array;
+    for (const ScoreComponent &component : components) {
+        QJsonObject object;
+        object.insert(QStringLiteral("label"), component.label);
+        object.insert(QStringLiteral("family"), sourceToString(component.family));
+        object.insert(QStringLiteral("measured"), component.measured);
+        object.insert(QStringLiteral("contrarian"), component.contrarian);
+        object.insert(QStringLiteral("weight"), component.weight);
+        object.insert(QStringLiteral("zscore"), component.zscore);
+        object.insert(QStringLiteral("contribution"), component.contribution);
+        object.insert(QStringLiteral("freshness"), freshnessWord(component.freshness));
+        object.insert(QStringLiteral("ageSec"), static_cast<double>(component.ageSec));
+        array.append(object);
+    }
+    return QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+QList<ScoreComponent> componentsFromJson(const QString &json)
+{
+    QList<ScoreComponent> out;
+    const QJsonArray array = QJsonDocument::fromJson(json.toUtf8()).array();
+    for (const auto &value : array) {
+        const QJsonObject object = value.toObject();
+        ScoreComponent component;
+        component.label = object.value(QStringLiteral("label")).toString();
+        component.family = sourceFromString(object.value(QStringLiteral("family")).toString());
+        component.measured = object.value(QStringLiteral("measured")).toBool();
+        component.contrarian = object.value(QStringLiteral("contrarian")).toBool();
+        component.weight = object.value(QStringLiteral("weight")).toDouble();
+        component.zscore = object.value(QStringLiteral("zscore")).toDouble();
+        component.contribution = object.value(QStringLiteral("contribution")).toDouble();
+        component.freshness =
+            freshnessFromWord(object.value(QStringLiteral("freshness")).toString());
+        component.ageSec = static_cast<qint64>(object.value(QStringLiteral("ageSec")).toDouble());
+        out.append(component);
+    }
+    return out;
+}
+
 } // namespace
 
 CrowdStore::CrowdStore(const QString &path)
@@ -114,6 +173,22 @@ bool CrowdStore::migrate()
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_obs_source ON observations(source)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS schema_meta ("
                        " key TEXT PRIMARY KEY, value TEXT NOT NULL)"),
+        // v2 (Phase 2): the SCORE result layer, kept separate from the raw observations. The
+        // component snapshot (its input references) is stored as JSON.
+        QStringLiteral("CREATE TABLE IF NOT EXISTS crowd_scores ("
+                       " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                       " instrument TEXT NOT NULL,"
+                       " computed_at TEXT NOT NULL,"
+                       " score REAL NOT NULL,"
+                       " direction TEXT NOT NULL,"
+                       " confidence REAL NOT NULL,"
+                       " coverage REAL NOT NULL,"
+                       " version INTEGER NOT NULL,"
+                       " components_json TEXT NOT NULL,"
+                       " warnings_json TEXT NOT NULL,"
+                       " UNIQUE(instrument, computed_at))"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_scores_instrument_time"
+                       " ON crowd_scores(instrument, computed_at)"),
     };
     for (const QString &statement : statements) {
         if (!query.exec(statement)) {
@@ -234,6 +309,97 @@ qint64 CrowdStore::count() const
     }
     QSqlQuery query(QSqlDatabase::database(m_connectionName));
     if (query.exec(QStringLiteral("SELECT COUNT(*) FROM observations")) && query.next()) {
+        return query.value(0).toLongLong();
+    }
+    return 0;
+}
+
+QList<double> CrowdStore::seriesValuesBefore(const QString &instrument, Source source,
+                                             const QString &seriesId,
+                                             const QDateTime &beforeUtc) const
+{
+    QList<double> out;
+    if (!m_open) {
+        return out;
+    }
+    QSqlQuery query(QSqlDatabase::database(m_connectionName));
+    query.prepare(QStringLiteral("SELECT value FROM observations"
+                                 " WHERE instrument = ? AND source = ? AND series_id = ?"
+                                 " AND received_time < ? ORDER BY received_time ASC"));
+    query.addBindValue(instrument);
+    query.addBindValue(sourceToString(source));
+    query.addBindValue(seriesId);
+    query.addBindValue(toUtcIso(beforeUtc));
+    if (query.exec()) {
+        while (query.next()) {
+            out.append(query.value(0).toDouble());
+        }
+    }
+    return out;
+}
+
+bool CrowdStore::saveScore(const QString &instrument, const CrowdScoreResult &result,
+                           const QDateTime &computedAtUtc)
+{
+    if (!m_open) {
+        return false;
+    }
+    QSqlQuery query(QSqlDatabase::database(m_connectionName));
+    query.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO crowd_scores"
+        " (instrument, computed_at, score, direction, confidence, coverage, version,"
+        "  components_json, warnings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    query.addBindValue(instrument);
+    query.addBindValue(toUtcIso(computedAtUtc));
+    query.addBindValue(result.score);
+    query.addBindValue(result.direction);
+    query.addBindValue(result.confidence);
+    query.addBindValue(result.coverage);
+    query.addBindValue(result.version);
+    query.addBindValue(componentsToJson(result.components));
+    query.addBindValue(QString::fromUtf8(
+        QJsonDocument(QJsonArray::fromStringList(result.warnings)).toJson(QJsonDocument::Compact)));
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
+}
+
+CrowdScoreResult CrowdStore::latestScore(const QString &instrument) const
+{
+    CrowdScoreResult out;
+    if (!m_open) {
+        return out;
+    }
+    QSqlQuery query(QSqlDatabase::database(m_connectionName));
+    query.prepare(QStringLiteral(
+        "SELECT score, direction, confidence, coverage, version, components_json, warnings_json"
+        " FROM crowd_scores WHERE instrument = ? ORDER BY computed_at DESC LIMIT 1"));
+    query.addBindValue(instrument);
+    if (query.exec() && query.next()) {
+        out.score = query.value(0).toDouble();
+        out.direction = query.value(1).toString();
+        out.confidence = query.value(2).toDouble();
+        out.coverage = query.value(3).toDouble();
+        out.version = query.value(4).toInt();
+        out.components = componentsFromJson(query.value(5).toString());
+        const QJsonArray warnings =
+            QJsonDocument::fromJson(query.value(6).toString().toUtf8()).array();
+        for (const auto &warning : warnings) {
+            out.warnings.append(warning.toString());
+        }
+    }
+    return out;
+}
+
+qint64 CrowdStore::scoreCount() const
+{
+    if (!m_open) {
+        return 0;
+    }
+    QSqlQuery query(QSqlDatabase::database(m_connectionName));
+    if (query.exec(QStringLiteral("SELECT COUNT(*) FROM crowd_scores")) && query.next()) {
         return query.value(0).toLongLong();
     }
     return 0;

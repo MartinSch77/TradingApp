@@ -447,6 +447,20 @@ Data shall be obtained through a provider SEAM: an interface with a mock — and
 Persistence shall keep the RAW observations separate from the features, labels, predictions and realized outcomes that later phases derive from them — never one oversized table — with a unique identity per datum (provider, series, instrument, event time) so that re-fetching the same observation is idempotent rather than a duplicate, and shall carry a schema version so it can be migrated deliberately.
 <<<
 
+[REQUIREMENT]
+UID: REQ-F-040
+VERIFICATION: T
+TITLE: Transparent rule-based crowd score
+STATEMENT: >>>
+The application shall compute a TRANSPARENT, rule-based crowd score for its index instruments from the normalized observations of REQ-F-039 — a number a person can read and reproduce, deliberately NOT a machine-learned model — so that it can serve as the BASELINE any later trained model must demonstrably beat. The score shall be evidence only: it shall not place a trade, and any proposal derived from it shall remain paper or advisory and gated by the deterministic risk rules that already exist.
+
+The score shall combine four component families — retail positioning, options and volatility, institutional positioning, and social and news — each first NORMALIZED against its own PAST history (a z-score computed only from values that preceded it, so a component carries no look-ahead), then combined by CONFIGURABLE weights whose defaults are stated as HYPOTHESES rather than proven rules. The sign convention of every component shall be documented, and the retail component shall be treated as CONTRARIAN — a crowd that is heavily long is a bearish input.
+
+Missing data shall never be treated as zero: a component that could not be measured — absent, or with too little history to normalize — shall be EXCLUDED from the score with the remaining weights renormalized, NAMED in the result, and shall lower both the reported DATA COVERAGE and the CONFIDENCE. Source freshness shall enter the confidence, so a stale component counts for less than a live one. The result shall report, alongside the score and its direction in words, the coverage, the confidence, the per-component CONTRIBUTIONS, the age of the newest and oldest input, the warnings, and a calculation VERSION; and the score together with a snapshot of its inputs shall be persisted in a store layer SEPARATE from the raw observations, for later auditing.
+
+A Qt view-model shall expose the score for presentation WITHOUT computing any of it, so the number a view shows is the number the rule produced. It shall be usable with mock data and shall carry direction and freshness by words, not by colour alone.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]

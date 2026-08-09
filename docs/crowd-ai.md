@@ -1,7 +1,7 @@
 # Crowd Sentiment & AI subsystem
 
-Status: **Phase 1 — data foundation** (REQ-F-039). This document is updated per phase; it
-describes what exists today and what is deliberately deferred.
+Status: **Phase 2 — transparent Crowd Score** (REQ-F-039, REQ-F-040). This document is updated
+per phase; it describes what exists today and what is deliberately deferred.
 
 > **These signals are experimental.** The subsystem produces, at most, paper-trading and
 > advisory output. It is **not financial advice**, past performance does not predict future
@@ -73,7 +73,27 @@ stored as ISO-8601 UTC strings; `(source_name, series_id, instrument, event_time
 re-fetching the same datum is an idempotent no-op (`INSERT OR IGNORE`). A `schema_meta` table
 records the schema version for deliberate migration. Pass `":memory:"` for tests.
 
-## Configuration (for later phases — no keys are used in Phase 1)
+## Phase 2 components — the transparent Crowd Score
+
+| Layer | File | Responsibility |
+|---|---|---|
+| domain | `src/domain/RollingZScore.{h,cpp}` | past-only z-score normalization (`zScore`, `RollingZScore`) |
+| domain | `src/domain/CrowdScore.{h,cpp}` | the pure rule-based score (`crowdScore`, config, result) |
+| services | `src/services/CrowdScoreBuilder.{h,cpp}` | `buildCrowdScore` — store observations → readings → score |
+| services | `src/services/CrowdStore.{h,cpp}` (v2) | z-history query + `crowd_scores` persistence layer |
+| ui | `src/ui/CrowdScoreModel.{h,cpp}` | Qt view-model (computes nothing; binds the result) |
+
+`CrowdScore = 0.35·retail + 0.30·options + 0.20·institutional + 0.15·social` — **weights are
+hypotheses, configurable, not validated rules.** Each family is a **past-only z-score** of its
+latest datum against its own history (no look-ahead). **Sign convention:** a positive component z
+is bullish, **except retail, which is contrarian** — a crowd that is heavily long is a *bearish*
+input, so `crowdScore` negates it; options is oriented in the builder (a high put/call ratio is
+bearish). Missing families are **excluded and named**, never zero; the result carries **coverage**,
+a freshness-weighted **confidence**, per-factor **contributions**, warnings and a **version**, and
+is persisted with its input snapshot in the separate `crowd_scores` table. It is **not** a
+probability and it does not trade — it is the transparent baseline a model must beat.
+
+## Configuration (for later phases — no keys are used in Phase 1 or 2)
 
 Provider credentials will be read from environment variables (never source, logs or fixtures).
 Missing keys are a recoverable "unavailable", not a failure. Planned names:
@@ -93,9 +113,6 @@ offered; no commercial dataset, credential or personal datum is ever committed.
 
 ## Deferred to later phases
 
-- **Phase 2** — the transparent rule-based **Crowd Score** (rolling z-scores, configurable
-  weights `0.35/0.30/0.20/0.15`, contrarian retail sign, missing-data handling, coverage +
-  confidence, factor contributions) and a Qt view-model over mock data.
 - **Phase 3** — real CFTC/FRED (and one market-data) providers with async networking, retry,
   rate-limit handling and recorded fixtures.
 - **Phase 4** — the offline Python training pipeline (`tools/ml/`): dataset build, LONG/NO_TRADE/

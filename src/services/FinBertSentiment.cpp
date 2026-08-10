@@ -43,7 +43,6 @@ QStringList fileLines(const QString &path, bool *ok)
 
 } // namespace
 
-
 struct FinBertSentiment::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_ERROR, "TradingApp"};
     Ort::SessionOptions options;

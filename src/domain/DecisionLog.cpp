@@ -99,7 +99,14 @@ QString decisionLine(const DecisionNote &note)
     // already documents: Europe and the US shift their clocks on different days, so any
     // hardcoded offset is wrong for part of the year.
     const QDateTime local = note.at.toLocalTime();
-    const QString stamp = local.toOffsetFromUtc(local.offsetFromUtc()).toString(Qt::ISODate);
+    QString stamp = local.toOffsetFromUtc(local.offsetFromUtc()).toString(Qt::ISODate);
+    // Qt renders a ZERO offset as "Z". Spell it "+00:00" instead, so the line carries an
+    // explicit numeric offset on every machine — a UTC host (every CI runner) must not
+    // produce a different log format than a desktop west or east of Greenwich.
+    if (stamp.endsWith(u'Z')) {
+        stamp.chop(1);
+        stamp += QStringLiteral("+00:00");
+    }
     const QString symbol = note.symbol.leftJustified(kSymbolWidth, u' ');
     const QString what = note.traded ? QStringLiteral("TRADED ") : QStringLiteral("REFUSED");
     const QString side = sideWord(note.dir, note.traded).leftJustified(7, u' ');

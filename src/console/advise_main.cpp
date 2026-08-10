@@ -124,10 +124,15 @@ struct AdviseArgs {
     bool askAi = true;
     bool verbose = false;
     bool help = false;
-    bool watch = false;   // keep running, re-report every interval
-    bool trade = false;   // keep running AND run a focused sim bot on this instrument
+    // The DEFAULT is the whole point of the tool: keep running, give advice AND simulate
+    // trading THIS one instrument. --once is the scriptable single verdict; --watch reports
+    // continuously without the sim bot.
+    bool once = false;
+    bool watchOnly = false;
     qint32 timeoutSec = 90;
     qint32 intervalSec = 60;
+    [[nodiscard]] bool watch() const { return !once; }   // continuous unless --once
+    [[nodiscard]] bool trade() const { return !once && !watchOnly; }
 };
 
 AdviseArgs parseArguments(const QStringList &args)
@@ -140,11 +145,12 @@ AdviseArgs parseArguments(const QStringList &args)
             out.askAi = false;
         } else if (args.at(i) == QLatin1String("--verbose")) {
             out.verbose = true;
+        } else if (args.at(i) == QLatin1String("--once")) {
+            out.once = true;
         } else if (args.at(i) == QLatin1String("--watch")) {
-            out.watch = true;
+            out.watchOnly = true;   // report continuously, but do NOT simulate trades
         } else if (args.at(i) == QLatin1String("--trade")) {
-            out.trade = true;
-            out.watch = true;   // trading implies the live report
+            // Explicit form of the default; accepted so old invocations keep working.
         } else if ((args.at(i) == QLatin1String("--timeout")) && (i + 1 < args.size())) {
             out.timeoutSec = args.at(++i).toInt();
         } else if ((args.at(i) == QLatin1String("--interval")) && (i + 1 < args.size())) {
@@ -160,21 +166,23 @@ void printUsage()
 {
     std::fprintf(
         stderr,
-        "TradingAdvise — one verdict with its reasons for ONE instrument (advisory only;\n"
-        "this binary links no order path and can place nothing).\n\n"
+        "TradingAdvise <INSTRUMENT> — keeps running, gives advice AND simulates trading THAT\n"
+        "one instrument (paper money on live prices, its own book; advisory by construction —\n"
+        "this binary links no order path and can place nothing real).\n\n"
         "usage: TradingAdvise <INSTRUMENT> [options]\n\n"
         "  <INSTRUMENT>      an eToro app symbol from the catalog (see the list below)\n"
-        "  --no-ai           skip the local model's pick (faster; the other sources stay)\n"
-        "  --timeout <sec>   bound on the data gathering (default 90; whatever has not\n"
-        "                    arrived by then is reported ABSENT, never zeroed)\n"
-        "  --watch           keep running: re-report the decision every --interval seconds,\n"
-        "                    with the index's live top-ten constituents each cycle\n"
-        "  --trade           keep running AND run a SIMULATED bot that trades THIS instrument\n"
-        "                    on the decision (paper money, own book; no real order — ever)\n"
-        "  --interval <sec>  re-report / re-decide period in watch/trade mode (default 60)\n"
-        "  --verbose         mirror the client/feed logs to stderr while gathering\n"
+        "  (default)         keep running: each --interval, print the decision with the\n"
+        "                    index's live top-ten constituents AND let the focused sim bot\n"
+        "                    act on it (opens/closes/refusals printed as [bot] lines)\n"
+        "  --once            a single verdict then exit (scriptable; no sim bot)\n"
+        "  --watch           keep running and report, but do NOT simulate trades\n"
+        "  --no-ai           skip the local model in the printed advice (the sim bot still\n"
+        "                    uses the configured AI mode)\n"
+        "  --interval <sec>  re-decide period (default 60)\n"
+        "  --timeout <sec>   one-shot gathering bound for --once (default 90)\n"
+        "  --verbose         mirror the client/feed logs to stderr\n"
         "  --help, -h        this text\n\n"
-        "exit codes: 0 = proposal, 2 = reasoned no-trade, 3 = not enough data, 64 = usage\n\n"
+        "exit codes (--once): 0 = proposal, 2 = no-trade, 3 = not enough data, 64 = usage\n\n"
         "instruments: %s\n",
         qPrintable(trading::tradableSymbols().join(QStringLiteral(" "))));
 }
@@ -440,13 +448,13 @@ int main(int argc, char *argv[])
         wireVerboseTaps(client, &app);
     }
 
-    if (args.watch) {
+    if (args.watch()) {
         // A focused paper bot for --trade: its OWN book (never the main bot's botsim.json),
         // focused on this one instrument, armed, with the local model in whatever mode the
         // config left it. SIMULATED money on live prices — no order path, like everything here.
         OllamaAdvisor *ai = nullptr;
         BotSimRunner *runner = nullptr;
-        if (args.trade) {
+        if (args.trade()) {
             ai = new OllamaAdvisor(cfg.ollamaHost, cfg.ollamaModel, &app);
             runner = new BotSimRunner(&client, ai, &app,
                                       QStringLiteral("advise-botsim-%1.json").arg(args.symbol));

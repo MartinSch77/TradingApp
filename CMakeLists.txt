@@ -440,6 +440,8 @@ else()
         src/console/bot_console_main.cpp
         src/console/BotConsoleView.cpp
         src/console/BotConsoleView.h
+        src/console/ScanBooks.cpp
+        src/console/ScanBooks.h
         src/ui/BotSimRunner.cpp
         src/ui/BotSimRunner.h
     )
@@ -447,6 +449,21 @@ else()
     target_link_libraries(TradingBot PRIVATE trading_services Qt6::Core Qt6::Concurrent)
     set_target_properties(TradingBot PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endif()
+
+
+# TradingAdvise — one-shot advice for ONE instrument on stdout (REQ-F-047). Plain writes, no
+# raw terminal mode and no ANSI, so unlike TradingBot it builds EVERYWHERE. Advisory by
+# construction: it links the read paths only and prints that it can place nothing.
+qt_add_executable(TradingAdvise
+    src/console/advise_main.cpp
+    src/console/AdviseView.cpp
+    src/console/AdviseView.h
+    src/console/ScanBooks.cpp
+    src/console/ScanBooks.h
+)
+target_include_directories(TradingAdvise PRIVATE src)
+target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+set_target_properties(TradingAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics

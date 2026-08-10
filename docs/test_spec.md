@@ -338,6 +338,13 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-ML-004 | I | The trainer REFUSES rather than pretends, and the guards run BEFORE the optional imports so the refusals hold on machines without the ML stack: a dataset below the sample floor exits 3 (the project's "skipped" code) with NOTHING written — the out directory never appears — and an all-NO_TRADE (one-class) record likewise, naming the class. |
 | TS-ML-005 | I | The full pipeline over a LEARNABLE record (price direction follows the volatility regime; SKIPPED without the optional `./setup.sh ml` environment, like every licence-bound stage): exit 0; walk-forward means for BOTH models beside the three named baselines on identical rows; the model beats the majority baseline OUT-OF-SAMPLE (measured, not asserted); and both ONNX exports exist only because both reproduced their trained model's probabilities (the parity figure is in the report). |
 
+## One-shot advice console (tests/tst_adviseview.cpp, DES-CON-ADVISE, REQ-F-047) — headless
+
+| ID | L | Case |
+|----|---|------|
+| TS-ADV-001 | U | A proposal carries the geometry, the evidence and the disclaimer: the first line is the COSTED plan's verdict with side/leverage/stop/target and confidence, the plan block shows P(win)/break-even/risk and the cost bill, every present source prints its reading, an ABSENT source is NAMED (never skipped), the index reads and the crowd line ride along, and the advisory-only sentence is part of the report — exit code 0. |
+| TS-ADV-002 | U | No-trade and no-data are distinct, reasoned and scriptable: a valid plan that says STAY OUT exits 2 with the plan's own reason on the first line; nothing gathered exits 3 with every missing source named (an empty report must not read as a calm market); a model that was never asked prints nothing, unlike a named error, which prints as the answer it is. |
+
 ## Crowd collection loop & dashboard — Phase 7 (tests/tst_crowdcollector.cpp, DES-SVC-CROWDCOLLECT, REQ-F-043) — no network; driven through ingest() with the deterministic mock
 
 | ID | L | Case |

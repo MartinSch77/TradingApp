@@ -574,9 +574,10 @@ trading::CloseReason BotSimRunner::aiExitFor(const PaperTrade &trade)
     if (!aiProposalsFresh()) {
         return CloseReason::None;
     }
-    const trading::HoldVerdict hold =
-        trading::paperAiHold(trade, m_proposals, m_book.config().aiMode,
-                             QDateTime::currentDateTime(), m_book.config());
+    const trading::HoldVerdict hold = trading::paperAiHold(
+        trade, m_proposals,
+        {m_book.config().aiMode, QDateTime::currentDateTime(), effectiveSpreadPct(trade.symbol)},
+        m_book.config());
     // Recorded for EVERY open position on every pass, not just the ones being
     // closed: the window shows hold / close / no-opinion per trade, and "the model
     // did not mention this one" has to be visible as its own answer.

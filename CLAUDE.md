@@ -303,7 +303,11 @@ publish_release; refuses to publish on a red pipeline).
   the numbers are load-bearing: `reentryCooldownMinutes` (45), `maxOpensPerHour` (6),
   `minHoldMinutes` (30, applies to AiExit/SignalFade/GiveBack but NEVER to stops,
   targets or the carry rules), `aiExitMinConfidence` (60 — a 1.5B model is not
-  consistent between two calls). A blocked opinion is still REPORTED (`ai-too-soon`,
+  consistent between two calls), and `aiExitMinLossOverCost` (1.5 — the fade rule's economics
+  on the model's exits: acted on only when the loss already exceeds that multiple of the exit
+  cost, because the measured book paid ~60 EUR round trips to abandon gross-POSITIVE crypto
+  positions at the 30-minute floor; refusals count as `ai-exit-uneconomic`, unknown spread =
+  silent, 0 = off, stops/targets untouched). A blocked opinion is still REPORTED (`ai-too-soon`,
   and the window's AI column still shows "close"), because hiding it would make the
   bot look broken. `sessionPhaseFor` reads the instrument's OWN exchange clock for the session edges and
   the NEW YORK clock for US releases and the Fed (never a fixed offset: Europe and the

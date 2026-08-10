@@ -4401,9 +4401,9 @@ void MainWindow::pushAiOpinionsToPositions()
         probe.isBuy = p.isBuy;
         probe.openTime = p.openTime;
         static_cast<void>(bySymbol.insert(
-            p.symbol,
-            trading::paperAiHold(probe, m_localPicks, trading::BotAiMode::Lead,
-                                 QDateTime::currentDateTime(), trading::BotConfig{})));
+            p.symbol, trading::paperAiHold(probe, m_localPicks,
+                                           {trading::BotAiMode::Lead, QDateTime::currentDateTime()},
+                                           trading::BotConfig{})));
     }
     m_positionsModel->setAiOpinions(bySymbol);
 }

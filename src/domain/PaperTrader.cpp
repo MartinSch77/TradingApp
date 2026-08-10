@@ -621,6 +621,23 @@ QString exitBrake(double confidence, double heldMinutes, const BotConfig &cfg)
     return {};
 }
 
+// The fade rule's economics, applied to the model's change of heart: an exit that does not
+// SAVE at least this multiple of its own cost pays the spread for an opinion. Empty when the
+// exit may act; unknown cost or a switched-off knob stays silent (the model is obeyed).
+QString exitEconomicsBrake(double net, double exitCost, const BotConfig &cfg)
+{
+    if ((exitCost <= 0.0) || (cfg.aiExitMinLossOverCost <= 0.0)) {
+        return {};
+    }
+    if (-net >= (exitCost * cfg.aiExitMinLossOverCost)) {
+        return {};
+    }
+    return QStringLiteral(" — but closing now pays ~%1 of spread to leave a position at "
+                          "net %2: the toll outweighs what the exit saves")
+        .arg(exitCost, 0, 'f', 2)
+        .arg(net, 0, 'f', 2);
+}
+
 // The model's own words appended to what it decided, when it gave any.
 QString holdReason(const AiProposal &p, const QString &head)
 {
@@ -630,7 +647,8 @@ QString holdReason(const AiProposal &p, const QString &head)
 // A contrary answer, and whether it may be acted on. The opinion is reported either
 // way — the window shows what the model thinks even while the trade is too young to
 // act on it.
-HoldVerdict contraryVerdict(const AiProposal &p, double heldMinutes, const BotConfig &cfg)
+HoldVerdict contraryVerdict(const AiProposal &p, double heldMinutes, double net, double exitCost,
+                            const BotConfig &cfg)
 {
     HoldVerdict out;
     out.opinion = HoldOpinion::Close;
@@ -642,6 +660,12 @@ HoldVerdict contraryVerdict(const AiProposal &p, double heldMinutes, const BotCo
     if (!brake.isEmpty()) {
         out.code = QStringLiteral("ai-too-soon");
         out.why += brake;
+        return out;
+    }
+    const QString economics = exitEconomicsBrake(net, exitCost, cfg);
+    if (!economics.isEmpty()) {
+        out.code = QStringLiteral("ai-exit-uneconomic");
+        out.why += economics;
         return out;
     }
     out.close = true;
@@ -664,8 +688,11 @@ QString holdOpinionWord(HoldOpinion opinion)
 }
 
 HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &proposals,
-                        BotAiMode mode, const QDateTime &now, const BotConfig &cfg)
+                        const HoldContext &ctx, const BotConfig &cfg)
 {
+    const BotAiMode mode = ctx.mode;
+    const QDateTime &now = ctx.now;
+    const double exitSpreadPct = ctx.exitSpreadPct;
     HoldVerdict out;
     if (mode == BotAiMode::Off) {
         return out;   // nobody was asked; the composite's own rules govern
@@ -682,7 +709,9 @@ HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &propos
         }
         const bool contrary = p.exitNow || ((p.dir != 0) && (p.dir != side));
         if (contrary) {
-            return contraryVerdict(p, heldMinutes, cfg);
+            return contraryVerdict(p, heldMinutes, trade.netPnl(),
+                                   paperHalfSpreadCost(trade.stake, trade.leverage, exitSpreadPct),
+                                   cfg);
         }
         // Named, and on this position's side (or an explicit HOLD): a KEEP with the
         // model behind it, which is a different thing from not having been asked.

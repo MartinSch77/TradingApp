@@ -425,8 +425,11 @@ endif()
 # stdin socket notifier, ANSI escapes — so it is NOT BUILT on Windows rather than half-ported:
 # a console whose keys are dead and whose escapes print as garbage would read as broken, not
 # as absent. Windows keeps the two GUI front ends; the Windows zip never shipped this binary.
-if(WIN32)
-    message(STATUS "TradingBot console: POSIX terminal only (termios/ANSI) — not built on Windows")
+if(WIN32 OR ANDROID)
+    # Android is Unix enough to COMPILE it, but androiddeployqt would then package a
+    # TradingBot.apk — a terminal program with no Activity, which fails the deploy (and
+    # would be meaningless installed). Desktop POSIX only, stated rather than half-built.
+    message(STATUS "TradingBot console: desktop POSIX terminal only — not built here")
 else()
     # TradingBot — the CONSOLE front end for examining the paper-trading bot (REQ-F-029).
     # Qt Core + services only, no widgets and no QML: it links the SAME BotSimRunner the GUI

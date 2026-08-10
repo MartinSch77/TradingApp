@@ -421,21 +421,29 @@ if(Qt6Graphs_FOUND)
 endif()
 
 # ---------------------------------------------------------------------------
-# TradingBot — the CONSOLE front end for examining the paper-trading bot (REQ-F-029).
-# Qt Core + services only, no widgets and no QML: it links the SAME BotSimRunner the GUI
-# apps drive (the reason that class was split out of BotSimPanel), so it measures the same
-# bot rather than a copy. A static ANSI TUI; no ncurses, so setup.sh gains no dependency.
-# ---------------------------------------------------------------------------
-qt_add_executable(TradingBot
-    src/console/bot_console_main.cpp
-    src/console/BotConsoleView.cpp
-    src/console/BotConsoleView.h
-    src/ui/BotSimRunner.cpp
-    src/ui/BotSimRunner.h
-)
-target_include_directories(TradingBot PRIVATE src)
-target_link_libraries(TradingBot PRIVATE trading_services Qt6::Core Qt6::Concurrent)
-set_target_properties(TradingBot PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+# TradingBot is a POSIX-TERMINAL program by construction — raw mode via termios, keys off a
+# stdin socket notifier, ANSI escapes — so it is NOT BUILT on Windows rather than half-ported:
+# a console whose keys are dead and whose escapes print as garbage would read as broken, not
+# as absent. Windows keeps the two GUI front ends; the Windows zip never shipped this binary.
+if(WIN32)
+    message(STATUS "TradingBot console: POSIX terminal only (termios/ANSI) — not built on Windows")
+else()
+    # TradingBot — the CONSOLE front end for examining the paper-trading bot (REQ-F-029).
+    # Qt Core + services only, no widgets and no QML: it links the SAME BotSimRunner the GUI
+    # apps drive (the reason that class was split out of BotSimPanel), so it measures the same
+    # bot rather than a copy. A static ANSI TUI; no ncurses, so setup.sh gains no dependency.
+    # ---------------------------------------------------------------------------
+    qt_add_executable(TradingBot
+        src/console/bot_console_main.cpp
+        src/console/BotConsoleView.cpp
+        src/console/BotConsoleView.h
+        src/ui/BotSimRunner.cpp
+        src/ui/BotSimRunner.h
+    )
+    target_include_directories(TradingBot PRIVATE src)
+    target_link_libraries(TradingBot PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+    set_target_properties(TradingBot PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics

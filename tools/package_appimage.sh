@@ -152,6 +152,30 @@ export QMAKE="$QT_PREFIX/bin/qmake"
 # run time), so without this it stops at "Could not find dependency:
 # libQt6Charts.so.6".
 export LD_LIBRARY_PATH="$QT_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# The app's only SQL driver is SQLite (the crowd store), but linking Qt6::Sql makes the Qt
+# plugin deploy EVERY driver in the kit — and a driver whose native client library is absent
+# on this machine (Mimer's libmimerapi.so on every CI runner; MySQL/ODBC/PostgreSQL clients
+# on many) aborts the whole deploy with "Could not find dependency". Hide the unresolvable
+# drivers for the duration of the deploy and restore them afterwards: what cannot even load
+# here must not be packaged here, and the kit is left exactly as found either way.
+SQLDRIVERS_DIR="$QT_PREFIX/plugins/sqldrivers"
+SQLDRIVERS_HIDDEN="$(mktemp -d)"
+restore_sqldrivers() {
+    mv "$SQLDRIVERS_HIDDEN"/*.so "$SQLDRIVERS_DIR"/ 2>/dev/null || true
+    rmdir "$SQLDRIVERS_HIDDEN" 2>/dev/null || true
+}
+trap restore_sqldrivers EXIT
+for drv in "$SQLDRIVERS_DIR"/libqsql*.so; do
+    [ -e "$drv" ] || continue
+    if [ "$(basename "$drv")" = "libqsqlite.so" ]; then
+        continue   # the one driver the app uses
+    fi
+    if ldd "$drv" 2>/dev/null | grep -q "not found"; then
+        echo "-- hiding $(basename "$drv") for the deploy: its client library is absent here"
+        mv "$drv" "$SQLDRIVERS_HIDDEN/"
+    fi
+done
 export EXTRA_QT_PLUGINS="tls;imageformats;iconengines;styles;platformthemes"
 # The Qt plugin bundles only the xcb platform plugin. offscreen costs ~30 KB
 # and is what makes the AppImage runnable on a headless box — including the

@@ -475,8 +475,6 @@ qt_add_executable(TradingPortfolioAdvise
     src/console/PortfolioReport.h
     src/console/SpreadsheetXml.cpp
     src/console/SpreadsheetXml.h
-    src/console/ScanBooks.cpp
-    src/console/ScanBooks.h
 )
 target_include_directories(TradingPortfolioAdvise PRIVATE src)
 target_link_libraries(TradingPortfolioAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)

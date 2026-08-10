@@ -5273,7 +5273,9 @@ void MainWindow::openDecision()
     }
 
     m_decisionSelected.clear();  // default to the recommendation each time it's opened
-    m_decisionDialog->show();
+    // Open expanded: the decision window carries the full sources table, the AI verdict and
+    // the plan, and a maximised window shows them without scrolling on first open.
+    m_decisionDialog->showMaximized();
     m_decisionDialog->raise();
     m_decisionDialog->activateWindow();
     startDecisionScan();  // kick a fresh scan (and the AI request once it finishes)

@@ -12,29 +12,31 @@
 #include <QList>
 #include <QString>
 
-// The portfolio proposal as SHEETS, from plain inputs (REQ-F-048) — pure and testable; the
-// gathering main fills one input and writes spreadsheetXml(portfolioReportSheets(in)).
+// The portfolio report as SHEETS, from plain inputs (REQ-F-048) — pure and testable. This is
+// HOLDINGS-CENTRIC: it analyses the instruments the account actually holds and recommends what
+// to do with each (hold / add / reduce / exit), rather than proposing catalogue buys. The
+// gathering main fills one input per held position and writes spreadsheetXml(sheets).
 namespace trading::console {
 
-struct PortfolioCandidate {
-    QString symbol;
-    DecisionRow row;    // the composite and its per-source reads
-    TradePlan plan;     // the COSTED verdict; only actionable plans should be handed in
+// One held position with whatever signal could be gathered for it. A holding with no data
+// feed (a stock the app cannot price) carries haveSignal=false and is reported as such — an
+// analysis that cannot see an instrument must say so, not invent a verdict.
+struct HoldingSignal {
+    Position position;
+    bool haveSignal = false;   // a composite (from candles) was computed
+    DecisionRow row;           // the technical/composite read, when haveSignal
+    bool havePlan = false;
+    TradePlan plan;            // the costed plan, when candles allowed one
+    QString note;              // e.g. "no candle feed" when haveSignal is false
 };
 
 struct PortfolioReportInput {
-    bool portfolioKnown = false;       // false = no credentials/timeout: proposals over a
-                                       // flat book, and the report SAYS so
-    QList<Position> positions;
+    bool portfolioKnown = false;   // false = no credentials / not delivered: say so
     double cash = 0.0;
     QString currency;
-    QList<PortfolioCandidate> candidates;
-    // Every instrument the scan evaluated, with why it is or is not a buy candidate — so the
-    // report SHOWS the whole catalogue was considered even when few are actionable (a weekend
-    // scan proposes almost nothing, which otherwise reads as "it only looked at one").
-    QList<QStringList> considered;     // rows: {symbol, status, detail}
-    QStringList absentSources;         // named absents for the Data health sheet
-    QString generatedAt;               // caller-supplied stamp (fixed in tests)
+    QList<HoldingSignal> holdings;
+    QStringList absentSources;     // named absents for the Data health sheet
+    QString generatedAt;           // caller-supplied stamp (fixed in tests)
 };
 
 [[nodiscard]] QList<Sheet> portfolioReportSheets(const PortfolioReportInput &in);

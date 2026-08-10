@@ -76,6 +76,23 @@ public:
     // order, and an empty set restores the previous behaviour.
     void setExtraQuoteInstruments(const QSet<qint64> &instrumentIds);
 
+    // Fetch a candle series for an ARBITRARY instrument by its id (ascending; empty on
+    // failure), for callers that already hold the id and must NOT pay the per-symbol search
+    // — the portfolio advisor iterating held positions, which each carry their instrumentId.
+    // A plain idempotent GET, so JsonHttp's 429/5xx retry applies.
+    void fetchCandlesForId(qint64 instrumentId, const QString &interval, qint32 count,
+                           std::function<void(QList<Candle>)> cb);
+
+    // Every open position from /portfolio, UNFILTERED — the whole book, including instruments
+    // outside the app's tradable catalogue (the portfolio advisor needs them; the normal
+    // portfolioUpdated path deliberately keeps only catalogued names for the GUI). Symbol is
+    // left empty (the payload carries only instrumentID); resolveInstrumentNames fills it.
+    void fetchAllPositions(std::function<void(QList<Position>)> cb);
+    // Resolve display names for a batch of instrument ids (<=100; the endpoint 500s on a bad
+    // id in a batch, so callers chunk). id -> name, only for ids the endpoint knew.
+    void resolveInstrumentNames(const QList<qint64> &ids,
+                                std::function<void(QHash<qint64, QString>)> cb);
+
     // The per-unit rollover fees come from eToro's PUBLIC trade-config host, which is
     // not the API base and therefore not covered by Config::baseUrl. Tests redirect it
     // here — the same hook AiAdvisor, MarketFeeds and EconomicCalendar carry, and for

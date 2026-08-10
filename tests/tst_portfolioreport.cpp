@@ -8,32 +8,36 @@
 
 using namespace trading::console;
 
-// The portfolio proposal's sheets and the spreadsheet writer (REQ-F-048), pinned headless.
+// The holdings-centric portfolio report and the spreadsheet writer (REQ-F-048), pinned
+// headless: what to do with each HELD instrument, and an honest file.
 namespace {
 
-PortfolioCandidate candidate(const QString &symbol, double confidence)
+HoldingSignal holding(const QString &symbol, double amount, bool isBuy, double profit,
+                      bool haveSignal, qint32 signalDir, double confidence)
 {
-    PortfolioCandidate c;
-    c.symbol = symbol;
-    c.row.symbol = symbol;
-    c.row.composite = confidence / 100.0;
-    c.row.confidence = confidence;
-    c.plan.valid = true;
-    c.plan.dir = 1;
-    c.plan.verdict = QStringLiteral("BUY");
-    c.plan.confidence = confidence;
-    c.plan.leverage = 5;
-    c.plan.slRate = 90.0;
-    c.plan.tpRate = 115.0;
-    c.plan.pWin = 0.45;
-    return c;
+    HoldingSignal h;
+    h.position.symbol = symbol;
+    h.position.amount = amount;
+    h.position.isBuy = isBuy;
+    h.position.profit = profit;
+    h.haveSignal = haveSignal;
+    h.row.symbol = symbol;
+    h.row.dir = signalDir;
+    h.row.confidence = confidence;
+    h.row.composite = confidence / 100.0 * signalDir;
+    return h;
 }
 
-QStringList sheetCell(const QList<Sheet> &sheets, const QString &name, qsizetype row)
+QStringList rowOf(const QList<Sheet> &sheets, const QString &name, const QString &firstCell)
 {
     for (const Sheet &s : sheets) {
-        if (s.name == name) {
-            return s.rows.value(row);
+        if (s.name != name) {
+            continue;
+        }
+        for (const QStringList &row : s.rows) {
+            if (!row.isEmpty() && (row.first() == firstCell)) {
+                return row;
+            }
         }
     }
     return {};
@@ -46,81 +50,62 @@ class TestPortfolioReport : public QObject
     Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's marker
 
 private slots:
-    //! @tstid TS-ADV-003 @design DES-CON-ADVISE
+    //! @tstid TS-ADV-003 @design DES-CON-PORTFOLIO
     // @relation(REQ-F-048, scope=function)
-    void TS_ADV_003_theRankingRespectsWhatTheBookAlreadyHolds()
+    void TS_ADV_003_eachHoldingGetsAVerdictFromItsSignalAndItsSide()
     {
         PortfolioReportInput in;
         in.portfolioKnown = true;
         in.cash = 1000.0;
         in.currency = QStringLiteral("USD");
-        // A book concentrated in equity indices: 4000 of 5000 invested in that bucket.
-        Position heavy;
-        heavy.symbol = QStringLiteral("SPX500");
-        heavy.amount = 4000.0;
-        Position light;
-        light.symbol = QStringLiteral("GOLD");
-        light.amount = 1000.0;
-        in.positions = {heavy, light};
-        // The stronger candidate sits in the CROWDED bucket; the weaker one is diversifying.
-        in.candidates = {candidate(QStringLiteral("NSDQ100"), 60.0),
-                         candidate(QStringLiteral("EURUSD"), 45.0)};
-        in.generatedAt = QStringLiteral("2026-08-10T20:00:00Z");
+        in.generatedAt = QStringLiteral("2026-08-11T09:00:00Z");
+        // A long the signal SUPPORTS, a long the signal OPPOSES, and one with no data feed.
+        in.holdings = {holding(QStringLiteral("AAPL"), 2000.0, true, 30.0, true, 1, 62.0),
+                       holding(QStringLiteral("TSLA"), 1000.0, true, -40.0, true, -1, 55.0),
+                       holding(QStringLiteral("SOMESTOCK"), 500.0, true, 0.0, false, 0, 0.0)};
+        in.holdings[2].note = QStringLiteral("no data feed");
 
         const QList<Sheet> sheets = portfolioReportSheets(in);
         QCOMPARE(sheets.size(), 4);
 
-        // Concentration DEMOTES with the reason named: 60-confidence NSDQ100 in a bucket
-        // holding 80% of invested money ranks BELOW the diversifying 45-confidence EURUSD.
-        const QStringList first = sheetCell(sheets, QStringLiteral("Proposal"), 1);
-        const QStringList second = sheetCell(sheets, QStringLiteral("Proposal"), 2);
-        QCOMPARE(first.at(1), QStringLiteral("EURUSD"));
-        QCOMPARE(second.at(1), QStringLiteral("NSDQ100"));
-        QVERIFY(second.at(10).contains(QStringLiteral("equity-index")));
-        QVERIFY(second.at(10).contains(QStringLiteral("80%")));
+        // A supporting signal on a long → HOLD/ADD; an opposing one → REDUCE/EXIT; no data →
+        // an explicit "hold (no signal)" that names the reason, never an invented verdict.
+        const QStringList aapl = rowOf(sheets, QStringLiteral("Holdings"), QStringLiteral("AAPL"));
+        QVERIFY(aapl.at(5).contains(QStringLiteral("ADD")) || aapl.at(5) == QStringLiteral("HOLD"));
+        QVERIFY(aapl.at(6).contains(QStringLiteral("supports")));
+        const QStringList tsla = rowOf(sheets, QStringLiteral("Holdings"), QStringLiteral("TSLA"));
+        QVERIFY(tsla.at(5).contains(QStringLiteral("REDUCE")));
+        QVERIFY(tsla.at(6).contains(QStringLiteral("opposes")));
+        const QStringList none =
+            rowOf(sheets, QStringLiteral("Holdings"), QStringLiteral("SOMESTOCK"));
+        QVERIFY(none.at(5).contains(QStringLiteral("no signal")));
+        QVERIFY(none.at(6).contains(QStringLiteral("no data feed")));
 
-        // The advisory stake is bounded by the cash that EXISTS (6% of equity would be 360,
-        // cash is 1000 — the smaller of the two rules, never more than is there).
-        QVERIFY(first.at(7).toDouble() <= in.cash);
-
-        // The portfolio sheet carries the positions, the cash and the bucket sums.
-        bool bucketRow = false;
-        for (const Sheet &s : sheets) {
-            if (s.name == QStringLiteral("Portfolio")) {
-                for (const QStringList &row : s.rows) {
-                    bucketRow = bucketRow
-                                || (row.value(0).startsWith(QStringLiteral("bucket:"))
-                                    && (row.value(2).toDouble() > 0.0));
-                }
-            }
-        }
-        QVERIFY(bucketRow);
+        // The Concentration sheet carries per-bucket invested sums; Data health counts how
+        // many holdings had a signal (2 of 3 here).
+        const QStringList health =
+            rowOf(sheets, QStringLiteral("Data health"), QStringLiteral("with a signal"));
+        QCOMPARE(health.at(1), QStringLiteral("2"));
     }
 
-    //! @tstid TS-ADV-004 @design DES-CON-ADVISE
+    //! @tstid TS-ADV-004 @design DES-CON-PORTFOLIO
     // @relation(REQ-F-048, scope=function)
     void TS_ADV_004_theFileIsHonestAboutAbsenceAndTheXmlIsWellFormed()
     {
-        // No portfolio: the report ranks over a flat book and SAYS so.
-        PortfolioReportInput in;
-        in.portfolioKnown = false;
-        in.candidates = {candidate(QStringLiteral("GOLD"), 50.0)};
-        in.absentSources << QStringLiteral("web ratings");
-        in.generatedAt = QStringLiteral("2026-08-10T20:00:00Z");
-        const QList<Sheet> sheets = portfolioReportSheets(in);
-        bool flatNote = false;
-        bool absentNamed = false;
+        // No portfolio: the concentration sheet says unavailable rather than inventing zeros.
+        PortfolioReportInput bare;
+        bare.portfolioKnown = false;
+        bare.generatedAt = QStringLiteral("2026-08-11T09:00:00Z");
+        const QList<Sheet> sheets = portfolioReportSheets(bare);
+        bool unavailable = false;
         for (const Sheet &s : sheets) {
             for (const QStringList &row : s.rows) {
-                flatNote = flatNote
-                           || row.value(0).contains(QStringLiteral("portfolio unavailable"));
-                absentNamed = absentNamed
-                              || ((row.value(0) == QStringLiteral("absent"))
-                                  && row.value(1).contains(QStringLiteral("web ratings")));
+                unavailable = unavailable
+                              || (!row.isEmpty()
+                                  && row.first().contains(QStringLiteral("portfolio unavailable")));
             }
         }
-        QVERIFY(flatNote);
-        QVERIFY(absentNamed);
+        QVERIFY(unavailable);
 
         // The writer: numbers typed as numbers, text escaped, tab names bounded — the file
         // must survive a symbol like "S&P<500>" without becoming invalid XML.

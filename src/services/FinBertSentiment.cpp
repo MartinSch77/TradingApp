@@ -21,10 +21,14 @@
 
 namespace trading::crowd {
 
+#ifdef TRADINGAPP_HAS_ONNXRUNTIME
+
 namespace {
 
 // The classifier input is a headline, not a filing: 64 tokens hold any headline whole, and a
-// longer text is truncated with the framing kept intact (wordPieceEncode's rule).
+// longer text is truncated with the framing kept intact (wordPieceEncode's rule). Both of
+// these live INSIDE the runtime guard: the stub build has no use for them, and an unused
+// static is fatal under the warnings-as-errors build every CI platform runs.
 constexpr qint32 kMaxTokens = 64;
 
 QStringList fileLines(const QString &path, bool *ok)
@@ -39,7 +43,6 @@ QStringList fileLines(const QString &path, bool *ok)
 
 } // namespace
 
-#ifdef TRADINGAPP_HAS_ONNXRUNTIME
 
 struct FinBertSentiment::Impl {
     Ort::Env env{ORT_LOGGING_LEVEL_ERROR, "TradingApp"};

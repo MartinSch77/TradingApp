@@ -326,7 +326,7 @@ void BotSimDialog::rebuildAccount()
         QStringLiteral("%1 · experience log: %2")
             .arg(trading::botNetSummary(m_runner->net(), m_runner->netMode(),
                                         trading::NetGateConfig{}),
-                 BotSimRunner::experiencePath()));
+                 m_runner->experiencePath()));
     // Which RULE is making or losing the money — the view that answers "why is the
     // record what it is" without anyone reading the JSON.
     QStringList byReason;

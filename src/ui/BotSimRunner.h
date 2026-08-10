@@ -127,7 +127,9 @@ public:
     // hence static.
     [[nodiscard]] QString storePath() const;
     // The append-only training set, and the model trained from it.
-    [[nodiscard]] static QString experiencePath();
+    [[nodiscard]] QString experiencePath() const;
+    [[nodiscard]] QString siblingPath(const QString &defaultName,
+                                      const QString &suffix) const;
     [[nodiscard]] static QString modelPath();
     // The append-only prediction ledger: every evaluation, including the ones that
     // stayed out, and what the market then did (REQ-F-037).
@@ -135,7 +137,7 @@ public:
     // The human-readable decision log: one line per instrument CONSIDERED, saying
     // whether it was traded and why (REQ-F-029). The ledger above is the machine's
     // copy for measuring; this one is the one a person opens after a long weekend.
-    [[nodiscard]] static QString decisionLogPath();
+    [[nodiscard]] QString decisionLogPath() const;
 
     // Fed by the main window after every all-instruments scan: the composite
     // decision per instrument plus the snapshot behind it (its screenerRows carry
@@ -153,6 +155,12 @@ signals:
     // A simulated position was just opened. The window is not always open, so the
     // notice is raised by whoever owns the runner rather than from here.
     void tradeOpened(const QString &symbol);
+    // One line PER evaluated candidate each scan (REQ-F-034 visibility): traded or refused,
+    // the countable code and the human reason. The GUI need not connect it (its decision
+    // window shows this already); the advise console prints it so a person watching one
+    // instrument sees exactly why it traded or was refused, every cycle.
+    void entryDecision(const QString &symbol, bool traded, const QString &code,
+                       const QString &why);
     // The local model's latest picks, for the views that show it as a SOURCE
     // (the signals panel and the decision window, REQ-F-034) rather than as the
     // bot's decision.
@@ -191,7 +199,7 @@ private:
     void recordExperience(const trading::PaperClosedTrade &done);
     void loadModel();
     void onTrainingDone();
-    [[nodiscard]] static QList<trading::TrainingExample> readExperience();
+    [[nodiscard]] QList<trading::TrainingExample> readExperience() const;
     // The model's verdict on holding this position: AiExit or None (never on
     // silence). Logs the reason when it closes.
     [[nodiscard]] trading::CloseReason aiExitFor(const trading::PaperTrade &trade);

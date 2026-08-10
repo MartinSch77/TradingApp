@@ -340,10 +340,18 @@ QString aiLineFor(const Config &cfg, const ScanBooks &books, const QString &symb
 // One report cycle: judge the current books, print with a timestamp, and (in trade mode) hand
 // the decisions to the focused runner so it acts on exactly the verdict just printed.
 void reportCycle(ScanBooks *books, const AdviseArgs &args, const Config &cfg, EtoroClient &client,
-                 BotSimRunner *runner)
+                 BotSimRunner *runner, const QString &botAiLine)
 {
     AdviseInput in = judgeBooks(*books, args.symbol, client, cfg);
-    if (args.askAi && !cfg.ollamaModel.isEmpty() && in.haveRow) {
+    if (runner != nullptr) {
+        // Trade mode: SHOW the bot's own model pick rather than make a second, redundant
+        // Ollama call — the bot already asked, on the same evidence, and a second call would
+        // block the report for up to the model's timeout each cycle.
+        if (!botAiLine.isEmpty()) {
+            in.aiAsked = true;
+            in.aiLine = botAiLine;
+        }
+    } else if (args.askAi && !cfg.ollamaModel.isEmpty() && in.haveRow) {
         in.aiAsked = true;
         in.aiLine = aiLineFor(cfg, *books, args.symbol);
     }
@@ -373,6 +381,29 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
     MarketFeeds &feeds = *ctx.feeds;
     ScanBooks *books = ctx.books;
     BotSimRunner *runner = ctx.runner;
+    // The bot's most recent model pick for the focus symbol, mirrored into the report so the
+    // AI decision is shown without a second Ollama call.
+    auto *botAiLine = new QString();
+    if (runner != nullptr) {
+        const QString focus = args.symbol;
+        QObject::connect(runner, &BotSimRunner::proposalsUpdated, &client,
+                         [botAiLine, focus](const QList<trading::AiProposal> &picks) {
+                             for (const trading::AiProposal &p : picks) {
+                                 if (p.resolvedSymbol != focus) {
+                                     continue;
+                                 }
+                                 *botAiLine = QStringLiteral("%1 (%2%)%3")
+                                     .arg(p.exitNow ? QStringLiteral("CLOSE")
+                                          : p.dir > 0 ? QStringLiteral("BUY")
+                                          : p.dir < 0 ? QStringLiteral("SELL")
+                                                      : QStringLiteral("HOLD"))
+                                     .arg(p.confidence, 0, 'f', 0)
+                                     .arg(p.rationale.isEmpty()
+                                              ? QString()
+                                              : QStringLiteral(" — ") + p.rationale);
+                             }
+                         });
+    }
     const auto rescan = [&client, &feeds] {
         client.scanInstruments();
         feeds.fetchInstrumentRatings();
@@ -385,7 +416,7 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
             std::any_of(books->rows.cbegin(), books->rows.cend(),
                         [&args](const ScreenerRow &r) { return r.symbol == args.symbol; });
         if (haveRow) {
-            reportCycle(books, args, cfg, client, runner);
+            reportCycle(books, args, cfg, client, runner, *botAiLine);
         } else {
             // Ids not resolved yet. The id-less scan emits screenerFinished
             // SYNCHRONOUSLY, so re-scanning inline here recurses until the
@@ -464,6 +495,21 @@ int main(int argc, char *argv[])
                 std::fprintf(stdout, "[bot] %s\n", qPrintable(line));
                 std::fflush(stdout);
             });
+            // The decision itself, spelled out, for the ONE instrument being traded — the
+            // proxies' not-focus refusals are inputs-not-candidates and would only be noise.
+            const QString focus = args.symbol;
+            QObject::connect(runner, &BotSimRunner::entryDecision, &app,
+                             [focus](const QString &symbol, bool traded, const QString &code,
+                                     const QString &why) {
+                                 if (symbol != focus) {
+                                     return;
+                                 }
+                                 std::fprintf(stdout, ">>> DECISION %s: %s (%s) — %s\n",
+                                              qPrintable(symbol),
+                                              traded ? "TRADED" : "refused",
+                                              qPrintable(code), qPrintable(why));
+                                 std::fflush(stdout);
+                             });
             std::fprintf(stdout,
                          "SIMULATED trading of %s — paper money on live prices, own book "
                          "(%s). No real order is ever placed.\n",

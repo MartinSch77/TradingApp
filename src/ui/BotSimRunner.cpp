@@ -794,10 +794,26 @@ void BotSimRunner::recordExperience(const PaperClosedTrade &done)
     ++m_experienceCount;
 }
 
-QString BotSimRunner::experiencePath()
+// The three books share ONE base name so a second runner (the advise console's focused
+// instrument) never writes the main bot's decision or experience logs — the store-file
+// override was pointless if these stayed fixed.
+QString BotSimRunner::siblingPath(const QString &defaultName, const QString &suffix) const
 {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    return QDir(dir).filePath(QStringLiteral("botsim-experience.jsonl"));
+    if (m_storeFile.isEmpty()) {
+        return QDir(dir).filePath(defaultName);
+    }
+    QString base = m_storeFile;
+    if (base.endsWith(QLatin1String(".json"))) {
+        base.chop(5);
+    }
+    return QDir(dir).filePath(base + suffix);
+}
+
+QString BotSimRunner::experiencePath() const
+{
+    return siblingPath(QStringLiteral("botsim-experience.jsonl"),
+                       QStringLiteral("-experience.jsonl"));
 }
 
 QString BotSimRunner::ledgerPath()
@@ -806,11 +822,10 @@ QString BotSimRunner::ledgerPath()
     return QDir(dir).filePath(QStringLiteral("prediction-ledger.jsonl"));
 }
 
-QString BotSimRunner::decisionLogPath()
+QString BotSimRunner::decisionLogPath() const
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     // .log, not .jsonl: this one is meant to be opened, tailed and grepped by a person.
-    return QDir(dir).filePath(QStringLiteral("botsim-decisions.log"));
+    return siblingPath(QStringLiteral("botsim-decisions.log"), QStringLiteral("-decisions.log"));
 }
 
 QString BotSimRunner::modelPath()
@@ -819,7 +834,7 @@ QString BotSimRunner::modelPath()
     return QDir(dir).filePath(QStringLiteral("botnet.json"));
 }
 
-QList<trading::TrainingExample> BotSimRunner::readExperience()
+QList<trading::TrainingExample> BotSimRunner::readExperience() const
 {
     // The append-only log, oldest first — the order matters: the trainer holds back
     // the LATEST trades to score itself on (REQ-F-033).
@@ -1261,6 +1276,7 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
         note.code = code;
         note.why = why;
         static_cast<void>(trading::appendDecision(decisionLogPath(), note));
+        emit entryDecision(row.symbol, false, code, why);
         return skip(code);
     };
     trading::BookState state = m_book.state();
@@ -1343,6 +1359,7 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     // like with like (REQ-F-032).
     m_book.setEntryCompositeConf(openedId, row.confidence);
     emit tradeOpened(sig.symbol);
+    emit entryDecision(sig.symbol, true, QStringLiteral("opened"), verdict.why);
     // The same event in the persistent log, with the geometry beside the evidence, so the
     // file answers "why WAS this traded?" as fully as it answers why the others were not.
     {

@@ -87,6 +87,36 @@ QString planLines(const TradePlan &p, double price)
 
 } // namespace
 
+QString decisionSources(const AdviseInput &in)
+{
+    QStringList lines;
+    // INDICATORS: the deterministic composite of technical ensemble, web rating, news, regime
+    // and the intraday/reference reads — the machinery the app has always used.
+    if (in.haveRow) {
+        const QString dir = in.row.dir > 0   ? QStringLiteral("BUY")
+                            : in.row.dir < 0 ? QStringLiteral("SELL")
+                                             : QStringLiteral("NEUTRAL");
+        lines << QStringLiteral("  INDICATORS say: %1 (composite confidence %2)")
+                     .arg(dir)
+                     .arg(in.row.confidence, 0, 'f', 0);
+    } else {
+        lines << QStringLiteral("  INDICATORS say: no reading (no scan row)");
+    }
+    // AI: the local language model's own pick (a different kind of judgement, shown apart so a
+    // reader never mistakes the model's word for the measured composite).
+    if (in.aiAsked) {
+        lines << QStringLiteral("  AI (local model) says: %1")
+                     .arg(in.aiLine.isEmpty() ? QStringLiteral("no usable answer") : in.aiLine);
+    } else {
+        lines << QStringLiteral("  AI (local model): not consulted");
+    }
+    // The trained crowd model, when it answered, is a third source and labelled as such.
+    if (!in.crowdLine.isEmpty()) {
+        lines << QStringLiteral("  AI (crowd model): ") + in.crowdLine;
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 AdviseVerdict adviseReport(const AdviseInput &in)
 {
     AdviseVerdict out;
@@ -117,6 +147,8 @@ AdviseVerdict adviseReport(const AdviseInput &in)
                    .arg(in.symbol);
     }
     out.text = head + QLatin1Char('\n');
+    out.text += QStringLiteral("--- decision sources ---\n") + decisionSources(in)
+                + QLatin1Char('\n');
     if (in.havePlan && in.plan.valid) {
         out.text += planLines(in.plan, in.price) + QLatin1Char('\n');
     }

@@ -216,7 +216,7 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
         }
         line(QString());
         line(QStringLiteral("  DECISIONS  (live; full history: %1)")
-                 .arg(BotSimRunner::decisionLogPath()));
+                 .arg(runner.decisionLogPath()));
         log.setViewport(10);
         for (const QString &row : log.window(10)) {
             line(QStringLiteral("  ") + row);

@@ -494,6 +494,16 @@ The output is EVIDENCE ONLY: this requirement wires no prediction to any trading
 <<<
 
 [REQUIREMENT]
+UID: REQ-F-047
+VERIFICATION: T
+TITLE: One-shot instrument advice on the console
+STATEMENT: >>>
+The application shall offer a CONSOLE program that, given one instrument symbol, gathers the SAME evidence the interactive application reasons from — the technical ensemble, the web rating, the news headlines with their sentiment, the volatility and calendar regime, the crowd sentiment, the independent intraday series, the reference-series reads where the instrument has them, the costed trade plan, the persisted crowd score with the optional in-process model's labelled prediction, and the optional local model's pick — and prints ONE verdict with its reasons: a proposal (side, leverage, stop, target, stake suggestion) or a reasoned "no trade", followed by what every source said, with an ABSENT source named as absent rather than silently omitted or zeroed.
+
+The program is ADVISORY BY CONSTRUCTION: it shall link no order path, so no invocation of it can place, size or cancel anything, and its output shall say so. It shall be scriptable: distinct exit codes for "proposal", "no trade" and "could not gather enough data", a bounded gathering time, and a machine-readable variant of the verdict on request. The verdict-and-reasons text shall be built by a component testable WITHOUT any network or terminal, so every line it can print is pinned headless — the same discipline as the bot console's view.
+<<<
+
+[REQUIREMENT]
 UID: REQ-F-043
 VERIFICATION: T
 TITLE: Crowd & AI dashboard with a collection loop

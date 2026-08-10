@@ -8,7 +8,8 @@
 
 namespace trading::console {
 
-void wireScanBooks(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books, QObject *context)
+void wireScanBooks(const EtoroClient &client, const MarketFeeds &feeds, ScanBooks *books,
+                   QObject *context)
 {
     QObject::connect(&feeds, &MarketFeeds::referenceSeries, context,
                      [books](const QString &ticker, const QList<double> &closes) {

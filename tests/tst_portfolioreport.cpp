@@ -6,21 +6,22 @@
 
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace trading::console;
 
 // The holdings-centric portfolio report and the spreadsheet writer (REQ-F-048), pinned
 // headless: what to do with each HELD instrument, and an honest file.
 namespace {
 
-HoldingSignal holding(const QString &symbol, double amount, bool isBuy, double profit,
-                      bool haveSignal, qint32 signalDir, double confidence)
+// A held long with a signal; the no-signal / short cases are built inline where needed.
+HoldingSignal holding(const QString &symbol, double amount, qint32 signalDir, double confidence)
 {
     HoldingSignal h;
     h.position.symbol = symbol;
     h.position.amount = amount;
-    h.position.isBuy = isBuy;
-    h.position.profit = profit;
-    h.haveSignal = haveSignal;
+    h.position.isBuy = true;
+    h.haveSignal = true;
     h.row.symbol = symbol;
     h.row.dir = signalDir;
     h.row.confidence = confidence;
@@ -34,10 +35,12 @@ QStringList rowOf(const QList<Sheet> &sheets, const QString &name, const QString
         if (s.name != name) {
             continue;
         }
-        for (const QStringList &row : s.rows) {
-            if (!row.isEmpty() && (row.first() == firstCell)) {
-                return row;
-            }
+        const auto it =
+            std::find_if(s.rows.cbegin(), s.rows.cend(), [&firstCell](const QStringList &row) {
+                return !row.isEmpty() && (row.first() == firstCell);
+            });
+        if (it != s.rows.cend()) {
+            return *it;
         }
     }
     return {};
@@ -60,10 +63,13 @@ private slots:
         in.currency = QStringLiteral("USD");
         in.generatedAt = QStringLiteral("2026-08-11T09:00:00Z");
         // A long the signal SUPPORTS, a long the signal OPPOSES, and one with no data feed.
-        in.holdings = {holding(QStringLiteral("AAPL"), 2000.0, true, 30.0, true, 1, 62.0),
-                       holding(QStringLiteral("TSLA"), 1000.0, true, -40.0, true, -1, 55.0),
-                       holding(QStringLiteral("SOMESTOCK"), 500.0, true, 0.0, false, 0, 0.0)};
-        in.holdings[2].note = QStringLiteral("no data feed");
+        HoldingSignal noData;
+        noData.position.symbol = QStringLiteral("SOMESTOCK");
+        noData.position.amount = 500.0;
+        noData.position.isBuy = true;
+        noData.note = QStringLiteral("no data feed");
+        in.holdings = {holding(QStringLiteral("AAPL"), 2000.0, 1, 62.0),
+                       holding(QStringLiteral("TSLA"), 1000.0, -1, 55.0), noData};
 
         const QList<Sheet> sheets = portfolioReportSheets(in);
         QCOMPARE(sheets.size(), 4);

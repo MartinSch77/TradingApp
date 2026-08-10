@@ -93,8 +93,9 @@ private slots:
         QVERIFY(noData.text.contains(QStringLiteral("absent: price series")));
         QVERIFY(noData.text.contains(QStringLiteral("absent: web rating")));
         QVERIFY(noData.text.contains(QStringLiteral("VIX: absent")));
-        // The model NOT having been asked prints nothing — unlike a named error.
-        QVERIFY(!noData.text.contains(QStringLiteral("local model")));
+        // The model not asked is shown as "not consulted" in the decision-sources block —
+        // never as a fabricated answer.
+        QVERIFY(noData.text.contains(QStringLiteral("AI (local model): not consulted")));
     }
 };
 

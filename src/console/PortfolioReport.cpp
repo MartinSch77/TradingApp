@@ -6,6 +6,7 @@
 #include "domain/PaperTrader.h"
 
 #include <algorithm>
+#include <numeric>
 
 namespace trading::console {
 
@@ -28,11 +29,9 @@ QHash<QString, double> investedByBucket(const QList<HoldingSignal> &holdings)
 
 double totalInvested(const QList<HoldingSignal> &holdings)
 {
-    double sum = 0.0;
-    for (const HoldingSignal &h : holdings) {
-        sum += h.position.amount;
-    }
-    return sum;
+    return std::accumulate(
+        holdings.cbegin(), holdings.cend(), 0.0,
+        [](double acc, const HoldingSignal &h) { return acc + h.position.amount; });
 }
 
 // What to do with ONE holding, and why — from the signal's side vs the position's side and

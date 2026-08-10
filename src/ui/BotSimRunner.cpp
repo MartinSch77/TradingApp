@@ -150,9 +150,9 @@ QString describePicks(const QList<trading::AiProposal> &picks)
 
 BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent,
                            const QString &storeFileName)
-    : QObject(parent), m_client(client), m_ai(ai), m_timer(new QTimer(this))
+    : QObject(parent), m_client(client), m_ai(ai), m_timer(new QTimer(this)),
+      m_storeFile(storeFileName)
 {
-    m_storeFile = storeFileName;
     load();
     loadModel();
     // What the bot has learned so far, and how much say it gets. Off by default:

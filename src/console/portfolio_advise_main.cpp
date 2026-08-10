@@ -206,6 +206,37 @@ void gatherHoldings(EtoroClient &client, const QList<Position> &positions,
     wait.exec();
 }
 
+// Fill each position's display name from the metadata endpoint, chunked (it 500s on a bad id
+// in a batch), so the report reads AMZN / BABA rather than bare ids; an unknown id stays "#id".
+void resolveNames(EtoroClient &client, QList<Position> &positions)
+{
+    QList<qint64> ids;
+    for (const Position &p : positions) {
+        if (!ids.contains(p.instrumentId)) {
+            ids.append(p.instrumentId);
+        }
+    }
+    QHash<qint64, QString> names;
+    for (qsizetype base = 0; base < ids.size(); base += 100) {
+        const QList<qint64> chunk = ids.mid(base, 100);
+        QEventLoop wait;
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        deadline.start(30 * 1000);
+        QObject::connect(&deadline, &QTimer::timeout, &wait, &QEventLoop::quit);
+        client.resolveInstrumentNames(chunk, [&](const QHash<qint64, QString> &got) {
+            for (auto it = got.constBegin(); it != got.constEnd(); ++it) {
+                names.insert(it.key(), it.value());
+            }
+            wait.quit();
+        });
+        wait.exec();
+    }
+    for (Position &p : positions) {
+        p.symbol = names.value(p.instrumentId, QStringLiteral("#%1").arg(p.instrumentId));
+    }
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -269,36 +300,7 @@ int main(int argc, char *argv[])
         return 3;
     }
 
-    // Resolve display names for the distinct instruments (chunked; the endpoint 500s on a bad
-    // id in a batch), so the report names the holdings rather than showing bare ids.
-    {
-        QList<qint64> ids;
-        for (const Position &p : positions) {
-            if (!ids.contains(p.instrumentId)) {
-                ids.append(p.instrumentId);
-            }
-        }
-        QHash<qint64, QString> names;
-        for (qsizetype base = 0; base < ids.size(); base += 100) {
-            const QList<qint64> chunk = ids.mid(base, 100);
-            QEventLoop wait;
-            QTimer deadline;
-            deadline.setSingleShot(true);
-            deadline.start(30 * 1000);
-            QObject::connect(&deadline, &QTimer::timeout, &wait, &QEventLoop::quit);
-            client.resolveInstrumentNames(chunk, [&](const QHash<qint64, QString> &got) {
-                for (auto it = got.constBegin(); it != got.constEnd(); ++it) {
-                    names.insert(it.key(), it.value());
-                }
-                wait.quit();
-            });
-            wait.exec();
-        }
-        for (Position &p : positions) {
-            p.symbol = names.value(p.instrumentId,
-                                   QStringLiteral("#%1").arg(p.instrumentId));
-        }
-    }
+    resolveNames(client, positions);
 
     // Phase 2: fetch and analyse every held instrument by its own id, paced.
     gatherHoldings(client, positions, &report, args);

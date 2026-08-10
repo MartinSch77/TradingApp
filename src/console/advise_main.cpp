@@ -75,7 +75,7 @@ QStringList readLinesFor(const QString &symbol, const trading::MarketSnapshot &s
 }
 
 trading::PlanInput planInputFor(const ScreenerRow &row, const ScanBooks &books,
-                                EtoroClient &client)
+                                const EtoroClient &client)
 {
     trading::PlanInput in;
     in.closes = row.closes;
@@ -254,7 +254,7 @@ void runGather(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
 
 // Everything except the (slow, optional) local model: the composite row, the costed plan,
 // the reads, the crowd knowledge and the named absents.
-AdviseInput judgeBooks(const ScanBooks &books, const QString &symbol, EtoroClient &client,
+AdviseInput judgeBooks(const ScanBooks &books, const QString &symbol, const EtoroClient &client,
                        const Config &cfg)
 {
     const trading::MarketSnapshot snap = trading::console::snapshotFrom(books);
@@ -342,9 +342,19 @@ QString aiLineFor(const Config &cfg, const ScanBooks &books, const QString &symb
 
 // One report cycle: judge the current books, print with a timestamp, and (in trade mode) hand
 // the decisions to the focused runner so it acts on exactly the verdict just printed.
-void reportCycle(ScanBooks *books, const AdviseArgs &args, const Config &cfg, EtoroClient &client,
-                 BotSimRunner *runner, const QString &botAiLine)
+struct CycleContext {
+    const ScanBooks *books = nullptr;
+    EtoroClient *client = nullptr;
+    BotSimRunner *runner = nullptr;   // null in --watch, present in --trade
+    QString botAiLine;   // the bot's own model pick, mirrored (trade mode)
+};
+
+void reportCycle(const CycleContext &ctx, const AdviseArgs &args, const Config &cfg)
 {
+    const ScanBooks *books = ctx.books;
+    EtoroClient &client = *ctx.client;
+    BotSimRunner *runner = ctx.runner;
+    const QString &botAiLine = ctx.botAiLine;
     AdviseInput in = judgeBooks(*books, args.symbol, client, cfg);
     if (runner != nullptr) {
         // Trade mode: SHOW the bot's own model pick rather than make a second, redundant
@@ -443,7 +453,7 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
             std::any_of(books->rows.cbegin(), books->rows.cend(),
                         [&args](const ScreenerRow &r) { return r.symbol == args.symbol; });
         if (haveRow) {
-            reportCycle(books, args, cfg, client, runner, *botAiLine);
+            reportCycle({books, &client, runner, *botAiLine}, args, cfg);
         } else {
             // Ids not resolved yet. The id-less scan emits screenerFinished
             // SYNCHRONOUSLY, so re-scanning inline here recurses until the
@@ -468,6 +478,60 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
 }
 
 } // namespace
+
+struct TradeSession {
+    BotSimRunner *runner = nullptr;
+    std::function<void(const QString &)> *tee = nullptr;
+};
+
+// Build the focused paper bot for --trade: its OWN book (never the main bot's botsim.json),
+// scoped to the one instrument, armed, with a session log every trade/decision is teed into.
+// SIMULATED money on live prices — no order path, like everything here.
+TradeSession makeTradeSession(EtoroClient &client, const Config &cfg, const AdviseArgs &args,
+                              QCoreApplication &app)
+{
+    TradeSession s;
+    auto *ai = new OllamaAdvisor(cfg.ollamaHost, cfg.ollamaModel, &app);
+    s.runner = new BotSimRunner(&client, ai, &app,
+                                QStringLiteral("advise-botsim-%1.json").arg(args.symbol));
+    s.runner->setFocusSymbols({args.symbol});
+    s.runner->setArmed(true);
+    const QString logPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+                            + QStringLiteral("/advise-botsim-%1-session.log").arg(args.symbol);
+    auto *logFile = new QFile(logPath, &app);
+    static_cast<void>(logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text));
+    s.tee = new std::function<void(const QString &)>([logFile](const QString &line) {
+        std::fprintf(stdout, "%s\n", qPrintable(line));
+        std::fflush(stdout);
+        if (logFile->isOpen()) {
+            logFile->write(QStringLiteral("%1  %2\n")
+                               .arg(QDateTime::currentDateTime().toString(Qt::ISODate), line)
+                               .toUtf8());
+            logFile->flush();
+        }
+    });
+    std::fprintf(stdout, "session log: %s\n", qPrintable(logPath));
+    auto *tee = s.tee;
+    QObject::connect(s.runner, &BotSimRunner::log, &app,
+                     [tee](const QString &line, bool) { (*tee)(QStringLiteral("[bot] ") + line); });
+    // The decision itself, for the ONE traded instrument (proxy not-focus refusals are noise).
+    const QString focus = args.symbol;
+    QObject::connect(
+        s.runner, &BotSimRunner::entryDecision, &app,
+        [focus, tee](const QString &symbol, bool traded, const QString &code, const QString &why) {
+            if (symbol == focus) {
+                (*tee)(QStringLiteral(">>> DECISION %1: %2 (%3) — %4")
+                           .arg(symbol,
+                                traded ? QStringLiteral("TRADED") : QStringLiteral("refused"), code,
+                                why));
+            }
+        });
+    std::fprintf(stdout,
+                 "SIMULATED trading of %s — paper money on live prices, own book (%s). "
+                 "No real order is ever placed.\n",
+                 qPrintable(args.symbol), qPrintable(s.runner->storePath()));
+    return s;
+}
 
 int main(int argc, char *argv[])
 {
@@ -512,65 +576,9 @@ int main(int argc, char *argv[])
     }
 
     if (args.watch()) {
-        // A focused paper bot for --trade: its OWN book (never the main bot's botsim.json),
-        // focused on this one instrument, armed, with the local model in whatever mode the
-        // config left it. SIMULATED money on live prices — no order path, like everything here.
-        OllamaAdvisor *ai = nullptr;
-        BotSimRunner *runner = nullptr;
-        std::function<void(const QString &)> *tee = nullptr;
-        if (args.trade()) {
-            ai = new OllamaAdvisor(cfg.ollamaHost, cfg.ollamaModel, &app);
-            runner = new BotSimRunner(&client, ai, &app,
-                                      QStringLiteral("advise-botsim-%1.json").arg(args.symbol));
-            runner->setFocusSymbols({args.symbol});
-            runner->setArmed(true);
-            // A session log beside the bot's book: every simulated trade and the P/L
-            // heartbeat are appended, so a run left going overnight leaves a readable record.
-            const QString logPath =
-                QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
-                + QStringLiteral("/advise-botsim-%1-session.log").arg(args.symbol);
-            auto *logFile = new QFile(logPath, &app);
-            static_cast<void>(logFile->open(QIODevice::WriteOnly | QIODevice::Append
-                                            | QIODevice::Text));
-            tee = new std::function<void(const QString &)>(
-                [logFile](const QString &line) {
-                    std::fprintf(stdout, "%s\n", qPrintable(line));
-                    std::fflush(stdout);
-                    if (logFile->isOpen()) {
-                        logFile->write(QStringLiteral("%1  %2\n")
-                                           .arg(QDateTime::currentDateTime().toString(Qt::ISODate),
-                                                line)
-                                           .toUtf8());
-                        logFile->flush();
-                    }
-                });
-            std::fprintf(stdout, "session log: %s\n", qPrintable(logPath));
-            QObject::connect(runner, &BotSimRunner::log, &app,
-                             [tee](const QString &line, bool) {
-                                 (*tee)(QStringLiteral("[bot] ") + line);
-                             });
-            // The decision itself, spelled out, for the ONE instrument being traded — the
-            // proxies' not-focus refusals are inputs-not-candidates and would only be noise.
-            const QString focus = args.symbol;
-            QObject::connect(runner, &BotSimRunner::entryDecision, &app,
-                             [focus, tee](const QString &symbol, bool traded,
-                                          const QString &code,
-                                     const QString &why) {
-                                 if (symbol != focus) {
-                                     return;
-                                 }
-                                 (*tee)(QStringLiteral(">>> DECISION %1: %2 (%3) — %4")
-                                            .arg(symbol,
-                                                 traded ? QStringLiteral("TRADED")
-                                                        : QStringLiteral("refused"),
-                                                 code, why));
-                             });
-            std::fprintf(stdout,
-                         "SIMULATED trading of %s — paper money on live prices, own book "
-                         "(%s). No real order is ever placed.\n",
-                         qPrintable(args.symbol), qPrintable(runner->storePath()));
-        }
-        return runContinuous({&client, &feeds, books, runner, tee}, args, cfg);
+        const TradeSession session =
+            args.trade() ? makeTradeSession(client, cfg, args, app) : TradeSession{};
+        return runContinuous({&client, &feeds, books, session.runner, session.tee}, args, cfg);
     }
 
     // One-shot.

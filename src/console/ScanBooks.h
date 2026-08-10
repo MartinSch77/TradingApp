@@ -35,7 +35,7 @@ struct ScanBooks {
 };
 
 // Connect every feed signal into `books` (owned by the caller, outliving `context`).
-void wireScanBooks(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
+void wireScanBooks(const EtoroClient &client, const MarketFeeds &feeds, ScanBooks *books,
                    QObject *context);
 
 // The books as the GUI's MarketSnapshot — absent stays absent, nothing is zeroed.

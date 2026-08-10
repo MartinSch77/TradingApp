@@ -18,6 +18,7 @@
 #include <QDateTime>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QTimer>
 
 #include <algorithm>
@@ -98,17 +99,31 @@ void runGather(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
     deadline.setSingleShot(true);
     deadline.start(args.timeoutSec * 1000);
     QObject::connect(&deadline, &QTimer::timeout, &wait, &QEventLoop::quit);
+    // Finish as soon as a full scan pass has delivered ITS rows and the VIX arrived — the
+    // first scan resolves ids and returns nothing, so re-kick once on an empty finish, then
+    // let a couple of settle polls pass so late feed answers land. Whatever a closed-market
+    // scan yields IS the answer; there is no fixed quota to wait for (that made the tool hang
+    // to the full timeout on a weekend, so it looked like it never wrote a file).
+    auto *settle = new int(0);
     QTimer poll;
-    const qsizetype wanted = trading::tradableSymbols().size() / 2;   // half is judgeable
-    QObject::connect(&poll, &QTimer::timeout, &wait, [&, scanDone, pollCount] {
+    QObject::connect(&poll, &QTimer::timeout, &wait, [&, scanDone, pollCount, settle] {
         ++*pollCount;
-        if (*scanDone && (books->rows.size() >= wanted) && books->vixValid) {
+        if (!*scanDone) {
+            return;
+        }
+        if (books->rows.isEmpty()) {
+            // ids not resolved on the first pass — nudge once, gently (shared rate pool).
+            if ((*pollCount % 6) == 0) {
+                *scanDone = false;
+                client.scanInstruments();
+            }
+            return;
+        }
+        // Rows are in. Give feed answers (VIX, ratings) a few polls to settle, then finish.
+        if (books->vixValid || (*settle >= 6)) {
             wait.quit();
         }
-        if (*scanDone && (books->rows.size() < wanted) && ((*pollCount % 20) == 0)) {
-            *scanDone = false;
-            client.scanInstruments();
-        }
+        ++*settle;
     });
     poll.start(500);
     wait.exec();
@@ -117,11 +132,16 @@ void runGather(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
 // Every scanned instrument with a directional composite gets a COSTED plan; only actionable
 // plans become candidates — a direction that cannot pay its own costs is a "no".
 QList<PortfolioCandidate> collectCandidates(const ScanBooks &books, EtoroClient &client,
-                                            const QList<trading::DecisionRow> &rows)
+                                            const QList<trading::DecisionRow> &rows,
+                                            QList<QStringList> *considered)
 {
     QList<PortfolioCandidate> out;
     for (const trading::DecisionRow &row : rows) {
+        // Every evaluated instrument is recorded with its status, so the report shows the
+        // WHOLE catalogue was scanned even when almost nothing is actionable.
         if (row.dir == 0) {
+            considered->append({row.symbol, QStringLiteral("no direction"),
+                                QStringLiteral("composite neutral this scan")});
             continue;
         }
         const auto scanRow = std::find_if(books.rows.cbegin(), books.rows.cend(),
@@ -129,6 +149,8 @@ QList<PortfolioCandidate> collectCandidates(const ScanBooks &books, EtoroClient 
                                               return r.symbol == row.symbol;
                                           });
         if ((scanRow == books.rows.cend()) || scanRow->closes.isEmpty()) {
+            considered->append({row.symbol, QStringLiteral("no data"),
+                                QStringLiteral("no candle series arrived")});
             continue;
         }
         trading::PlanInput in;
@@ -150,6 +172,15 @@ QList<PortfolioCandidate> collectCandidates(const ScanBooks &books, EtoroClient 
         const trading::TradePlan plan = trading::buildTradePlan(in);
         if (plan.valid && (plan.verdict != QLatin1String("STAY OUT")) && (plan.dir != 0)) {
             out.append(PortfolioCandidate{row.symbol, row, plan});
+            considered->append({row.symbol, QStringLiteral("PROPOSED"),
+                                QStringLiteral("%1, confidence %2")
+                                    .arg(plan.verdict)
+                                    .arg(plan.confidence, 0, 'f', 0)});
+        } else {
+            considered->append(
+                {row.symbol, QStringLiteral("stay out"),
+                 plan.verdictReason.isEmpty() ? QStringLiteral("not actionable")
+                                              : plan.verdictReason});
         }
     }
     return out;
@@ -198,12 +229,18 @@ int main(int argc, char *argv[])
                          [](const QString &line, bool) {
                              std::fprintf(stderr, "[client] %s\n", qPrintable(line));
                          });
+        QObject::connect(&client, &EtoroClient::screenerRow, &app,
+                         [](const ScreenerRow &row) {
+                             std::fprintf(stderr, "[row] %s ok=%d closes=%d\n",
+                                          qPrintable(row.symbol), row.ok ? 1 : 0,
+                                          static_cast<int>(row.closes.size()));
+                         });
     }
     runGather(client, feeds, books, args);
 
     const trading::MarketSnapshot snap = trading::console::snapshotFrom(*books);
-    report.candidates =
-        collectCandidates(*books, client, trading::computeDecisionRows(snap));
+    report.candidates = collectCandidates(*books, client, trading::computeDecisionRows(snap),
+                                          &report.considered);
     if (books->rows.isEmpty()) {
         report.absentSources << QStringLiteral("price series / scan rows");
     }
@@ -227,8 +264,10 @@ int main(int argc, char *argv[])
     out.write(trading::console::spreadsheetXml(
                   trading::console::portfolioReportSheets(report))
                   .toUtf8());
-    std::fprintf(stdout, "wrote %s — %d candidate(s), portfolio %s\n",
-                 qPrintable(args.outPath), static_cast<int>(report.candidates.size()),
+    std::fprintf(stdout, "wrote %s — %d candidate(s) of %d considered, portfolio %s\n",
+                 qPrintable(QFileInfo(args.outPath).absoluteFilePath()),
+                 static_cast<int>(report.candidates.size()),
+                 static_cast<int>(report.considered.size()),
                  report.portfolioKnown ? "read" : "UNAVAILABLE (flat-book ranking)");
     return 0;
 }

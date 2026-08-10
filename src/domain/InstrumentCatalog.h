@@ -42,6 +42,11 @@ struct InstrumentSpec {
 // The catalogued symbols, selector order — what setTradableSymbols() consumes.
 [[nodiscard]] QStringList tradableSymbols();
 
+// The same, with catalogued crypto removed — what the eToro Trader GUI uses everywhere, so
+// the desktop app never scans, prices, rates or decides crypto (REQ-F-031: crypto is the
+// bot experiment's asset class, reached only through the console front ends, not the GUI).
+[[nodiscard]] QStringList nonCryptoTradableSymbols();
+
 // Whether a symbol is catalogued crypto — the ONE rule the manual-trading surfaces filter
 // on (REQ-F-031): crypto is a bot-experiment asset class here (priced off candles, no real
 // eToro rate row), so the instrument selector and the screener do not OFFER it while the

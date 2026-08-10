@@ -29,6 +29,10 @@ struct PortfolioReportInput {
     double cash = 0.0;
     QString currency;
     QList<PortfolioCandidate> candidates;
+    // Every instrument the scan evaluated, with why it is or is not a buy candidate — so the
+    // report SHOWS the whole catalogue was considered even when few are actionable (a weekend
+    // scan proposes almost nothing, which otherwise reads as "it only looked at one").
+    QList<QStringList> considered;     // rows: {symbol, status, detail}
     QStringList absentSources;         // named absents for the Data health sheet
     QString generatedAt;               // caller-supplied stamp (fixed in tests)
 };

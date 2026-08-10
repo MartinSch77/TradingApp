@@ -26,6 +26,7 @@
 #include "ui/BotSimRunner.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QNetworkProxy>
 #include <QDateTime>
 #include <QStandardPaths>
@@ -34,6 +35,8 @@
 #include <algorithm>
 
 #include <cstdio>
+
+#include <functional>
 
 namespace {
 
@@ -373,6 +376,7 @@ struct WatchContext {
     MarketFeeds *feeds = nullptr;
     ScanBooks *books = nullptr;
     BotSimRunner *runner = nullptr;   // null in --watch, present in --trade
+    std::function<void(const QString &)> *tee = nullptr;   // stdout + session log (trade only)
 };
 
 int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config &cfg)
@@ -403,6 +407,29 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
                                               : QStringLiteral(" — ") + p.rationale);
                              }
                          });
+        // The running P/L every 10 s, independent of the scan interval — the runner marks
+        // its open positions on its own tick, so stats() is always current.
+        auto *pnl = new QTimer(&client);
+        std::function<void(const QString &)> *tee = ctx.tee;
+        QObject::connect(pnl, &QTimer::timeout, &client, [runner, tee] {
+            const trading::PaperStats s = runner->stats();
+            const QString line =
+                QStringLiteral("[P/L] equity %1 EUR · realised %2 · open %3 · %4 open / "
+                               "%5 closed · costs %6")
+                    .arg(s.equity, 0, 'f', 2)
+                    .arg(s.realized, 0, 'f', 2)
+                    .arg(s.openPnl, 0, 'f', 2)
+                    .arg(s.openTrades)
+                    .arg(s.closedTrades)
+                    .arg(s.costsPaid, 0, 'f', 2);
+            if (tee != nullptr) {
+                (*tee)(line);
+            } else {
+                std::fprintf(stdout, "%s\n", qPrintable(line));
+                std::fflush(stdout);
+            }
+        });
+        pnl->start(10 * 1000);
     }
     const auto rescan = [&client, &feeds] {
         client.scanInstruments();
@@ -490,37 +517,60 @@ int main(int argc, char *argv[])
         // config left it. SIMULATED money on live prices — no order path, like everything here.
         OllamaAdvisor *ai = nullptr;
         BotSimRunner *runner = nullptr;
+        std::function<void(const QString &)> *tee = nullptr;
         if (args.trade()) {
             ai = new OllamaAdvisor(cfg.ollamaHost, cfg.ollamaModel, &app);
             runner = new BotSimRunner(&client, ai, &app,
                                       QStringLiteral("advise-botsim-%1.json").arg(args.symbol));
             runner->setFocusSymbols({args.symbol});
             runner->setArmed(true);
-            QObject::connect(runner, &BotSimRunner::log, &app, [](const QString &line, bool) {
-                std::fprintf(stdout, "[bot] %s\n", qPrintable(line));
-                std::fflush(stdout);
-            });
+            // A session log beside the bot's book: every simulated trade and the P/L
+            // heartbeat are appended, so a run left going overnight leaves a readable record.
+            const QString logPath =
+                QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+                + QStringLiteral("/advise-botsim-%1-session.log").arg(args.symbol);
+            auto *logFile = new QFile(logPath, &app);
+            static_cast<void>(logFile->open(QIODevice::WriteOnly | QIODevice::Append
+                                            | QIODevice::Text));
+            tee = new std::function<void(const QString &)>(
+                [logFile](const QString &line) {
+                    std::fprintf(stdout, "%s\n", qPrintable(line));
+                    std::fflush(stdout);
+                    if (logFile->isOpen()) {
+                        logFile->write(QStringLiteral("%1  %2\n")
+                                           .arg(QDateTime::currentDateTime().toString(Qt::ISODate),
+                                                line)
+                                           .toUtf8());
+                        logFile->flush();
+                    }
+                });
+            std::fprintf(stdout, "session log: %s\n", qPrintable(logPath));
+            QObject::connect(runner, &BotSimRunner::log, &app,
+                             [tee](const QString &line, bool) {
+                                 (*tee)(QStringLiteral("[bot] ") + line);
+                             });
             // The decision itself, spelled out, for the ONE instrument being traded — the
             // proxies' not-focus refusals are inputs-not-candidates and would only be noise.
             const QString focus = args.symbol;
             QObject::connect(runner, &BotSimRunner::entryDecision, &app,
-                             [focus](const QString &symbol, bool traded, const QString &code,
+                             [focus, tee](const QString &symbol, bool traded,
+                                          const QString &code,
                                      const QString &why) {
                                  if (symbol != focus) {
                                      return;
                                  }
-                                 std::fprintf(stdout, ">>> DECISION %s: %s (%s) — %s\n",
-                                              qPrintable(symbol),
-                                              traded ? "TRADED" : "refused",
-                                              qPrintable(code), qPrintable(why));
-                                 std::fflush(stdout);
+                                 (*tee)(QStringLiteral(">>> DECISION %1: %2 (%3) — %4")
+                                            .arg(symbol,
+                                                 traded ? QStringLiteral("TRADED")
+                                                        : QStringLiteral("refused"),
+                                                 code, why));
                              });
             std::fprintf(stdout,
                          "SIMULATED trading of %s — paper money on live prices, own book "
                          "(%s). No real order is ever placed.\n",
                          qPrintable(args.symbol), qPrintable(runner->storePath()));
         }
-        return runContinuous({&client, &feeds, books, runner}, args, cfg);
+        return runContinuous({&client, &feeds, books, runner, tee}, args, cfg);
     }
 
     // One-shot.

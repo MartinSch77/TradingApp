@@ -1209,7 +1209,10 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
         instModel->appendRow(new QStandardItem(spec.symbol));
     }
     m_instrumentBox->setModel(instModel);
-    const QStringList tradableSymbols = trading::tradableSymbols();
+    // The GUI uses the NON-crypto set everywhere: crypto is never scanned, priced, rated or
+    // decided in the desktop app, so it cannot appear in the selector, the screener, the
+    // decision window or the cockpit (REQ-F-031 — crypto lives in the console front ends).
+    const QStringList tradableSymbols = trading::nonCryptoTradableSymbols();
     m_client->setTradableSymbols(tradableSymbols);  // for id resolution + portfolio filtering
     m_feeds->setTradableSymbols(tradableSymbols);   // for the bulk web-rating/news fetches
     const qint32 curIdx = m_instrumentBox->findText(m_client->config().symbol);

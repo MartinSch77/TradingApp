@@ -169,6 +169,18 @@ Sheet portfolioSheet(const PortfolioReportInput &in)
     return sheet;
 }
 
+Sheet consideredSheet(const PortfolioReportInput &in)
+{
+    Sheet sheet;
+    sheet.name = QStringLiteral("Considered");
+    sheet.rows.append({QStringLiteral("instrument"), QStringLiteral("status"),
+                       QStringLiteral("detail")});
+    for (const QStringList &row : in.considered) {
+        sheet.rows.append(row);
+    }
+    return sheet;
+}
+
 Sheet healthSheet(const PortfolioReportInput &in)
 {
     Sheet sheet;
@@ -191,7 +203,8 @@ Sheet healthSheet(const PortfolioReportInput &in)
 QList<Sheet> portfolioReportSheets(const PortfolioReportInput &in)
 {
     const QList<Ranked> list = ranked(in);
-    return {proposalSheet(in, list), evidenceSheet(list), portfolioSheet(in), healthSheet(in)};
+    return {proposalSheet(in, list), consideredSheet(in), evidenceSheet(list),
+            portfolioSheet(in), healthSheet(in)};
 }
 
 } // namespace trading::console

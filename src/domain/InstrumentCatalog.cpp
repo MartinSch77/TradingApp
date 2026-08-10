@@ -255,6 +255,17 @@ QString marketHoursText(const QString &symbol)
     return kHours.value(region, region + QStringLiteral(" exchange · Mon–Fri"));
 }
 
+QStringList nonCryptoTradableSymbols()
+{
+    QStringList out;
+    for (const InstrumentSpec &spec : instrumentCatalog()) {
+        if (spec.group != QLatin1String("Crypto")) {
+            out.append(spec.symbol);
+        }
+    }
+    return out;
+}
+
 bool isCryptoSymbol(const QString &symbol)
 {
     const InstrumentSpec *spec = instrumentSpec(symbol);

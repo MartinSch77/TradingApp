@@ -367,7 +367,7 @@ void BotSimDialog::rebuildAccount()
             .arg(botPlain(s.costsPaid), botMoney(s.bestTrade), botMoney(s.worstTrade)));
     m_storeLabel->setText(QStringLiteral("Simulated money only — no order ever reaches eToro. "
                                          "Books: %1")
-                              .arg(BotSimRunner::storePath()));
+                              .arg(m_runner->storePath()));
 }
 
 void BotSimDialog::rebuildOpenTable()

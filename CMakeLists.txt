@@ -460,6 +460,8 @@ qt_add_executable(TradingAdvise
     src/console/AdviseView.h
     src/console/ScanBooks.cpp
     src/console/ScanBooks.h
+    src/ui/BotSimRunner.cpp
+    src/ui/BotSimRunner.h
 )
 target_include_directories(TradingAdvise PRIVATE src)
 target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)

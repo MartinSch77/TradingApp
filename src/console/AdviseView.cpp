@@ -7,27 +7,32 @@ namespace trading::console {
 
 namespace {
 
+QStringList compositeLines(const DecisionRow &r)
+{
+    QStringList lines;
+    lines << QStringLiteral("composite: %1 (confidence %2)")
+                 .arg(r.dir > 0   ? QStringLiteral("BUY")
+                      : r.dir < 0 ? QStringLiteral("SELL")
+                                  : QStringLiteral("NEUTRAL"))
+                 .arg(r.confidence, 0, 'f', 0);
+    lines << (r.haveTech ? QStringLiteral("technical ensemble: %1 (%2)")
+                               .arg(r.techLabel)
+                               .arg(r.techConf, 0, 'f', 0)
+                         : QStringLiteral("technical ensemble: absent"));
+    lines << (r.haveRating ? QStringLiteral("web rating: %1").arg(r.rating, 0, 'f', 2)
+                           : QStringLiteral("web rating: absent"));
+    lines << (r.haveNews ? QStringLiteral("news sentiment: %1 over %2 headline(s)")
+                               .arg(r.newsScore, 0, 'f', 2)
+                               .arg(r.newsCount)
+                         : QStringLiteral("news sentiment: absent"));
+    return lines;
+}
+
 QString sourceLines(const AdviseInput &in)
 {
     QStringList lines;
     if (in.haveRow) {
-        const DecisionRow &r = in.row;
-        lines << QStringLiteral("composite: %1 (confidence %2)")
-                     .arg(r.dir > 0   ? QStringLiteral("BUY")
-                          : r.dir < 0 ? QStringLiteral("SELL")
-                                      : QStringLiteral("NEUTRAL"))
-                     .arg(r.confidence, 0, 'f', 0);
-        lines << (r.haveTech ? QStringLiteral("technical ensemble: %1 (%2)")
-                                   .arg(r.techLabel)
-                                   .arg(r.techConf, 0, 'f', 0)
-                             : QStringLiteral("technical ensemble: absent"));
-        lines << (r.haveRating
-                      ? QStringLiteral("web rating: %1").arg(r.rating, 0, 'f', 2)
-                      : QStringLiteral("web rating: absent"));
-        lines << (r.haveNews ? QStringLiteral("news sentiment: %1 over %2 headline(s)")
-                                   .arg(r.newsScore, 0, 'f', 2)
-                                   .arg(r.newsCount)
-                             : QStringLiteral("news sentiment: absent"));
+        lines += compositeLines(in.row);
     }
     lines << (in.vixValid ? QStringLiteral("VIX: %1").arg(in.vix, 0, 'f', 1)
                           : QStringLiteral("VIX: absent"));
@@ -38,6 +43,9 @@ QString sourceLines(const AdviseInput &in)
     }
     for (const QString &line : in.readLines) {
         lines << QStringLiteral("read: ") + line;
+    }
+    for (const QString &line : in.heavyLines) {
+        lines << QStringLiteral("constituent: ") + line;
     }
     if (!in.crowdLine.isEmpty()) {
         lines << in.crowdLine;

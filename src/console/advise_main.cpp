@@ -23,10 +23,15 @@
 #include "services/EtoroClient.h"
 #include "services/MarketFeeds.h"
 #include "services/OllamaAdvisor.h"
+#include "ui/BotSimRunner.h"
 
 #include <QCoreApplication>
+#include <QNetworkProxy>
+#include <QDateTime>
 #include <QStandardPaths>
 #include <QTimer>
+
+#include <algorithm>
 
 #include <cstdio>
 
@@ -88,13 +93,41 @@ trading::PlanInput planInputFor(const ScreenerRow &row, const ScanBooks &books,
     return in;
 }
 
+// For an index: its top-ten constituents' session moves, worst-first (so the drag shows at a
+// glance). Empty for a non-index or when the reference series have not arrived — an absent
+// constituent is dropped, never shown as a flat 0%.
+QStringList heavyLinesFor(const QString &symbol, const ScanBooks &books)
+{
+    if ((symbol != QLatin1String("SPX500")) && (symbol != QLatin1String("NSDQ100"))) {
+        return {};
+    }
+    QList<QPair<double, QString>> moves;
+    for (const QString &name : trading::indexHeavyweights(symbol)) {
+        const QList<double> series = books.reference.value(name);
+        if ((series.size() >= 2) && (series.constFirst() > 0.0)) {
+            const double pct =
+                ((series.constLast() - series.constFirst()) / series.constFirst()) * 100.0;
+            moves.append({pct, name});
+        }
+    }
+    std::sort(moves.begin(), moves.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    QStringList out;
+    for (const auto &m : moves) {
+        out << QStringLiteral("%1 %2%").arg(m.second).arg(m.first, 0, 'f', 2);
+    }
+    return out;
+}
 
 struct AdviseArgs {
     QString symbol;
     bool askAi = true;
     bool verbose = false;
     bool help = false;
+    bool watch = false;   // keep running, re-report every interval
+    bool trade = false;   // keep running AND run a focused sim bot on this instrument
     qint32 timeoutSec = 90;
+    qint32 intervalSec = 60;
 };
 
 AdviseArgs parseArguments(const QStringList &args)
@@ -107,8 +140,15 @@ AdviseArgs parseArguments(const QStringList &args)
             out.askAi = false;
         } else if (args.at(i) == QLatin1String("--verbose")) {
             out.verbose = true;
+        } else if (args.at(i) == QLatin1String("--watch")) {
+            out.watch = true;
+        } else if (args.at(i) == QLatin1String("--trade")) {
+            out.trade = true;
+            out.watch = true;   // trading implies the live report
         } else if ((args.at(i) == QLatin1String("--timeout")) && (i + 1 < args.size())) {
             out.timeoutSec = args.at(++i).toInt();
+        } else if ((args.at(i) == QLatin1String("--interval")) && (i + 1 < args.size())) {
+            out.intervalSec = args.at(++i).toInt();
         } else if (!args.at(i).startsWith(QLatin1Char('-')) && out.symbol.isEmpty()) {
             out.symbol = args.at(i).toUpper();
         }
@@ -127,6 +167,11 @@ void printUsage()
         "  --no-ai           skip the local model's pick (faster; the other sources stay)\n"
         "  --timeout <sec>   bound on the data gathering (default 90; whatever has not\n"
         "                    arrived by then is reported ABSENT, never zeroed)\n"
+        "  --watch           keep running: re-report the decision every --interval seconds,\n"
+        "                    with the index's live top-ten constituents each cycle\n"
+        "  --trade           keep running AND run a SIMULATED bot that trades THIS instrument\n"
+        "                    on the decision (paper money, own book; no real order — ever)\n"
+        "  --interval <sec>  re-report / re-decide period in watch/trade mode (default 60)\n"
         "  --verbose         mirror the client/feed logs to stderr while gathering\n"
         "  --help, -h        this text\n\n"
         "exit codes: 0 = proposal, 2 = reasoned no-trade, 3 = not enough data, 64 = usage\n\n"
@@ -218,6 +263,7 @@ AdviseInput judgeBooks(const ScanBooks &books, const QString &symbol, EtoroClien
         }
     }
     in.readLines = readLinesFor(symbol, snap);
+    in.heavyLines = heavyLinesFor(symbol, books);
     in.vixValid = books.vixValid;
     in.vix = books.vix;
     in.fgValid = books.fgValid;
@@ -283,6 +329,77 @@ QString aiLineFor(const Config &cfg, const ScanBooks &books, const QString &symb
     return aiLine;
 }
 
+// One report cycle: judge the current books, print with a timestamp, and (in trade mode) hand
+// the decisions to the focused runner so it acts on exactly the verdict just printed.
+void reportCycle(ScanBooks *books, const AdviseArgs &args, const Config &cfg, EtoroClient &client,
+                 BotSimRunner *runner)
+{
+    AdviseInput in = judgeBooks(*books, args.symbol, client, cfg);
+    if (args.askAi && !cfg.ollamaModel.isEmpty() && in.haveRow) {
+        in.aiAsked = true;
+        in.aiLine = aiLineFor(cfg, *books, args.symbol);
+    }
+    const trading::console::AdviseVerdict verdict = trading::console::adviseReport(in);
+    std::fprintf(stdout, "==== %s ====\n%s\n",
+                 qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)),
+                 qPrintable(verdict.text));
+    std::fflush(stdout);
+    if (runner != nullptr) {
+        const trading::MarketSnapshot snap = trading::console::snapshotFrom(*books);
+        runner->onDecisions(trading::computeDecisionRows(snap), snap);
+    }
+}
+
+// The continuous path for --watch / --trade: kick the feeds and an initial scan, then on each
+// scan completion report a cycle, and re-scan every --interval seconds. Runs until killed.
+struct WatchContext {
+    EtoroClient *client = nullptr;
+    MarketFeeds *feeds = nullptr;
+    ScanBooks *books = nullptr;
+    BotSimRunner *runner = nullptr;   // null in --watch, present in --trade
+};
+
+int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config &cfg)
+{
+    EtoroClient &client = *ctx.client;
+    MarketFeeds &feeds = *ctx.feeds;
+    ScanBooks *books = ctx.books;
+    BotSimRunner *runner = ctx.runner;
+    const auto rescan = [&client, &feeds] {
+        client.scanInstruments();
+        feeds.fetchInstrumentRatings();
+        feeds.fetchInstrumentNews();
+        feeds.fetchIntradaySeries();
+        feeds.fetchReferenceSeries();
+    };
+    QObject::connect(&client, &EtoroClient::screenerFinished, &client, [&, books, runner] {
+        const bool haveRow =
+            std::any_of(books->rows.cbegin(), books->rows.cend(),
+                        [&args](const ScreenerRow &r) { return r.symbol == args.symbol; });
+        if (haveRow) {
+            reportCycle(books, args, cfg, client, runner);
+        } else {
+            // Ids not resolved yet. The id-less scan emits screenerFinished
+            // SYNCHRONOUSLY, so re-scanning inline here recurses until the
+            // stack blows — defer to the event loop instead.
+            QTimer::singleShot(2000, &client, [&client] { client.scanInstruments(); });
+        }
+    });
+    // Order matters and is proven by the one-shot path: start the client and kick its scan
+    // BEFORE starting the feeds. Starting MarketFeeds first left the client's first
+    // proxy/QNAM setup half-initialised and segfaulted in proxyForQuery on that first scan.
+    client.start();
+    client.scanInstruments();
+    feeds.start(60 * 1000);
+    feeds.fetchInstrumentRatings();
+    feeds.fetchInstrumentNews();
+    feeds.fetchIntradaySeries();
+    feeds.fetchReferenceSeries();
+    auto *timer = new QTimer(&client);
+    QObject::connect(timer, &QTimer::timeout, &client, rescan);
+    timer->start(args.intervalSec * 1000);
+    return QCoreApplication::exec();
+}
 
 } // namespace
 
@@ -293,6 +410,11 @@ int main(int argc, char *argv[])
     // the shared per-app directory, so this console reads the very books the app writes.
     QCoreApplication::setOrganizationName(QStringLiteral("TradingApp"));
     QCoreApplication::setApplicationName(QStringLiteral("eToro Trader"));
+    // Headless tool talking only to known public hosts: an EXPLICIT no-proxy, which makes
+    // every QNAM skip the proxy-FACTORY query path altogether. setUseSystemConfiguration(false)
+    // was not enough — proxyForQuery was still invoked and segfaulted in libproxy on the
+    // first scan; an application proxy set to NoProxy is never routed through the factory.
+    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
 
     const AdviseArgs args = parseArguments(QCoreApplication::arguments());
     if (args.help || args.symbol.isEmpty()
@@ -317,14 +439,38 @@ int main(int argc, char *argv[])
     if (args.verbose) {
         wireVerboseTaps(client, &app);
     }
-    runGather(client, feeds, books, args);
 
+    if (args.watch) {
+        // A focused paper bot for --trade: its OWN book (never the main bot's botsim.json),
+        // focused on this one instrument, armed, with the local model in whatever mode the
+        // config left it. SIMULATED money on live prices — no order path, like everything here.
+        OllamaAdvisor *ai = nullptr;
+        BotSimRunner *runner = nullptr;
+        if (args.trade) {
+            ai = new OllamaAdvisor(cfg.ollamaHost, cfg.ollamaModel, &app);
+            runner = new BotSimRunner(&client, ai, &app,
+                                      QStringLiteral("advise-botsim-%1.json").arg(args.symbol));
+            runner->setFocusSymbols({args.symbol});
+            runner->setArmed(true);
+            QObject::connect(runner, &BotSimRunner::log, &app, [](const QString &line, bool) {
+                std::fprintf(stdout, "[bot] %s\n", qPrintable(line));
+                std::fflush(stdout);
+            });
+            std::fprintf(stdout,
+                         "SIMULATED trading of %s — paper money on live prices, own book "
+                         "(%s). No real order is ever placed.\n",
+                         qPrintable(args.symbol), qPrintable(runner->storePath()));
+        }
+        return runContinuous({&client, &feeds, books, runner}, args, cfg);
+    }
+
+    // One-shot.
+    runGather(client, feeds, books, args);
     AdviseInput in = judgeBooks(*books, args.symbol, client, cfg);
     if (args.askAi && !cfg.ollamaModel.isEmpty() && in.haveRow) {
         in.aiAsked = true;
         in.aiLine = aiLineFor(cfg, *books, args.symbol);
     }
-
     const trading::console::AdviseVerdict verdict = trading::console::adviseReport(in);
     std::fputs(qPrintable(verdict.text), stdout);
     return verdict.exitCode;

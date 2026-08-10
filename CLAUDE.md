@@ -55,6 +55,10 @@ build/TradingAdvise            # one-shot: TradingAdvise <INSTRUMENT> gathers AL
                                # (scan, ratings, news, VIX/F&G, nine reads, crowd store+model,
                                # optional Ollama pick) and prints ONE costed verdict + reasons.
                                # Exit 0 proposal / 2 no-trade / 3 no data. --help documents it.
+                               # --watch keeps running (re-reports + index top-ten live each
+                               # --interval); --trade also runs a focused SIM bot on that one
+                               # instrument (own book advise-botsim-<SYM>.json). Narrow scan
+                               # set (instrument + SP.24-7 + NSDQ100.24-7) — NOT all 52.
 build/TradingPortfolioAdvise   # ranked buys for the WHOLE catalog respecting the account's
                                # own holdings (concentration demotes, named), written as a
                                # SpreadsheetML .xls (4 sheets). Advisory only, like the above:

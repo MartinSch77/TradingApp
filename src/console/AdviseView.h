@@ -26,6 +26,8 @@ struct AdviseInput {
     double price = 0.0;   // the price the plan was built from (0 = unknown)
     // The nine-reads summary for the two indices; empty lines = not applicable here.
     QStringList readLines;
+    // For an index: its top-ten constituents' session moves, worst-first (empty otherwise).
+    QStringList heavyLines;
     // Crowd evidence line (empty = nothing measured) and the optional local model's answer
     // (empty = not asked; a named error is a real answer and is printed as such).
     QString crowdLine;

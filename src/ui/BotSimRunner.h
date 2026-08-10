@@ -49,12 +49,19 @@ public:
     // `ai` is optional (may be null): the LOCAL model advisor whose proposal the
     // simulator can trade on (REQ-F-030). The runner owns no advisor logic — it
     // asks, waits, logs, and lets the pure gate decide what the answer means.
-    BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent = nullptr);
+    // `storeFileName` overrides the persisted book's file name (default botsim.json): a
+    // second runner in another process — the advise console's one-instrument experiment —
+    // must never write the main bot's book.
+    BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent = nullptr,
+                 const QString &storeFileName = QString());
 
     // The single explicit step that turns the experiment on. While disarmed the
     // bot keeps marking and reporting its existing positions (the books stay
     // honest) but opens nothing new.
     void setArmed(bool armed);
+    // Narrow (or widen) the traded focus set (REQ-F-034); empty = the whole catalog. The
+    // advise console's --trade mode focuses the runner on exactly its one instrument.
+    void setFocusSymbols(const QStringList &symbols);
     // One crowd-evidence line per instrument (REQ-F-046): appended to the model's prompt as
     // EVIDENCE beside the technical lines — it gates, sizes and stops NOTHING (the
     // deterministic risk rules never read it), and an empty line clears the entry so absent
@@ -118,7 +125,7 @@ public:
     // Where the books are persisted (shown in the window, so the file behind a
     // multi-day experiment is never a mystery). One location per installation,
     // hence static.
-    [[nodiscard]] static QString storePath();
+    [[nodiscard]] QString storePath() const;
     // The append-only training set, and the model trained from it.
     [[nodiscard]] static QString experiencePath();
     [[nodiscard]] static QString modelPath();
@@ -294,6 +301,7 @@ private:
     qint64 m_experienceCount = 0;           // training examples written this session
     QString m_evidence;                     // prompt of the scan being decided
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
+    QString m_storeFile;   // book file override (empty = botsim.json)
     QList<trading::DecisionRow> m_pendingRows;
     QList<ScreenerRow> m_pendingScan;
     QDateTime m_askedAt;                    // when the in-flight request went out

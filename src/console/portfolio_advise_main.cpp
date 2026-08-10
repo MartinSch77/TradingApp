@@ -14,6 +14,7 @@
 #include "services/MarketFeeds.h"
 
 #include <QCoreApplication>
+#include <QNetworkProxy>
 #include <QDateTime>
 #include <QEventLoop>
 #include <QFile>
@@ -161,6 +162,11 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("TradingApp"));
     QCoreApplication::setApplicationName(QStringLiteral("eToro Trader"));
+    // Headless tool talking only to known public hosts: an EXPLICIT no-proxy, which makes
+    // every QNAM skip the proxy-FACTORY query path altogether. setUseSystemConfiguration(false)
+    // was not enough — proxyForQuery was still invoked and segfaulted in libproxy on the
+    // first scan; an application proxy set to NoProxy is never routed through the factory.
+    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
 
     const PortfolioArgs args = parseArguments(QCoreApplication::arguments());
     if (args.help) {

@@ -148,12 +148,11 @@ QString describePicks(const QList<trading::AiProposal> &picks)
 
 } // namespace
 
-BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent)
-    : QObject(parent)
-    , m_client(client)
-    , m_ai(ai)
-    , m_timer(new QTimer(this))
+BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent,
+                           const QString &storeFileName)
+    : QObject(parent), m_client(client), m_ai(ai), m_timer(new QTimer(this))
 {
+    m_storeFile = storeFileName;
     load();
     loadModel();
     // What the bot has learned so far, and how much say it gets. Off by default:
@@ -272,10 +271,26 @@ void BotSimRunner::setAiMode(trading::BotAiMode mode)
     emit changed();
 }
 
-QString BotSimRunner::storePath()
+QString BotSimRunner::storePath() const
 {
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    return QDir(dir).filePath(QLatin1String(kStoreFile));
+    return QDir(dir).filePath(m_storeFile.isEmpty() ? QLatin1String(kStoreFile)
+                                                    : QLatin1String(m_storeFile.toLatin1()));
+}
+
+void BotSimRunner::setFocusSymbols(const QStringList &symbols)
+{
+    trading::BotConfig cfg = m_book.config();
+    if (cfg.focusSymbols == symbols) {
+        return;
+    }
+    cfg.focusSymbols = symbols;
+    m_book.setConfig(cfg);
+    emit log(QStringLiteral("BOT SIM focus: %1")
+                 .arg(symbols.isEmpty() ? QStringLiteral("whole catalog")
+                                        : symbols.join(QStringLiteral(", "))),
+             false);
+    save();
 }
 
 void BotSimRunner::setArmed(bool armed)

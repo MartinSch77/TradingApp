@@ -100,6 +100,10 @@ target_include_directories(tst_botconsoleview PRIVATE ../src)
 tradingapp_add_test(tst_adviseview tst_adviseview.cpp
     ../src/console/AdviseView.cpp ../src/console/AdviseView.h)
 target_include_directories(tst_adviseview PRIVATE ../src)
+tradingapp_add_test(tst_portfolioreport tst_portfolioreport.cpp
+    ../src/console/PortfolioReport.cpp ../src/console/PortfolioReport.h
+    ../src/console/SpreadsheetXml.cpp ../src/console/SpreadsheetXml.h)
+target_include_directories(tst_portfolioreport PRIVATE ../src)
 # The one test that runs the TRAINER (tools/train_bot_net.py) and reads its output
 # back: the C++ and the Python halves of REQ-F-033 have to agree on the model file,
 # and only an end-to-end round trip can show that they do.

@@ -504,6 +504,16 @@ The program is ADVISORY BY CONSTRUCTION: it shall link no order path, so no invo
 <<<
 
 [REQUIREMENT]
+UID: REQ-F-048
+VERIFICATION: T
+TITLE: Portfolio-aware buy proposals as a spreadsheet
+STATEMENT: >>>
+The application shall offer a CONSOLE program that reads the account's OWN portfolio and free cash, evaluates every catalogued instrument with the same evidence stack as the single-instrument advisor, and writes a ranked buy proposal as a spreadsheet file that Excel and LibreOffice open natively — four sheets: the ranked PROPOSAL (side, confidence, leverage, stop, target, an ADVISORY stake suggestion bounded by the cash that actually exists, the correlation bucket and any constraint that demoted the candidate), the per-candidate EVIDENCE, the PORTFOLIO itself with its per-bucket exposure, and a DATA HEALTH sheet naming every source that did not arrive.
+
+Only candidates whose COSTED plan is actionable shall rank — a direction that cannot pay its own costs proposes nothing — and CONCENTRATION shall demote, not forbid: a candidate whose correlation bucket already holds a large share of the invested money moves down the ranking with the reason NAMED, because a dozen positions in one bucket are one bet. When the portfolio cannot be read the report shall rank over a flat book and SAY so, never pretend. The program is ADVISORY BY CONSTRUCTION (no order path linked, the disclaimer part of the file), and both the sheet builder and the spreadsheet writer shall be testable without a network, a terminal or a spreadsheet application.
+<<<
+
+[REQUIREMENT]
 UID: REQ-F-043
 VERIFICATION: T
 TITLE: Crowd & AI dashboard with a collection loop

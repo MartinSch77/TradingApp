@@ -465,6 +465,21 @@ target_include_directories(TradingAdvise PRIVATE src)
 target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
 set_target_properties(TradingAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+# TradingPortfolioAdvise — ranked buys for the whole catalog, respecting the account's own
+# holdings, as an Excel-readable SpreadsheetML file (REQ-F-048). Same construction rules.
+qt_add_executable(TradingPortfolioAdvise
+    src/console/portfolio_advise_main.cpp
+    src/console/PortfolioReport.cpp
+    src/console/PortfolioReport.h
+    src/console/SpreadsheetXml.cpp
+    src/console/SpreadsheetXml.h
+    src/console/ScanBooks.cpp
+    src/console/ScanBooks.h
+)
+target_include_directories(TradingPortfolioAdvise PRIVATE src)
+target_link_libraries(TradingPortfolioAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+set_target_properties(TradingPortfolioAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics
 # ---------------------------------------------------------------------------

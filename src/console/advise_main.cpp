@@ -304,8 +304,14 @@ int main(int argc, char *argv[])
     const Config cfg = Config::load();
     EtoroClient client(cfg);
     MarketFeeds feeds;
-    client.setTradableSymbols(trading::tradableSymbols());
-    feeds.setTradableSymbols(trading::tradableSymbols());
+    // Scan ONLY what this verdict needs: the instrument itself plus the two futures proxies
+    // the index reads are built from (drop those and the futures-lead/momentum reads go
+    // silently UNKNOWN — the trap TS-CONF-006 pins). Everything else would burn the shared
+    // rate pool resolving and scanning 50 instruments for one answer.
+    QStringList scanSet{args.symbol, QStringLiteral("SP.24-7"), QStringLiteral("NSDQ100.24-7")};
+    scanSet.removeDuplicates();
+    client.setTradableSymbols(scanSet);
+    feeds.setTradableSymbols(scanSet);
     auto *books = new ScanBooks();
     trading::console::wireScanBooks(client, feeds, books, &app);
     if (args.verbose) {

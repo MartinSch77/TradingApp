@@ -51,6 +51,14 @@ build/TradingBot               # the CONSOLE front end for examining the bot (RE
                                # BotSimRunner as the GUIs (split out of BotSimPanel).
                                # P/L+invested header, SPX500/NSDQ100 heavyweight bars,
                                # open/closed tables, keyboard-scrollable decision log
+build/TradingAdvise            # one-shot: TradingAdvise <INSTRUMENT> gathers ALL evidence
+                               # (scan, ratings, news, VIX/F&G, nine reads, crowd store+model,
+                               # optional Ollama pick) and prints ONE costed verdict + reasons.
+                               # Exit 0 proposal / 2 no-trade / 3 no data. --help documents it.
+build/TradingPortfolioAdvise   # ranked buys for the WHOLE catalog respecting the account's
+                               # own holdings (concentration demotes, named), written as a
+                               # SpreadsheetML .xls (4 sheets). Advisory only, like the above:
+                               # neither binary links an order path.
 build/TradingCockpit           # the SECOND front end: Qt Quick + Qt Graphs, read-only,
                                # QCustomSeries candlesticks. Same domain/services/view-model
                                # as TradingApp; separate binary because Charts and Graphs

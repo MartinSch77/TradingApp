@@ -414,6 +414,11 @@ void MainWindow::setupRunners()
         this);
     m_crowdCollector->start();
     m_botRunner = new BotSimRunner(m_client, m_ollama, this);
+    // The GUI bot trades every instrument in the app's list — the full non-crypto tradable
+    // set the selector shows and the client scans (REQ-F-034 focus set, widened to the whole
+    // desktop catalogue on request). The risk, cost and reluctant-symbol rules still govern
+    // WHICH of them actually open; this only removes the not-focus pre-filter.
+    m_botRunner->setFocusSymbols(trading::nonCryptoTradableSymbols());
     m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
                                  m_client->config().botDailyLossLimit);
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));

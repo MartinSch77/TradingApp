@@ -12,28 +12,45 @@
 #include <QByteArray>
 #include <QTimer>
 
+namespace {
 
-int main(int argc, char *argv[])
+// The two nudges WSL2 needs BEFORE the GUI stack starts, both defensive (an explicit user
+// setting always wins). Extracted from main() so main() stays within the metrics complexity
+// budget.
+//
+//  * PLATFORM: WSLg's strict Wayland compositor trips Qt's client-side decorations — a maximized
+//    top-level gets a buffer a few pixels taller than the configured maximized state, which the
+//    compositor rejects with a fatal "xdg_surface buffer does not match the configured maximized
+//    state". XWayland (xcb) does not hit this, so prefer it and drop decorations on the wayland
+//    fallback.
+//  * GRAPHICS: no usable GPU passthrough, so Mesa's default Zink (OpenGL-on-Vulkan) path probes a
+//    Vulkan device that does not exist, prints the libEGL / "ZINK: failed to choose pdev"
+//    warnings, and falls back to software anyway. Force the software rasteriser up front so that
+//    fallback is clean and silent; a real-GPU machine is untouched.
+void configureWslEnvironment()
 {
-
-    // WSL2's built-in GUI (WSLg) runs a strict Wayland compositor that Qt's client-side
-    // window decorations trip over: a maximized top-level ends up with a buffer a few
-    // pixels taller than the configured maximized state, which the compositor rejects
-    // with a fatal "xdg_surface buffer does not match the configured maximized state"
-    // protocol error. XWayland (the xcb platform) doesn't hit this, so on WSL prefer it,
-    // falling back to wayland if xcb is unavailable. An explicit QT_QPA_PLATFORM always
-    // wins, so the choice stays the user's.
-    const bool hasWslDistro = qEnvironmentVariableIsSet("WSL_DISTRO_NAME");
-    const bool hasWslInterop = qEnvironmentVariableIsSet("WSL_INTEROP");
-    const bool platformForced = qEnvironmentVariableIsSet("QT_QPA_PLATFORM");
-    if ((hasWslDistro || hasWslInterop) && !platformForced) {
+    const bool onWsl = qEnvironmentVariableIsSet("WSL_DISTRO_NAME")
+                       || qEnvironmentVariableIsSet("WSL_INTEROP");
+    if (!onWsl) {
+        return;
+    }
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
         static_cast<void>(qputenv("QT_QPA_PLATFORM", "xcb;wayland"));
-        // If it does fall back to wayland, drop Qt's decorations too — the same buffer
-        // mismatch otherwise resurfaces there.
         if (!qEnvironmentVariableIsSet("QT_WAYLAND_DISABLE_WINDOWDECORATION")) {
             static_cast<void>(qputenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1"));
         }
     }
+    if (!qEnvironmentVariableIsSet("LIBGL_ALWAYS_SOFTWARE")) {
+        static_cast<void>(qputenv("LIBGL_ALWAYS_SOFTWARE", "1"));
+        static_cast<void>(qputenv("GALLIUM_DRIVER", "llvmpipe"));
+    }
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    configureWslEnvironment();
 
     // const: the instance is never mutated through this name — the app is
     // driven through QApplication's static API (setApplicationName, exec).

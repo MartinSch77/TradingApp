@@ -173,6 +173,34 @@ QList<trading::console::HeavyMove> heavyMovesFor(
     return out;
 }
 
+// Everything a scan accumulates for the runner, mirroring MainWindow's members. The console
+// used to hand onDecisions an EMPTY MarketSnapshot, so the runner never saw the scan's rows and
+// produced NO decisions at all — the bot drew its header but never evaluated or traded, and
+// botsim-decisions.log stayed empty. Collecting the scan makes the console run the SAME
+// decision pipeline the GUI does.
+struct ScanBooks {
+    QList<ScreenerRow> rows;                        // the scan's per-instrument candles
+    QHash<QString, QList<double>> intraday;         // 1-minute series per app symbol
+    QHash<QString, trading::VolumeSeries> refVol;   // reference volume bars per ticker
+    bool vixValid = false;
+    double vix = 0.0;
+    double vixChange = 0.0;
+};
+
+trading::MarketSnapshot scanSnapshot(const ScanBooks &books,
+                                     const QHash<QString, QList<double>> &referenceSeries)
+{
+    trading::MarketSnapshot snap;
+    snap.screenerRows = books.rows;
+    snap.referenceSeries = referenceSeries;
+    snap.referenceVolumes = books.refVol;
+    snap.intradayBySymbol = books.intraday;
+    snap.vixValid = books.vixValid;
+    snap.vix = books.vix;
+    snap.vixChangePct = books.vixChange;
+    return snap;
+}
+
 // The whole static screen as one function, so main() stays under the metrics ratchet and
 // the drawing is separable from the wiring. Redrawn in place; no scrolling.
 void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> &snapshot,
@@ -196,6 +224,11 @@ void drawScreen(const BotSimRunner &runner, const QHash<QString, QList<double>> 
                  kIndexB, heavyMovesFor(kIndexB, snapshot), 10)) {
             line(row);
         }
+        // The one-line summarised constituent-lead: cap-weighted top-ten direction of each
+        // index, up or down together. The number and arrow come from the domain pulse.
+        line(trading::console::consoleConstituentLead(
+            trading::heavyweightPulse(kIndexA, snapshot).leadIndicator(),
+            trading::heavyweightPulse(kIndexB, snapshot).leadIndicator()));
         line(QString());
 
         line(QStringLiteral("  OPEN"));
@@ -291,28 +324,52 @@ int main(int argc, char *argv[])
     QObject::connect(&runner, &BotSimRunner::log, &app,
                      [&log](const QString &line, bool) { log.add(line); });
 
-    // The books that feed the confluence reads and the heavyweight chart. Kept here and
-    // handed to the runner, same as MainWindow does.
+    // The books that feed the confluence reads, the heavyweight chart AND the decision scan.
+    // `snapshot` is the reference series (also drawn as the heavy bars); `books` collects the
+    // REST of the MarketSnapshot the runner needs. Without them the console handed onDecisions an
+    // empty snapshot, so the runner saw no scan rows and produced NO decisions — the bug behind
+    // the empty botsim-decisions.log.
     auto *snapshot = new QHash<QString, QList<double>>();
+    auto *books = new ScanBooks();
     QObject::connect(&feeds, &MarketFeeds::referenceSeries, &app,
                      [snapshot, &runner](const QString &ticker, const QList<double> &closes) {
                          snapshot->insert(ticker, closes);
                          runner.setReferenceSeries(*snapshot);
                      });
+    QObject::connect(&feeds, &MarketFeeds::referenceVolumeSeries, &app,
+                     [books](const QString &ticker, const trading::VolumeSeries &bars) {
+                         books->refVol.insert(ticker, bars);
+                     });
+    QObject::connect(&feeds, &MarketFeeds::intradayCloses, &app,
+                     [books](const QString &symbol, const QList<double> &closes) {
+                         books->intraday.insert(symbol, closes);
+                     });
+    QObject::connect(&feeds, &MarketFeeds::vixUpdated, &app,
+                     [books](double level, double changePct) {
+                         books->vixValid = true;
+                         books->vix = level;
+                         books->vixChange = changePct;
+                     });
+    // The scan's per-instrument candles arrive progressively; collect them (cleared at the start
+    // of each scan so two cycles never mix).
+    QObject::connect(&client, &EtoroClient::screenerRow, &app,
+                     [books](const ScreenerRow &row) { books->rows.append(row); });
 
     // The all-instruments scan that produces decisions, on the same ~5-minute cadence the GUI
     // uses. The bot focuses on the two indices, but the scan still covers the catalog so the
     // risk caps and correlation groups see the whole book.
     client.setTradableSymbols(trading::tradableSymbols());
     feeds.setTradableSymbols(trading::tradableSymbols());
-    const auto scan = [&client, &feeds] {
+    const auto scan = [&client, &feeds, books] {
+        books->rows.clear();   // a fresh scan; last cycle's rows must not linger
         client.scanInstruments();
         feeds.fetchIntradaySeries();
         feeds.fetchReferenceSeries();
     };
-    QObject::connect(&client, &EtoroClient::screenerFinished, &app, [&client, &runner] {
-        // Marking runs on the runner's own tick; here we hand it the fresh decisions.
-        const trading::MarketSnapshot snap;   // the runner recomputes from what it holds
+    QObject::connect(&client, &EtoroClient::screenerFinished, &app, [&runner, books, snapshot] {
+        // Build the SAME MarketSnapshot MainWindow does and hand it to the runner, so the console
+        // runs the real decision pipeline instead of an empty one.
+        const trading::MarketSnapshot snap = scanSnapshot(*books, *snapshot);
         runner.onDecisions(trading::computeDecisionRows(snap), snap);
     });
     client.start();

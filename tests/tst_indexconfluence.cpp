@@ -346,6 +346,50 @@ private slots:
         QVERIFY(heavyweightPulse(QStringLiteral("NSDQ100"), partial).measured <= thin.measured);
     }
 
+    //! @tstid TS-CONF-007 @design DES-DOM-CONFLUENCE
+    // @relation(REQ-F-035, scope=function)
+    //
+    // The CAP-WEIGHTED constituent lead: the summarised up/down indicator the user asked for,
+    // weighting each name by its share of the index. Its whole reason to exist is that it can
+    // disagree with the equal-weight count — "the index lags its top constituents" — so the
+    // decisive test is exactly that case: the two HEAVIEST names carry the field one way while
+    // the majority (and the plain average) point the other.
+    void TS_CONF_007_theCapWeightedLeadCanDisagreeWithTheCount()
+    {
+        QHash<QString, QList<double>> series;
+        // NVDA (heaviest) and MSFT (second) up strongly; the other eight down. So the COUNT is
+        // 2-of-10 up and the equal-weight AVERAGE is negative, but the two megacaps outweigh the
+        // rest, so the cap-weighted move is positive: the top names are pulling the index up.
+        for (const QString &name : nasdaqHeavyweights()) {
+            const bool heavy = (name == QStringLiteral("NVDA")) || (name == QStringLiteral("MSFT"));
+            static_cast<void>(series.insert(name, sessionWith(heavy ? 5.0 : -2.0)));
+        }
+        const HeavyweightPulse pulse = heavyweightPulse(QStringLiteral("NSDQ100"), series);
+        QCOMPARE(pulse.measured, 10);
+        QCOMPARE(pulse.up, 2);
+        QVERIFY(pulse.averageChangePct < 0.0);          // the equal-weight read says DOWN…
+        QVERIFY(pulse.capWeightedChangePct > 0.0);      // …the cap-weighted read says UP.
+        // The headline carries both numbers, and the compact indicator carries the direction as
+        // an arrow (▲ for the positive cap-weighted move) plus the index and the breadth count.
+        QVERIFY(pulse.headline().contains(QStringLiteral("cap-wt")));
+        const QString indicator = pulse.leadIndicator();
+        QVERIFY(indicator.contains(QStringLiteral("Nasdaq-100")));
+        QVERIFY(indicator.contains(QString(QChar(0x25B2))));   // ▲ up
+        QVERIFY(indicator.contains(QStringLiteral("2/10 up")));
+
+        // When every name is DOWN, the indicator points down (▼), and an unread field says so
+        // rather than inventing a flat 0% direction.
+        QHash<QString, QList<double>> allDown;
+        for (const QString &name : nasdaqHeavyweights()) {
+            static_cast<void>(allDown.insert(name, sessionWith(-1.0)));
+        }
+        const HeavyweightPulse down = heavyweightPulse(QStringLiteral("NSDQ100"), allDown);
+        QVERIFY(down.capWeightedChangePct < 0.0);
+        QVERIFY(down.leadIndicator().contains(QString(QChar(0x25BC))));   // ▼ down
+        QVERIFY(heavyweightPulse(QStringLiteral("SPX500"), {}).leadIndicator()
+                    .contains(QStringLiteral("no prices")));
+    }
+
     //! @tstid TS-CONF-005 @design DES-DOM-CONFLUENCE
     // @relation(REQ-F-035, scope=function)
     void TS_CONF_005_theVolumeReadsAnswerWhereTheBuyingHappened()

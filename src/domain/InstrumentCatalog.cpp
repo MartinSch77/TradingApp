@@ -9,6 +9,110 @@
 
 namespace trading {
 
+// The crypto slice of the catalog, in its OWN function so the flat instrument table stays
+// under the metrics NLOC limit as coins are added. eToro names crypto by the bare ticker
+// (BTC, ETH, SOL, XRP, …) while the local model answers with the exchange pair (BTCUSDT,
+// ETH-USD, LTCUSD), which matchProposalSymbol strips. Every crypto economic — the x2 leverage
+// cap, the 1% cost floor, the own correlation bucket, 24/7 weekend trading — keys off
+// group == "Crypto", so a new coin needs only its row here. TradingView spot pairs are
+// Coinbase where listed, Binance for the two it does not carry (TRX, BNB); Yahoo quotes every
+// one as <TICKER>-USD. TRX and BNB use a BINANCE: TradingView reference because Coinbase has no
+// spot pair for them; eToro trades both, BNB priced in USD like the rest (verified live).
+namespace {
+QList<InstrumentSpec> cryptoInstruments()
+{
+    return {
+        {QStringLiteral("BTC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:BTCUSD"), QStringLiteral("BTC-USD"),
+         QStringLiteral("US"), {1, 2}, 68000.0},
+        {QStringLiteral("ETH"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ETHUSD"), QStringLiteral("ETH-USD"),
+         QStringLiteral("US"), {1, 2}, 2600.0},
+        {QStringLiteral("SOL"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:SOLUSD"), QStringLiteral("SOL-USD"),
+         QStringLiteral("US"), {1, 2}, 145.0},
+        {QStringLiteral("XRP"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:XRPUSD"), QStringLiteral("XRP-USD"),
+         QStringLiteral("US"), {1, 2}, 0.55},
+        {QStringLiteral("AVAX"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:AVAXUSD"), QStringLiteral("AVAX-USD"),
+         QStringLiteral("US"), {1, 2}, 35.0},
+        {QStringLiteral("DOGE"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:DOGEUSD"), QStringLiteral("DOGE-USD"),
+         QStringLiteral("US"), {1, 2}, 0.16},
+        {QStringLiteral("DOT"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:DOTUSD"), QStringLiteral("DOT-USD"),
+         QStringLiteral("US"), {1, 2}, 7.0},
+        {QStringLiteral("LINK"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:LINKUSD"), QStringLiteral("LINK-USD"),
+         QStringLiteral("US"), {1, 2}, 18.0},
+        {QStringLiteral("SAND"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:SANDUSD"), QStringLiteral("SAND-USD"),
+         QStringLiteral("US"), {1, 2}, 0.45},
+        {QStringLiteral("TRX"), QStringLiteral("Crypto"),
+         QStringLiteral("BINANCE:TRXUSDT"), QStringLiteral("TRX-USD"),
+         QStringLiteral("US"), {1, 2}, 0.13},
+        {QStringLiteral("BCH"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:BCHUSD"), QStringLiteral("BCH-USD"),
+         QStringLiteral("US"), {1, 2}, 480.0},
+        {QStringLiteral("LTC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:LTCUSD"), QStringLiteral("LTC-USD"),
+         QStringLiteral("US"), {1, 2}, 90.0},
+        {QStringLiteral("BNB"), QStringLiteral("Crypto"),
+         QStringLiteral("BINANCE:BNBUSDT"), QStringLiteral("BNB-USD"),
+         QStringLiteral("US"), {1, 2}, 590.0},
+        {QStringLiteral("XLM"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:XLMUSD"), QStringLiteral("XLM-USD"),
+         QStringLiteral("US"), {1, 2}, 0.12},
+        {QStringLiteral("SUN"), QStringLiteral("Crypto"),
+         QStringLiteral("BINANCE:SUNUSDT"), QStringLiteral("SUN-USD"),
+         QStringLiteral("US"), {1, 2}, 0.02},
+        {QStringLiteral("ADA"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ADAUSD"), QStringLiteral("ADA-USD"),
+         QStringLiteral("US"), {1, 2}, 0.45},
+        {QStringLiteral("MATIC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:MATICUSD"), QStringLiteral("MATIC-USD"),
+         QStringLiteral("US"), {1, 2}, 0.50},
+        {QStringLiteral("EOS"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:EOSUSD"), QStringLiteral("EOS-USD"),
+         QStringLiteral("US"), {1, 2}, 0.70},
+        {QStringLiteral("FTM"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:FTMUSD"), QStringLiteral("FTM-USD"),
+         QStringLiteral("US"), {1, 2}, 0.50},
+        {QStringLiteral("ATOM"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ATOMUSD"), QStringLiteral("ATOM-USD"),
+         QStringLiteral("US"), {1, 2}, 6.0},
+        {QStringLiteral("ALGO"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ALGOUSD"), QStringLiteral("ALGO-USD"),
+         QStringLiteral("US"), {1, 2}, 0.15},
+        {QStringLiteral("XTZ"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:XTZUSD"), QStringLiteral("XTZ-USD"),
+         QStringLiteral("US"), {1, 2}, 0.90},
+        {QStringLiteral("ETC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ETCUSD"), QStringLiteral("ETC-USD"),
+         QStringLiteral("US"), {1, 2}, 20.0},
+        {QStringLiteral("ZEC"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:ZECUSD"), QStringLiteral("ZEC-USD"),
+         QStringLiteral("US"), {1, 2}, 30.0},
+        {QStringLiteral("DASH"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:DASHUSD"), QStringLiteral("DASH-USD"),
+         QStringLiteral("US"), {1, 2}, 30.0},
+        {QStringLiteral("MANA"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:MANAUSD"), QStringLiteral("MANA-USD"),
+         QStringLiteral("US"), {1, 2}, 0.40},
+        {QStringLiteral("NEAR"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:NEARUSD"), QStringLiteral("NEAR-USD"),
+         QStringLiteral("US"), {1, 2}, 5.0},
+        {QStringLiteral("AAVE"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:AAVEUSD"), QStringLiteral("AAVE-USD"),
+         QStringLiteral("US"), {1, 2}, 100.0},
+        {QStringLiteral("SUSHI"), QStringLiteral("Crypto"),
+         QStringLiteral("COINBASE:SUSHIUSD"), QStringLiteral("SUSHI-USD"),
+         QStringLiteral("US"), {1, 2}, 1.0},
+    };
+}
+} // namespace
+
 // One entry per instrument. Ticker provenance (kept from the original
 // MarketFeeds maps, where every entry was verified against the live feeds):
 //  * TradingView tickers confirmed working via the scanner (non-null
@@ -21,7 +125,8 @@ namespace trading {
 //    CFD tracks. Empty = no usable reference quote.
 const QList<InstrumentSpec> &instrumentCatalog()
 {
-    static const QList<InstrumentSpec> kCatalog = {
+    static const QList<InstrumentSpec> kCatalog = [] {
+        QList<InstrumentSpec> all = {
         // --- Indices --------------------------------------------------------
         {QStringLiteral("SPX500"), QStringLiteral("Indices"),
          QStringLiteral("SP:SPX"), QStringLiteral("^GSPC"),
@@ -103,27 +208,12 @@ const QList<InstrumentSpec> &instrumentCatalog()
         {QStringLiteral("OIL.24-7"), QStringLiteral("Commodities"),
          QStringLiteral("FX:USOIL"), QStringLiteral("CL=F"),  // WTI CFD stream
          QStringLiteral("US"), {1, 2, 5, 10}, 78.0},
-
-        // --- Crypto ---------------------------------------------------------
-        // eToro's own names are the bare tickers (BTC, ETH, SOL, XRP) — the local model tends to
-        // answer with the exchange pair (BTCUSDT, ETH-USD), which matchProposalSymbol now
-        // maps back. Leverage is {1, 2} because eToro caps retail crypto CFDs at x2, and the
-        // crypto correlation bucket + a 1% cost floor (see PaperTrader) reflect the rest of
-        // the real economics. Yahoo quotes crypto as BTC-USD; TradingView as the Coinbase
-        // spot pair.
-        {QStringLiteral("BTC"), QStringLiteral("Crypto"),
-         QStringLiteral("COINBASE:BTCUSD"), QStringLiteral("BTC-USD"),
-         QStringLiteral("US"), {1, 2}, 68000.0},
-        {QStringLiteral("ETH"), QStringLiteral("Crypto"),
-         QStringLiteral("COINBASE:ETHUSD"), QStringLiteral("ETH-USD"),
-         QStringLiteral("US"), {1, 2}, 2600.0},
-        {QStringLiteral("SOL"), QStringLiteral("Crypto"),
-         QStringLiteral("COINBASE:SOLUSD"), QStringLiteral("SOL-USD"),
-         QStringLiteral("US"), {1, 2}, 145.0},
-        {QStringLiteral("XRP"), QStringLiteral("Crypto"),
-         QStringLiteral("COINBASE:XRPUSD"), QStringLiteral("XRP-USD"),
-         QStringLiteral("US"), {1, 2}, 0.55},
-    };
+        };
+        // The crypto slice lives in its own function (above), so this flat table stays under
+        // the metrics NLOC limit as coins are added.
+        all.append(cryptoInstruments());
+        return all;
+    }();
     return kCatalog;
 }
 
@@ -136,6 +226,33 @@ QStringList tradableSymbols()
         symbols << spec.symbol;
     }
     return symbols;
+}
+
+QString marketHoursText(const QString &symbol)
+{
+    const InstrumentSpec *spec = instrumentSpec(symbol);
+    if (spec == nullptr) {
+        return QStringLiteral("hours unknown");
+    }
+    if (spec->group == QStringLiteral("Crypto")) {
+        return QStringLiteral("24/7 — trades every day");
+    }
+    // The FIRST calendar region picks the exchange. Edges match PaperTrader's openPhase/
+    // closePhase (09:30–16:00 New York, 09:00–17:30 Xetra, 09:30–16:00 HKEX) so the display and
+    // the bot's session sit-outs cannot tell the user different things.
+    const QString region = spec->calendarRegions.section(QLatin1Char(','), 0, 0).trimmed();
+    static const QHash<QString, QString> kHours = {
+        {QStringLiteral("US"), QStringLiteral("09:30–16:00 New York · Mon–Fri")},
+        {QStringLiteral("DE"), QStringLiteral("09:00–17:30 Frankfurt · Mon–Fri")},
+        {QStringLiteral("EU"), QStringLiteral("09:00–17:30 Frankfurt · Mon–Fri")},
+        {QStringLiteral("FR"), QStringLiteral("09:00–17:30 Frankfurt · Mon–Fri")},
+        {QStringLiteral("HK"), QStringLiteral("09:30–16:00 Hong Kong · Mon–Fri")},
+        {QStringLiteral("CN"), QStringLiteral("09:30–16:00 Hong Kong · Mon–Fri")},
+        {QStringLiteral("CH"), QStringLiteral("09:00–17:30 Zurich · Mon–Fri")},
+        {QStringLiteral("SE"), QStringLiteral("09:00–17:30 Stockholm · Mon–Fri")},
+        {QStringLiteral("CA"), QStringLiteral("09:30–16:00 Toronto · Mon–Fri")},
+        {QStringLiteral("CO"), QStringLiteral("09:30–15:55 Bogotá · Mon–Fri")}};
+    return kHours.value(region, region + QStringLiteral(" exchange · Mon–Fri"));
 }
 
 const InstrumentSpec *instrumentSpec(const QString &symbol)

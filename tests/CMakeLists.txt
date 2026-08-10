@@ -38,6 +38,47 @@ tradingapp_add_test(tst_signalensemble tst_signalensemble.cpp)
 tradingapp_add_test(tst_decisionengine tst_decisionengine.cpp)
 tradingapp_add_test(tst_tradeplan tst_tradeplan.cpp)
 tradingapp_add_test(tst_tradescript tst_tradescript.cpp)
+
+# Crowd Sentiment & AI subsystem — Phase 1 data foundation (REQ-F-039). The store test drives an
+# in-memory SQLite database; trading_services links Qt6::Sql, so it is available transitively.
+tradingapp_add_test(tst_crowdobservation tst_crowdobservation.cpp)
+tradingapp_add_test(tst_mockcrowdprovider tst_mockcrowdprovider.cpp)
+tradingapp_add_test(tst_crowdstore tst_crowdstore.cpp)
+# Phase 2 — transparent Crowd Score (REQ-F-040).
+tradingapp_add_test(tst_rollingzscore tst_rollingzscore.cpp)
+tradingapp_add_test(tst_crowdscore tst_crowdscore.cpp)
+tradingapp_add_test(tst_crowdscorebuilder tst_crowdscorebuilder.cpp)
+tradingapp_add_test(tst_crowdscoremodel tst_crowdscoremodel.cpp
+    ../src/ui/CrowdScoreModel.cpp ../src/ui/CrowdScoreModel.h)
+# Phase 3 — real network-backed providers (REQ-F-039), driven against the in-process mock HTTP
+# server: valid parse, malformed/empty, network error, 429 rate-limit retry, no-key unavailable.
+tradingapp_add_test(tst_crowdproviders tst_crowdproviders.cpp MockHttpServer.cpp MockHttpServer.h)
+# Phase 4 — the OFFLINE training pipeline (REQ-F-041): the C++ CrowdStore writes real SQLite
+# fixtures, the Python tools (tools/ml/) read them, and the leakage/label/split/refusal rules
+# are asserted on the files that come back — the same cross-language contract discipline as
+# TS-NET-004. The model-fitting test skips without the optional `./setup.sh ml` environment.
+# CrowdFixtures carries the shared pipeline invocation/fixtures for the Phase 4 + 5 tests.
+tradingapp_add_test(tst_crowdml tst_crowdml.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_crowdml PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Phase 5 — the OPTIONAL in-process inference (REQ-F-042): the pure metadata/assembly rules
+# run everywhere; the round-trip test loads the very files the pipeline exports and skips
+# without the runtime or the training environment — the licence-bound-stage discipline.
+tradingapp_add_test(tst_crowdinference tst_crowdinference.cpp)
+tradingapp_add_test(tst_crowdmodel tst_crowdmodel.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_crowdmodel PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Phase 7 — the collection loop (REQ-F-043), driven through ingest() with the deterministic
+# mock's batches; no network, refreshNow() is never called here.
+tradingapp_add_test(tst_crowdcollector tst_crowdcollector.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_crowdcollector PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Phase 6 — local text sentiment (REQ-F-044): tokenizer rules everywhere; the runner and the
+# collector hook against the tiny bert-shaped fixture (make_finbert_fixture.py), never the
+# real 400 MB model.
+tradingapp_add_test(tst_finbert tst_finbert.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_finbert PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # TS-SCRIPT-008 parses the reference script that ships in examples/ — the file
 # users copy has to keep matching the parser that reads it.
 target_compile_definitions(tst_tradescript PRIVATE
@@ -82,6 +123,10 @@ tradingapp_add_test(tst_ollamaadvisor tst_ollamaadvisor.cpp MockHttpServer.cpp M
 tradingapp_add_test(tst_positionsmodel tst_positionsmodel.cpp
     ../src/ui/PositionsModel.cpp ../src/ui/PositionsModel.h)
 target_link_libraries(tst_positionsmodel PRIVATE Qt6::Widgets)
+
+tradingapp_add_test(tst_leadgauge tst_leadgauge.cpp
+    ../src/ui/LeadGauge.cpp ../src/ui/LeadGauge.h)
+target_link_libraries(tst_leadgauge PRIVATE Qt6::Widgets)
 
 # --- the declarative cockpit's data, tested WITHOUT rendering (REQ-F-038) -----
 # Same reason as above: the ui layer is not a library, so the view-model is compiled

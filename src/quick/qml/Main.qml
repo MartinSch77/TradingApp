@@ -64,6 +64,16 @@ Rectangle {
             font.bold: true
         }
 
+        // The selected instrument's exchange opening hours (crypto = 24/7), so the trader can
+        // see at a glance whether the market is even open before reading the confluence.
+        Text {
+            objectName: "cockpitHours"
+            text: root.cockpit.openingHours
+            visible: root.cockpit.openingHours.length > 0
+            color: Theme.inkMuted
+            font.pixelSize: 12
+        }
+
         // Market cards.
         RowLayout {
             Layout.fillWidth: true

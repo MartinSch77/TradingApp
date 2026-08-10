@@ -46,6 +46,11 @@ struct InstrumentSpec {
 // own documented fallbacks (calendar -> "US", simulation -> index defaults).
 [[nodiscard]] const InstrumentSpec *instrumentSpec(const QString &symbol);
 
+// A short, human OPENING-HOURS summary for the instrument's exchange, for display beside the
+// selected instrument (crypto = "24/7"). A DISPLAY line: its edges match the session logic in
+// PaperTrader (sessionPhaseFor), which stays the authority the bot actually sits out on.
+[[nodiscard]] QString marketHoursText(const QString &symbol);
+
 } // namespace trading
 
 #endif // TRADINGAPP_DOMAIN_INSTRUMENTCATALOG_H

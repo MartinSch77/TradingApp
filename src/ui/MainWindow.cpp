@@ -19,8 +19,10 @@
 #include "ui/PositionsModel.h"
 #include "ui/PriceChart.h"
 #include "ui/ScreenerDialog.h"
+#include "services/CrowdCollector.h"
 #include "services/OllamaAdvisor.h"
 #include "ui/BotSimPanel.h"
+#include "ui/CrowdDashboardWindow.h"
 #include "ui/HeavyweightsPanel.h"
 #include "ui/CockpitPanel.h"
 #include "ui/TradeScriptPanel.h"
@@ -56,6 +58,7 @@
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QSet>
+#include <QStandardPaths>
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTableWidget>
@@ -401,12 +404,44 @@ void MainWindow::setupRunners()
     // the configuration it reports itself unconfigured and the bot runs on the
     // composite alone. It is owned here and handed to the runner.
     m_ollama = new OllamaAdvisor(m_client->config().ollamaHost, m_client->config().ollamaModel, this);
+    // The crowd collection loop (REQ-F-043): providers + raw store + score + optional model,
+    // running quietly in the background. Its store lives beside the bot's books in the app
+    // config dir — all three binaries share organizationName/applicationName on purpose.
+    m_crowdCollector = new trading::crowd::CrowdCollector(
+        m_client->config(),
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+            + QStringLiteral("/crowd.db"),
+        this);
+    m_crowdCollector->start();
     m_botRunner = new BotSimRunner(m_client, m_ollama, this);
     m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
                                  m_client->config().botDailyLossLimit);
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
     static_cast<void>(connect(m_botRunner, &BotSimRunner::tradeOpened, this,
                               &MainWindow::onBotTradeOpened));
+    // The crowd evidence reaches the bot's prompt (REQ-F-046): one line per instrument,
+    // rebuilt whenever the score or the model's read changes — evidence beside the technical
+    // lines, gating and sizing nothing.
+    const auto pushCrowdEvidence = [this](const QString &instrument) {
+        m_botRunner->setCrowdEvidence(
+            instrument, trading::crowd::crowdEvidenceLine(
+                            instrument, m_crowdScores.value(instrument),
+                            m_crowdPredictions.value(instrument)));
+    };
+    static_cast<void>(connect(
+        m_crowdCollector, &trading::crowd::CrowdCollector::scoreUpdated, this,
+        [this, pushCrowdEvidence](const QString &instrument,
+                                  const trading::crowd::CrowdScoreResult &result) {
+            m_crowdScores.insert(instrument, result);
+            pushCrowdEvidence(instrument);
+        }));
+    static_cast<void>(connect(
+        m_crowdCollector, &trading::crowd::CrowdCollector::predictionUpdated, this,
+        [this, pushCrowdEvidence](const QString &instrument,
+                                  const trading::crowd::CrowdPrediction &prediction) {
+            m_crowdPredictions.insert(instrument, prediction);
+            pushCrowdEvidence(instrument);
+        }));
     // The local model is a SOURCE like any other, not just the bot's brain: its
     // picks show up in the signals panel and in the decision window (REQ-F-034).
     static_cast<void>(connect(m_botRunner, &BotSimRunner::proposalsUpdated, this,
@@ -1215,6 +1250,7 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addWidget(m_decisionButton);
     header->addWidget(m_scriptButton);
     header->addWidget(m_botButton);
+    header->addWidget(m_crowdButton);
     header->addWidget(m_heavyButton);
     header->addWidget(m_cockpitButton);
     header->addWidget(m_closedButton);
@@ -1464,6 +1500,8 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "reading. It never places an order at eToro and never moves real funds."));
     static_cast<void>(
         connect(m_botButton, &QPushButton::clicked, this, &MainWindow::openBotSim));
+
+    createCrowdButton(central);
 
     // Toggle for the combined signals + AI window (both panels moved out of the
     // main window into ONE floating, stay-on-top window shown at startup); same
@@ -4491,6 +4529,30 @@ void MainWindow::openBotSim()
     m_botDialog->activateWindow();
 }
 
+// Crowd & AI dashboard entry point: what the crowd collection loop knows — evidence only.
+void MainWindow::createCrowdButton(QWidget *central)
+{
+    m_crowdButton = new QPushButton(QStringLiteral("Crowd…"), central);
+    m_crowdButton->setObjectName(QStringLiteral("crowdButton"));
+    m_crowdButton->setFocusPolicy(Qt::NoFocus);  // don't swallow the b/s trade shortcuts
+    m_crowdButton->setToolTip(QStringLiteral(
+        "Crowd & AI dashboard (REQ-F-043): provider states, the transparent crowd score and "
+        "the optional trained model's verdict — experimental evidence, not financial advice, "
+        "with no route to an order."));
+    static_cast<void>(
+        connect(m_crowdButton, &QPushButton::clicked, this, &MainWindow::openCrowdDashboard));
+}
+
+void MainWindow::openCrowdDashboard()
+{
+    if (m_crowdDialog == nullptr) {
+        m_crowdDialog = new CrowdDashboardWindow(m_crowdCollector, m_ollama, this);
+    }
+    m_crowdDialog->show();
+    m_crowdDialog->raise();
+    m_crowdDialog->activateWindow();
+}
+
 void MainWindow::openScreener()
 {
     if (m_screenerDialog == nullptr) {
@@ -4680,6 +4742,16 @@ void MainWindow::onReferenceSeries(const QString &ticker, const QList<double> &c
 void MainWindow::onInstrumentNews(const QString &symbol, const QList<NewsHeadline> &headlines)
 {
     static_cast<void>(m_newsBySymbol.insert(symbol, headlines));
+    // The crowd subsystem's social family (REQ-F-044): the same headlines, scored by the
+    // optional local sentiment model — a silent no-op while no model is provisioned.
+    if (trading::crowd::CrowdCollector::instruments().contains(symbol)) {
+        QStringList titles;
+        titles.reserve(headlines.size());
+        for (const NewsHeadline &headline : headlines) {
+            titles.append(headline.title);
+        }
+        m_crowdCollector->scoreHeadlines(symbol, titles);
+    }
     rebuildRecommendations();  // refresh the hover reasoning with the fresh headlines
     rebuildDecision();
     if (symbol == m_client->config().symbol) {

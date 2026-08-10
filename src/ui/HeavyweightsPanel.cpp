@@ -4,6 +4,7 @@
 #include "ui/HeavyweightsPanel.h"
 
 #include "domain/LeadSignal.h"
+#include "ui/LeadGauge.h"
 #include "ui/Palette.h"
 
 #include <QChart>
@@ -165,6 +166,17 @@ void HeavyweightsPanel::buildUi()
     makeSide(QStringLiteral("S&P 500 (SPX500)"), m_spTable, m_spSummary,
              QStringLiteral("spHeavyTable"), QStringLiteral("spHeavySummary"));
     outer->addLayout(tables);
+
+    // The cap-weighted lead as a GAUGE: one diverging bar per index, so "which way, and how
+    // strongly, are the top names pulling the index" reads at a glance — the visual companion
+    // to the console's Top-10 lead line and the summary text above.
+    auto *gaugeHeading = new QLabel(
+        QStringLiteral("Top-10 cap-weighted lead — each name weighted by its share of the index"),
+        this);
+    gaugeHeading->setObjectName(QStringLiteral("leadGaugeHeading"));
+    outer->addWidget(gaugeHeading);
+    m_gauge = new LeadGauge(this);
+    outer->addWidget(m_gauge);
 
     // The movers as CURVES. Each constituent is normalised to its own session start,
     // so ten names at ten price levels share one axis and the question the chart is
@@ -430,6 +442,22 @@ void HeavyweightsPanel::setReferenceSeries(const QHash<QString, QList<double>> &
     const HeavyweightPulse sp = heavyweightPulse(QStringLiteral("SPX500"), series);
     fillTable(m_nasdaqTable, m_nasdaqSummary, nasdaq);
     fillTable(m_spTable, m_spSummary, sp);
+
+    if (m_gauge != nullptr) {
+        // S&P 500 first, then Nasdaq-100 — the same order the console's Top-10 lead line uses.
+        // An empty pulse is marked NOT known, so the gauge draws a dash, never a zero-length
+        // bar (the absent-is-not-zero rule the tables above also follow).
+        const auto rowFor = [](const HeavyweightPulse &p) {
+            GaugeRow row;
+            row.label = p.indexName;
+            row.capWeightedPct = p.capWeightedChangePct;
+            row.up = p.up;
+            row.measured = p.measured;
+            row.known = !p.isEmpty();
+            return row;
+        };
+        m_gauge->setRows({rowFor(sp), rowFor(nasdaq)});
+    }
 
     const QString verdict = verdictFor(nasdaq, sp);
     const QString colour = verdict.contains(QStringLiteral("BID"))

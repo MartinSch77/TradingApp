@@ -200,19 +200,21 @@ QList<AiDecision> picksFromArray(const QJsonArray &arr)
 // {"picks":{"BTC":{…},"ETH":{…<cut>}} thus recovers the COMPLETE BTC pick, key and all, and
 // drops the incomplete ETH one — far better than discarding the whole answer. Returns empty
 // when not even one container closed (nothing to salvage).
-QByteArray repairTruncatedJson(const QString &text)
+// The last position in a JSON fragment at which a container closed CLEANLY, plus the
+// containers still open there — everything needed to trim a truncated answer back to a
+// valid prefix and re-balance it.
+struct SafeCut {
+    qsizetype len = -1;         // length of the cleanly-closed prefix, or -1 if none
+    QList<QChar> openStack;     // the containers still open at that cut, outermost first
+};
+
+// Scan a JSON fragment, tracking string/escape state so brackets inside strings do not
+// count, and record the LAST clean close and the open stack at that point. Split out of
+// repairTruncatedJson so neither function carries the whole state machine's complexity.
+SafeCut scanToSafeCut(const QString &s)
 {
-    const qsizetype start = text.indexOf(QLatin1Char('{'));
-    const qsizetype startArr = text.indexOf(QLatin1Char('['));
-    const qsizetype from =
-        (startArr >= 0 && (start < 0 || startArr < start)) ? startArr : start;
-    if (from < 0) {
-        return {};
-    }
-    const QString s = text.mid(from);
+    SafeCut cut;
     QList<QChar> stack;
-    QList<QChar> safeStack;
-    qsizetype safeLen = -1;
     bool inStr = false;
     bool esc = false;
     for (qsizetype i = 0; i < s.size(); ++i) {
@@ -235,16 +237,31 @@ QByteArray repairTruncatedJson(const QString &text)
             if (!stack.isEmpty()) {
                 stack.removeLast();
             }
-            safeLen = i + 1;      // a container just closed cleanly here
-            safeStack = stack;    // …with these still open
+            cut.len = i + 1;          // a container just closed cleanly here
+            cut.openStack = stack;    // …with these still open
         }
     }
-    if (safeLen < 0) {
+    return cut;
+}
+
+QByteArray repairTruncatedJson(const QString &text)
+{
+    const qsizetype start = text.indexOf(QLatin1Char('{'));
+    const qsizetype startArr = text.indexOf(QLatin1Char('['));
+    const qsizetype from =
+        (startArr >= 0 && (start < 0 || startArr < start)) ? startArr : start;
+    if (from < 0) {
+        return {};
+    }
+    const QString s = text.mid(from);
+    const SafeCut cut = scanToSafeCut(s);
+    if (cut.len < 0) {
         return {};                // nothing completed — no picks to recover
     }
-    QString repaired = s.left(safeLen);
-    for (qsizetype i = safeStack.size() - 1; i >= 0; --i) {
-        repaired += (safeStack.at(i) == QLatin1Char('{')) ? QLatin1Char('}') : QLatin1Char(']');
+    QString repaired = s.left(cut.len);
+    for (qsizetype i = cut.openStack.size() - 1; i >= 0; --i) {
+        repaired +=
+            (cut.openStack.at(i) == QLatin1Char('{')) ? QLatin1Char('}') : QLatin1Char(']');
     }
     return repaired.toUtf8();
 }
@@ -360,6 +377,83 @@ void OllamaAdvisor::checkAvailability()
                               .arg(m_host, m_model,
                                    models.isEmpty() ? QStringLiteral("none") : models.join(u", ")),
                           models);
+    });
+}
+
+void OllamaAdvisor::requestExplanation(const QString &evidence)
+{
+    if (!isConfigured()) {
+        emit explanationReady({}, QStringLiteral("No Ollama model configured."));
+        return;
+    }
+    if (m_inFlight) {
+        emit explanationReady({},
+                              QStringLiteral("Ollama is still answering the previous request."));
+        return;
+    }
+    const QJsonObject body{
+        {QStringLiteral("model"), m_model},
+        // The instruction rides along, but the SAFETY property is the caller's wiring: the
+        // answer is displayed and consumed by nothing (REQ-F-045).
+        {QStringLiteral("system"),
+         QStringLiteral("You explain market evidence to a human reader in plain language. "
+                        "Answer ONLY with JSON of the form {\"explanation\": \"two to four "
+                        "sentences\"}. Do not give prices, targets, position sizes, stop "
+                        "levels, probabilities, or buy/sell instructions.")},
+        {QStringLiteral("prompt"), evidence},
+        {QStringLiteral("stream"), false},
+        {QStringLiteral("format"), QStringLiteral("json")},
+        {QStringLiteral("options"),
+         QJsonObject{{QStringLiteral("temperature"), 0.3},
+                     {QStringLiteral("num_predict"), 400}}},
+    };
+    QNetworkRequest req(QUrl(endpointBase() + QStringLiteral("/api/generate")));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setTransferTimeout(kGenerateTimeout);
+    m_inFlight = true;
+    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    m_http->handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
+                                      const QByteArray &raw, const QString &netError) {
+        m_inFlight = false;
+        if (!ok) {
+            emit explanationReady({}, QStringLiteral("Ollama request failed (HTTP %1): %2")
+                                          .arg(status)
+                                          .arg(netError.isEmpty()
+                                                   ? QString::fromUtf8(raw.left(200))
+                                                   : netError));
+            return;
+        }
+        const QString text = doc.object().value(QStringLiteral("response")).toString();
+        // Defensive, like the proposal parse — but for PROSE the honest fallback is the prose
+        // itself: unlike a trade proposal, a mis-parse here cannot cause an action.
+        QJsonDocument answer = QJsonDocument::fromJson(jsonPayloadIn(text));
+        if (!answer.isObject()) {
+            answer = QJsonDocument::fromJson(repairTruncatedJson(text));
+        }
+        QString words;
+        if (answer.isObject()) {
+            const QJsonObject object = answer.object();
+            for (const auto &key :
+                 {QStringLiteral("explanation"), QStringLiteral("summary"),
+                  QStringLiteral("text"), QStringLiteral("answer")}) {
+                if (words.isEmpty()) {
+                    words = object.value(key).toString().trimmed();
+                }
+            }
+            for (const auto &value : object) {   // a small model's key of the day
+                if (words.isEmpty() && value.isString()) {
+                    words = value.toString().trimmed();
+                }
+            }
+        } else if (!text.trimmed().startsWith(QLatin1Char('{'))) {
+            words = text.trimmed();
+        }
+        if (words.isEmpty()) {
+            emit explanationReady({}, QStringLiteral("%1 answered nothing readable: %2")
+                                          .arg(m_model, text.left(160).simplified()));
+            return;
+        }
+        emit explanationReady(words, QString());
     });
 }
 

@@ -340,6 +340,8 @@ For each read the app shall report the direction it supports, the number behind 
 
 The constituents shall additionally be shown IN THEIR OWN VIEW as an early read on the two indices: the ten names of each index side by side with their session moves, how many of them are up, the average move of the readable ones, and which single name is leading and which is lagging — because an index carried by one name and an index carried by all ten are different situations that the same index price cannot tell apart. That view shall state, on screen rather than in a comment, that it is a STAND-IN for market breadth, and a constituent whose price could not be read shall be shown as UNKNOWN rather than as a zero move.
 
+Beside the equal-weight average, the app shall report a single SUMMARISED direction for the top constituents together — a CAP-WEIGHTED move, each name scaled by its share of the index and renormalised over the readable names — as the "in which direction are the top names pulling the index, up or down" indicator, because the index itself is cap-weighted and a large name moving is not a small name moving, and the top names can carry the index against the majority count (the index lagging its heaviest constituents is exactly the situation this is meant to surface). Direction shall be carried by a sign and a shape, never by colour alone. The weights used shall be an APPROXIMATE STATIC snapshot — this app does not fetch live index weightings — and shall be labelled as such on the same footing as the breadth stand-in caveat — enough to weight the heaviest name above the lightest by roughly the right ratio, never a claim to the index's exact construction.
+
 The count of agreeing reads shall be shown per instrument alongside the app's other signals, shall be given to the model as evidence in those words, and shall gate the bot: an index position shall not be opened while fewer than a configured number of the MEASURED reads agree with its side. That threshold shall be configurable, shall be satisfiable (never more than the number of reads actually available), and shall be able to be switched off — with the reads still shown and still given to the model, because a read nobody acts on is still information a reader is owed.
 <<<
 
@@ -429,6 +431,114 @@ Identity in that view shall not rest on colour alone. Where a state is encoded b
 That second front end may be delivered as its own executable where a technical constraint requires it, provided it is built over the SAME domain, service and view-model components and adds no logic of its own. One such constraint is present and shall not be worked around by duplicating code: the charting module that supplies the candlestick view declares many class names identically to the charting module the existing interface uses, so a single binary linking both cannot resolve either, and the failure is silent — the declarative view renders empty with no error. Where a component of the view is unavailable in a given process, the view shall degrade to a STATED reason and shall not take the rest of the presentation down with it, since an empty panel reads as "no data", which is a different and false claim.
 
 The bars that chart draws shall be assembled by the separately testable component above, under the same absent-is-not-zero discipline as every other reading: a bar shall be drawn only when all four of its values are present and mutually consistent, an incomplete or contradictory bar shall be discarded whole rather than repaired into shape — repairing invents an extreme the market never printed, and one invented extreme moves the entire scale — and the vertical scale shall cover the extremes actually reached rather than the opening and closing levels, which would cut those extremes off at the frame.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-039
+VERIFICATION: T
+TITLE: Crowd sentiment and positioning data foundation
+STATEMENT: >>>
+The application shall be able to collect, normalize and store timestamped crowd-positioning, options, volatility, institutional-positioning, social and macro observations for its index instruments, as the FOUNDATION a later transparent crowd score and an offline-trained probability model rest on. This requirement is the data layer ONLY: no machine-learning model, no real-money execution and no directional trade follows from it — every downstream proposal remains paper or advisory and gated by the deterministic risk rules that already exist.
+
+Each observation shall be a NORMALIZED, immutable record carrying its instrument, the family it belongs to, the concrete provider that produced it, a source-specific series identifier, its value and unit, its schema version, and — decisively — TWO timestamps in UTC: the time the datum is ABOUT (its event time) and the time it became KNOWN (its received or publication time). The two shall be kept distinct and both stored, because a datum published after the period it describes — the weekly Commitments-of-Traders report describes a Tuesday but publishes the following Friday — must never be treated as known before it was; that is the single most important guard against a model that appears to predict the past. A record that could not be measured shall be marked NOT VALID and shall never be read as a zero, and its freshness shall be reported as live, stale or absent against a configured threshold, with absent remaining distinct from stale.
+
+Data shall be obtained through a provider SEAM: an interface with a mock — and, later, a recorded-fixture — implementation, so the whole subsystem builds, runs and is tested WITHOUT any paid subscription or network, and a missing credential shall be a recoverable "unavailable" state rather than a failure. The initial, licence-safe providers shall be the free public sources (the Commitments of Traders report and the Federal Reserve series including the volatility index); scraping shall not be used where no public API is offered, and no downloaded commercial dataset, credential or personal datum shall be committed. When a real provider is added its network access shall be asynchronous and shall never block the interface thread.
+
+Persistence shall keep the RAW observations separate from the features, labels, predictions and realized outcomes that later phases derive from them — never one oversized table — with a unique identity per datum (provider, series, instrument, event time) so that re-fetching the same observation is idempotent rather than a duplicate, and shall carry a schema version so it can be migrated deliberately.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-040
+VERIFICATION: T
+TITLE: Transparent rule-based crowd score
+STATEMENT: >>>
+The application shall compute a TRANSPARENT, rule-based crowd score for its index instruments from the normalized observations of REQ-F-039 — a number a person can read and reproduce, deliberately NOT a machine-learned model — so that it can serve as the BASELINE any later trained model must demonstrably beat. The score shall be evidence only: it shall not place a trade, and any proposal derived from it shall remain paper or advisory and gated by the deterministic risk rules that already exist.
+
+The score shall combine four component families — retail positioning, options and volatility, institutional positioning, and social and news — each first NORMALIZED against its own PAST history (a z-score computed only from values that preceded it, so a component carries no look-ahead), then combined by CONFIGURABLE weights whose defaults are stated as HYPOTHESES rather than proven rules. The sign convention of every component shall be documented, and the retail component shall be treated as CONTRARIAN — a crowd that is heavily long is a bearish input.
+
+Missing data shall never be treated as zero: a component that could not be measured — absent, or with too little history to normalize — shall be EXCLUDED from the score with the remaining weights renormalized, NAMED in the result, and shall lower both the reported DATA COVERAGE and the CONFIDENCE. Source freshness shall enter the confidence, so a stale component counts for less than a live one. The result shall report, alongside the score and its direction in words, the coverage, the confidence, the per-component CONTRIBUTIONS, the age of the newest and oldest input, the warnings, and a calculation VERSION; and the score together with a snapshot of its inputs shall be persisted in a store layer SEPARATE from the raw observations, for later auditing.
+
+A Qt view-model shall expose the score for presentation WITHOUT computing any of it, so the number a view shows is the number the rule produced. It shall be usable with mock data and shall carry direction and freshness by words, not by colour alone.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-041
+VERIFICATION: T
+TITLE: Offline training pipeline for the crowd model
+STATEMENT: >>>
+The crowd subsystem's trained model shall come from an OFFLINE training pipeline that is a development-time tool and NEVER a runtime dependency: the application shall build, run and pass its tests with none of the pipeline's libraries installed, and nothing the pipeline produces shall place a trade — a trained model remains paper or advisory evidence behind the deterministic risk rules that already exist.
+
+The pipeline shall assemble its dataset from the SAME raw observation store the application writes (REQ-F-039), joining every observation to a decision time AS OF ITS RECEIVED TIME: a datum enters a row only when its received (publication) time is at or before the row's decision time, so a publication-lagged datum — the Commitments-of-Traders report is about a Tuesday but released the Friday after — can never inform a decision dated before its release. A missing datum shall stay missing (a named absence with a measured/not-measured marker), never a zero; per-series normalization shall be computed only from values received BEFORE the datum it normalizes; and the dataset shall carry a stable, versioned feature manifest whose names are append-only, so the trainer, the exported model and any later consumer agree on columns BY NAME rather than by position.
+
+Labels shall be three classes — LONG, NO_TRADE and SHORT — derived from the instrument's FORWARD return over a configurable horizon with a DEAD ZONE representing the round-trip cost of taking the trade: a move that would not clear its own cost labels NO_TRADE, so that "do not trade" is learned as an outcome rather than treated as a failure; and a row whose horizon runs past the available price history shall be DROPPED, never labelled by invention.
+
+Validation shall be PURGED WALK-FORWARD: a model is evaluated only on data strictly later than everything it trained on, and a training row whose LABEL WINDOW reaches into the evaluation block — extended by a configurable embargo — is PURGED, because forward-return labels overlap in time and a random split would let the model see the future and report a fiction. Every reported result shall sit beside NAMED BASELINES computed on the identical evaluation rows — at least the majority class and the transparent crowd score of REQ-F-040 — so "the model beats the baseline" is a measured claim, never an impression.
+
+The trained baseline models (a logistic regression and a gradient-boosted-trees classifier) shall be exported to the ONNX exchange format carrying, as embedded metadata, the feature names in order, the imputation values a consumer must apply, the class order and the manifest version; and the exported artifact shall be verified to reproduce the trained model's own probabilities before it is kept — an export that disagrees with its source shall be deleted and reported, never shipped. The dataset build, labelling and split logic shall run on the Python standard library alone, so the leakage and labelling rules are testable on every machine the project supports; the fitting and export step may require the optional, setup-provisioned environment and shall REFUSE with the project's "skipped" exit code — writing nothing — when that environment is absent, when the dataset is too small, or when the labels hold fewer than two classes, rather than emit a model that means nothing.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-042
+VERIFICATION: T
+TITLE: Optional in-process inference for the trained crowd model
+STATEMENT: >>>
+The application shall be able to LOAD and RUN a crowd model exported by the offline pipeline (REQ-F-041) in-process, behind a SEAM — one interface with a test double — so that everything consuming a prediction is testable without the real runtime, mirroring the provider seam of REQ-F-039.
+
+The inference runtime shall be OPTIONAL AT BUILD TIME: on a machine without it the application shall configure, build, run and pass its tests identically, with the capability reporting itself UNAVAILABLE in words that name the remedy — never a build failure, never a crash, and never a silently absent feature a reader could mistake for a broken one. The runtime shall be provisioned by the same optional setup mode as the training environment, and no machine-specific path shall be committed.
+
+The model file's own EMBEDDED metadata shall drive the inference, so the trainer and the consumer cannot drift apart silently: input features shall be matched BY NAME against the metadata's ordered feature list, a missing or non-finite input shall be imputed with the EXACT value the trainer embedded for that feature — with the number of imputed features REPORTED alongside the answer, because a prediction made mostly of fill-ins is a weaker claim — and the class labels of the answered probabilities shall come from the metadata, never from an assumption about column order. A model whose metadata is absent, unparsable or inconsistent — imputation values not matching the feature list, no classes — shall be REFUSED with a stated reason rather than scored.
+
+Every failure shall be recoverable and named: a missing file, an unreadable graph, and a runtime error during scoring shall each produce an error result while the application carries on. An answer that does not form a probability distribution over the stated classes shall be refused rather than repaired.
+
+The output is EVIDENCE ONLY: this requirement wires no prediction to any trading decision. Any later consumer remains paper or advisory behind the deterministic risk rules that already exist, and the probabilities remain subject to the measurement discipline of REQ-F-037 before anyone treats them as calibrated.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-043
+VERIFICATION: T
+TITLE: Crowd & AI dashboard with a collection loop
+STATEMENT: >>>
+The application shall RUN the crowd subsystem it has so far only built and tested: a COLLECTION LOOP that periodically asks every CONFIGURED provider for the focus instruments, persists the observations into the raw store — idempotently, so a repeated fetch can never grow the record — recomputes and persists the transparent crowd score of REQ-F-040, and, when an exported model is present, scores it in-process through the optional inference seam of REQ-F-042. An unconfigured provider shall be shown as UNAVAILABLE in words and asked nothing; a provider failure shall become a named status beside the others, never a crash and never invented data.
+
+A DASHBOARD view shall present what the subsystem knows, honestly: per-provider state in words (configured, unavailable, or the last issue), the crowd score with its direction in words, confidence, coverage, per-family contributions and warnings — missing families NAMED, never zeroed — and the model verdict: its availability and readiness in words, and when it scores, the class probabilities LABELLED from the model's own embedded metadata beside the COUNT of imputed inputs, because a prediction made mostly of fill-ins is a weaker claim than one made of measurements. Model inputs the collector cannot compute in-process — the price-context features — shall be left MISSING for the model's own embedded imputation and counted as such, never fabricated in a second implementation that could drift from the trainer's.
+
+The dashboard is EVIDENCE ONLY: it shall state that the signals are experimental and not financial advice, it shall offer no trading affordance, and nothing in the loop or the view shall reach an order path — the deterministic risk rules and the double-press gate remain the only route to a real order. Optional local-LLM EXPLANATIONS of the evidence — words only, never prices, probabilities, stops or sizing — remain DEFERRED within this phase until they can be built with their own tests.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-044
+VERIFICATION: T
+TITLE: Local text-sentiment features for the social family
+STATEMENT: >>>
+The application shall be able to turn the news HEADLINES it already fetches into the crowd subsystem's SOCIAL-family observations using a LOCAL text-sentiment classifier — a financial-domain BERT model exported to the ONNX format — so that the fourth family of the crowd score and of the training dataset can run on measured data without any social-network API, key, or scraping.
+
+The capability shall be DOUBLY OPTIONAL: it requires the build-time inference runtime of REQ-F-042 AND a model directory the user provisions with the offline exporter tool — under the model's OWN licence terms, which the tool shall name rather than accept silently. Absent either, the feature shall report itself unavailable in words and nothing else changes: the headlines keep flowing to the panels that already show them, and no sentiment is invented.
+
+Text shall be encoded with the model's OWN vocabulary, faithfully: WordPiece tokenization with greedy longest-match subwords, unknown words mapped to the unknown token, the classifier's framing tokens, and truncation at a stated maximum — a tokenizer mismatched to its model scores noise with confidence, which is worse than scoring nothing. The meaning of the answered classes shall come from a labels file exported BESIDE the model, never from an assumed column order, and a label set that does not name positive and negative shall be REFUSED.
+
+The published sentiment shall be the NET (probability of positive minus probability of negative) over the scored headlines, stored as a NORMAL observation of the social family — event time quantized to the hour so the idempotent store is not flooded by every news poll — and entering the score, the dataset and the model features by the same rules as every other series. Failures shall be recoverable and named: a missing model directory, a malformed vocabulary, a label set without meaning, an empty headline set and a runtime error mid-score shall each produce an unavailable state or an error result while the application carries on. The output is EVIDENCE ONLY, with no route to an order.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-045
+VERIFICATION: T
+TITLE: Local-LLM explanation of the crowd evidence, words only
+STATEMENT: >>>
+The crowd dashboard shall be able to ask the OPTIONAL local model (the REQ-F-030 machinery — no cloud, no key) to EXPLAIN the evidence it currently shows, in plain words a person can read beside the numbers. The request shall carry the SAME evidence the view presents, so the words are about what the user sees and nothing hidden.
+
+The explanation is WORDS ONLY, enforced by construction rather than by trust: the answered text shall be DISPLAYED and consumed by NOTHING — no parser reads numbers out of it, no decision path receives it, and the view shall label it as the words of a small local model whose numbers are not data. The model shall be instructed to give no prices, targets, sizes, stops, probabilities or buy/sell instructions, but the safety property is the wiring, not the instruction.
+
+Without a configured model the feature shall report itself unavailable in the established words; a transport failure, an empty answer and an unreadable answer shall each be a NAMED error result, never a blank that reads as "nothing to say". The parse shall be defensive in the way the proposal parse already is — a small model's JSON is approximate, and for prose the honest fallback is the prose itself — and one request shall be in flight at a time, sharing the advisor's existing discipline.
+<<<
+
+[REQUIREMENT]
+UID: REQ-F-046
+VERIFICATION: T
+TITLE: Crowd evidence reaches the paper bot, as evidence only
+STATEMENT: >>>
+The crowd subsystem's findings shall be able to reach the paper bot's decision model as EVIDENCE LINES beside the technical evidence it already reads: per focus instrument, the transparent score's own headline and — when the in-process model has answered — its probabilities LABELLED from the model's embedded metadata, marked EXPERIMENTAL and UNCALIBRATED with the imputation count stated, because a probability is measured, never asserted (REQ-F-037).
+
+The line shall GATE, SIZE and STOP nothing: no refusal code, no sizing rule, no exit rule and no risk cap reads it — it informs the model exactly like every other evidence line, and the deterministic risk rules remain the only governor of what the bot may do. Nothing measured shall mean NO line — absent evidence must never appear as a neutral-looking zero — and clearing an instrument's line shall remove it rather than leave a stale claim in every later prompt. The input is OPTIONAL: a front end without the collection loop passes nothing and behaves identically.
 <<<
 
 [[/SECTION]]

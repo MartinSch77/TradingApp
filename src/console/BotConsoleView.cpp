@@ -119,6 +119,18 @@ QStringList consoleHeavyBarsSideBySide(const QString &labelA, const QList<HeavyM
     return out;
 }
 
+QString consoleConstituentLead(const QString &leftIndicator, const QString &rightIndicator,
+                               qsizetype leftWidth)
+{
+    // Visible width == QString::size here: the only non-ASCII glyphs the indicator carries are
+    // the ▲/▼ arrows, each a single BMP cell. Pad the left side to a fixed column so the right
+    // one does not shift as the numbers change width. leftJustified only pads, never truncates,
+    // so a longer-than-expected left string pushes the right out rather than losing characters.
+    return QStringLiteral("  Top-10 lead   %1%2")
+        .arg(leftIndicator.leftJustified(leftWidth, u' '))
+        .arg(rightIndicator);
+}
+
 QStringList consoleOpenTrades(const QList<PaperTrade> &open)
 {
     QStringList out;

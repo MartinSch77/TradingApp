@@ -52,6 +52,31 @@ bool isNasdaqSymbol(const QString &symbol)
         || symbol.startsWith(QStringLiteral("NQ"), Qt::CaseInsensitive);
 }
 
+// Approximate index weight (share of the index, in percent) of a top-ten constituent.
+// A STATIC snapshot, the same standing the ticker lists have: real weightings drift on
+// the order of quarters, not scans, and this app does not fetch live weights. It is the
+// honest counterpart of the breadth caveat — enough to weight NVDA's move above COST's
+// by roughly the right ratio, not a claim to the index's exact construction. Only relative
+// magnitudes matter, because the cap-weighted change renormalises over the READABLE names.
+// A function-local static (not a file-scope QHash) so the QString constructors run lazily
+// on first use, where an exception can be handled (CERT-ERR58-CPP), like instrumentSpec().
+double heavyweightWeight(const QString &symbol, const QString &ticker)
+{
+    static const QHash<QString, double> kNasdaq = {
+        {QStringLiteral("NVDA"), 8.9},  {QStringLiteral("MSFT"), 7.8},
+        {QStringLiteral("AAPL"), 7.5},  {QStringLiteral("AMZN"), 5.5},
+        {QStringLiteral("AVGO"), 4.8},  {QStringLiteral("META"), 4.6},
+        {QStringLiteral("GOOGL"), 5.1}, {QStringLiteral("TSLA"), 3.0},
+        {QStringLiteral("NFLX"), 2.5},  {QStringLiteral("COST"), 2.5}};
+    static const QHash<QString, double> kSp = {
+        {QStringLiteral("NVDA"), 7.0},  {QStringLiteral("MSFT"), 6.5},
+        {QStringLiteral("AAPL"), 6.5},  {QStringLiteral("AMZN"), 3.8},
+        {QStringLiteral("META"), 2.6},  {QStringLiteral("AVGO"), 2.4},
+        {QStringLiteral("GOOGL"), 3.9}, {QStringLiteral("TSLA"), 1.6},
+        {QStringLiteral("BRK-B"), 1.7}, {QStringLiteral("JPM"), 1.4}};
+    return (isNasdaqSymbol(symbol) ? kNasdaq : kSp).value(ticker, 0.0);
+}
+
 // The two futures the cash indices follow, as this app's own instrument symbols
 // (their Yahoo tickers are NQ=F and ES=F — see the instrument catalog). Functions
 // rather than file-scope QStrings: a static QString's constructor can throw where
@@ -505,22 +530,45 @@ IndexReads indexReads(const QString &symbol, const ReadInputs &in)
     return out;
 }
 
+// A signed percent in the window's convention: a leading "+" only for positive numbers
+// (the "-" comes from the number itself), a trailing "%".
+namespace {
+QString signedPct(double value)
+{
+    return QStringLiteral("%1%2%")
+        .arg((value > 0.0) ? QStringLiteral("+") : QString())
+        .arg(value, 0, 'f', 2);
+}
+} // namespace
+
 QString HeavyweightPulse::headline() const
 {
     if (isEmpty()) {
         return QStringLiteral("%1: no constituent prices yet").arg(indexName);
     }
-    const QString direction = (averageChangePct > 0.0) ? QStringLiteral("+") : QString();
-    return QStringLiteral("%1: %2 of %3 up · average %4%5% · leader %6 %7%8% · laggard %9 %10%")
+    return QStringLiteral("%1: %2 of %3 up · average %4 · cap-wt %5 · leader %6 %7 · laggard %8 %9")
         .arg(indexName)
         .arg(up)
         .arg(measured)
-        .arg(direction)
-        .arg(averageChangePct, 0, 'f', 2)
-        .arg(leader, (leaderChangePct > 0.0) ? QStringLiteral("+") : QString())
-        .arg(leaderChangePct, 0, 'f', 2)
-        .arg(laggard)
-        .arg(laggardChangePct, 0, 'f', 2);
+        .arg(signedPct(averageChangePct))
+        .arg(signedPct(capWeightedChangePct))
+        .arg(leader, signedPct(leaderChangePct))
+        .arg(laggard, signedPct(laggardChangePct));
+}
+
+QString HeavyweightPulse::leadIndicator() const
+{
+    if (isEmpty()) {
+        return QStringLiteral("%1 top-10: no prices yet").arg(indexName);
+    }
+    // The SIGN of the cap-weighted move is the summarised direction; arrow AND sign carry it.
+    const bool upTogether = capWeightedChangePct > 0.0;
+    return QStringLiteral("%1 top-10 %2 %3 (%4/%5 up)")
+        .arg(indexName)
+        .arg(upTogether ? QChar(0x25B2) : QChar(0x25BC))   // ▲ / ▼
+        .arg(signedPct(capWeightedChangePct))
+        .arg(up)
+        .arg(measured);
 }
 
 HeavyweightPulse heavyweightPulse(const QString &symbol,
@@ -530,6 +578,8 @@ HeavyweightPulse heavyweightPulse(const QString &symbol,
     out.indexName = isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100")
                                            : QStringLiteral("S&P 500");
     double sum = 0.0;
+    double weightedSum = 0.0;   // Σ weight · change over the READABLE names…
+    double totalWeight = 0.0;   // …divided by this, so absent names do not distort it.
     bool haveExtremes = false;
     for (const QString &ticker : indexHeavyweights(symbol)) {
         HeavyweightRow row;
@@ -543,6 +593,9 @@ HeavyweightPulse heavyweightPulse(const QString &symbol,
                 ++out.up;
             }
             sum += *change;
+            const double weight = heavyweightWeight(symbol, ticker);
+            weightedSum += weight * *change;
+            totalWeight += weight;
             if (!haveExtremes || (*change > out.leaderChangePct)) {
                 out.leader = ticker;
                 out.leaderChangePct = *change;
@@ -558,6 +611,11 @@ HeavyweightPulse heavyweightPulse(const QString &symbol,
     if (out.measured > 0) {
         out.averageChangePct = sum / static_cast<double>(out.measured);
     }
+    // Renormalise over the readable weight so a missing megacap does not drag the number
+    // toward zero. Falls back to the equal-weight average only if no readable name carried
+    // a weight (cannot happen for the current lists, but keeps the number defined).
+    out.capWeightedChangePct = (totalWeight > 0.0) ? (weightedSum / totalWeight)
+                                                   : out.averageChangePct;
     return out;
 }
 

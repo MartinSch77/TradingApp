@@ -23,6 +23,8 @@ class QTimer;
 
 namespace trading::ui {
 
+class LeadGauge;
+
 // The top-ten constituents of the Nasdaq-100 and the S&P 500, side by side, as an
 // EARLY read on where the two indices may go (REQ-F-035).
 //
@@ -100,6 +102,7 @@ private:
     QValueAxis *m_axisX = nullptr;
     QValueAxis *m_axisY = nullptr;
     QList<QLineSeries *> m_curves;
+    LeadGauge *m_gauge = nullptr;
     QLabel *m_nasdaqLead = nullptr;
     QLabel *m_spLead = nullptr;
     bool m_vixValid = false;

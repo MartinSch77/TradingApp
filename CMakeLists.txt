@@ -38,7 +38,7 @@ set(CMAKE_AUTOUIC ON)
 # lets it be ONE PAGE of this Widgets application rather than a second executable — the same
 # domain and service libraries behind two presentations, which is the point of the exercise.
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
-                                    Qml Quick QuickWidgets QuickControls2)
+                                    Qml Quick QuickWidgets QuickControls2 Sql)
 # Qt Graphs supplies CustomSeries (6.11), which draws the cockpit's candlesticks — but it is
 # found, NOT linked, and that is load-bearing.
 #
@@ -163,6 +163,16 @@ qt_add_library(trading_domain STATIC
     src/domain/DecisionLog.h
     src/domain/PaperTrader.cpp
     src/domain/PaperTrader.h
+    src/domain/CrowdObservation.cpp
+    src/domain/CrowdObservation.h
+    src/domain/RollingZScore.cpp
+    src/domain/RollingZScore.h
+    src/domain/CrowdScore.cpp
+    src/domain/CrowdScore.h
+    src/domain/CrowdInference.cpp
+    src/domain/CrowdInference.h
+    src/domain/WordPieceTokenizer.cpp
+    src/domain/WordPieceTokenizer.h
 )
 target_include_directories(trading_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(trading_domain PUBLIC Qt6::Core)
@@ -186,11 +196,64 @@ qt_add_library(trading_services STATIC
     src/services/OllamaAdvisor.h
     src/services/SimulationEngine.cpp
     src/services/SimulationEngine.h
+    src/services/CrowdProvider.h
+    src/services/MockCrowdProvider.cpp
+    src/services/MockCrowdProvider.h
+    src/services/CrowdStore.cpp
+    src/services/CrowdStore.h
+    src/services/CrowdScoreBuilder.cpp
+    src/services/CrowdScoreBuilder.h
+    src/services/CrowdHttpProvider.cpp
+    src/services/CrowdHttpProvider.h
+    src/services/CftcCotProvider.cpp
+    src/services/CftcCotProvider.h
+    src/services/FredProvider.cpp
+    src/services/FredProvider.h
+    src/services/IgSentimentProvider.cpp
+    src/services/IgSentimentProvider.h
+    src/services/CrowdModel.cpp
+    src/services/CrowdModel.h
+    src/services/CrowdCollector.cpp
+    src/services/CrowdCollector.h
+    src/services/FinBertSentiment.cpp
+    src/services/FinBertSentiment.h
 )
 target_link_libraries(trading_services PUBLIC
     trading_domain
     Qt6::Network
+    Qt6::Sql
 )
+
+# --- Optional ONNX Runtime (REQ-F-042) --------------------------------------
+# The crowd-model inference seam (services/CrowdModel.*) compiles its real backend only when
+# the runtime is present; absent, the SAME class is a stub answering "unavailable" and the
+# build is otherwise identical — never a failure. Resolved from ONNXRUNTIME_ROOT (cache or
+# environment), falling back to the directory `./setup.sh ml` provisions; no machine-specific
+# path is committed, the HOME/USERPROFILE variables resolve per machine.
+if(NOT DEFINED ONNXRUNTIME_ROOT)
+    if(DEFINED ENV{ONNXRUNTIME_ROOT})
+        set(ONNXRUNTIME_ROOT "$ENV{ONNXRUNTIME_ROOT}")
+    elseif(WIN32)
+        set(ONNXRUNTIME_ROOT "$ENV{USERPROFILE}/.local/onnxruntime")
+    else()
+        set(ONNXRUNTIME_ROOT "$ENV{HOME}/.local/onnxruntime")
+    endif()
+endif()
+find_path(TRADINGAPP_ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+    HINTS "${ONNXRUNTIME_ROOT}/include")
+find_library(TRADINGAPP_ONNXRUNTIME_LIBRARY onnxruntime
+    HINTS "${ONNXRUNTIME_ROOT}/lib")
+if(TRADINGAPP_ONNXRUNTIME_INCLUDE_DIR AND TRADINGAPP_ONNXRUNTIME_LIBRARY)
+    target_compile_definitions(trading_services PRIVATE TRADINGAPP_HAS_ONNXRUNTIME=1)
+    # SYSTEM: the runtime's headers are not held to this project's warning gate.
+    target_include_directories(trading_services SYSTEM PRIVATE
+        "${TRADINGAPP_ONNXRUNTIME_INCLUDE_DIR}")
+    target_link_libraries(trading_services PUBLIC "${TRADINGAPP_ONNXRUNTIME_LIBRARY}")
+    message(STATUS "ONNX Runtime: ${TRADINGAPP_ONNXRUNTIME_LIBRARY} — crowd-model inference enabled")
+else()
+    message(STATUS "ONNX Runtime not found (ONNXRUNTIME_ROOT=${ONNXRUNTIME_ROOT}) — "
+                   "crowd-model inference reports unavailable; ./setup.sh ml provisions it")
+endif()
 
 qt_add_executable(TradingApp
     src/main.cpp
@@ -208,6 +271,12 @@ qt_add_executable(TradingApp
     src/ui/TradeScriptPanel.h
     src/ui/HeavyweightsPanel.cpp
     src/ui/HeavyweightsPanel.h
+    src/ui/LeadGauge.cpp
+    src/ui/LeadGauge.h
+    src/ui/CrowdScoreModel.cpp
+    src/ui/CrowdScoreModel.h
+    src/ui/CrowdDashboardWindow.cpp
+    src/ui/CrowdDashboardWindow.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
     src/ui/BotSimPanel.cpp

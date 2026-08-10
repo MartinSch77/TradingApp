@@ -56,6 +56,16 @@ struct HeavyMove {
                                                      const QList<HeavyMove> &namesB,
                                                      qsizetype width);
 
+// The one-line SUMMARISED constituent-lead indicator the user asked for: the two indices'
+// top-ten cap-weighted direction, side by side — "in which direction do the top constituents
+// go together, up or down?". The wording of each side is produced by the domain
+// (HeavyweightPulse::leadIndicator, so the number and the arrow live in one place); this
+// only lays the two strings out as one aligned line with a label, padding the left side to a
+// fixed column so the right does not shift when the left grows or shrinks.
+[[nodiscard]] QString consoleConstituentLead(const QString &leftIndicator,
+                                             const QString &rightIndicator,
+                                             qsizetype leftWidth = 40);
+
 // The open book, one STABLE row per position keyed by id, so a trade does not jump rows
 // between refreshes (the user asked for a static screen; a table that reshuffles is the
 // opposite). Marked P/L and its carry cost so far are shown, because a position that looks

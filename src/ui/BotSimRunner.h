@@ -55,6 +55,11 @@ public:
     // bot keeps marking and reporting its existing positions (the books stay
     // honest) but opens nothing new.
     void setArmed(bool armed);
+    // One crowd-evidence line per instrument (REQ-F-046): appended to the model's prompt as
+    // EVIDENCE beside the technical lines — it gates, sizes and stops NOTHING (the
+    // deterministic risk rules never read it), and an empty line clears the entry so absent
+    // stays absent. Optional: the console front end never calls it and behaves identically.
+    void setCrowdEvidence(const QString &instrument, const QString &line);
     [[nodiscard]] bool armed() const { return m_armed; }
 
     // How the AI proposal is used (REQ-F-030). Changing it is logged: it changes
@@ -154,6 +159,7 @@ private:
     void requestProposal();
     // The open book as the model is shown it, appended to the evidence prompt.
     [[nodiscard]] QString holdEvidence() const;
+    [[nodiscard]] QString crowdEvidenceBlock() const;
     // One decision row as the domain's candidate: quotes, leverage ladder, market
     // state, fee table and whether the model backed it.
     [[nodiscard]] trading::CandidateInput candidateFor(const trading::DecisionRow &row,
@@ -220,7 +226,8 @@ private:
         double ask = 0.0;
         double spreadPct = 0.0;
     };
-    [[nodiscard]] Sides sidesFor(const QString &symbol, qint64 instrumentId) const;
+    [[nodiscard]] Sides sidesFor(const QString &symbol, qint64 instrumentId,
+                                 const QList<double> &closes) const;
     void considerEntries(const QList<trading::DecisionRow> &rows, const QList<ScreenerRow> &scan);
     // One candidate, all the way from the AI gate to an opened simulated trade;
     // true = a trade was opened, and `skipCode` receives the countable reason when
@@ -286,6 +293,7 @@ private:
     trading::BotNetMode m_netMode = trading::BotNetMode::Off;
     qint64 m_experienceCount = 0;           // training examples written this session
     QString m_evidence;                     // prompt of the scan being decided
+    QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QList<trading::DecisionRow> m_pendingRows;
     QList<ScreenerRow> m_pendingScan;
     QDateTime m_askedAt;                    // when the in-flight request went out

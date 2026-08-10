@@ -538,6 +538,96 @@ private slots:
             QVERIFY(availability.last().at(0).toBool());
         }
     }
+
+    //! @tstid TS-OLLAMA-009 @design DES-SVC-OLLAMA
+    // @relation(REQ-F-045, scope=function)
+    void TS_OLLAMA_009_theExplanationIsWordsDefensivelyParsedAndEveryFailureIsNamed()
+    {
+        // One request round trip for the explanation signal (text, error).
+        struct Explained {
+            QString text;
+            QString error;
+        };
+        const auto explain = [](OllamaAdvisor &advisor, const QString &evidence) {
+            QSignalSpy ready(&advisor, &OllamaAdvisor::explanationReady);
+            advisor.requestExplanation(evidence);
+            Explained out;
+            if (ready.isEmpty() && !ready.wait(kWaitMs)) {
+                out.error = QStringLiteral("no signal");
+                return out;
+            }
+            out.text = ready.at(0).at(0).toString();
+            out.error = ready.at(0).at(1).toString();
+            return out;
+        };
+
+        // The clean shape: the words come back, and the wire carries the caller's evidence
+        // verbatim, the JSON switches, and the no-prices/no-sizing instruction.
+        {
+            MockHttpServer server(generateMock(generateBody(QStringLiteral(
+                R"({"explanation":"volatility is low and the crowd leans long"})"))));
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            OllamaAdvisor advisor(QStringLiteral("http://localhost:1"),
+                                  QStringLiteral("qwen2.5:1.5b"));
+            advisor.setEndpointBaseForTesting(server.baseUrl());
+            const Explained a = explain(advisor, QStringLiteral("EVIDENCE-MARKER"));
+            QVERIFY2(a.error.isEmpty(), qPrintable(a.error));
+            QCOMPARE(a.text, QStringLiteral("volatility is low and the crowd leans long"));
+            const QJsonObject sent =
+                QJsonDocument::fromJson(server.lastBodyFor(QStringLiteral("/api/generate")))
+                    .object();
+            QCOMPARE(sent.value(QStringLiteral("prompt")).toString(),
+                     QStringLiteral("EVIDENCE-MARKER"));
+            QCOMPARE(sent.value(QStringLiteral("format")).toString(), QStringLiteral("json"));
+            QVERIFY(sent.value(QStringLiteral("system")).toString()
+                        .contains(QStringLiteral("prices")));
+        }
+        // A small model's key of the day still reads; bare PROSE is honest fallback — unlike
+        // a proposal, a mis-parse here cannot cause an action, the text is only displayed.
+        {
+            MockHttpServer server(generateMock(generateBody(
+                QStringLiteral(R"({"summary":"quiet session so far"})"))));
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            OllamaAdvisor advisor(QStringLiteral("http://localhost:1"), QStringLiteral("m"));
+            advisor.setEndpointBaseForTesting(server.baseUrl());
+            QCOMPARE(explain(advisor, QStringLiteral("e")).text,
+                     QStringLiteral("quiet session so far"));
+        }
+        {
+            MockHttpServer server(generateMock(generateBody(
+                QStringLiteral("markets are calm, nothing stands out"))));
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            OllamaAdvisor advisor(QStringLiteral("http://localhost:1"), QStringLiteral("m"));
+            advisor.setEndpointBaseForTesting(server.baseUrl());
+            QCOMPARE(explain(advisor, QStringLiteral("e")).text,
+                     QStringLiteral("markets are calm, nothing stands out"));
+        }
+        // Every failure is NAMED, never a blank that reads as "nothing to say": no model
+        // configured, a transport failure, and an empty answer.
+        {
+            OllamaAdvisor unconfigured(QStringLiteral("http://localhost:1"), QString());
+            const Explained a = explain(unconfigured, QStringLiteral("e"));
+            QVERIFY(a.text.isEmpty());
+            QVERIFY(a.error.contains(QStringLiteral("configured")));
+        }
+        {
+            MockHttpServer server(generateMock(QByteArrayLiteral("{}"), 500));
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            OllamaAdvisor advisor(QStringLiteral("http://localhost:1"), QStringLiteral("m"));
+            advisor.setEndpointBaseForTesting(server.baseUrl());
+            QVERIFY(explain(advisor, QStringLiteral("e"))
+                        .error.contains(QStringLiteral("failed")));
+        }
+        {
+            MockHttpServer server(generateMock(generateBody(QString())));
+            QVERIFY(server.listen(QHostAddress::LocalHost));
+            OllamaAdvisor advisor(QStringLiteral("http://localhost:1"), QStringLiteral("m"));
+            advisor.setEndpointBaseForTesting(server.baseUrl());
+            const Explained a = explain(advisor, QStringLiteral("e"));
+            QVERIFY(a.text.isEmpty());
+            QVERIFY(!a.error.isEmpty());
+        }
+    }
 };
 
 QTEST_MAIN(TestOllamaAdvisor)

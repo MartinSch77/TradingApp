@@ -156,6 +156,10 @@ public:
     // emit portfolioUpdated. Useful after trading elsewhere (eToro's own UI), and
     // the entry point the open-trades regression test drives.
     void refreshPortfolio();
+    // Re-run the market-open inference now (the poll loop does this sparingly on its own
+    // tick; tests and a user-facing "re-check" need it on demand). Simulation has no
+    // session boundaries, so it is a no-op there.
+    void refreshTradeability();
 
     // Scan every tradable instrument for its max leverage + a recent close series,
     // so the UI can rank them by leverage and compute a buy/sell signal for each.

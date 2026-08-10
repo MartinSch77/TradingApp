@@ -148,18 +148,27 @@ struct HeavyweightRow {
 };
 
 // What the top-ten constituents of one index are doing, together: the rows, how many
-// were readable, how many are up, and the AVERAGE move of the readable ones.
+// were readable, how many are up, the AVERAGE move of the readable ones, and the
+// CAP-WEIGHTED move — each name's session change scaled by its (approximate) share of
+// the index, renormalised over the readable names.
 //
-// Why average rather than index-weighted: this app does not fetch index weights, and
-// a weighted number computed from invented weights would look more authoritative than
-// it is. The average of the ten biggest names is an honest stand-in and is labelled
-// as one — see the note on breadth above.
+// Two numbers, deliberately: the average treats the ten names equally; the cap-weighted
+// number answers the question the user actually asked — "in which direction are the top
+// constituents pulling the index, by their portion in it?" — since the index itself is
+// cap-weighted and NVDA moving 2% is not AMZN moving 2%. The weights are a STATIC snapshot
+// (see heavyweightWeight in the .cpp): this app does not fetch live index weightings, so
+// the cap-weighted lead is an approximate stand-in, the honest counterpart of the breadth
+// caveat above — not a claim to the index's exact construction. Both numbers share one
+// sign convention: positive == the top names are net up.
 struct HeavyweightPulse {
     QString indexName;              // "Nasdaq-100" / "S&P 500"
     QList<HeavyweightRow> rows;
     qint32 measured = 0;
     qint32 up = 0;
     double averageChangePct = 0.0;
+    // The top-ten move weighted by each name's share of the index (the "constituent lead").
+    // Its SIGN is the summarised direction the user asked to see: > 0 up together, < 0 down.
+    double capWeightedChangePct = 0.0;
     // The strongest and the weakest readable name — one name carrying an index is a
     // different situation from ten moving together, and that is the whole point of
     // watching the constituents rather than only the index.
@@ -171,6 +180,11 @@ struct HeavyweightPulse {
     [[nodiscard]] bool isEmpty() const { return measured == 0; }
     // A one-line summary in the words the window shows.
     [[nodiscard]] QString headline() const;
+    // The compact "summarised indicator" the user asked for: the cap-weighted direction of
+    // the top-ten as an arrow + signed percent + breadth (e.g. "Nasdaq-100 top-10 ▲ +0.42%
+    // (8/10 up)"). Direction is the arrow AND the sign, never colour — it reads the same in
+    // a monochrome capture and for a colour-blind trader, like the rest of the app's meters.
+    [[nodiscard]] QString leadIndicator() const;
 };
 
 // The pulse of the index `symbol` belongs to, from the reference series already

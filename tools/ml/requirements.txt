@@ -1,0 +1,11 @@
+# The OPTIONAL offline training environment (REQ-F-041) — provisioned by `./setup.sh ml`
+# (Windows: `.\setup.ps1 -Mode ml`) into its own venv, NEVER a runtime dependency of the app.
+# tools/ml/crowd_dataset.py is stdlib-only on purpose; only train_crowd_model.py needs these,
+# and it exits 3 ("skipped") with a pointer here when they are absent.
+numpy>=1.26
+scikit-learn>=1.4
+xgboost>=2.0
+onnx>=1.16
+onnxruntime>=1.18
+skl2onnx>=1.17
+onnxmltools>=1.12

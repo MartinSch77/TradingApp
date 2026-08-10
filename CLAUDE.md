@@ -172,17 +172,34 @@ publish_release; refuses to publish on a red pipeline).
   that are about the risk budget, the margin cap or the cash rule set
   `maxInvestedEur = 0` to isolate what they measure (TS-PAPER-008/012/014);
   TS-PAPER-031 owns the ceiling itself.
-- CRYPTO (BTC/ETH/SOL/XRP) is tradable, with eToro's real constraints modelled. The local model
-  answers with exchange pairs (BTCUSDT, ETH-USD, SOLUSDT); `matchProposalSymbol` strips the
-  fiat/quote suffix so they map to the bare eToro tickers — without it every crypto pick was
-  "not tradable here". They are their OWN correlation bucket (`crypto`), capped at x2
-  (`groupLeverageCap`, eToro's retail crypto ceiling; catalog ladder {1,2}), cost a ~1% round
-  trip modelled as a spread FLOOR (`minSpreadPctFor`, applied through the runner's ONE
-  `effectiveSpreadPct` choke-point), and are EXEMPT from the weekday-only weekend stop
-  (`tradesOnWeekend`, crypto is 24/7) while indices stay stopped. Proposals are resolved
-  against the whole catalog (`tradableSymbols()`), not just the scan's rows, so "not tradable
-  here" means "not in the catalog" (e.g. XRP), never "not scored this cycle".
-- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default SPX500 + NSDQ100 + BTC/ETH/SOL/XRP):
+- CRYPTO is tradable — a CATALOG-DRIVEN set (BTC/ETH/SOL/XRP + ~24 more, `cryptoInstruments()` in
+  InstrumentCatalog; grow it with one row per coin). The "map completely" pattern: eToro names crypto
+  by the BARE ticker, the model answers with the pair (`^.*USDT$` etc.), `matchProposalSymbol` strips
+  ONE quote suffix, and the bare ticker matches the catalog. Focus AUTO-DERIVES every catalog crypto
+  (`defaultFocusSymbols` = SPX500 + NSDQ100 + all group=="Crypto"), so a coin added to the catalog is
+  mappable AND traded with no second edit. Pricing still needs a Yahoo `<ticker>-USD` feed, so a coin
+  with no such feed resolves by name but shows "no prices" and is safely refused. A trailing
+  quote suffix is stripped exact-match FIRST (so a real instrument ending in USD — EURUSD — is
+  never chopped to EUR; the mapping audit found and fixed that). Every crypto
+  economic keys off the catalog `group == "Crypto"`, so a new coin inherits all of them from its
+  catalog entry alone: their OWN correlation bucket (`crypto`), capped at x2 (`groupLeverageCap`,
+  eToro's retail crypto ceiling; catalog ladder {1,2}), a ~1% round trip modelled as a spread
+  FLOOR (`minSpreadPctFor`, applied through the runner's ONE `effectiveSpreadPct` choke-point),
+  and EXEMPTION from the weekday-only weekend stop (`tradesOnWeekend`, crypto is 24/7) while
+  indices stay stopped. Proposals are resolved against the whole catalog (`tradableSymbols()`),
+  not just the scan's rows, so "not tradable here" means "not in the catalog", never "not scored
+  this cycle". (TRX and BNB use a BINANCE: TradingView reference because Coinbase has no spot
+  pair for them; eToro trades both — BNB verified live at ~602 USD.)
+- Crypto is PRICED off its 1-minute candle close, not an eToro rate row. In this build crypto
+  never resolves a non-zero eToro `instrumentId`, so the id/rate quote path leaves `lastRateFor`
+  at 0 and every crypto candidate was refused `no-live-quote` even with a composite direction.
+  `BotSimRunner::sidesFor` (entry) and `markFor` (marking/exits) therefore FALL BACK to the
+  scan's candle close (the row's own closes for entry, `m_symbolSeries` for the mark — the Yahoo
+  `<TICKER>-USD` sweep, which quotes crypto 24/7), widened by the effective spread (already the
+  1% floor). `candidateFor` also treats a 24/7 instrument as `marketOpen` (`tradesOnWeekend`),
+  since the eToro tradeable set does not cover it — but `sides.ok` still gates, so a crypto with
+  no candle is still honestly refused. A candle-derived mark is NOT flagged live (fromCandle).
+- The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default `defaultFocusSymbols()` = SPX500 + NSDQ100 + every catalog crypto):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure
   modes that dominated it — the model spending its one answer on a peripheral name
@@ -222,6 +239,15 @@ publish_release; refuses to publish on a red pipeline).
   labelled a STAND-IN for breadth — real breadth needs per-constituent data this app
   does not fetch. Order flow (volume delta, CVD, bid/ask imbalance) is NOT available at
   all: it needs CME level-2, and eToro gives one bid/ask with no sizes.
+  The `HeavyweightPulse` carries TWO summary numbers of the same constituents: the
+  equal-weight `averageChangePct` and a `capWeightedChangePct` (each name scaled by
+  `heavyweightWeight`, an APPROXIMATE STATIC weight table, renormalised over the readable
+  names). `leadIndicator()` is the summarised up/down indicator the console shows
+  (`consoleConstituentLead`) — its sign is the direction, the arrow + sign carry it, never
+  colour. The point is that the cap-weighted lead can disagree with the count (the index
+  lagging its heaviest names), TS-CONF-007. The weights are a stand-in on the SAME footing
+  as the breadth caveat; this DISPLAYS the lead and does NOT rewire the decision math onto
+  it (LeadSignal still reads `averageChangePct`) — that would be a load-bearing change.
   THE BOOKS ARE KEYED DIFFERENTLY AND A READ MUST NEVER SEARCH THE WRONG ONE — the
   references by Yahoo TICKER, the futures proxies by APP SYMBOL. `ReadInputs` +
   `readInputsFor` exist to make that unrepresentable: the futures-lead read once looked

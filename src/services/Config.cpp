@@ -35,6 +35,12 @@ void applyJson(Config &cfg, const QJsonObject &obj)
     applyString(obj, QStringLiteral("anthropicApiKey"), cfg.anthropicApiKey);
     applyString(obj, QStringLiteral("ollamaHost"), cfg.ollamaHost);
     applyString(obj, QStringLiteral("ollamaModel"), cfg.ollamaModel);
+    applyString(obj, QStringLiteral("igApiKey"), cfg.igApiKey);
+    applyString(obj, QStringLiteral("igIdentifier"), cfg.igIdentifier);
+    applyString(obj, QStringLiteral("igPassword"), cfg.igPassword);
+    if (obj.contains(QStringLiteral("igDemo"))) {
+        cfg.igDemo = obj.value(QStringLiteral("igDemo")).toBool(cfg.igDemo);
+    }
     if (obj.contains(QStringLiteral("defaultLeverage"))) {
         cfg.defaultLeverage = obj.value(QStringLiteral("defaultLeverage")).toDouble(cfg.defaultLeverage);
     }
@@ -126,6 +132,14 @@ void applyEnv(Config &cfg)
     take("ANTHROPIC_API_KEY", cfg.anthropicApiKey);
     take("OLLAMA_HOST", cfg.ollamaHost);
     take("OLLAMA_MODEL", cfg.ollamaModel);
+    take("TRADINGAPP_IG_API_KEY", cfg.igApiKey);
+    take("TRADINGAPP_IG_IDENTIFIER", cfg.igIdentifier);
+    take("TRADINGAPP_IG_PASSWORD", cfg.igPassword);
+    if (env.contains(QStringLiteral("TRADINGAPP_IG_DEMO"))) {
+        const QString raw = env.value(QStringLiteral("TRADINGAPP_IG_DEMO")).trimmed();
+        cfg.igDemo = !raw.isEmpty() && (raw != QStringLiteral("0"))
+                     && (raw.compare(QStringLiteral("false"), Qt::CaseInsensitive) != 0);
+    }
 
     if (env.contains(QStringLiteral("ETORO_POLL_MS"))) {
         bool ok = false;

@@ -506,6 +506,13 @@ private slots:
     // user gave about eToro crypto, each pinned so a change to one is visible.
     void TS_PAPER_036_cryptoIsItsOwnBucketCappedAndCosted()
     {
+        // Crypto is catalogued and bucketed — and marked as crypto by the ONE helper the
+        // manual-trading surfaces filter on: the selector and screener drop exactly these,
+        // never an unknown symbol (an unrecognised name must not vanish for the wrong reason).
+        QVERIFY(trading::isCryptoSymbol(QStringLiteral("BTC")));
+        QVERIFY(!trading::isCryptoSymbol(QStringLiteral("SPX500")));
+        QVERIFY(!trading::isCryptoSymbol(QStringLiteral("NO-SUCH-SYMBOL")));
+
         // One bucket, so three crypto positions count as close to one bet in the risk budget.
         QCOMPARE(correlationGroup(QStringLiteral("BTC")), QStringLiteral("crypto"));
         QCOMPARE(correlationGroup(QStringLiteral("ETH")), QStringLiteral("crypto"));

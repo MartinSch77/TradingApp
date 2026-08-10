@@ -255,6 +255,12 @@ QString marketHoursText(const QString &symbol)
     return kHours.value(region, region + QStringLiteral(" exchange · Mon–Fri"));
 }
 
+bool isCryptoSymbol(const QString &symbol)
+{
+    const InstrumentSpec *spec = instrumentSpec(symbol);
+    return (spec != nullptr) && (spec->group == QLatin1String("Crypto"));
+}
+
 const InstrumentSpec *instrumentSpec(const QString &symbol)
 {
     // Index built once: the catalog is immutable and lookups run per poll tick.

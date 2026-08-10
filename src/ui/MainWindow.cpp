@@ -1192,6 +1192,11 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     auto *instModel = new QStandardItemModel(m_instrumentBox);
     QString currentGroup;
     for (const trading::InstrumentSpec &spec : trading::instrumentCatalog()) {
+        // Crypto is the bot's experiment class, not a manual-trading offer (REQ-F-031):
+        // it never appears in the selector, so no crypto order can be armed by hand.
+        if (spec.group == QLatin1String("Crypto")) {
+            continue;
+        }
         if (spec.group != currentGroup) {
             currentGroup = spec.group;
             auto *h = new QStandardItem(currentGroup);
@@ -4585,6 +4590,11 @@ void MainWindow::startScreenerScan()
 
 void MainWindow::onScreenerRow(const ScreenerRow &row)
 {
+    // The screener is a manual-entry helper, and crypto is not offered for manual trading
+    // (REQ-F-031) — the scan itself still covers it, because the bot reads the same scan.
+    if (trading::isCryptoSymbol(row.symbol)) {
+        return;
+    }
     // Replace any existing row for the same symbol (a rescan), else append; then
     // re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
     const auto known = std::find_if(m_screenerRows.begin(), m_screenerRows.end(),

@@ -42,6 +42,13 @@ struct InstrumentSpec {
 // The catalogued symbols, selector order — what setTradableSymbols() consumes.
 [[nodiscard]] QStringList tradableSymbols();
 
+// Whether a symbol is catalogued crypto — the ONE rule the manual-trading surfaces filter
+// on (REQ-F-031): crypto is a bot-experiment asset class here (priced off candles, no real
+// eToro rate row), so the instrument selector and the screener do not OFFER it while the
+// bot, its evidence views and the risk buckets keep seeing it. Unknown symbols are not
+// crypto — an unrecognised name must not vanish from a list for the wrong reason.
+[[nodiscard]] bool isCryptoSymbol(const QString &symbol);
+
 // The spec for one symbol, or nullptr for an unknown one. Consumers keep their
 // own documented fallbacks (calendar -> "US", simulation -> index defaults).
 [[nodiscard]] const InstrumentSpec *instrumentSpec(const QString &symbol);

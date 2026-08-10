@@ -465,14 +465,19 @@ int main(int argc, char *argv[])
     const Config cfg = Config::load();
     EtoroClient client(cfg);
     MarketFeeds feeds;
-    // Scan ONLY what this verdict needs: the instrument itself plus the two futures proxies
-    // the index reads are built from (drop those and the futures-lead/momentum reads go
-    // silently UNKNOWN — the trap TS-CONF-006 pins). Everything else would burn the shared
-    // rate pool resolving and scanning 50 instruments for one answer.
-    QStringList scanSet{args.symbol, QStringLiteral("SP.24-7"), QStringLiteral("NSDQ100.24-7")};
-    scanSet.removeDuplicates();
-    client.setTradableSymbols(scanSet);
-    feeds.setTradableSymbols(scanSet);
+    // The CLIENT scans ONLY the instrument itself — that is what produces the [row] the user
+    // watches and the candle series the plan needs. The two index futures proxies are NOT
+    // scanned: the futures-lead/momentum reads take their series from the intraday FEED
+    // (Yahoo, client-independent), so the FEEDS set keeps them for an index while the scan
+    // stays about the one instrument. Drop them from the feeds too and those reads go
+    // silently UNKNOWN — the trap TS-CONF-006 pins.
+    client.setTradableSymbols({args.symbol});
+    QStringList feedSet{args.symbol};
+    if ((args.symbol == QLatin1String("SPX500")) || (args.symbol == QLatin1String("NSDQ100"))) {
+        feedSet << QStringLiteral("SP.24-7") << QStringLiteral("NSDQ100.24-7");
+    }
+    feedSet.removeDuplicates();
+    feeds.setTradableSymbols(feedSet);
     auto *books = new ScanBooks();
     trading::console::wireScanBooks(client, feeds, books, &app);
     if (args.verbose) {

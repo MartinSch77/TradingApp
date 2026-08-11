@@ -506,6 +506,13 @@ private slots:
     // user gave about eToro crypto, each pinned so a change to one is visible.
     void TS_PAPER_036_cryptoIsItsOwnBucketCappedAndCosted()
     {
+        // Crypto is catalogued and bucketed — and marked as crypto by the ONE helper the
+        // manual-trading surfaces filter on: the selector and screener drop exactly these,
+        // never an unknown symbol (an unrecognised name must not vanish for the wrong reason).
+        QVERIFY(trading::isCryptoSymbol(QStringLiteral("BTC")));
+        QVERIFY(!trading::isCryptoSymbol(QStringLiteral("SPX500")));
+        QVERIFY(!trading::isCryptoSymbol(QStringLiteral("NO-SUCH-SYMBOL")));
+
         // One bucket, so three crypto positions count as close to one bet in the risk budget.
         QCOMPARE(correlationGroup(QStringLiteral("BTC")), QStringLiteral("crypto"));
         QCOMPARE(correlationGroup(QStringLiteral("ETH")), QStringLiteral("crypto"));
@@ -1157,6 +1164,60 @@ private slots:
         QCOMPARE(paperLiveReadiness(flat, gate).blockers.size(), 1);
     }
 
+    //! @tstid TS-PAPER-038 @design DES-DOM-PAPER
+    // @relation(REQ-F-034, scope=function)
+    void TS_PAPER_038_theModelsExitMustSaveMoreThanItCosts()
+    {
+        // Measured 2026-08-09: eight crypto closes, gross +149.33 against 478.82 of spread —
+        // every "AI says exit" at the 30-minute floor paid a ~60 EUR round trip to abandon a
+        // gross-POSITIVE position. The fade rule already refuses to pay the spread to save
+        // nothing; this pins the same economics on the model's change of heart.
+        const BotConfig cfg;
+        QVERIFY(cfg.aiExitMinLossOverCost > 0.0);
+
+        PaperTrade trade = tradeAt(5000.0, true);
+        trade.symbol = QStringLiteral("SPX500");
+        trade.stake = 3000.0;
+        trade.leverage = 2;
+        trade.feesPaid = 0.0;
+        trade.openCost = 30.0;   // the toll already sunk at entry
+        const QDateTime old = trade.openTime.addSecs(qint64{60} * (cfg.minHoldMinutes + 60));
+
+        AiProposal reversal;
+        reversal.ok = true;
+        reversal.resolvedSymbol = QStringLiteral("SPX500");
+        reversal.dir = -1;
+        reversal.confidence = 90.0;
+
+        // Gross-positive but under its own costs — the measured pathology. With a 1% spread
+        // the exit toll is 30 and the guard wants 45 of loss; net −24 is not worth paying it.
+        trade.markRate = 5005.0;
+        QVERIFY(trade.netPnl() < 0.0);
+        QVERIFY(-trade.netPnl() < 45.0);
+        const HoldVerdict uneconomic =
+            paperAiHold(trade, {reversal}, {BotAiMode::Lead, old, 1.0}, cfg);
+        QCOMPARE(uneconomic.opinion, HoldOpinion::Close);   // the opinion is still SHOWN
+        QVERIFY(!uneconomic.close);   // …but the toll is refused
+        QCOMPARE(uneconomic.code, QStringLiteral("ai-exit-uneconomic"));
+        QVERIFY(uneconomic.why.contains(QStringLiteral("toll")));
+
+        // A REAL loss clears the guard: saving it is worth the spread.
+        trade.markRate = 4900.0;
+        QVERIFY(-trade.netPnl() > 45.0);
+        QVERIFY(paperAiHold(trade, {reversal}, {BotAiMode::Lead, old, 1.0}, cfg).close);
+
+        // An unknown spread keeps the guard SILENT (the model is obeyed — the same rule the
+        // carry exits follow for unknown fees), and 0 switches it off deliberately.
+        trade.markRate = 5005.0;
+        QVERIFY(paperAiHold(trade, {reversal}, {BotAiMode::Lead, old, 0.0}, cfg).close);
+        BotConfig off = cfg;
+        off.aiExitMinLossOverCost = 0.0;
+        QVERIFY(paperAiHold(trade, {reversal}, {BotAiMode::Lead, old, 1.0}, off).close);
+
+        // Stops and targets are PRICES, not opinions: the guard never touches them —
+        // pinned by the exit path tests, restated here as the boundary of this rule.
+    }
+
     //! @tstid TS-PAPER-025 @design DES-DOM-WHEN
     // @relation(REQ-F-034, scope=function)
     void TS_PAPER_025_churnIsWhatLosesTheMoneyAndTheRulesSayNo()
@@ -1183,16 +1244,16 @@ private slots:
         // Five minutes in — exactly the case that bled the book — the model's change
         // of mind is SHOWN but not acted on.
         const HoldVerdict tooSoon =
-            paperAiHold(fresh, {reversal}, BotAiMode::Lead, opened.addSecs(qint64{60} * 5), cfg);
+            paperAiHold(fresh, {reversal}, {BotAiMode::Lead, opened.addSecs(qint64{60} * 5)}, cfg);
         QCOMPARE(tooSoon.opinion, HoldOpinion::Close);  // the flag still says close
         QVERIFY(!tooSoon.close);                        // …but nothing closes
         QCOMPARE(tooSoon.code, QStringLiteral("ai-too-soon"));
         QVERIFY(tooSoon.why.contains(QStringLiteral("held only")));
 
         // After the minimum holding time, the same answer does close it.
-        const HoldVerdict allowed =
-            paperAiHold(fresh, {reversal}, BotAiMode::Lead,
-                        opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 1)), cfg);
+        const HoldVerdict allowed = paperAiHold(
+            fresh, {reversal},
+            {BotAiMode::Lead, opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 1))}, cfg);
         QVERIFY(allowed.close);
         QCOMPARE(allowed.code, QStringLiteral("ai-reversed"));
 
@@ -1201,9 +1262,9 @@ private slots:
         // worth them.
         AiProposal unsure = reversal;
         unsure.confidence = cfg.aiExitMinConfidence - 10.0;
-        const HoldVerdict hesitant =
-            paperAiHold(fresh, {unsure}, BotAiMode::Lead,
-                        opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 60)), cfg);
+        const HoldVerdict hesitant = paperAiHold(
+            fresh, {unsure},
+            {BotAiMode::Lead, opened.addSecs(qint64{60} * (cfg.minHoldMinutes + 60))}, cfg);
         QCOMPARE(hesitant.opinion, HoldOpinion::Close);
         QVERIFY(!hesitant.close);
         QCOMPARE(hesitant.code, QStringLiteral("ai-too-soon"));
@@ -1897,43 +1958,45 @@ private slots:
         // Silence — the common case with a small model — always keeps the position,
         // and says NO OPINION rather than recommending anything: the window shows
         // that state, so it must be distinguishable from an actual "hold".
-        const HoldVerdict quiet = paperAiHold(longTrade, {}, BotAiMode::Confirm, later, cfg);
+        const HoldVerdict quiet = paperAiHold(longTrade, {}, {BotAiMode::Confirm, later}, cfg);
         QVERIFY(!quiet.close);
         QCOMPARE(quiet.opinion, HoldOpinion::NoOpinion);
         QCOMPARE(holdOpinionWord(quiet.opinion), QStringLiteral("—"));
-        QCOMPARE(paperAiHold(longTrade, {elsewhere}, BotAiMode::Confirm, later, cfg).opinion,
+        QCOMPARE(paperAiHold(longTrade, {elsewhere}, {BotAiMode::Confirm, later}, cfg).opinion,
                  HoldOpinion::NoOpinion);
         // An explicit HOLD is "no action" — but it IS an opinion about this trade.
-        const HoldVerdict held = paperAiHold(longTrade, {hold}, BotAiMode::Confirm, later, cfg);
+        const HoldVerdict held = paperAiHold(longTrade, {hold}, {BotAiMode::Confirm, later}, cfg);
         QVERIFY(!held.close);
         QCOMPARE(held.opinion, HoldOpinion::Hold);
         QCOMPARE(held.code, QStringLiteral("ai-keep"));
         QCOMPARE(holdOpinionWord(held.opinion), QStringLiteral("hold"));
         // Agreement on the side keeps it too, and says so.
-        const HoldVerdict agreed = paperAiHold(longTrade, {agree}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict agreed = paperAiHold(longTrade, {agree}, {BotAiMode::Lead, later}, cfg);
         QVERIFY(!agreed.close);
         QCOMPARE(agreed.opinion, HoldOpinion::Hold);
 
         // The other side, or an explicit CLOSE, closes it — with a countable code.
-        const HoldVerdict reversed = paperAiHold(longTrade, {reverse}, BotAiMode::Confirm, later, cfg);
+        const HoldVerdict reversed =
+            paperAiHold(longTrade, {reverse}, {BotAiMode::Confirm, later}, cfg);
         QVERIFY(reversed.close);
         QCOMPARE(reversed.opinion, HoldOpinion::Close);
         QCOMPARE(holdOpinionWord(reversed.opinion), QStringLiteral("close"));
         QCOMPARE(reversed.code, QStringLiteral("ai-reversed"));
         QVERIFY(reversed.why.contains(QStringLiteral("momentum has turned")));
-        const HoldVerdict asked = paperAiHold(longTrade, {closeIt}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict asked = paperAiHold(longTrade, {closeIt}, {BotAiMode::Lead, later}, cfg);
         QVERIFY(asked.close);
         QCOMPARE(asked.code, QStringLiteral("ai-close"));
 
         // A SHORT is the mirror image: a BUY pick is the contrary opinion.
         PaperTrade shortTrade = tradeAt(5000.0, false);
         shortTrade.symbol = QStringLiteral("SPX500");
-        QVERIFY(paperAiHold(shortTrade, {agree}, BotAiMode::Confirm, later, cfg).close);
-        QVERIFY(!paperAiHold(shortTrade, {reverse}, BotAiMode::Confirm, later, cfg).close);
+        QVERIFY(paperAiHold(shortTrade, {agree}, {BotAiMode::Confirm, later}, cfg).close);
+        QVERIFY(!paperAiHold(shortTrade, {reverse}, {BotAiMode::Confirm, later}, cfg).close);
 
         // With the model switched off nobody was asked, so nothing it "said" counts —
         // and the flag stays empty rather than claiming a recommendation.
-        const HoldVerdict silent = paperAiHold(longTrade, {reverse, closeIt}, BotAiMode::Off, later, cfg);
+        const HoldVerdict silent =
+            paperAiHold(longTrade, {reverse, closeIt}, {BotAiMode::Off, later}, cfg);
         QVERIFY(!silent.close);
         QCOMPARE(silent.opinion, HoldOpinion::NoOpinion);
 
@@ -2426,7 +2489,7 @@ private slots:
         trade.openTime = opened;
 
         // OFF: nobody was asked, so there is no opinion — not a silent keep.
-        QCOMPARE(paperAiHold(trade, {}, BotAiMode::Off, later, cfg).opinion,
+        QCOMPARE(paperAiHold(trade, {}, {BotAiMode::Off, later}, cfg).opinion,
                  HoldOpinion::NoOpinion);
         // Asked, but the model named other instruments: still NO opinion. Silence
         // must never close a position.
@@ -2435,7 +2498,7 @@ private slots:
         other.resolvedSymbol = QStringLiteral("GOLD");
         other.dir = -1;
         other.confidence = 90.0;
-        const HoldVerdict silent = paperAiHold(trade, {other}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict silent = paperAiHold(trade, {other}, {BotAiMode::Lead, later}, cfg);
         QCOMPARE(silent.opinion, HoldOpinion::NoOpinion);
         QVERIFY(!silent.close);
         // A proposal that failed to parse is not an opinion either.
@@ -2443,7 +2506,7 @@ private slots:
         broken.ok = false;
         broken.resolvedSymbol = QStringLiteral("SPX500");
         broken.exitNow = true;
-        QCOMPARE(paperAiHold(trade, {broken}, BotAiMode::Lead, later, cfg).opinion,
+        QCOMPARE(paperAiHold(trade, {broken}, {BotAiMode::Lead, later}, cfg).opinion,
                  HoldOpinion::NoOpinion);
 
         // Named, same side: a KEEP with the model behind it.
@@ -2452,54 +2515,54 @@ private slots:
         keep.resolvedSymbol = QStringLiteral("SPX500");
         keep.dir = 1;
         keep.confidence = 80.0;
-        const HoldVerdict kept = paperAiHold(trade, {keep}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict kept = paperAiHold(trade, {keep}, {BotAiMode::Lead, later}, cfg);
         QCOMPARE(kept.opinion, HoldOpinion::Hold);
         QCOMPARE(kept.code, QStringLiteral("ai-keep"));
         QVERIFY(!kept.close);
         // An explicit HOLD (no direction) is also a keep, and says so in words.
         AiProposal flat = keep;
         flat.dir = 0;
-        QCOMPARE(paperAiHold(trade, {flat}, BotAiMode::Lead, later, cfg).opinion,
+        QCOMPARE(paperAiHold(trade, {flat}, {BotAiMode::Lead, later}, cfg).opinion,
                  HoldOpinion::Hold);
 
         // Contrary and convinced, held long enough: a close.
         AiProposal against = keep;
         against.dir = -1;
-        const HoldVerdict closes = paperAiHold(trade, {against}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict closes = paperAiHold(trade, {against}, {BotAiMode::Lead, later}, cfg);
         QCOMPARE(closes.opinion, HoldOpinion::Close);
         QVERIFY(closes.close);
         QCOMPARE(closes.code, QStringLiteral("ai-reversed"));
         // An explicit CLOSE reads the same way but names itself differently.
         AiProposal exit = keep;
         exit.exitNow = true;
-        QCOMPARE(paperAiHold(trade, {exit}, BotAiMode::Lead, later, cfg).code,
+        QCOMPARE(paperAiHold(trade, {exit}, {BotAiMode::Lead, later}, cfg).code,
                  QStringLiteral("ai-close"));
 
         // Too soon, or not convinced enough: the opinion is REPORTED but does not
         // close — hiding it would make the bot look broken.
         const QDateTime tooSoon = opened.addSecs(qint64{5} * 60);
-        const HoldVerdict early = paperAiHold(trade, {against}, BotAiMode::Lead, tooSoon, cfg);
+        const HoldVerdict early = paperAiHold(trade, {against}, {BotAiMode::Lead, tooSoon}, cfg);
         QCOMPARE(early.opinion, HoldOpinion::Close);
         QVERIFY(!early.close);
         QCOMPARE(early.code, QStringLiteral("ai-too-soon"));
         AiProposal unsure = against;
         unsure.confidence = 30.0;
-        const HoldVerdict weak = paperAiHold(trade, {unsure}, BotAiMode::Lead, later, cfg);
+        const HoldVerdict weak = paperAiHold(trade, {unsure}, {BotAiMode::Lead, later}, cfg);
         QCOMPARE(weak.opinion, HoldOpinion::Close);
         QVERIFY(!weak.close);
         // An unknown clock counts as old enough — the alternative is a position
         // nothing can ever close.
         PaperTrade timeless = trade;
         timeless.openTime = QDateTime();
-        QVERIFY(paperAiHold(timeless, {against}, BotAiMode::Lead, later, cfg).close);
-        QVERIFY(paperAiHold(trade, {against}, BotAiMode::Lead, QDateTime(), cfg).close);
+        QVERIFY(paperAiHold(timeless, {against}, {BotAiMode::Lead, later}, cfg).close);
+        QVERIFY(paperAiHold(trade, {against}, {BotAiMode::Lead, QDateTime()}, cfg).close);
 
         // A SHORT position mirrors all of it: a long call is what contradicts it.
         PaperTrade shortTrade = trade;
         shortTrade.isBuy = false;
-        QCOMPARE(paperAiHold(shortTrade, {keep}, BotAiMode::Lead, later, cfg).opinion,
+        QCOMPARE(paperAiHold(shortTrade, {keep}, {BotAiMode::Lead, later}, cfg).opinion,
                  HoldOpinion::Close);
-        QCOMPARE(paperAiHold(shortTrade, {against}, BotAiMode::Lead, later, cfg).opinion,
+        QCOMPARE(paperAiHold(shortTrade, {against}, {BotAiMode::Lead, later}, cfg).opinion,
                  HoldOpinion::Hold);
     }
     //! @tstid TS-PT-033 @design DES-DOM-PAPER

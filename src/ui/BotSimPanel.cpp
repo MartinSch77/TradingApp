@@ -326,7 +326,7 @@ void BotSimDialog::rebuildAccount()
         QStringLiteral("%1 · experience log: %2")
             .arg(trading::botNetSummary(m_runner->net(), m_runner->netMode(),
                                         trading::NetGateConfig{}),
-                 BotSimRunner::experiencePath()));
+                 m_runner->experiencePath()));
     // Which RULE is making or losing the money — the view that answers "why is the
     // record what it is" without anyone reading the JSON.
     QStringList byReason;
@@ -367,7 +367,7 @@ void BotSimDialog::rebuildAccount()
             .arg(botPlain(s.costsPaid), botMoney(s.bestTrade), botMoney(s.worstTrade)));
     m_storeLabel->setText(QStringLiteral("Simulated money only — no order ever reaches eToro. "
                                          "Books: %1")
-                              .arg(BotSimRunner::storePath()));
+                              .arg(m_runner->storePath()));
 }
 
 void BotSimDialog::rebuildOpenTable()

@@ -1123,6 +1123,94 @@ void EtoroClient::refreshTradeabilityReal()
     }, /*retriesLeft=*/1);  // ride out a transient 429 on the shared market-data pool
 }
 
+void EtoroClient::fetchAllPositions(std::function<void(QList<Position>)> cb)
+{
+    const QString path = QStringLiteral("/v1/trading/info%1/portfolio").arg(accountSegment());
+    QNetworkReply *reply = apiGet(path, QUrlQuery());
+    handleReply(reply, [cb = std::move(cb)](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                            const QByteArray & /*raw*/, const QString & /*net*/) {
+        QList<Position> out;
+        if (!ok) {
+            cb(out);
+            return;
+        }
+        const QJsonObject client =
+            pick(doc.object(), {QStringLiteral("clientPortfolio")}).toObject();
+        for (const auto &v : pick(client, {QStringLiteral("positions")}).toArray()) {
+            const QJsonObject o = v.toObject();
+            Position p;
+            p.instrumentId = static_cast<qint64>(
+                numFrom(pick(o, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
+            if (p.instrumentId <= 0) {
+                continue;
+            }
+            p.positionId = pick(o, {QStringLiteral("positionID"), QStringLiteral("positionId")})
+                               .toVariant().toString();
+            p.isBuy = pick(o, {QStringLiteral("isBuy"), QStringLiteral("buy")}).toBool(true);
+            p.amount = numFrom(pick(o, {QStringLiteral("amount"),
+                                        QStringLiteral("investedAmount")}));
+            p.openRate = numFrom(pick(o, {QStringLiteral("openRate"), QStringLiteral("openPrice")}));
+            p.leverage = numFrom(pick(o, {QStringLiteral("leverage")}));
+            out.append(p);
+        }
+        cb(out);
+    }, /*retriesLeft=*/2);
+}
+
+void EtoroClient::resolveInstrumentNames(const QList<qint64> &ids,
+                                         std::function<void(QHash<qint64, QString>)> cb)
+{
+    if (ids.isEmpty()) {
+        cb({});
+        return;
+    }
+    QStringList idStrings;
+    for (const qint64 id : ids) {
+        idStrings << QString::number(id);
+    }
+    QUrlQuery q;
+    q.addQueryItem(QStringLiteral("instrumentIds"), idStrings.join(QLatin1Char(',')));
+    QNetworkReply *reply = apiGet(QStringLiteral("/v1/market-data/instruments"), q);
+    handleReply(reply, [cb = std::move(cb)](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                            const QByteArray & /*raw*/, const QString & /*net*/) {
+        QHash<qint64, QString> names;
+        if (ok) {
+            const QJsonArray arr = doc.isArray()
+                                       ? doc.array()
+                                       : pick(doc.object(), {QStringLiteral("instrumentDisplayDatas"),
+                                                             QStringLiteral("instruments"),
+                                                             QStringLiteral("data")}).toArray();
+            for (const auto &v : arr) {
+                const QJsonObject o = v.toObject();
+                const qint64 id = static_cast<qint64>(numFrom(
+                    pick(o, {QStringLiteral("instrumentID"), QStringLiteral("instrumentId")})));
+                const QString name = pick(o, {QStringLiteral("internalSymbolFull"),
+                                              QStringLiteral("symbolFull"),
+                                              QStringLiteral("displayname"),
+                                              QStringLiteral("instrumentDisplayName")}).toString();
+                if ((id > 0) && !name.isEmpty()) {
+                    names.insert(id, name);
+                }
+            }
+        }
+        cb(names);
+    }, /*retriesLeft=*/1);
+}
+
+void EtoroClient::fetchCandlesForId(qint64 instrumentId, const QString &interval,
+                                    qint32 count, std::function<void(QList<Candle>)> cb)
+{
+    const QString path = QStringLiteral("/v1/market-data/instruments/%1/history/candles/%2/%3/%4")
+                             .arg(instrumentId)
+                             .arg(m_candleDirection, interval)
+                             .arg(count);
+    QNetworkReply *reply = apiGet(path, QUrlQuery());
+    handleReply(reply, [cb = std::move(cb)](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                            const QByteArray & /*raw*/, const QString & /*net*/) {
+        cb(ok ? candlesFrom(doc) : QList<Candle>{});
+    });
+}
+
 void EtoroClient::fetchCandles(const QString &interval, qint32 count,
                                std::function<void(QList<Candle>)> cb)
 {
@@ -1643,7 +1731,8 @@ QList<Position> EtoroClient::parsePositionsPayload(const QJsonDocument &doc) con
     for (const auto &v : std::as_const(arr)) {
         const QJsonObject o = v.toObject();
         const qint64 instrumentId =
-            static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
+            static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId"),
+                                                     QStringLiteral("instrumentID")})));
         const bool isCurrent = m_instrument.isValid()
                                && (instrumentId == m_instrument.instrumentId);
 
@@ -1670,7 +1759,8 @@ QList<Position> EtoroClient::parsePositionsPayload(const QJsonDocument &doc) con
 
         Position p;
         p.positionId =
-            pick(o, {QStringLiteral("positionId"), QStringLiteral("id")}).toVariant().toString();
+            pick(o, {QStringLiteral("positionId"), QStringLiteral("positionID"),
+                 QStringLiteral("id")}).toVariant().toString();
         p.instrumentId = instrumentId;
         p.symbol = sym;
         p.isBuy = pick(o, {QStringLiteral("isBuy"), QStringLiteral("buy")}).toBool(true);
@@ -1851,7 +1941,8 @@ void EtoroClient::fetchTradeHistoryPageReal(const QSharedPointer<PnlAccum> &acc)
             acc->accountFees += fee;
 
             const qint64 iid =
-                static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId")})));
+                static_cast<qint64>(numFrom(pick(o, {QStringLiteral("instrumentId"),
+                                                     QStringLiteral("instrumentID")})));
 
             // Keep the individual trade (all instruments) for the detail list. Its
             // symbol/listed tag is assigned by nameAndSummarizeTrades once the walk

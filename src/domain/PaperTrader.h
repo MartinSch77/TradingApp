@@ -300,6 +300,14 @@ struct BotConfig {
     // …and a reversal from the model has to be CONVINCED to be worth two half-
     // spreads. A 1.5 B model is not consistent between two calls five minutes apart.
     double aiExitMinConfidence = 60.0;
+    // …and it has to SAVE something: the model's exit is acted on only when the position's
+    // loss already exceeds this multiple of the exit cost — the fade rule's own discipline
+    // (fadeMinLossOverCost), applied to the model's change of heart. Measured 2026-08-09:
+    // eight crypto closes, gross +149.33, spread costs 478.82 — every "AI says exit" at the
+    // 30-minute floor paid a ~60 EUR round trip to abandon a gross-POSITIVE position, which
+    // no 30-minute crypto move can recover. Stops, targets and the carry rules are prices
+    // and stay untouched; 0 switches the guard off; an unknown spread keeps it silent.
+    double aiExitMinLossOverCost = 1.5;
     // …and the whole book opens at most this many new positions per hour, so a
     // single excited scan cannot become a trading spree.
     qint32 maxOpensPerHour = 6;
@@ -848,10 +856,16 @@ struct EntryEconomics {
 // Exit evaluation (pure)
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &proposals,
-                                      BotAiMode mode, const QDateTime &now,
-                                      const BotConfig &cfg);
+// The circumstances of one hold question: which mode asked, when, and what leaving would
+// cost (exit spread in percent; 0 = unknown, which keeps the economics guard silent).
+struct HoldContext {
+    BotAiMode mode = BotAiMode::Off;
+    QDateTime now;
+    double exitSpreadPct = 0.0;
+};
 
+[[nodiscard]] HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &proposals,
+                                      const HoldContext &ctx, const BotConfig &cfg);
 
 // The live read an open position is judged against between scans (the exit-side
 // counterpart of CandidateInput).

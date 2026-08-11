@@ -414,6 +414,11 @@ void MainWindow::setupRunners()
         this);
     m_crowdCollector->start();
     m_botRunner = new BotSimRunner(m_client, m_ollama, this);
+    // The GUI bot trades every instrument in the app's list — the full non-crypto tradable
+    // set the selector shows and the client scans (REQ-F-034 focus set, widened to the whole
+    // desktop catalogue on request). The risk, cost and reluctant-symbol rules still govern
+    // WHICH of them actually open; this only removes the not-focus pre-filter.
+    m_botRunner->setFocusSymbols(trading::nonCryptoTradableSymbols());
     m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
                                  m_client->config().botDailyLossLimit);
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
@@ -1192,6 +1197,11 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     auto *instModel = new QStandardItemModel(m_instrumentBox);
     QString currentGroup;
     for (const trading::InstrumentSpec &spec : trading::instrumentCatalog()) {
+        // Crypto is the bot's experiment class, not a manual-trading offer (REQ-F-031):
+        // it never appears in the selector, so no crypto order can be armed by hand.
+        if (spec.group == QLatin1String("Crypto")) {
+            continue;
+        }
         if (spec.group != currentGroup) {
             currentGroup = spec.group;
             auto *h = new QStandardItem(currentGroup);
@@ -1204,7 +1214,10 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
         instModel->appendRow(new QStandardItem(spec.symbol));
     }
     m_instrumentBox->setModel(instModel);
-    const QStringList tradableSymbols = trading::tradableSymbols();
+    // The GUI uses the NON-crypto set everywhere: crypto is never scanned, priced, rated or
+    // decided in the desktop app, so it cannot appear in the selector, the screener, the
+    // decision window or the cockpit (REQ-F-031 — crypto lives in the console front ends).
+    const QStringList tradableSymbols = trading::nonCryptoTradableSymbols();
     m_client->setTradableSymbols(tradableSymbols);  // for id resolution + portfolio filtering
     m_feeds->setTradableSymbols(tradableSymbols);   // for the bulk web-rating/news fetches
     const qint32 curIdx = m_instrumentBox->findText(m_client->config().symbol);
@@ -4401,9 +4414,9 @@ void MainWindow::pushAiOpinionsToPositions()
         probe.isBuy = p.isBuy;
         probe.openTime = p.openTime;
         static_cast<void>(bySymbol.insert(
-            p.symbol,
-            trading::paperAiHold(probe, m_localPicks, trading::BotAiMode::Lead,
-                                 QDateTime::currentDateTime(), trading::BotConfig{})));
+            p.symbol, trading::paperAiHold(probe, m_localPicks,
+                                           {trading::BotAiMode::Lead, QDateTime::currentDateTime()},
+                                           trading::BotConfig{})));
     }
     m_positionsModel->setAiOpinions(bySymbol);
 }
@@ -4585,6 +4598,11 @@ void MainWindow::startScreenerScan()
 
 void MainWindow::onScreenerRow(const ScreenerRow &row)
 {
+    // The screener is a manual-entry helper, and crypto is not offered for manual trading
+    // (REQ-F-031) — the scan itself still covers it, because the bot reads the same scan.
+    if (trading::isCryptoSymbol(row.symbol)) {
+        return;
+    }
     // Replace any existing row for the same symbol (a rescan), else append; then
     // re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
     const auto known = std::find_if(m_screenerRows.begin(), m_screenerRows.end(),
@@ -5255,7 +5273,9 @@ void MainWindow::openDecision()
     }
 
     m_decisionSelected.clear();  // default to the recommendation each time it's opened
-    m_decisionDialog->show();
+    // Open expanded: the decision window carries the full sources table, the AI verdict and
+    // the plan, and a maximised window shows them without scrolling on first open.
+    m_decisionDialog->showMaximized();
     m_decisionDialog->raise();
     m_decisionDialog->activateWindow();
     startDecisionScan();  // kick a fresh scan (and the AI request once it finishes)

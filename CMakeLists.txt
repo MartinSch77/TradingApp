@@ -16,7 +16,7 @@ if(POLICY CMP0156)
 endif()
 
 project(TradingApp
-    VERSION 1.0.4
+    VERSION 1.0.5
     DESCRIPTION "Qt desktop app to trade instruments via the official eToro API"
     LANGUAGES CXX)
 
@@ -440,6 +440,8 @@ else()
         src/console/bot_console_main.cpp
         src/console/BotConsoleView.cpp
         src/console/BotConsoleView.h
+        src/console/ScanBooks.cpp
+        src/console/ScanBooks.h
         src/ui/BotSimRunner.cpp
         src/ui/BotSimRunner.h
     )
@@ -447,6 +449,36 @@ else()
     target_link_libraries(TradingBot PRIVATE trading_services Qt6::Core Qt6::Concurrent)
     set_target_properties(TradingBot PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endif()
+
+
+# TradingAdvise — one-shot advice for ONE instrument on stdout (REQ-F-047). Plain writes, no
+# raw terminal mode and no ANSI, so unlike TradingBot it builds EVERYWHERE. Advisory by
+# construction: it links the read paths only and prints that it can place nothing.
+qt_add_executable(TradingAdvise
+    src/console/advise_main.cpp
+    src/console/AdviseView.cpp
+    src/console/AdviseView.h
+    src/console/ScanBooks.cpp
+    src/console/ScanBooks.h
+    src/ui/BotSimRunner.cpp
+    src/ui/BotSimRunner.h
+)
+target_include_directories(TradingAdvise PRIVATE src)
+target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+set_target_properties(TradingAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# TradingPortfolioAdvise — ranked buys for the whole catalog, respecting the account's own
+# holdings, as an Excel-readable SpreadsheetML file (REQ-F-048). Same construction rules.
+qt_add_executable(TradingPortfolioAdvise
+    src/console/portfolio_advise_main.cpp
+    src/console/PortfolioReport.cpp
+    src/console/PortfolioReport.h
+    src/console/SpreadsheetXml.cpp
+    src/console/SpreadsheetXml.h
+)
+target_include_directories(TradingPortfolioAdvise PRIVATE src)
+target_link_libraries(TradingPortfolioAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+set_target_properties(TradingPortfolioAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics

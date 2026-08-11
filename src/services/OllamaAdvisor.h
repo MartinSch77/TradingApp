@@ -11,7 +11,9 @@
 #include <QStringList>
 
 class JsonHttp;
+class QJsonObject;
 class QNetworkAccessManager;
+class QNetworkReply;
 
 // Asks a LOCAL model served by Ollama for a trading proposal (REQ-F-030), from
 // the same evidence prompt the cloud advisor gets — so the bot simulation can be
@@ -86,6 +88,9 @@ signals:
 
 private:
     [[nodiscard]] QString endpointBase() const;
+    // POST `body` to /api/generate and mark a request in flight; shared by requestDecision and
+    // requestExplanation, which differ only in what they do with the reply.
+    QNetworkReply *postGenerate(const QJsonObject &body);
 
     QString m_host;
     QString m_model;

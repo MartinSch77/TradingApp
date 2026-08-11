@@ -262,6 +262,18 @@ struct BotConfig {
     // to the catalog needs no second edit here. Empty = the whole catalog (kept for the tests
     // that measure the risk rules in isolation).
     QStringList focusSymbols = defaultFocusSymbols();
+    // Within `focusSymbols`, the symbols that trade at the NORMAL conviction bar (REQ-F-034).
+    // Empty (the default) draws no distinction — every focus symbol trades normally unless
+    // individually named in `reluctantSymbols`, the pre-existing behaviour every test above
+    // measures. When set — the GUI does, once `focusSymbols` is widened past the two indices —
+    // anything IN `focusSymbols` but NOT here is treated exactly like a named reluctant symbol:
+    // the same hourly-move-times-leverage floor, the same confidence multiplier
+    // (`reluctanceVerdict` in the .cpp). This lets the widened catalogue stay open to a
+    // genuinely convincing signal without trading it at the SAME bar as SPX500/NSDQ100.
+    // Measured 2026-08-11: once focus was widened to the whole non-crypto catalogue with no
+    // such distinction, Gold.24-7/Colombia/Canada60/Cybersecurity/GoldMiners/DJ30 took 8 of 19
+    // closed trades for -256 EUR net — 81% of the book's -316 EUR loss — at ZERO extra scrutiny.
+    QStringList coreFocusSymbols;
     // When the local model LEADS but abstains on a focus instrument (no answer, or it named
     // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
     // the volatility and yield reads, session phase: every signal the app computes without

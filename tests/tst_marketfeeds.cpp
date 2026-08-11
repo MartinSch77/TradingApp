@@ -376,7 +376,7 @@ private slots:
         MarketFeeds feeds;
         feeds.setEndpointBaseForTesting(server.baseUrl());
         feeds.setTradableSymbols({QStringLiteral("SP.24-7")});   // Yahoo ES=F
-        QSignalSpy candles(&feeds, &MarketFeeds::intradayCandles);
+        const QSignalSpy candles(&feeds, &MarketFeeds::intradayCandles);
         const QSignalSpy closes(&feeds, &MarketFeeds::intradayCloses);
         feeds.fetchIntradaySeries();
 

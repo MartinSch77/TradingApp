@@ -190,7 +190,7 @@ void printUsage()
         qPrintable(trading::tradableSymbols().join(QStringLiteral(" "))));
 }
 
-void wireVerboseTaps(EtoroClient &client, QObject *context)
+void wireVerboseTaps(const EtoroClient &client, QObject *context)
 {
     QObject::connect(&client, &EtoroClient::log, context, [](const QString &line, bool) {
         std::fprintf(stderr, "[client] %s\n", qPrintable(line));
@@ -352,7 +352,7 @@ struct CycleContext {
 void reportCycle(const CycleContext &ctx, const AdviseArgs &args, const Config &cfg)
 {
     const ScanBooks *books = ctx.books;
-    EtoroClient &client = *ctx.client;
+    const EtoroClient &client = *ctx.client;
     BotSimRunner *runner = ctx.runner;
     const QString &botAiLine = ctx.botAiLine;
     AdviseInput in = judgeBooks(*books, args.symbol, client, cfg);

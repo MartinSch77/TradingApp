@@ -137,26 +137,13 @@ private slots:
 
         const QTemporaryDir dir;
         QVERIFY(dir.isValid());
-        const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
-        const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        QVERIFY(writeRegimeFixture(storePath, prices, QDate(2025, 9, 1), 270));
-        const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
-        const QString manifest = dir.filePath(QStringLiteral("manifest.json"));
-        ToolRun run = runPython(
-            QStringLiteral("python3"),
-            buildToolArgs(storePath, prices, dataset, manifest,
-                          {QStringLiteral("--dead-zone-pct"), QStringLiteral("0.5")}),
-            60000);
+        QString outDir;
+        QString dataset;
+        QString manifest;
+        const ToolRun run = runRegimeTrainingPipeline(dir, python, outDir, dataset, manifest);
         if (!run.started) {
             QSKIP("python3 is not available on this host");
         }
-        QVERIFY2(run.exitCode == 0, qPrintable(run.stdErr));
-        const QString outDir = dir.filePath(QStringLiteral("out"));
-        run = runPython(python,
-                        trainerArgs(dataset, manifest, outDir,
-                                    {QStringLiteral("--min-samples"), QStringLiteral("100"),
-                                     QStringLiteral("--xgb-estimators"), QStringLiteral("25")}),
-                        300000);
         QVERIFY2(run.exitCode == 0, qPrintable(run.stdErr));
 
         // The XGBoost export loads, and its DECLARED contract matches the manifest it was

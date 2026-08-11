@@ -14,6 +14,8 @@
 #include <QString>
 #include <QStringList>
 
+class QTemporaryDir;
+
 // Shared fixtures for the crowd ML tests (tst_crowdml, tst_crowdmodel): both drive the SAME
 // offline pipeline (tools/ml/) over stores the C++ CrowdStore writes, so the invocation and
 // fixture construction live once here rather than as clones. Compiled into each test target;
@@ -61,6 +63,33 @@ struct ToolRun {
 // the volatility level. False when the store cannot be written.
 [[nodiscard]] bool writeRegimeFixture(const QString &storePath, const QString &pricesPath,
                                       const QDate &start, int days);
+
+// The store/prices pair a fixture writer (e.g. writeRegimeFixture) produces together, bundled
+// so runDatasetBuildAndTrain stays under the 5-parameter metrics threshold.
+struct FixtureFiles {
+    QString storePath;
+    QString pricesPath;
+};
+
+// Runs the dataset-build step over an already-written fixture, then the trainer over its
+// output — the two-stage invocation tst_crowdml and tst_crowdmodel's end-to-end tests both
+// drive. Returns whichever run actually failed (dataset build if it could not start or exited
+// non-zero, the trainer otherwise), so a caller's single
+// `QVERIFY2(run.exitCode == 0, qPrintable(run.stdErr))` reports the real failure either way.
+[[nodiscard]] ToolRun runDatasetBuildAndTrain(const FixtureFiles &fixture, const QString &dataset,
+                                              const QString &manifest, const QString &outDir,
+                                              const QString &python);
+
+// Writes the LEARNABLE regime fixture into `dir` and runs the full dataset-build + train
+// pipeline over it — the common core of tst_crowdml's and tst_crowdmodel's end-to-end tests,
+// which differ only in what they do with a successful run afterward (`dir` outlives this
+// call, so the temp directory is the caller's, not owned here). `outDir`/`dataset`/`manifest`
+// are set to the pipeline's own paths even on failure, so a caller that inspects them after a
+// QSKIP check still has valid paths. Returns a not-started run only if the fixture itself
+// could not be written (a hard test bug, not a pipeline failure).
+[[nodiscard]] ToolRun runRegimeTrainingPipeline(const QTemporaryDir &dir, const QString &python,
+                                                QString &outDir, QString &dataset,
+                                                QString &manifest);
 
 // The dataset CSV has no quoting (numbers, ISO stamps, label words): rows keyed by column NAME.
 [[nodiscard]] QList<QHash<QString, QString>> readCsv(const QString &path);

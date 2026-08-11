@@ -419,6 +419,14 @@ void MainWindow::setupRunners()
     // desktop catalogue on request). The risk, cost and reluctant-symbol rules still govern
     // WHICH of them actually open; this only removes the not-focus pre-filter.
     m_botRunner->setFocusSymbols(trading::nonCryptoTradableSymbols());
+    // …but SPX500/NSDQ100 stay the CORE: a peripheral name admitted by the widened set above
+    // still has to clear the reluctance bar (REQ-F-034) rather than trade at the same footing.
+    // Measured 2026-08-11: without this distinction, six peripheral names (Gold.24-7, Colombia,
+    // Canada60, Cybersecurity, GoldMiners, DJ30) took 8 of the book's 19 closed trades for -256
+    // EUR net — 81% of its -316 EUR loss — because nothing outside the two indices had to bring
+    // anything extra.
+    m_botRunner->setCoreFocusSymbols(
+        {QStringLiteral("SPX500"), QStringLiteral("NSDQ100")});
     m_botRunner->applyDailyRules(m_client->config().botDailyTarget,
                                  m_client->config().botDailyLossLimit);
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));

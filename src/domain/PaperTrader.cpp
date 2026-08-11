@@ -187,13 +187,24 @@ double volatileWindowFactor(SessionPhase phase, const BotConfig &cfg)
 // per hour" is the instrument's own hourly sigma multiplied by the leverage actually
 // chosen, i.e. a percentage of the STAKE rather than of the price — which is what
 // decides whether a position can outrun its costs in a short time.
+//
+// The SAME bar also applies to any symbol that is in `focusSymbols` but not in the
+// (optional) `coreFocusSymbols` — a "peripheral" instrument the wider universe admits
+// but that has to bring more than SPX500/NSDQ100 do to be worth trading. Reported as
+// `peripheral-symbol` rather than `reluctant-symbol` so a reader can tell "this one is
+// individually named" from "this one is just outside the core focus".
 EntryVerdict reluctanceVerdict(const CandidateInput &in, const EntrySignal &sig,
                                const BotConfig &cfg)
 {
     EntryVerdict out;
-    if (!cfg.reluctantSymbols.contains(in.symbol, Qt::CaseInsensitive)) {
+    const bool named = cfg.reluctantSymbols.contains(in.symbol, Qt::CaseInsensitive);
+    const bool peripheral = !named && !cfg.coreFocusSymbols.isEmpty()
+                             && !cfg.coreFocusSymbols.contains(in.symbol, Qt::CaseInsensitive);
+    if (!named && !peripheral) {
         return out;
     }
+    const QString code =
+        named ? QStringLiteral("reluctant-symbol") : QStringLiteral("peripheral-symbol");
     const double perHour = sig.volPct * static_cast<double>(sig.leverage);
     if (perHour < cfg.reluctantMinHourlyMovePct) {
         out.why = QStringLiteral("%1 moves %2%% of the stake per hour at x%3 — under the %4%% "
@@ -202,7 +213,7 @@ EntryVerdict reluctanceVerdict(const CandidateInput &in, const EntrySignal &sig,
                       .arg(perHour, 0, 'f', 2)
                       .arg(sig.leverage)
                       .arg(cfg.reluctantMinHourlyMovePct, 0, 'f', 2);
-        out.code = QStringLiteral("reluctant-symbol");
+        out.code = code;
         return out;
     }
     const double floor = cfg.minConfidence * std::max(1.0, cfg.reluctantConfidenceFactor);
@@ -211,7 +222,7 @@ EntryVerdict reluctanceVerdict(const CandidateInput &in, const EntrySignal &sig,
                       .arg(in.symbol)
                       .arg(floor, 0, 'f', 0)
                       .arg(in.confidence, 0, 'f', 0);
-        out.code = QStringLiteral("reluctant-symbol");
+        out.code = code;
     }
     return out;
 }

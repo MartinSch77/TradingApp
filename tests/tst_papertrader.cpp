@@ -48,6 +48,25 @@ CandidateInput goodCandidate()
     return in;
 }
 
+// Overwrites `in.closes` with a series moving ~0.004%/h — quiet enough to fail the
+// reluctance/peripheral hourly-move floor whatever confidence accompanies it.
+void makeQuietCloses(CandidateInput &in)
+{
+    in.closes = QList<double>(120, 99.6);
+    for (qsizetype i = 0; i < in.closes.size(); ++i) {
+        in.closes[i] = 99.6 + (0.004 * static_cast<double>(i % 5));
+    }
+}
+
+// Overwrites `in.closes` with a series moving ~0.55%/h — comfortably over the hourly-move
+// floor at any leverage used in these tests, so only conviction decides whether it is taken.
+void makeLivelyCloses(CandidateInput &in)
+{
+    for (qsizetype i = 0; i < in.closes.size(); ++i) {
+        in.closes[i] = 99.6 + (0.55 * static_cast<double>(i % 5));
+    }
+}
+
 BookState freshBook()
 {
     BookState st;
@@ -56,6 +75,17 @@ BookState freshBook()
     st.invested = 0.0;
     st.openCount = 0;
     return st;
+}
+
+// From `quiet`, builds a LIVELY variant — same symbol, closes moving fast enough to clear the
+// hourly-move floor, confidence doubled past the reluctance/peripheral floor. The caller still
+// asserts it is taken (this is reluctance, not a ban) and may derive further variants from it.
+CandidateInput livelyVariant(const CandidateInput &quiet, const BotConfig &cfg)
+{
+    CandidateInput lively = quiet;
+    lively.confidence = cfg.minConfidence * cfg.reluctantConfidenceFactor + 5.0;
+    makeLivelyCloses(lively);
+    return lively;
 }
 
 // The live read an exit is judged against, spelled out per case below.
@@ -1417,10 +1447,7 @@ private slots:
         quiet.bid = 99.60;
         quiet.ask = 99.62;
         quiet.spreadPct = 0.02;
-        quiet.closes = QList<double>(120, 99.6);
-        for (qsizetype i = 0; i < quiet.closes.size(); ++i) {
-            quiet.closes[i] = 99.6 + (0.004 * static_cast<double>(i % 5));   // ~0.004%/h
-        }
+        makeQuietCloses(quiet);
         const EntrySignal quietSig = buildEntrySignal(quiet, cfg);
         const EntryVerdict refused = paperEntryVerdict(quiet, quietSig, freshBook(), cfg);
         QVERIFY(!refused.take);
@@ -1436,11 +1463,7 @@ private slots:
 
         // A dollar index that IS moving, and with conviction, may be traded: the rule is
         // reluctance, not a ban.
-        CandidateInput lively = quiet;
-        lively.confidence = cfg.minConfidence * cfg.reluctantConfidenceFactor + 5.0;
-        for (qsizetype i = 0; i < lively.closes.size(); ++i) {
-            lively.closes[i] = 99.6 + (0.55 * static_cast<double>(i % 5));   // a real move
-        }
+        const CandidateInput lively = livelyVariant(quiet, cfg);
         const EntrySignal livelySig = buildEntrySignal(lively, cfg);
         QVERIFY(livelySig.volPct * livelySig.leverage >= cfg.reluctantMinHourlyMovePct);
         QVERIFY2(paperEntryVerdict(lively, livelySig, freshBook(), cfg).take,
@@ -1460,6 +1483,55 @@ private slots:
         BotConfig eager = cfg;
         eager.reluctantSymbols.clear();
         QVERIFY(paperEntryVerdict(quiet, quietSig, freshBook(), eager).take);
+    }
+
+    //! @tstid TS-PAPER-039 @design DES-DOM-WHEN
+    // @relation(REQ-F-034, scope=function)
+    //
+    // Measured 2026-08-11: once the GUI widened focusSymbols to the whole non-crypto
+    // catalogue, six peripheral names (Gold.24-7, Colombia, Canada60, Cybersecurity,
+    // GoldMiners, DJ30) traded at the SAME bar as SPX500/NSDQ100 and took 8 of 19 closed
+    // trades for -256 EUR net — 81% of the book's -316 EUR loss. coreFocusSymbols
+    // reintroduces the distinction WITHOUT banning the wider universe: a peripheral symbol
+    // is refused `peripheral-symbol` under the SAME reluctance bar as a named symbol above,
+    // unless it brings genuinely convincing conviction.
+    void TS_PAPER_039_aPeripheralSymbolNeedsMoreConvictionThanTheCore()
+    {
+        BotConfig cfg;
+        cfg.coreFocusSymbols = {QStringLiteral("SPX500"), QStringLiteral("NSDQ100")};
+        QVERIFY(!cfg.reluctantSymbols.contains(QStringLiteral("Canada60")));
+
+        // A quiet peripheral instrument: refused for being OUTSIDE the core, not individually
+        // named — the code says which.
+        CandidateInput quiet = goodCandidate();
+        quiet.symbol = QStringLiteral("Canada60");
+        quiet.confidence = cfg.minConfidence + 1.0;   // clears the NORMAL floor…
+        makeQuietCloses(quiet);
+        const EntrySignal quietSig = buildEntrySignal(quiet, cfg);
+        const EntryVerdict refused = paperEntryVerdict(quiet, quietSig, freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("peripheral-symbol"));
+        QVERIFY(refused.why.contains(QStringLiteral("Canada60")));
+
+        // The SAME quiet series on a CORE symbol is taken: the rule is about being outside
+        // the core, not about quiet markets in general.
+        CandidateInput core = quiet;
+        core.symbol = QStringLiteral("SPX500");
+        QVERIFY(paperEntryVerdict(core, buildEntrySignal(core, cfg), freshBook(), cfg).take);
+
+        // A peripheral instrument that IS moving, with conviction over the reluctance floor,
+        // may still be traded — this is reluctance, not a ban.
+        const CandidateInput lively = livelyVariant(quiet, cfg);
+        const EntrySignal livelySig = buildEntrySignal(lively, cfg);
+        QVERIFY(livelySig.volPct * livelySig.leverage >= cfg.reluctantMinHourlyMovePct);
+        QVERIFY2(paperEntryVerdict(lively, livelySig, freshBook(), cfg).take,
+                 qPrintable(paperEntryVerdict(lively, livelySig, freshBook(), cfg).why));
+
+        // Emptying coreFocusSymbols removes the distinction entirely: the quiet candidate is
+        // taken again, at the normal bar.
+        BotConfig noCore = cfg;
+        noCore.coreFocusSymbols.clear();
+        QVERIFY(paperEntryVerdict(quiet, quietSig, freshBook(), noCore).take);
     }
 
     //! @tstid TS-PAPER-031 @design DES-DOM-DAY

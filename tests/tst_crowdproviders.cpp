@@ -74,6 +74,20 @@ MockHttpServer::Response igHandler(const QByteArray &method, const QString &path
     return {404, "{}", {}, 0};
 }
 
+// Wires `provider` against `server`'s base URL, drives one refresh(), and waits for exactly
+// `expectedCount` observations via QTRY_COMPARE_WITH_TIMEOUT — the boilerplate every
+// CftcCotProvider case here repeats around a differently shaped mock server.
+void refreshCftcAndWait(MockHttpServer &server, CftcCotProvider &provider, QObject *ctx,
+                        QList<Observation> &got, int expectedCount)
+{
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    provider.setEndpointBaseForTesting(server.baseUrl());
+    static_cast<void>(QObject::connect(&provider, &CftcCotProvider::observationsReady, ctx,
+                                       [&got](const QList<Observation> &obs) { got = obs; }));
+    provider.refresh(QStringLiteral("SPX500"), QDateTime::currentDateTimeUtc());
+    QTRY_COMPARE_WITH_TIMEOUT(got.size(), expectedCount, kWaitMs);
+}
+
 } // namespace
 
 class TestCrowdProviders : public QObject
@@ -91,16 +105,9 @@ private slots:
             }
             return {404, "{}", {}, 0};
         });
-        QVERIFY(server.listen(QHostAddress::LocalHost));
-
         CftcCotProvider provider;
-        provider.setEndpointBaseForTesting(server.baseUrl());
         QList<Observation> got;
-        static_cast<void>(connect(&provider, &CftcCotProvider::observationsReady, this,
-                                  [&got](const QList<Observation> &obs) { got = obs; }));
-
-        provider.refresh(QStringLiteral("SPX500"), QDateTime::currentDateTimeUtc());
-        QTRY_COMPARE_WITH_TIMEOUT(got.size(), 2, kWaitMs);
+        refreshCftcAndWait(server, provider, this, got, 2);
 
         // asset-mgr net = 120000 - 80000 = 40000; leveraged-fund net = 90000 - 140000 = -50000.
         const Observation &assetMgr = got.at(0);
@@ -181,14 +188,9 @@ private slots:
                 }
                 return {200, cotBody(), {}, 0};
             });
-            QVERIFY(server.listen(QHostAddress::LocalHost));
             CftcCotProvider provider;
-            provider.setEndpointBaseForTesting(server.baseUrl());
             QList<Observation> got;
-            static_cast<void>(connect(&provider, &CftcCotProvider::observationsReady, this,
-                                      [&got](const QList<Observation> &obs) { got = obs; }));
-            provider.refresh(QStringLiteral("SPX500"), QDateTime::currentDateTimeUtc());
-            QTRY_COMPARE_WITH_TIMEOUT(got.size(), 2, kWaitMs);
+            refreshCftcAndWait(server, provider, this, got, 2);
         }
     }
 

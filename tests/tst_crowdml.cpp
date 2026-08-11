@@ -27,6 +27,27 @@ using namespace trading::crowd;
 // half needs the optional `./setup.sh ml` environment and its test SKIPS without it.
 using namespace crowdtest;
 
+namespace {
+// A synthetic 30-day close series (flat 100 -> up to 104 for days 10-19 -> back to 100),
+// written as a prices CSV, with an empty CrowdStore created and closed at `storePath` first —
+// labels are a price-only fact, so both dataset-labelling tests below start from the same
+// empty store. Returns the prices CSV path, or an empty string if either write failed.
+QString writeStepCloseFixture(const QTemporaryDir &dir, const QString &storePath)
+{
+    const CrowdStore store(storePath);
+    if (!store.isOpen()) {
+        return {};
+    }
+    const QDate start(2026, 6, 1);
+    QList<double> closes;
+    for (int i = 0; i < 30; ++i) {
+        closes.append(i < 10 ? 100.0 : (i < 20 ? 104.0 : 100.0));
+    }
+    const QString prices = dir.filePath(QStringLiteral("prices.csv"));
+    return writePricesCsv(prices, start, closes) ? prices : QString();
+}
+} // namespace
+
 class TestCrowdMl : public QObject
 {
     Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's marker
@@ -148,17 +169,8 @@ private slots:
         const QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
-        {
-            const CrowdStore store(storePath); // deliberately EMPTY: labels are a price-only fact
-            QVERIFY2(store.isOpen(), qPrintable(store.lastError()));
-        }
-        const QDate start(2026, 6, 1);
-        QList<double> closes;
-        for (int i = 0; i < 30; ++i) {
-            closes.append(i < 10 ? 100.0 : (i < 20 ? 104.0 : 100.0));
-        }
-        const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        QVERIFY(writePricesCsv(prices, start, closes));
+        const QString prices = writeStepCloseFixture(dir, storePath);
+        QVERIFY2(!prices.isEmpty(), "failed to write the step-close fixture");
 
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         const ToolRun run = runPython(
@@ -268,17 +280,8 @@ private slots:
         const QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
-        {
-            const CrowdStore store(storePath);
-            QVERIFY2(store.isOpen(), qPrintable(store.lastError()));
-        }
-        const QDate start(2026, 6, 1);
-        QList<double> closes;
-        for (int i = 0; i < 30; ++i) {
-            closes.append(i < 10 ? 100.0 : (i < 20 ? 104.0 : 100.0));
-        }
-        const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        QVERIFY(writePricesCsv(prices, start, closes));
+        const QString prices = writeStepCloseFixture(dir, storePath);
+        QVERIFY2(!prices.isEmpty(), "failed to write the step-close fixture");
         const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
         const QString manifest = dir.filePath(QStringLiteral("manifest.json"));
         ToolRun run = runPython(QStringLiteral("python3"),
@@ -330,28 +333,13 @@ private slots:
 
         const QTemporaryDir dir;
         QVERIFY(dir.isValid());
-        const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
-        const QString prices = dir.filePath(QStringLiteral("prices.csv"));
-        QVERIFY(writeRegimeFixture(storePath, prices, QDate(2025, 9, 1), 270));
-
-        const QString dataset = dir.filePath(QStringLiteral("dataset.csv"));
-        const QString manifest = dir.filePath(QStringLiteral("manifest.json"));
-        ToolRun run = runPython(
-            QStringLiteral("python3"),
-            buildToolArgs(storePath, prices, dataset, manifest,
-                          {QStringLiteral("--dead-zone-pct"), QStringLiteral("0.5")}),
-            60000);
+        QString outDir;
+        QString dataset;
+        QString manifest;
+        const ToolRun run = runRegimeTrainingPipeline(dir, python, outDir, dataset, manifest);
         if (!run.started) {
             QSKIP("python3 is not available on this host");
         }
-        QVERIFY2(run.exitCode == 0, qPrintable(run.stdErr));
-
-        const QString outDir = dir.filePath(QStringLiteral("out"));
-        run = runPython(python,
-                        trainerArgs(dataset, manifest, outDir,
-                                    {QStringLiteral("--min-samples"), QStringLiteral("100"),
-                                     QStringLiteral("--xgb-estimators"), QStringLiteral("25")}),
-                        300000);
         QVERIFY2(run.exitCode == 0, qPrintable(run.stdErr));
 
         // Both exports exist — they are only written after BOTH passed the parity check.

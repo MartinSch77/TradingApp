@@ -23,6 +23,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <utility>
 
 using trading::CloseReason;
 using trading::PaperClosedTrade;
@@ -149,9 +150,9 @@ QString describePicks(const QList<trading::AiProposal> &picks)
 } // namespace
 
 BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent,
-                           const QString &storeFileName)
+                           QString storeFileName)
     : QObject(parent), m_client(client), m_ai(ai), m_timer(new QTimer(this)),
-      m_storeFile(storeFileName)
+      m_storeFile(std::move(storeFileName))
 {
     load();
     loadModel();
@@ -288,6 +289,21 @@ void BotSimRunner::setFocusSymbols(const QStringList &symbols)
     m_book.setConfig(cfg);
     emit log(QStringLiteral("BOT SIM focus: %1")
                  .arg(symbols.isEmpty() ? QStringLiteral("whole catalog")
+                                        : symbols.join(QStringLiteral(", "))),
+             false);
+    save();
+}
+
+void BotSimRunner::setCoreFocusSymbols(const QStringList &symbols)
+{
+    trading::BotConfig cfg = m_book.config();
+    if (cfg.coreFocusSymbols == symbols) {
+        return;
+    }
+    cfg.coreFocusSymbols = symbols;
+    m_book.setConfig(cfg);
+    emit log(QStringLiteral("BOT SIM core focus (normal bar): %1")
+                 .arg(symbols.isEmpty() ? QStringLiteral("none — every focus symbol equal")
                                         : symbols.join(QStringLiteral(", "))),
              false);
     save();

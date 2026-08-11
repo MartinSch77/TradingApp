@@ -6,6 +6,7 @@
 #include "services/CrowdStore.h"
 
 #include <QDir>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <QFile>
@@ -71,6 +72,39 @@ QStringList trainerArgs(const QString &dataset, const QString &manifest, const Q
                        QStringLiteral("--manifest"), manifest,
                        QStringLiteral("--out-dir"), outDir}
            + extra;
+}
+
+ToolRun runDatasetBuildAndTrain(const FixtureFiles &fixture, const QString &dataset,
+                                const QString &manifest, const QString &outDir,
+                                const QString &python)
+{
+    ToolRun run = runPython(
+        QStringLiteral("python3"),
+        buildToolArgs(fixture.storePath, fixture.pricesPath, dataset, manifest,
+                      {QStringLiteral("--dead-zone-pct"), QStringLiteral("0.5")}),
+        60000);
+    if (!run.started || run.exitCode != 0) {
+        return run;
+    }
+    return runPython(python,
+                     trainerArgs(dataset, manifest, outDir,
+                                 {QStringLiteral("--min-samples"), QStringLiteral("100"),
+                                  QStringLiteral("--xgb-estimators"), QStringLiteral("25")}),
+                     300000);
+}
+
+ToolRun runRegimeTrainingPipeline(const QTemporaryDir &dir, const QString &python,
+                                  QString &outDir, QString &dataset, QString &manifest)
+{
+    const QString storePath = dir.filePath(QStringLiteral("crowd.db"));
+    const QString prices = dir.filePath(QStringLiteral("prices.csv"));
+    outDir = dir.filePath(QStringLiteral("out"));
+    dataset = dir.filePath(QStringLiteral("dataset.csv"));
+    manifest = dir.filePath(QStringLiteral("manifest.json"));
+    if (!writeRegimeFixture(storePath, prices, QDate(2025, 9, 1), 270)) {
+        return {};
+    }
+    return runDatasetBuildAndTrain({storePath, prices}, dataset, manifest, outDir, python);
 }
 
 Observation makeObservation(Source source, const QString &series, const QDateTime &event,

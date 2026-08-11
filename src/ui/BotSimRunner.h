@@ -53,7 +53,7 @@ public:
     // second runner in another process — the advise console's one-instrument experiment —
     // must never write the main bot's book.
     BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *parent = nullptr,
-                 const QString &storeFileName = QString());
+                 QString storeFileName = QString());
 
     // The single explicit step that turns the experiment on. While disarmed the
     // bot keeps marking and reporting its existing positions (the books stay
@@ -62,6 +62,11 @@ public:
     // Narrow (or widen) the traded focus set (REQ-F-034); empty = the whole catalog. The
     // advise console's --trade mode focuses the runner on exactly its one instrument.
     void setFocusSymbols(const QStringList &symbols);
+    // Within the focus set, the symbols exempt from the extra reluctance bar (REQ-F-034);
+    // empty = no distinction, every focus symbol trades at the normal bar. The GUI sets this
+    // to the two headline indices once it widens the focus set to the whole catalogue, so a
+    // peripheral name still has to bring more conviction than SPX500/NSDQ100 do.
+    void setCoreFocusSymbols(const QStringList &symbols);
     // One crowd-evidence line per instrument (REQ-F-046): appended to the model's prompt as
     // EVIDENCE beside the technical lines — it gates, sizes and stops NOTHING (the
     // deterministic risk rules never read it), and an empty line clears the entry so absent

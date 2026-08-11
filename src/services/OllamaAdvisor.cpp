@@ -331,6 +331,15 @@ QString OllamaAdvisor::endpointBase() const
     return m_endpointBaseForTesting.isEmpty() ? m_host : m_endpointBaseForTesting;
 }
 
+QNetworkReply *OllamaAdvisor::postGenerate(const QJsonObject &body)
+{
+    QNetworkRequest req(QUrl(endpointBase() + QStringLiteral("/api/generate")));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setTransferTimeout(kGenerateTimeout);
+    m_inFlight = true;
+    return m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+}
+
 void OllamaAdvisor::checkAvailability()
 {
     if (!isConfigured()) {
@@ -407,11 +416,7 @@ void OllamaAdvisor::requestExplanation(const QString &evidence)
          QJsonObject{{QStringLiteral("temperature"), 0.3},
                      {QStringLiteral("num_predict"), 400}}},
     };
-    QNetworkRequest req(QUrl(endpointBase() + QStringLiteral("/api/generate")));
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    req.setTransferTimeout(kGenerateTimeout);
-    m_inFlight = true;
-    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    QNetworkReply *reply = postGenerate(body);
     m_http->handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
                                       const QByteArray &raw, const QString &netError) {
         m_inFlight = false;
@@ -490,11 +495,7 @@ void OllamaAdvisor::requestDecision(const QString &evidencePrompt)
          }},
     };
 
-    QNetworkRequest req(QUrl(endpointBase() + QStringLiteral("/api/generate")));
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    req.setTransferTimeout(kGenerateTimeout);
-    m_inFlight = true;
-    QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    QNetworkReply *reply = postGenerate(body);
     m_http->handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
                                       const QByteArray &raw, const QString &netError) {
         m_inFlight = false;

@@ -1428,6 +1428,13 @@ void EtoroClient::fetchEurUsd()
     }, /*retriesLeft=*/2);
 }
 
+void EtoroClient::refreshTradeability()
+{
+    if (!m_simulated) {
+        refreshTradeabilityReal();
+    }
+}
+
 void EtoroClient::refreshPortfolio()
 {
     if (m_simulated) {

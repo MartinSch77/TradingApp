@@ -11,4 +11,6 @@ skip = build*,docs/html,docs/strictdoc,docs/sphinx-html,.git,coverage,analysis-r
 #   Synopsys = the company (Coverity's vendor before Black Duck), not "synopsis"
 #   optin = the Clang Static Analyzer's checker category (optin.cplusplus.*),
 #           named in tools/clang_analyzer.py and .clang-tidy
-ignore-words-list = nam,hsi,nd,fo,synopsys,optin
+#   zink = Mesa's OpenGL-on-Vulkan driver (QSG_RHI_BACKEND notes in main.cpp /
+#          cockpit_main.cpp), not a typo of "zinc"
+ignore-words-list = nam,hsi,nd,fo,synopsys,optin,zink

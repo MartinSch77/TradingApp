@@ -17,6 +17,8 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QList>
+#include "domain/CrowdInference.h"
+
 #include <QMainWindow>
 #include <QSet>
 #include <QSize>
@@ -27,8 +29,13 @@ class HeavyweightsPanel;
 class CockpitPanel;
 }
 
+namespace trading::crowd {
+class CrowdCollector;
+}
+
 class AiAdvisor;
 class BotSimDialog;
+class CrowdDashboardWindow;
 class BotSimRunner;
 class EconomicCalendar;
 class EtoroClient;
@@ -114,6 +121,8 @@ private slots:
     // closed simulated trades and the bot's decision log. The runner keeps its
     // books with the window closed, so an experiment can run for days.
     void openBotSim();
+    void openCrowdDashboard();
+    void createCrowdButton(QWidget *central);
     // "Trading-Bot opened a trade" — raised from the runner's signal, so it shows
     // whether or not the bot window is open.
     void onBotTradeOpened(const QString &symbol);
@@ -434,6 +443,11 @@ private:
     QStringList m_localAsked;                  // …and what it was shown to answer about
     BotSimDialog *m_botDialog = nullptr;
     QPushButton *m_botButton = nullptr;
+    trading::crowd::CrowdCollector *m_crowdCollector = nullptr;
+    QHash<QString, trading::crowd::CrowdScoreResult> m_crowdScores;      // REQ-F-046 caches
+    QHash<QString, trading::crowd::CrowdPrediction> m_crowdPredictions;
+    CrowdDashboardWindow *m_crowdDialog = nullptr;
+    QPushButton *m_crowdButton = nullptr;
     // The index-heavyweight early read (REQ-F-035): a window of its own, fed from
     // the reference series the confluence reads already fetch.
     QPushButton *m_heavyButton = nullptr;

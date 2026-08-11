@@ -547,7 +547,7 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
         // window reports the model's read per instrument, so it must be shown them
         // (REQ-F-034). The decision window keeps its own shorter list.
         m_evidence = trading::buildDecisionEvidence(rows, snap, kAskedCandidates)
-                     + holdEvidence();
+                     + holdEvidence() + crowdEvidenceBlock();
         m_askedSymbols.clear();
         const QStringList &focus = m_book.config().focusSymbols;
         for (const trading::DecisionRow &row : rows) {
@@ -890,6 +890,30 @@ bool BotSimRunner::aiProposalsFresh() const
         return false;
     }
     return m_askedAt.msecsTo(QDateTime::currentDateTime()) <= kProposalMaxAgeMs;
+}
+
+void BotSimRunner::setCrowdEvidence(const QString &instrument, const QString &line)
+{
+    if (line.isEmpty()) {
+        m_crowdEvidence.remove(instrument);   // absent evidence is NO line, never a stale one
+    } else {
+        m_crowdEvidence.insert(instrument, line);
+    }
+}
+
+// The crowd lines as one prompt block (REQ-F-046). Evidence only: the model reads it like the
+// technical lines; no refusal code, no sizing rule and no exit rule consults it.
+QString BotSimRunner::crowdEvidenceBlock() const
+{
+    if (m_crowdEvidence.isEmpty()) {
+        return {};
+    }
+    QStringList lines;
+    for (auto it = m_crowdEvidence.constBegin(); it != m_crowdEvidence.constEnd(); ++it) {
+        lines.append(it.value());
+    }
+    lines.sort();   // deterministic prompt order, independent of hash order
+    return QLatin1Char('\n') + lines.join(QLatin1Char('\n'));
 }
 
 QString BotSimRunner::holdEvidence() const

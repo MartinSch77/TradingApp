@@ -59,6 +59,11 @@ public:
     // takes is governed by its risk budget, and the protocol must not be the thing
     // that limits it (REQ-F-030).
     void requestDecision(const QString &evidencePrompt);
+
+    // Ask for a plain-words EXPLANATION of the given evidence (REQ-F-045): displayed, never
+    // parsed into anything — the words-only property is the caller's wiring, this method only
+    // instructs the model and shapes the answer. Same one-in-flight rule as the decisions.
+    void requestExplanation(const QString &evidence);
     [[nodiscard]] bool busy() const { return m_inFlight; }
 
     // Point the endpoints at `base`, e.g. the tests' in-process MockHttpServer
@@ -70,6 +75,10 @@ signals:
     // parse failed: unconfigured, unreachable, timed out, no JSON). One signal for
     // both outcomes, so a consumer cannot accidentally treat a failure as a HOLD.
     void proposalsReady(const QList<AiDecision> &picks, const QString &error);
+    // The explanation's words, or a NAMED error (unconfigured, busy, transport, nothing
+    // readable) — exactly one of the two is non-empty, so a blank can never read as
+    // "nothing to say".
+    void explanationReady(const QString &explanation, const QString &error);
     // ok = the daemon answered AND the configured model is installed.
     // `detail` is a one-line, user-facing diagnosis either way; `models` lists
     // what the daemon actually serves (empty when it could not be asked).

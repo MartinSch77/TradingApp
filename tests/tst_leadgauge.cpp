@@ -5,7 +5,6 @@
 
 #include <QtTest/QtTest>
 
-using trading::ui::GaugeBar;
 using trading::ui::leadGaugeBar;
 
 // The lead gauge's only NUMERIC claim is the bar geometry: how far a bar reaches from the

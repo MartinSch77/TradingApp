@@ -1,5 +1,11 @@
 {
   "env": {
     "MCP_TIMEOUT": "180000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python3 tools/trace_report.py)",
+      "Bash(tools/run_tests.sh build *)"
+    ]
   }
 }

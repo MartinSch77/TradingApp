@@ -1166,9 +1166,17 @@ bool MainWindow::marketClosedOverridden() const
     return m_tradeabilityKnown && !m_tradeableNow.contains(m_client->config().symbol);
 }
 
-QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
+QLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
 {
     // --- Header: instrument name + live price --------------------------------
+    // Two stacked rows, not one: ten toggle/dialog buttons plus the title, selector
+    // and price column in a single QHBoxLayout need ~1450 px with nothing to spare
+    // (measured), which is wider than plenty of real screens/RDP sessions — the
+    // window then grows past the display edge, taking its own close button and
+    // title-bar drag handle off-screen with it (regression: the window manager
+    // cannot move or fully decorate a window wider than the display). A QHBoxLayout
+    // never wraps, so splitting the row is the fix, not a smaller minimum on any
+    // one button.
     auto *header = new QHBoxLayout;
     m_titleLabel = new QLabel(sym, central);
     m_titleLabel->setObjectName(QStringLiteral("titleLabel"));
@@ -1264,22 +1272,30 @@ QHBoxLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     header->addSpacing(12);
     header->addWidget(new QLabel(QStringLiteral("Instrument:"), central));
     header->addWidget(m_instrumentBox);
-    header->addSpacing(8);
-    header->addWidget(m_chartToggle);
-    header->addWidget(m_signalsToggle);
-    header->addWidget(m_screenerButton);
-    header->addWidget(m_decisionButton);
-    header->addWidget(m_scriptButton);
-    header->addWidget(m_botButton);
-    header->addWidget(m_crowdButton);
-    header->addWidget(m_heavyButton);
-    header->addWidget(m_cockpitButton);
-    header->addWidget(m_closedButton);
     header->addStretch();
     header->addWidget(m_clockLabel);
     header->addSpacing(12);
     header->addLayout(priceCol);
-    return header;
+
+    // The ten toggle/dialog buttons get their own row beneath the identity row
+    // above, so neither row alone needs the ~1450 px the single combined row did.
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(m_chartToggle);
+    buttons->addWidget(m_signalsToggle);
+    buttons->addWidget(m_screenerButton);
+    buttons->addWidget(m_decisionButton);
+    buttons->addWidget(m_scriptButton);
+    buttons->addWidget(m_botButton);
+    buttons->addWidget(m_crowdButton);
+    buttons->addWidget(m_heavyButton);
+    buttons->addWidget(m_cockpitButton);
+    buttons->addWidget(m_closedButton);
+    buttons->addStretch();
+
+    auto *stacked = new QVBoxLayout;
+    stacked->addLayout(header);
+    stacked->addLayout(buttons);
+    return stacked;
 }
 
 // Hand the heavyweight window every book its reads are computed from (REQ-F-035/036).

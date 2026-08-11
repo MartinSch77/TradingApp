@@ -57,6 +57,7 @@ QT_FORWARD_DECLARE_CLASS(QFormLayout)
 QT_FORWARD_DECLARE_CLASS(QGroupBox)
 QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
 QT_FORWARD_DECLARE_CLASS(QLabel)
+QT_FORWARD_DECLARE_CLASS(QLayout)
 QT_FORWARD_DECLARE_CLASS(QListWidget)
 QT_FORWARD_DECLARE_CLASS(QMessageBox)
 QT_FORWARD_DECLARE_CLASS(QPlainTextEdit)
@@ -286,7 +287,7 @@ private:
     // buildUi() is an orchestrator; the per-panel builders below (same ratchet
     // reasoning as buildMarketClosedRow) run in its exact original order.
     // Header row: title, instrument selector, header buttons, price/cash column.
-    [[nodiscard]] QHBoxLayout *buildHeaderRow(QWidget *central, const QString &sym);
+    [[nodiscard]] QLayout *buildHeaderRow(QWidget *central, const QString &sym);
     // The header's window/dialog buttons (Graph … Closed trades…).
     void buildHeaderButtons(QWidget *central);
     // The parentless, stay-on-top price/time chart window (shown by the constructor).

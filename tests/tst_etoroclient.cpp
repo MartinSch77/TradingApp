@@ -7,6 +7,7 @@
 // the bulk-rates spread (half-spread × invest × leverage per side).
 
 #include "MockHttpServer.h"
+#include "domain/PositionMath.h"
 #include "services/Config.h"
 #include "services/EtoroClient.h"
 
@@ -1337,6 +1338,83 @@ private slots:
         QVERIFY(quote.fromCandle);
         QCOMPARE(quote.bid, 5100.0);
         QCOMPARE(quote.ask, 5102.0);   // the delayed row's 2.0 spread still applies
+    }
+
+    //! @tstid TS-CLI-020 @design DES-SVC-CLIENT
+    // @relation(REQ-F-025, scope=function)
+    void TS_CLI_020_staleQuoteLeavesClosingCostAtZero()
+    {
+        // Regression, measured on an NSDQ100 position moments after a symbol switch:
+        // closingCost used to be priced off the bulk quote's spread unconditionally,
+        // even when that quote was too old to mark the position's profit from (the
+        // exact staleness this function already refuses for p.profit). The candle
+        // repair that normally rescues a delayed rates row is unavailable here
+        // (/history/candles 404s), so the quote stays stale and closingCost must
+        // stay at its 0.0 default rather than publish a cost derived from a price
+        // eToro itself would not use to mark the position.
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const QString stale = nowUtc.addSecs(-3 * 60LL).toString(Qt::ISODate);
+        MockHttpServer server([stale](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
+                    "internalSymbolFull":"SPX500","currentRate":5000.0}]})", {}};
+            }
+            if (path.contains(QStringLiteral("/history/candles"))) {
+                return MockHttpServer::Response{404, "{}", {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                // Stale beyond kQuoteStaleMs (2 min), with a non-zero spread — the
+                // shape that used to leak into closingCost regardless of age.
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5020.0,"ask":5022.0,
+                                                 "date":"%1"}]})").arg(stale).toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/pnl"))) {
+                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+                     "leverage":20,"units":10.0,"openRate":5000.0,
+                     "unrealizedPnL":{"pnL":150.0,"closeRate":5015.0}}]}})", {}};
+            }
+            if (path.contains(QStringLiteral("/portfolio"))) {
+                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+                     "leverage":20,"units":10.0,"openRate":5000.0,
+                     "openDateTime":"2026-07-30T14:12:00Z"}],"orders":[]}})", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 25;
+        EtoroClient client(cfg);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        client.start();
+
+        // First wait for the bulk quote poll to actually have parsed the stale rates
+        // row — it runs on its own cadence, separate from the portfolio poll that
+        // immediately overlays /pnl's 150.0, so asserting before the quote lands would
+        // pass for the wrong reason (no quote to price off at all).
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(27).spread() > 0.0, kWaitMs);
+        const Quote quote = client.quotes().value(27);
+        QVERIFY(!quote.fromCandle);
+        QVERIFY(quote.ageMs(nowUtc) > trading::kQuoteStaleMs);
+
+        // Now that the stale, non-zero-spread quote is loaded, wait for a portfolio
+        // poll to run against it and check what it produced: eToro's own snapshot P/L
+        // stands (the stale quote never overwrites it), and closingCost — despite that
+        // live 2.0 spread sitting in the quote book — stays at its 0.0 default rather
+        // than pricing a cost off a price too old to trust: (spread/2) × perPoint here
+        // would wrongly be 10.0.
+        portfolio.clear();
+        QVERIFY(portfolio.wait(kWaitMs));
+        const auto positions = portfolio.constLast().at(0).value<QList<Position>>();
+        QCOMPARE(positions.size(), 1);
+        QCOMPARE(positions[0].profit, 150.0);
+        QCOMPARE(positions[0].closingCost, 0.0);
     }
 };
 

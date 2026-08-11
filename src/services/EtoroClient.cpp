@@ -1841,20 +1841,28 @@ void EtoroClient::finalizePortfolioPl(const QList<Position> &positions)
         // *quote* currency and mis-scale non-account-currency instruments like HKG50).
         const double perPoint = trading::accountValuePerPoint(p);
 
-        // Expected spread cost to close now. eToro attributes HALF the spread to
-        // opening and half to closing (a long sells at the bid = mid − spread/2), so
-        // its close dialog shows spread/2 × value-per-point; charging the full spread
-        // here was ≈2× eToro's figure (same bug fixed for the opening cost).
-        if (quote.spread() > 0.0) {
-            p.closingCost = (quote.spread() / 2.0) * perPoint;
-        }
-
         // Only mark against a quote that is actually current. A delayed one would move
         // the figure AWAY from eToro's live number, so in that case eToro's own
         // snapshot value is the better answer and is left standing (the table shows it
         // as not-live); the candle repair usually has a fresh mark by the next tick.
         // An unstamped row (age -1) passes: fail open, as the market-open inference does.
+        //
+        // closingCost is gated behind the SAME check: `positions` is a fresh parse of
+        // the portfolio endpoint every poll (see overlayPnlOntoLivePositions), so it has
+        // no carried-over value to fall back on the way profit does via /pnl — a stale
+        // quote must leave it at its 0.0 default rather than publish a spread cost that
+        // is quietly wrong (reported: an NSDQ100 position showing a fraction of eToro's
+        // own "Geschätzte Schließungskosten" moments after a symbol switch — the exact
+        // stale-quote shape a prior fix already hit in this function, for the SAME
+        // instrument-switch scenario, just for p.profit instead of p.closingCost).
         if (quote.ageMs(nowUtc) <= trading::kQuoteStaleMs) {
+            // Expected spread cost to close now. eToro attributes HALF the spread to
+            // opening and half to closing (a long sells at the bid = mid − spread/2), so
+            // its close dialog shows spread/2 × value-per-point; charging the full spread
+            // here was ≈2× eToro's figure (same bug fixed for the opening cost).
+            if (quote.spread() > 0.0) {
+                p.closingCost = (quote.spread() / 2.0) * perPoint;
+            }
             p.profit = trading::positionPnl(p, quote);
             // Re-anchor so the per-tick re-price in the table continues from here.
             p.apiCloseRate = quote.closeRate(p.isBuy);

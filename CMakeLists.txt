@@ -452,33 +452,44 @@ endif()
 
 
 # TradingAdvise — one-shot advice for ONE instrument on stdout (REQ-F-047). Plain writes, no
-# raw terminal mode and no ANSI, so unlike TradingBot it builds EVERYWHERE. Advisory by
-# construction: it links the read paths only and prints that it can place nothing.
-qt_add_executable(TradingAdvise
-    src/console/advise_main.cpp
-    src/console/AdviseView.cpp
-    src/console/AdviseView.h
-    src/console/ScanBooks.cpp
-    src/console/ScanBooks.h
-    src/ui/BotSimRunner.cpp
-    src/ui/BotSimRunner.h
-)
-target_include_directories(TradingAdvise PRIVATE src)
-target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
-set_target_properties(TradingAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-
+# raw terminal mode and no ANSI, so unlike TradingBot it builds on every DESKTOP platform.
+# Advisory by construction: it links the read paths only and prints that it can place nothing.
+#
 # TradingPortfolioAdvise — ranked buys for the whole catalog, respecting the account's own
 # holdings, as an Excel-readable SpreadsheetML file (REQ-F-048). Same construction rules.
-qt_add_executable(TradingPortfolioAdvise
-    src/console/portfolio_advise_main.cpp
-    src/console/PortfolioReport.cpp
-    src/console/PortfolioReport.h
-    src/console/SpreadsheetXml.cpp
-    src/console/SpreadsheetXml.h
-)
-target_include_directories(TradingPortfolioAdvise PRIVATE src)
-target_link_libraries(TradingPortfolioAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
-set_target_properties(TradingPortfolioAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+#
+# Neither is built on Android, for the SAME reason TradingBot is guarded above: qt_add_executable
+# there builds a shared library that androiddeployqt then packages into an APK automatically, and
+# a console program with no GUI Activity fails that packaging step (exit 12, "no platform plugin
+# included in the deployment") rather than producing anything installable.
+if(ANDROID)
+    message(STATUS "TradingAdvise / TradingPortfolioAdvise: desktop console only — not built here")
+else()
+    qt_add_executable(TradingAdvise
+        src/console/advise_main.cpp
+        src/console/AdviseView.cpp
+        src/console/AdviseView.h
+        src/console/ScanBooks.cpp
+        src/console/ScanBooks.h
+        src/ui/BotSimRunner.cpp
+        src/ui/BotSimRunner.h
+    )
+    target_include_directories(TradingAdvise PRIVATE src)
+    target_link_libraries(TradingAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+    set_target_properties(TradingAdvise PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+    qt_add_executable(TradingPortfolioAdvise
+        src/console/portfolio_advise_main.cpp
+        src/console/PortfolioReport.cpp
+        src/console/PortfolioReport.h
+        src/console/SpreadsheetXml.cpp
+        src/console/SpreadsheetXml.h
+    )
+    target_include_directories(TradingPortfolioAdvise PRIVATE src)
+    target_link_libraries(TradingPortfolioAdvise PRIVATE trading_services Qt6::Core Qt6::Concurrent)
+    set_target_properties(TradingPortfolioAdvise PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()
 
 # ---------------------------------------------------------------------------
 # Visual Studio solution ergonomics

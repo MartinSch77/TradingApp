@@ -1814,51 +1814,54 @@ void MainWindow::buildSignalsWindow(const QString &sym)
     buildAiPanel(signalsWinLayout);
 }
 
+// Shared by buildSignalRows and buildStatisticalSignalRows: a labelled row whose
+// caption and value both carry an explanatory mouse-over describing what the
+// signal means and how to read it.
+void MainWindow::addSignalRow(QGroupBox *sigBox, QFormLayout *sigForm, const QString &caption,
+                               QLabel *value, const QString &tip)
+{
+    auto *cap = new QLabel(caption, sigBox);
+    cap->setToolTip(tip);
+    value->setToolTip(tip);
+    sigForm->addRow(cap, value);
+}
+
 void MainWindow::buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
 {
-    // Add a labelled row whose caption and value both carry an explanatory
-    // mouse-over describing what the signal means and how to read it.
-    auto addSignalRow = [sigBox, sigForm](const QString &caption, QLabel *value,
-                                          const QString &tip) {
-        auto *cap = new QLabel(caption, sigBox);
-        cap->setToolTip(tip);
-        value->setToolTip(tip);
-        sigForm->addRow(cap, value);
-    };
     // Trend (SMA) and MACD kept together as two adjacent lines…
-    addSignalRow(QStringLiteral("Trend (SMA 10/30):"), m_sigTrend,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Trend (SMA 10/30):"), m_sigTrend,
                  QStringLiteral("Fast vs. slow simple moving average (10 vs. 30 bars). Fast above "
                                 "slow = up-trend (bullish); fast below = down-trend (bearish)."));
-    addSignalRow(QStringLiteral("MACD (12/26/9):"), m_sigMacd,
+    addSignalRow(sigBox, sigForm, QStringLiteral("MACD (12/26/9):"), m_sigMacd,
                  QStringLiteral("Moving-average convergence/divergence histogram. Positive "
                                 "(above signal line) = bullish momentum, negative = bearish."));
     // …and Momentum (RSI) and Stochastic %K kept together as the next two lines.
-    addSignalRow(QStringLiteral("Momentum (RSI 14):"), m_sigMomentum,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Momentum (RSI 14):"), m_sigMomentum,
                  QStringLiteral("Relative Strength Index over 14 bars (0–100). Above 70 = "
                                 "overbought (pullback risk), below 30 = oversold (bounce risk); "
                                 "~50 is neutral."));
-    addSignalRow(QStringLiteral("Stochastic %K (14):"), m_sigStoch,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Stochastic %K (14):"), m_sigStoch,
                  QStringLiteral("Where the price is within its 14-bar high–low range (0–100). "
                                 "Above 80 = overbought, below 20 = oversold — used for entry "
                                 "timing."));
-    addSignalRow(QStringLiteral("Bollinger %B (20):"), m_sigBoll,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Bollinger %B (20):"), m_sigBoll,
                  QStringLiteral("Where price sits inside its 20-bar Bollinger Bands. Near 1 = at "
                                 "the upper band (stretched high), near 0 = at the lower band "
                                 "(stretched low), ~0.5 = mid-band."));
-    addSignalRow(QStringLiteral("Volatility (20):"), m_sigVol,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Volatility (20):"), m_sigVol,
                  QStringLiteral("Typical size of a one-bar move (std-dev of returns over 20 "
                                 "bars), in percent. Higher = choppier, larger swings."));
-    addSignalRow(QStringLiteral("VIX (fear):"), m_sigVix,
+    addSignalRow(sigBox, sigForm, QStringLiteral("VIX (fear):"), m_sigVix,
                  QStringLiteral("CBOE Volatility Index (spot), and how far it sits above/below its "
                                 "own multi-month average. Elevated / rising VIX = risk-off "
                                 "(bearish for indices) and trims signal confidence; low / falling "
                                 "VIX = risk-on. Folded into the buy/sell ensemble below."));
-    addSignalRow(QStringLiteral("Regime (VIX/events):"), m_sigRegime,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Regime (VIX/events):"), m_sigRegime,
                  QStringLiteral("Market regime from the VIX plus the economic calendar: calm VIX = "
                                 "risk-on (mildly bullish for indices), fearful VIX = risk-off; an "
                                 "imminent high-impact event flags added volatility. The same regime "
                                 "source used in the Decision window."));
-    addSignalRow(QStringLiteral("News sentiment:"), m_sigNews,
+    addSignalRow(sigBox, sigForm, QStringLiteral("News sentiment:"), m_sigNews,
                  QStringLiteral("Sentiment of recent headlines for this instrument (TradingView "
                                 "feed), scored by keyword tone from negative to positive. The same "
                                 "news source used in the Decision window; n/a until the news scan "
@@ -1870,37 +1873,30 @@ void MainWindow::buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
 // neither function is a hundred lines of table rows.
 void MainWindow::buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigForm)
 {
-    auto addSignalRow = [sigBox, sigForm](const QString &caption, QLabel *value,
-                                          const QString &tip) {
-        auto *cap = new QLabel(caption, sigBox);
-        cap->setToolTip(tip);
-        value->setToolTip(tip);
-        sigForm->addRow(cap, value);
-    };
-    addSignalRow(QStringLiteral("Regression (30):"), m_sigRegression,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Regression (30):"), m_sigRegression,
                  QStringLiteral("Least-squares trend line over the last 30 bars: slope in %/bar "
                                 "(direction & steepness) and R² (0–1) for how well price fits the "
                                 "line — higher R² = a cleaner trend."));
-    addSignalRow(QStringLiteral("Pattern kNN (10):"), m_sigKnn,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Pattern kNN (10):"), m_sigKnn,
                  QStringLiteral("k-Nearest-Neighbours analog forecast: finds the past 10-bar "
                                 "patterns most like now and averages what happened next. Shows the "
                                 "expected move and how strongly the analogs agree."));
-    addSignalRow(QStringLiteral("Trend filter (SMA 50):"), m_sigTrend50,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Trend filter (SMA 50):"), m_sigTrend50,
                  QStringLiteral("Price vs. its 50-bar simple moving average. Above = "
                                 "long-friendly regime (uptrend), below = downtrend."));
-    addSignalRow(QStringLiteral("Risk at leverage:"), m_sigRisk,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Risk at leverage:"), m_sigRisk,
                  QStringLiteral("Expected ~1-hour price swing multiplied by your selected "
                                 "leverage = the swing in your margin. Amber/red flag oversized "
                                 "risk for the chosen leverage."));
-    addSignalRow(QStringLiteral("Change (window):"), m_sigChange,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Change (window):"), m_sigChange,
                  QStringLiteral("Percentage price change across the currently loaded history "
                                 "window (first bar → latest)."));
-    addSignalRow(QStringLiteral("Web rating (1h):"), m_sigWeb,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Web rating (1h):"), m_sigWeb,
                  QStringLiteral("Real-time technical rating from TradingView for this instrument "
                                 "(1-hour timeframe): an aggregate of ~26 indicators shown as Strong "
                                 "Sell … Strong Buy. Fetched live from the internet; shows n/a for "
                                 "eToro's proprietary baskets with no TradingView equivalent."));
-    addSignalRow(QStringLiteral("Confluence (independent):"), m_sigConfluence,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Confluence (independent):"), m_sigConfluence,
                  QStringLiteral("How many INDEPENDENT reads agree with the current call — the "
                                 "futures that lead the cash market (Nasdaq vs S&P), expected "
                                 "volatility (^VXN for the Nasdaq, ^VIX otherwise, read by its "
@@ -1915,7 +1911,7 @@ void MainWindow::buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigF
                                 "cannot be computed counts as UNMEASURED, never as agreement. "
                                 "Heavyweight participation is a stand-in for market breadth, "
                                 "which needs per-constituent data this app does not fetch."));
-    addSignalRow(QStringLiteral("Local model (Ollama):"), m_sigLocalAi,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Local model (Ollama):"), m_sigLocalAi,
                  QStringLiteral("What the LOCAL large language model (Ollama, running on this "
                                 "machine — no key, nothing leaves it) says about THIS instrument: "
                                 "its side, its confidence and its own one-line reasoning. It is "
@@ -1924,32 +1920,32 @@ void MainWindow::buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigF
                                 "it considers worth trading — \"no opinion\" is a real answer and "
                                 "means it did not name this one. The bot may act on it (see the Bot "
                                 "sim window); here it is shown as one source among the others."));
-    addSignalRow(QStringLiteral("Crowd (Fear/Greed):"), m_sigCrowd,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Crowd (Fear/Greed):"), m_sigCrowd,
                  QStringLiteral("CNN's Fear & Greed index — what the trading crowd is doing right "
                                 "now, aggregated from put/call ratios, breadth, momentum and more: "
                                 "0 = extreme fear, 100 = extreme greed. Mid readings tilt mildly "
                                 "with the crowd; extremes are read contrarian (extreme fear = "
                                 "capitulation, extreme greed = froth). Folded into the Decision "
                                 "window's composite."));
-    addSignalRow(QStringLiteral("Web quote (Yahoo):"), m_sigWebQuote,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Web quote (Yahoo):"), m_sigWebQuote,
                  QStringLiteral("Independent reference quote for this instrument from Yahoo "
                                 "Finance, with its exchange timestamp — a cross-check on how fresh "
                                 "and close eToro's own rate is. A small gap is normal (the CFD "
                                 "tracks futures and carries the spread); a large or growing gap "
                                 "means one of the feeds is stale."));
-    addSignalRow(QStringLiteral("Prediction (now):"), m_sigPrediction,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Prediction (now):"), m_sigPrediction,
                  QStringLiteral("Ensemble vote across all the indicators above: direction, a "
                                 "confidence % (how strongly they agree) and the expected per-bar "
                                 "move. Confidence is halved when a high-impact event is imminent."));
-    addSignalRow(QStringLiteral("Forecast (3h):"), m_sig3h,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Forecast (3h):"), m_sig3h,
                  QStringLiteral("Extrapolates the recent drift over the next ~3 hours (180 "
                                 "one-minute bars), with a target price and a ±1σ range that grows "
                                 "with the square root of time."));
-    addSignalRow(QStringLiteral("AI forecast (3 days):"), m_sig3d,
+    addSignalRow(sigBox, sigForm, QStringLiteral("AI forecast (3 days):"), m_sig3d,
                  QStringLiteral("Ensemble projection for the next 3 trading days: the indicator "
                                 "vote sets the direction and how far within the expected ±1σ range "
                                 "price is likely to travel. A model estimate, not investment advice."));
-    addSignalRow(QStringLiteral("Signal:"), m_sigOverall,
+    addSignalRow(sigBox, sigForm, QStringLiteral("Signal:"), m_sigOverall,
                  QStringLiteral("Overall call from the same ensemble: BUY or SELL when a clear "
                                 "majority of indicators agree, otherwise NEUTRAL."));
 }
@@ -4801,6 +4797,99 @@ void MainWindow::onInstrumentNews(const QString &symbol, const QList<NewsHeadlin
     }
 }
 
+namespace {
+// Recency label for a headline timestamp: "just now" / "37m ago" / "4h ago" / "2d ago".
+QString recommendationAgo(const QDateTime &t)
+{
+    if (!t.isValid()) {
+        return {};
+    }
+    const qint64 s = t.secsTo(QDateTime::currentDateTime());
+    if (s < 60) {
+        return QStringLiteral("just now");
+    }
+    if (s < 3600) {
+        return QStringLiteral("%1m ago").arg(s / 60);
+    }
+    if (s < 86400) {
+        return QStringLiteral("%1h ago").arg(s / 3600);
+    }
+    return QStringLiteral("%1d ago").arg(s / 86400);
+}
+
+// Technical-ensemble tooltip lines for one recommendation row (one line while
+// gathering data, two once an ensemble has voted).
+QStringList ensembleTooltipLines(const trading::Ensemble &e)
+{
+    if (!e.valid) {
+        return {QStringLiteral("Technical ensemble: gathering data…")};
+    }
+    const QString bull = (e.dir > 0) ? QStringLiteral("bullish")
+                                     : ((e.dir < 0) ? QStringLiteral("bearish")
+                                                    : QStringLiteral("mixed"));
+    const QString trend = (e.dir > 0) ? QStringLiteral("▲ up")
+                                      : ((e.dir < 0) ? QStringLiteral("▼ down")
+                                                     : QStringLiteral("→ flat"));
+    return {QStringLiteral("Technical ensemble: %1 — net %2/%3 indicators %4")
+                .arg(e.signal)
+                .arg(std::abs(e.score))
+                .arg(e.votes)
+                .arg(bull),
+            QStringLiteral("Trend %1 · volatility ±%2%/bar").arg(trend).arg(e.vol, 0, 'f', 2)};
+}
+
+// Up to three "Recent news:" tooltip lines (plus a header line), or empty when
+// there is no recent news for this instrument.
+QStringList newsTooltipLines(const QList<NewsHeadline> &news)
+{
+    if (news.isEmpty()) {
+        return {};
+    }
+    QStringList lines{QString(), QStringLiteral("Recent news:")};
+    for (qsizetype i = 0; (i < news.size()) && (i < 3); ++i) {
+        const NewsHeadline &h = news[i];
+        QString meta = h.provider;
+        const QString a = recommendationAgo(h.published);
+        if (!a.isEmpty()) {
+            meta += meta.isEmpty() ? a : QStringLiteral(", %1").arg(a);
+        }
+        lines << (meta.isEmpty() ? QStringLiteral("• %1").arg(h.title)
+                                 : QStringLiteral("• %1  (%2)").arg(h.title, meta));
+    }
+    return lines;
+}
+}  // namespace
+
+// The hover tooltip for one recommendation row: header line, technical ensemble,
+// TradingView rating and up to three recent headlines. Split out of
+// rebuildRecommendations purely to keep its own McCabe complexity within budget.
+QString MainWindow::recommendationTooltip(const trading::DecisionRow &d) const
+{
+    const QString side = (d.dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL");
+    QStringList tip;
+    tip << QStringLiteral("%1 — %2 (confidence %3%)")
+               .arg(d.symbol, side)
+               .arg(qRound(d.confidence));
+    tip << QString();
+    const auto sr = std::find_if(m_screenerRows.cbegin(), m_screenerRows.cend(),
+                                 [&d](const ScreenerRow &r) { return r.symbol == d.symbol; });
+    const trading::Ensemble e =
+        ((sr != m_screenerRows.cend()) && sr->ok && !sr->closes.isEmpty())
+            ? trading::computeEnsemble(sr->closes, m_vixValid, m_vixChangePct)
+            : trading::Ensemble{};
+    tip << ensembleTooltipLines(e);
+    tip << (d.haveRating
+                ? QStringLiteral("TradingView 1h rating: %1 (%2%3) — %4")
+                      .arg(trading::webRatingWord(d.rating),
+                           (d.rating >= 0.0) ? QStringLiteral("+") : QString())
+                      .arg(d.rating, 0, 'f', 2)
+                      .arg(((d.rating > 0) == (d.dir > 0)) ? QStringLiteral("confirms")
+                                                           : QStringLiteral("disagrees"))
+                : QStringLiteral("TradingView rating: n/a for this instrument"));
+    tip << newsTooltipLines(m_newsBySymbol.value(d.symbol));
+    return tip.join(QLatin1Char('\n'));
+}
+
 void MainWindow::rebuildRecommendations()
 {
     if ((m_recoBuyList == nullptr) || (m_recoSellList == nullptr)) {
@@ -4809,23 +4898,6 @@ void MainWindow::rebuildRecommendations()
 
     const QColor &green = trading::ui::kGreen;
     const QColor &red = trading::ui::kRed;
-
-    auto ago = [](const QDateTime &t) -> QString {
-        if (!t.isValid()) {
-            return {};
-        }
-        const qint64 s = t.secsTo(QDateTime::currentDateTime());
-        if (s < 60) {
-            return QStringLiteral("just now");
-        }
-        if (s < 3600) {
-            return QStringLiteral("%1m ago").arg(s / 60);
-        }
-        if (s < 86400) {
-            return QStringLiteral("%1h ago").arg(s / 3600);
-        }
-        return QStringLiteral("%1d ago").arg(s / 86400);
-    };
 
     struct Reco {
         QString symbol;
@@ -4854,66 +4926,13 @@ void MainWindow::rebuildRecommendations()
             continue;
         }
 
-        const QString side = (d.dir > 0) ? QStringLiteral("BUY") : QStringLiteral("SELL");
         Reco reco;
         reco.symbol = d.symbol;
         reco.dir = d.dir;
         reco.confidence = d.confidence;
         // Side is conveyed by the column and colour, so the row is just symbol + confidence.
         reco.row = QStringLiteral("%1   ·   %2%").arg(d.symbol).arg(qRound(d.confidence));
-
-        QStringList tip;
-        tip << QStringLiteral("%1 — %2 (confidence %3%)")
-                   .arg(d.symbol, side)
-                   .arg(qRound(d.confidence));
-        tip << QString();
-        const auto sr = std::find_if(m_screenerRows.cbegin(), m_screenerRows.cend(),
-                                     [&d](const ScreenerRow &r) { return r.symbol == d.symbol; });
-        const trading::Ensemble e =
-            ((sr != m_screenerRows.cend()) && sr->ok && !sr->closes.isEmpty())
-                ? trading::computeEnsemble(sr->closes, m_vixValid, m_vixChangePct)
-                : trading::Ensemble{};
-        if (e.valid) {
-            const QString bull = (e.dir > 0) ? QStringLiteral("bullish")
-                                             : ((e.dir < 0) ? QStringLiteral("bearish")
-                                                            : QStringLiteral("mixed"));
-            const QString trend = (e.dir > 0) ? QStringLiteral("▲ up")
-                                              : ((e.dir < 0) ? QStringLiteral("▼ down")
-                                                             : QStringLiteral("→ flat"));
-            tip << QStringLiteral("Technical ensemble: %1 — net %2/%3 indicators %4")
-                       .arg(e.signal)
-                       .arg(std::abs(e.score))
-                       .arg(e.votes)
-                       .arg(bull);
-            tip << QStringLiteral("Trend %1 · volatility ±%2%/bar").arg(trend).arg(e.vol, 0, 'f', 2);
-        } else {
-            tip << QStringLiteral("Technical ensemble: gathering data…");
-        }
-        if (d.haveRating) {
-            tip << QStringLiteral("TradingView 1h rating: %1 (%2%3) — %4")
-                       .arg(trading::webRatingWord(d.rating),
-                            (d.rating >= 0.0) ? QStringLiteral("+") : QString())
-                       .arg(d.rating, 0, 'f', 2)
-                       .arg(((d.rating > 0) == (d.dir > 0)) ? QStringLiteral("confirms")
-                                                            : QStringLiteral("disagrees"));
-        } else {
-            tip << QStringLiteral("TradingView rating: n/a for this instrument");
-        }
-        const QList<NewsHeadline> news = m_newsBySymbol.value(d.symbol);
-        if (!news.isEmpty()) {
-            tip << QString() << QStringLiteral("Recent news:");
-            for (qsizetype i = 0; (i < news.size()) && (i < 3); ++i) {
-                const NewsHeadline &h = news[i];
-                QString meta = h.provider;
-                const QString a = ago(h.published);
-                if (!a.isEmpty()) {
-                    meta += meta.isEmpty() ? a : QStringLiteral(", %1").arg(a);
-                }
-                tip << (meta.isEmpty() ? QStringLiteral("• %1").arg(h.title)
-                                       : QStringLiteral("• %1  (%2)").arg(h.title, meta));
-            }
-        }
-        reco.tip = tip.join(QLatin1Char('\n'));
+        reco.tip = recommendationTooltip(d);
         recos.append(reco);
     }
 
@@ -5778,6 +5797,102 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
     m_planWatcher.setFuture(QtConcurrent::run(trading::buildTradePlan, in));
 }
 
+// The verdict explanation for the trade-plan tooltip: what BUY/SELL/STAY OUT
+// means, plus the verdict reason and risk notes when present. Split out of
+// renderTradePlanResult purely to keep its own McCabe complexity within budget.
+QString MainWindow::planVerdictMeaning(const trading::TradePlan &plan)
+{
+    QString verdictMeaning;
+    if (plan.verdict == QStringLiteral("BUY")) {
+        verdictMeaning = QStringLiteral(
+            "BUY — open a long position: the sources point up and the expected "
+            "win, after all costs, is positive.");
+    } else if (plan.verdict == QStringLiteral("SELL")) {
+        verdictMeaning = QStringLiteral(
+            "SELL — open a short position: the sources point down and the expected "
+            "win, after all costs, is positive.");
+    } else {
+        verdictMeaning = QStringLiteral(
+            "STAY OUT — do not open a position on this instrument now.");
+    }
+    if (!plan.verdictReason.isEmpty()) {
+        verdictMeaning += QStringLiteral("\nWhy: %1.").arg(plan.verdictReason);
+    }
+    if (!plan.riskNotes.isEmpty()) {
+        verdictMeaning += QStringLiteral("\nRisk notes: %1.")
+                              .arg(plan.riskNotes.join(QStringLiteral("; ")));
+    }
+    return verdictMeaning;
+}
+
+// Cost bill (open/close spread, overnight, weekend) plus the expected-edge line
+// and an optional weekend-carry warning, as HTML <div>s. Split out of
+// renderTradePlanResult purely to keep its own McCabe complexity within budget.
+QString MainWindow::planCostSummaryHtml(const trading::TradePlan &plan) const
+{
+    const QString green = trading::ui::greenHex();
+    const QString red = trading::ui::redHex();
+    const QString amber = trading::ui::amberHex();
+    auto eur = [this](double v) {
+        return QStringLiteral("%1%2").arg(m_ccy, QLocale().toString(v, 'f', 2));
+    };
+    const QString openCostText = eur(plan.openCost);
+    const QString closeCostText = eur(plan.closeCost);
+    QString costLine =
+        QStringLiteral("open %1 + close %2").arg(openCostText, closeCostText);
+    if (plan.feePerNight != 0.0) {
+        costLine += QStringLiteral(" + %1/night").arg(eur(plan.feePerNight));
+    }
+    if (plan.crossesWeekend) {
+        costLine += QStringLiteral(" + weekend %1").arg(eur(plan.weekendFee));
+    }
+    const QString netColor = (plan.expectedNet > 0.0) ? green : red;
+    const QString nightsPlural = (plan.nights == 1) ? QString() : QStringLiteral("s");
+    const QString costsTotal = eur(plan.expectedCosts);
+    const QString partialNote =
+        plan.costsComplete ? QString()
+                           : QStringLiteral(" <span style='color:%1'>(partial — live "
+                                            "spread/fees not received yet)</span>")
+                                 .arg(amber);
+    const QString netSign = (plan.expectedNet >= 0.0) ? QStringLiteral("+") : QString();
+    const QString netText = QLocale().toString(plan.expectedNet, 'f', 2);
+    QString html = QStringLiteral(
+                "<div>Costs (%1 night%2): %3 = <b>%4</b>%5 · expected edge after costs: "
+                "<span style='color:%6'><b>%7%8</b></span></div>")
+                .arg(plan.nights)
+                .arg(nightsPlural, costLine, costsTotal, partialNote, netColor, netSign, netText);
+    if (plan.crossesWeekend) {
+        html += QStringLiteral(
+                    "<div style='color:%1'>⚠ Holding over the weekend: the rollover night "
+                    "charges ~3× the overnight fee and Monday can gap past the stop.</div>")
+                    .arg(amber);
+    }
+    return html;
+}
+
+// The reference-quote freshness line ("Δ ±x% vs the eToro rate"), or empty when
+// no fresh independent quote is available for this symbol. Split out of
+// renderTradePlanResult purely to keep its own McCabe complexity within budget.
+QString MainWindow::planReferenceQuoteHtml(const QString &focusSymbol, bool isCurrent) const
+{
+    if (!isCurrent || (m_webQuotePrice <= 0.0)
+        || (m_webQuoteSymbol.compare(focusSymbol, Qt::CaseInsensitive) != 0)
+        || (m_lastPrice <= 0.0)) {
+        return {};
+    }
+    const QString grey = trading::ui::greyHex();
+    auto rate = [](double v) {
+        return QLocale().toString(v, 'f', trading::priceDecimals(v));
+    };
+    const double deltaPct = ((m_webQuotePrice - m_lastPrice) / m_lastPrice) * 100.0;
+    return QStringLiteral(
+               "<div style='color:%1'>Reference quote (Yahoo): %2, Δ %3%4% vs the "
+               "eToro rate.</div>")
+               .arg(grey, rate(m_webQuotePrice),
+                    (deltaPct >= 0.0) ? QStringLiteral("+") : QString())
+               .arg(deltaPct, 0, 'f', 2);
+}
+
 void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
                                        const QString &focusSymbol, bool isCurrent)
 {
@@ -5867,73 +5982,14 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
                 .arg(slAmountText, slRateText, tpAmountText, tpRateText);
 
     // Cost bill: spread both ways, overnight, weekend — netted against the edge.
-    const QString openCostText = eur(plan.openCost);
-    const QString closeCostText = eur(plan.closeCost);
-    QString costLine =
-        QStringLiteral("open %1 + close %2").arg(openCostText, closeCostText);
-    if (plan.feePerNight != 0.0) {
-        costLine += QStringLiteral(" + %1/night").arg(eur(plan.feePerNight));
-    }
-    if (plan.crossesWeekend) {
-        costLine += QStringLiteral(" + weekend %1").arg(eur(plan.weekendFee));
-    }
-    const QString netColor = (plan.expectedNet > 0.0) ? green : red;
-    const QString nightsPlural = (plan.nights == 1) ? QString() : QStringLiteral("s");
-    const QString costsTotal = eur(plan.expectedCosts);
-    const QString partialNote =
-        plan.costsComplete ? QString()
-                           : QStringLiteral(" <span style='color:%1'>(partial — live "
-                                            "spread/fees not received yet)</span>")
-                                 .arg(amber);
-    const QString netSign = (plan.expectedNet >= 0.0) ? QStringLiteral("+") : QString();
-    const QString netText = QLocale().toString(plan.expectedNet, 'f', 2);
-    html += QStringLiteral(
-                "<div>Costs (%1 night%2): %3 = <b>%4</b>%5 · expected edge after costs: "
-                "<span style='color:%6'><b>%7%8</b></span></div>")
-                .arg(plan.nights)
-                .arg(nightsPlural, costLine, costsTotal, partialNote, netColor, netSign, netText);
-    if (plan.crossesWeekend) {
-        html += QStringLiteral(
-                    "<div style='color:%1'>⚠ Holding over the weekend: the rollover night "
-                    "charges ~3× the overnight fee and Monday can gap past the stop.</div>")
-                    .arg(amber);
-    }
+    html += planCostSummaryHtml(plan);
     // Data freshness: how the eToro rate compares to the independent web quote.
-    if (isCurrent && (m_webQuotePrice > 0.0)
-        && (m_webQuoteSymbol.compare(focusSymbol, Qt::CaseInsensitive) == 0)
-        && (m_lastPrice > 0.0)) {
-        const double deltaPct = ((m_webQuotePrice - m_lastPrice) / m_lastPrice) * 100.0;
-        html += QStringLiteral(
-                    "<div style='color:%1'>Reference quote (Yahoo): %2, Δ %3%4% vs the "
-                    "eToro rate.</div>")
-                    .arg(grey, rate(m_webQuotePrice),
-                         (deltaPct >= 0.0) ? QStringLiteral("+") : QString())
-                    .arg(deltaPct, 0, 'f', 2);
-    }
+    html += planReferenceQuoteHtml(focusSymbol, isCurrent);
 
     m_decisionPlanLabel->setText(html);
     // Mouse-over: what this verdict means, why it was reached, and what
     // "expected edge after costs" is — the whole plan block explains itself.
-    QString verdictMeaning;
-    if (plan.verdict == QStringLiteral("BUY")) {
-        verdictMeaning = QStringLiteral(
-            "BUY — open a long position: the sources point up and the expected "
-            "win, after all costs, is positive.");
-    } else if (plan.verdict == QStringLiteral("SELL")) {
-        verdictMeaning = QStringLiteral(
-            "SELL — open a short position: the sources point down and the expected "
-            "win, after all costs, is positive.");
-    } else {
-        verdictMeaning = QStringLiteral(
-            "STAY OUT — do not open a position on this instrument now.");
-    }
-    if (!plan.verdictReason.isEmpty()) {
-        verdictMeaning += QStringLiteral("\nWhy: %1.").arg(plan.verdictReason);
-    }
-    if (!plan.riskNotes.isEmpty()) {
-        verdictMeaning += QStringLiteral("\nRisk notes: %1.")
-                              .arg(plan.riskNotes.join(QStringLiteral("; ")));
-    }
+    const QString verdictMeaning = planVerdictMeaning(plan);
     m_decisionPlanLabel->setToolTip(QStringLiteral(
         "%1\n\n"
         "Expected edge after costs = P(take-profit first) × TP amount − "

@@ -40,16 +40,11 @@
  "src/ui/MainWindow.cpp::MainWindow::rebuildEventsView": {
   "ccn": 20
  },
- "src/ui/MainWindow.cpp::MainWindow::rebuildRecommendations": {
-  "ccn": 36,
-  "nloc": 118
- },
  "src/ui/MainWindow.cpp::MainWindow::renderMonteCarlo": {
   "ccn": 18
  },
  "src/ui/MainWindow.cpp::MainWindow::renderTradePlanResult": {
-  "ccn": 30,
-  "nloc": 160
+  "nloc": 101
  },
  "src/ui/PositionsModel.cpp::PositionsModel::displayText": {
   "ccn": 18

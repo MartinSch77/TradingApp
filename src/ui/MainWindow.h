@@ -301,6 +301,10 @@ private:
     // The labelled rows of the signals panel, each with its explanatory mouse-over.
     void buildSignalRows(QGroupBox *sigBox, QFormLayout *sigForm);
     void buildStatisticalSignalRows(QGroupBox *sigBox, QFormLayout *sigForm);
+    // Shared by both builders above: a labelled row whose caption and value both
+    // carry an explanatory mouse-over describing what the signal means.
+    static void addSignalRow(QGroupBox *sigBox, QFormLayout *sigForm, const QString &caption,
+                              QLabel *value, const QString &tip);
     // The AI decision-support panel, sharing the floating signals window.
     void buildAiPanel(QVBoxLayout *signalsWinLayout);
     // "Open trades" panel: positions view, totals, close-proposal banner, Close button.
@@ -337,6 +341,10 @@ private:
     // the actionable-instrument list with its per-row reasoning tooltips.
     void startRecommendationScan();
     void rebuildRecommendations();
+    // The hover tooltip for one recommendation row (ensemble, rating, recent
+    // headlines). Split out of rebuildRecommendations purely to keep its own
+    // McCabe complexity within budget.
+    QString recommendationTooltip(const trading::DecisionRow &d) const;
 
     // Decision window helpers. The weighted multi-source blend itself lives in the
     // domain layer (trading::computeDecisionRows and friends); the UI only captures
@@ -372,6 +380,11 @@ private:
     // Monte-Carlo heavy buildTradePlan to the thread pool via m_planWatcher).
     void renderTradePlanResult(const trading::TradePlan &plan, const QString &focusSymbol,
                                bool isCurrent);
+    // The three helpers below are split out of renderTradePlanResult purely to
+    // keep its own McCabe complexity within budget.
+    static QString planVerdictMeaning(const trading::TradePlan &plan);
+    QString planCostSummaryHtml(const trading::TradePlan &plan) const;
+    QString planReferenceQuoteHtml(const QString &focusSymbol, bool isCurrent) const;
     // Applies the signals-panel Monte-Carlo outlook computed off the GUI thread.
     void renderMonteCarlo(const trading::McOutlook &mc);
     void applyDecisionPlan();     // push m_lastPlan into the trade panel (no order placed)

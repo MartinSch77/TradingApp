@@ -18,7 +18,7 @@ has.
 
 | Tool | What it gives this project | Stage | Without it |
 |------|---------------------------|-------|-----------|
-| **Axivion Suite** | MISRA C++ 2023, architecture/cycle/dead-code analysis, the dashboard the external findings are imported into | `axivion` | stage skips; the other seven analyzers still gate |
+| **Axivion Suite** | MISRA C++ 2023, architecture/cycle/dead-code analysis, the dashboard the external findings are imported into | `axivion` | stage skips; the other eight analyzers still gate |
 | **Squish** | the GUI test suite that drives the real application | `gui` | stage skips; the unit suite still runs |
 | **Squish Coco** | statement / decision / condition / **MC/DC** coverage from an instrumented build | `coverage` | gcov + clang MC/DC still measure; Coco's numbers are simply absent |
 | **Squish Test Center** | one place holding every test result, with history and traceability | `testcenter` | stage skips; the JUnit XML stays in `test-results/` |
@@ -454,7 +454,7 @@ substitutions.
 
 ## If you have no licences at all
 
-Nothing breaks. `./build_all.sh` runs every open-source stage, the seven analyzers
+Nothing breaks. `./build_all.sh` runs every open-source stage, the eight analyzers
 still gate at zero findings, gcov and clang MC/DC still measure coverage, and the
 quality PDF prints the four licensed tools with "no licence here" against them. That
 distinction — *measured and clean* versus *not measured on this machine* — is the

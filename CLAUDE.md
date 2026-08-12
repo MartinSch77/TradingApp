@@ -20,7 +20,7 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
 tools/publish_release.sh       # release: REFUSES unless the evidence is there
-                               # (tests green, 7 analyzers at 0, ratchet clean,
+                               # (tests green, 8 analyzers at 0, ratchet clean,
                                # 0 hard gaps, PDF newer than the sources), then
                                # attaches binaries + docs + qualification bundle
 tools/make_test_report.sh      # the FINAL report, reproducibly: tests -> Squish GUI ->
@@ -485,7 +485,7 @@ publish_release; refuses to publish on a red pipeline).
   Do NOT add a push trigger: the free tier's weekly submission cap plus a
   shared analysis queue (~188 builds deep) make per-push builds pure waste.
 - Publishing goes through `tools/publish_release.{sh,ps1}` and NOWHERE else: it
-  re-checks the evidence (tests, the seven analyzers at zero, the metrics ratchet,
+  re-checks the evidence (tests, the eight analyzers at zero, the metrics ratchet,
   0 hard gaps) and that every artefact is NEWER than the newest tracked source,
   then attaches the binaries for THAT version plus the docs and qualification
   bundles. Artefacts named for another version are skipped and named — the release

@@ -153,7 +153,7 @@ if [ "$MISSING_ANALYZER" -eq 1 ]; then
 elif [ "$ANALYSIS_TOTAL" -ne 0 ]; then
     bad "$ANALYSIS_TOTAL analyzer finding(s) — a release claims zero"
 else
-    ok "seven analyzers, 0 findings"
+    ok "${#ANALYZERS[@]} analyzers, 0 findings"
 fi
 
 # 5. The two gates that cost seconds are re-run rather than trusted.
@@ -286,7 +286,7 @@ NOTES="$(mktemp)"
     echo "| Evidence | Result |"
     echo "|---|---|"
     echo "| Test suite | $TEST_CASES cases, 0 failures |"
-    echo "| Static analysis | seven analyzers, 0 findings |"
+    echo "| Static analysis | ${#ANALYZERS[@]} analyzers, 0 findings |"
     echo "| Code metrics | ratchet clean |"
     echo "| Traceability | 0 hard gaps |"
     echo

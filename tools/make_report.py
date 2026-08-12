@@ -209,6 +209,7 @@ def collect_analysis():
         ("g++ -fanalyzer", "gcc-analyzer.txt"),
         ("clazy", "clazy.txt"),
         ("PMD CPD (clones)", "pmd-cpd.txt"),
+        ("qmllint", "qmllint.txt"),
         ("codespell", "codespell.txt"),
     ]
     out = []
@@ -458,7 +459,7 @@ def collect_external_import():
 
     analysis-results/external_findings.csv is the merged log (tools/merge_findings.py) that
     axivion/external_import.py re-emits as Axivion style violations, one provider per tool.
-    Without this the report shows "seven analyzers: 0" and "Axivion: 154,758" as two
+    Without this the report shows "eight analyzers: 0" and "Axivion: 154,758" as two
     unrelated facts, when in truth the first feed the second — so a reader cannot tell
     whether an analyzer's output reached the dashboard at all.
 
@@ -1060,7 +1061,7 @@ def build_report(out_path, build_dir):
 
     # Every analyzer above ALSO lands on the Axivion dashboard, one provider per tool, so
     # the whole toolchain is triageable in one place. Stated explicitly because otherwise
-    # "seven analyzers: 0" and "Axivion: 154,758 style violations" read as two unrelated
+    # "eight analyzers: 0" and "Axivion: 154,758 style violations" read as two unrelated
     # facts rather than one pipeline feeding the other.
     imported, wired = collect_external_import()
     if wired:

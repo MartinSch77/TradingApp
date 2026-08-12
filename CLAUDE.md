@@ -157,7 +157,8 @@ publish_release; refuses to publish on a red pipeline).
   when the remaining upside no longer covers rollover-to-horizon + exit spread, and
   before the tripled weekend charge unless the position has earned it (a credit
   never closes; unknown fees keep both rules silent). An ACTIVE keep from the model
-  (`ExitContext::aiBacksHold`, config `aiMayOverrideCarry`, default on) waives BOTH carry
+  (`ExitContext::aiBacksHold`, config `aiMayOverrideCarry`, default OFF since 2026-08-12 —
+  see the strategic redirection below) waives BOTH carry
   closes so a conviction trade may ride overnight/over the weekend — but ONLY those two: the
   stop/target barrier is checked first and never waived, the rollover is still CHARGED every
   mark (hold through the rent, not escape it), and SILENCE never triggers it (the safe
@@ -227,12 +228,47 @@ publish_release; refuses to publish on a red pipeline).
   nothing (the fallback carries a direction, never invents one). Verified live: NSDQ100 went
   from `REFUSED no side · ai-other-pick` to `REFUSED long · weekend · strength 48` — the
   composite now leads and only the genuine weekend closure stops the trade.
-- The bot's DEFAULT decision source is the local model in LEAD mode
-  (`BotConfig::aiMode`), bounded by every risk rule; a book saved earlier keeps the
-  mode it was left in, because an upgrade must not change what a running experiment
-  measures. Opening a position raises a NON-MODAL notice, at most one on screen
-  (`MainWindow::onBotTradeOpened`) — a modal box would stop the marking/exit timers,
+- The bot's DEFAULT decision source is the COMPOSITE, with the local model restricted to
+  EXPLAINING what the deterministic strategy measured and decided (`BotConfig::aiMode`
+  default OFF since 2026-08-12, reverting the earlier Lead-by-default choice) — the
+  strategic direction is a quantitative, explainable model, and a 1.5B local LLM has
+  measurably picked the wrong instrument, produced inconsistent exits and overridden carry
+  rules it shouldn't have (see the strategy-redesign notes below). Lead/Confirm remain
+  available for whoever opts back in explicitly, still bounded by every risk rule; a book
+  saved earlier keeps the mode it was left in, because an upgrade must not change what a
+  running experiment measures. Opening a position raises a NON-MODAL notice, at most one on
+  screen (`MainWindow::onBotTradeOpened`) — a modal box would stop the marking/exit timers,
   and one scan can open a dozen trades.
+- STRATEGIC REDIRECTION (2026-08-12): the bot should get strategically clearer, lower-risk
+  and better validatable — not "smarter" or more autonomous. The technical base already
+  supports this; the gap was a not-yet-coherent trading strategy, not the code. Landed so
+  far: `aiMode`/`aiMayOverrideCarry` default OFF (above), and an EXPLICIT risk-per-trade
+  model (`BotConfig::useExplicitRiskModel`/`riskPerTrade`/`riskPerTradeBySymbol`,
+  `riskPerTradeFor`, `sizeByExplicitRisk`) — additive and OFF by default, so the existing
+  fraction-of-stake sizing (`stakeFraction` × `riskBudgetFraction` via `paperStakeFor`) is
+  UNCHANGED for the general-purpose bot. The explicit model inverts the order of derivation
+  a swing strategy wants: the euro loss at the stop is fixed FIRST (`equity × riskPerTrade`),
+  the notional follows from the stop's own distance, and leverage only decides how much of
+  that notional is committed as margin — it no longer decides how much is risked. `Prediction`
+  (REQ-F-037) also gained a `strategyVersion` field so multiple strategies' calls in one
+  ledger can be scored separately rather than averaged together. NOT yet landed, in the
+  stated priority order: a `SwingPullbackStrategyV1` behind a new `ITradingStrategy`
+  interface (SPX500 only at first — trend filter EMA20>EMA50>EMA200, a controlled 2-5
+  session pullback, ATR-based stop, partial exit near +2R, trailing stop, time/session
+  caps); a swing-mode daily-target-off + partial-exit path (needs `PaperBook` multi-leg
+  support it does not have yet); a Market Replay engine reusing the SAME strategy/risk/
+  booking domain classes as the live paper bot (never a separate backtest implementation
+  that could drift); labelling EVERY recorded decision — including `NO_TRADE` — with a
+  path-dependent R-outcome, not just executed trades (avoids the selection bias of learning
+  only from what the current gate already chose); a purged walk-forward pipeline (logistic
+  regression baseline, then XGBoost via ONNX Runtime, reusing the crowd-ML pipeline's
+  time-based split/embargo/baseline-comparison machinery) to eventually complement/replace
+  `BotNet`'s simple train/holdout split; and NSDQ100 as its own separate model only after
+  SPX500 validates. `defaultFocusSymbols()` is DELIBERATELY left returning SPX500 + NSDQ100 +
+  every catalog crypto (below) rather than narrowed to SPX500 alone — that function is also
+  what makes crypto trading work at all (`TS-PAPER-037`), so the new strategy's SPX500-only
+  scope belongs to ITS OWN config once it exists, not to the shared general-purpose default.
+  Real-money execution stays excluded throughout every one of these steps.
 - Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
   `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
   1/5/15-minute push (ONE read, because three horizons off one series are one piece of

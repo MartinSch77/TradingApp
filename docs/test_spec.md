@@ -550,3 +550,20 @@ rules that need PaperBook's multi-leg support (item 6, not yet built).
 | TS-SWING-008 | U | `swingExitDecision`: the 2R partial fires exactly once and does not repeat on a later call for the SAME gain once `partialTaken` is set; the trailing stop tightens to the higher of the 5-day low or EMA10 the same call the partial fires on, tightens FURTHER on the next call, and never loosens when a later candidate is lower than the current stop. |
 | TS-SWING-009 | U | The time stop (past `timeStopSessions` still under `timeStopMinR`) and the max-hold ceiling (past `maxHoldSessions` regardless of result) both close the WHOLE remaining position — never a partial — and are distinguishable by their own `code`; a gain past the time-stop floor is not closed by it. |
 | TS-SWING-010 | U | A degenerate R (stop not below entry) refuses as `invalid-risk-unit` rather than dividing by a non-positive number, while still counting the session as held; an ordinary mid-position call with no rule triggered reports `hold`. |
+
+## Strategy backtester (tests/tst_strategybacktest.cpp, DES-DOM-BACKTEST, REQ-F-031)
+
+`runBacktest` (2026-08-12 redesign, item 7): walks a strategy over historical daily bars
+using the SAME `PaperBook`/`BotConfig` booking and risk logic the live paper bot uses.
+Driven by a small mock strategy (`AlwaysEnterOnDay`) so these tests exercise the backtest
+LOOP itself — walk-forward, sizing, the stop/exit mechanics, the cost-multiplier sweep —
+rather than depending on `SwingPullbackStrategyV1`'s own entry conditions (already covered
+by tst_swingpullbackstrategy.cpp) lining up numerically.
+
+| ID | L | Case |
+|----|---|------|
+| TS-BT-001 | U | `resolveBarAgainstStop`: a gap through the stop before the bar even opens executes AT THE OPEN (the market never traded at the stale stop price); a bar whose low merely reaches the stop executes at the stop; an untouched bar and a stop of 0 (nothing to check) both report no hit. |
+| TS-BT-002 | U | Walk-forward with no lookahead: a mock strategy that enters only when it recognises the snapshot's own bar count as "today" never fires early, proving the strategy is asked with exactly the bars known up to and including each day. |
+| TS-BT-003 | U | A stop-loss day fires the conservative bar resolution, closes the position and frees the book — the closed record is a loss and `closedTrades` is 1. |
+| TS-BT-004 | U | Widening the assumed spread via `spreadMultiplier`, with every other input identical, never IMPROVES the recorded result (`totalPnl`) and never pays LESS in costs — the property the design's 1x/1.5x/2x cost sweep exists to check, not trusted by inspection. |
+| TS-BT-005 | U | A refused sizing (`riskPerTrade` switched off entirely) leaves the day unopened and named `sizing-refused`, rather than opening at whatever sizing happened to be computed. |

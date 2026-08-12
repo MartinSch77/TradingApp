@@ -112,6 +112,7 @@ target_compile_definitions(tst_botnet PRIVATE
 tradingapp_add_test(tst_positionmath tst_positionmath.cpp)
 tradingapp_add_test(tst_invariants tst_invariants.cpp)
 tradingapp_add_test(tst_swingpullbackstrategy tst_swingpullbackstrategy.cpp)
+tradingapp_add_test(tst_strategybacktest tst_strategybacktest.cpp)
 tradingapp_add_test(tst_eventinsight tst_eventinsight.cpp)
 tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 

@@ -301,6 +301,34 @@ stance as Mull and SonarCloud: a found crash lands under `fuzz/crashes/<target>/
 ` (git-ignored) and is reproduced by running the harness binary directly on that
 one file, but nothing here fails a build yet.
 
+## REUSE/SPDX license compliance — a real CI gate
+
+`tools/reuse_lint.sh` / `tools/reuse_lint.ps1` run [reuse](https://reuse.software)
+(`pipx install reuse` / pip on Windows — a pure-Python CLI, `./setup.sh` /
+`setup.ps1` install it) over the whole tree: every tracked file needs a
+copyright notice and an SPDX license identifier, either an inline header (the
+project-wide convention on every `src`/`tests`/`tools` file) or an entry in
+`REUSE.toml` for the formats where a header is impractical (JSON has no comment
+syntax) or risky to hand-edit (binaries, generated files). `.github/workflows/
+ci.yml`'s `reuse` job (`fsfe/reuse-action`) runs the same check on every push and
+PR — unlike Mull/fuzzing/SonarCloud, **this one is a real gate, not
+informational**: it needs no Qt/CMake/build step at all, so it finishes in well
+under a minute and is exactly the "fast CI gate" tooling backlog item 4 asked
+for.
+
+Compliance was established by auditing every file `reuse lint` flagged (95 files
+initially missing licensing metadata, one malformed SPDX expression inside
+README.md's own prose describing the convention, one genuinely unused license
+text — `LICENSES/LGPL-3.0-only.txt`, referencing Qt's own license by name in
+`THIRD_PARTY_LICENSES.md` without any in-tree file actually carrying that SPDX
+tag, since Qt is a system dependency and never vendored). Files with a natural,
+low-risk comment syntax got a real inline header (`axivion/preinclude.h`,
+`docs/conf.py`, `packaging/make_icon.py`, `strictdoc_config.py`, and the four
+TradeScript-format `.txt`/corpus fixtures, using the `#` comments that format's
+own parser already treats as ignorable); everything else — JSON configs, CI/
+editor/IDE metadata, most of `docs/`, one binary PNG — is annotated in bulk via
+`REUSE.toml`, exactly the case that mechanism exists for.
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |

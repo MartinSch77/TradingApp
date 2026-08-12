@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # TradingApp — trade-script REFERENCE (REQ-F-028)
 #
 # Every keyword the format has, on lines that CANNOT FILL. Each buy waits for a

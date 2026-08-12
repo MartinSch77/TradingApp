@@ -25,6 +25,9 @@ tools/mutation_test.sh [target:source-regex ...]   # Mull mutation-testing pilot
 tools/fuzz.sh [seconds-per-target]   # libFuzzer over fuzz/*.cpp harnesses (TradeScript's
                                # parser first); build-fuzz/ tree, Linux/clang only,
                                # informational, not a gate; see docs/tools.md
+tools/reuse_lint.sh            # REUSE/SPDX license-compliance lint (pure Python,
+                               # both platforms); a REAL CI GATE (.github/workflows/
+                               # ci.yml `reuse` job, fsfe/reuse-action) — see REUSE.toml
 tools/publish_release.sh       # release: REFUSES unless the evidence is there
                                # (tests green, 8 analyzers at 0, ratchet clean,
                                # 0 hard gaps, PDF newer than the sources), then

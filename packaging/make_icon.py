@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Generate packaging/tradingapp.png — the app icon the AppImage needs.
 
 Pure standard library (zlib + struct), so it needs no image tooling on any

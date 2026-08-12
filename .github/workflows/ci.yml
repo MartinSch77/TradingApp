@@ -32,6 +32,20 @@ env:
   QT_VERSION_WINDOWS: "6.10.3"
 
 jobs:
+  # Fast, dependency-free license-compliance gate (tooling backlog item 4): every
+  # tracked file needs a copyright + SPDX license (either an inline header — the
+  # project-wide convention — or an entry in REUSE.toml for the formats where a
+  # header is impractical/risky: JSON has no comment syntax, PNG is binary). This
+  # is the ONE job in this workflow that needs no Qt/CMake/build step at all, so it
+  # is a genuine gate rather than a report: a run finishes in well under a minute
+  # and fails the check the moment a new file lands with no licensing metadata.
+  reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: fsfe/reuse-action@v5
+
   build-and-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

@@ -1,1 +1,3 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
 SPX500; BUY @ 6100; AMOUNT 500

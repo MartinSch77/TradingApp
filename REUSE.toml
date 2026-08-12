@@ -1,0 +1,86 @@
+version = 1
+
+# Bulk REUSE licensing metadata (https://reuse.software) for files where an inline
+# SPDX header is impractical or would risk breaking the file's own syntax: formats
+# with no comment syntax (JSON), binaries (PNG), and configs/docs it is safer not to
+# hand-edit line-by-line. Every file that DOES have a natural comment syntax and low
+# edit risk carries a real inline SPDX-FileCopyrightText/SPDX-License-Identifier
+# header instead (the project-wide convention — see any src/tests/tools file); this
+# table exists only for the remainder, verified against `reuse lint`.
+
+[[annotations]]
+path = [
+    ".clang-format",
+    ".clang-tidy",
+    "tests/.clang-tidy",
+    ".codespellrc",
+    ".gitattributes",
+    ".gitignore",
+    ".mcp.json",
+    ".sonarcloud.properties",
+    "sonar-project.properties",
+    "CMakePresets.json",
+    "Doxyfile",
+    "apiKeyEtoro.example.json",
+    "config.json",
+    "requirements/requirements.sdoc",
+    "tools/cppcheck-suppressions.txt",
+    "tools/lizard_baseline.json",
+    "tools/ml/requirements.txt",
+    "tools/tsan.supp",
+    "tools/valgrind.supp",
+    "squish/suite_gui/envvars",
+    "squish/suite_gui/suite.conf",
+]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["CLAUDE.md", "CONTRIBUTING.md", "README.md", "SECURITY.md", "THIRD_PARTY_LICENSES.md"]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ".claude/**"
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ".vscode/**"
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ".github/**"
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+# axivion/preinclude.h carries its own inline header and is deliberately not listed
+# here (it is fed to the compiler as a real -include; the syntax matters).
+path = [
+    "axivion/README.md",
+    "axivion/axivion_config.json",
+    "axivion/ci_config.json",
+    "axivion/ci_config_windows.json",
+    "axivion/compiler_config.json",
+    "axivion/compiler_config_msvc.json",
+    "axivion/rule_config.json",
+    "axivion/windows/axivion_config.json",
+]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+# docs/conf.py carries its own inline header and is deliberately not listed here.
+path = "docs/**"
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+# packaging/make_icon.py carries its own inline header and is deliberately not
+# listed here.
+path = ["packaging/TradingApp.desktop", "packaging/android/AndroidManifest.xml",
+    "packaging/tradingapp.png"]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"

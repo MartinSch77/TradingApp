@@ -200,8 +200,8 @@ It uses the Qt framework under its applicable open-source licenses.
 
 The full text is in [LICENSE](LICENSE); everything the project links against or ships
 is inventoried in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), with the texts
-under [`LICENSES/`](LICENSES/). Every source file carries an
-`SPDX-License-Identifier: GPL-3.0-or-later` header.
+under [`LICENSES/`](LICENSES/). Every source file carries an SPDX license
+identifier header naming `GPL-3.0-or-later`.
 
 Why GPL rather than something more permissive: **Qt Charts is offered under a
 commercial licence or GPLv3 only — it has no LGPL option** — so a distributed binary

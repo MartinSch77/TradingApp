@@ -84,7 +84,7 @@ APT_PKGS=(
 # version across Linux, Windows and macOS, and a formatting check that answers
 # differently on two machines is worse than no check (.clang-format explains the
 # hunk-scoped CI check it feeds).
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard clang-format)
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard clang-format reuse)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 

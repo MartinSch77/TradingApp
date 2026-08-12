@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # TradingApp trade script — REQ-F-028. One order per line, ';'-separated:
 #   <instrument>; BUY|SELL @ <trigger>; then optional fields in any order.
 # BUY enters at the trigger rate or LOWER, SELL at the trigger or HIGHER —

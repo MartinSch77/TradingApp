@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Sphinx configuration — developer handbook over the repository's markdown
 # documentation (MyST). Built by tools/make_docs.sh into docs/sphinx-html/
 # when sphinx-build is installed (pipx install sphinx; pipx inject sphinx

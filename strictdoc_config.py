@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # StrictDoc project configuration — requirements-as-code for TradingApp.
 #
 # Source of truth: requirements/requirements.sdoc. Export via

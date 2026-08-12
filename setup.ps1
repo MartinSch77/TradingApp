@@ -111,6 +111,8 @@ $PipPkgs = [ordered]@{
     'aqtinstall'  = 'aqt'
     'lizard'      = 'lizard'
     'reportlab'   = ''          # library only, imported by tools\make_report.py
+    'reuse'       = 'reuse'     # REUSE/SPDX license-compliance lint (tools/reuse_lint.sh
+                                # counterpart is tools/reuse_lint.ps1)
     # From pip rather than the LLVM installer: the wheel pins ONE clang-format
     # version on every platform, and a formatting check that answers differently on
     # two machines is worse than no check (.clang-format explains the CI check).

@@ -506,3 +506,23 @@ order flow, the EUR display itself) remain manual like the list above.
 | TS-PERF-001 | U | `monteCarlo` (1200 paths) benchmark over a deterministic 240-bar walk — QBENCHMARK wall-clock per iteration. |
 | TS-PERF-002 | U | `buildTradePlan` benchmark (full plan incl. its Monte-Carlo) over the same walk. |
 | TS-PERF-003 | U | `computeDecisionRows` benchmark over 25 instruments with intraday series. |
+
+## Property-based invariants (tests/tst_invariants.cpp, DES-DOM-PAPER/-PLAN/-LEDGER/-CONFLUENCE/-GATE, REQ-F-010/-031/-035/-037/REQ-N-005)
+
+Each case below runs 300 deterministically-generated inputs (fixed-seed
+`std::mt19937`) through a pure domain function and asserts the stated property
+holds for every one of them — complementary to, not a replacement for, the
+example-based suites these functions already have (tst_papertrader.cpp,
+tst_tradeplan.cpp, tst_predictionledger.cpp, tst_indexconfluence.cpp,
+tst_confirmgate.cpp), which pin specific measured scenarios and regressions.
+
+| ID | L | Case |
+|----|---|------|
+| TS-INV-001 | U | `paperUnits`/`paperStakeFor`: position size is never negative, NaN or infinite over randomized stakes, leverages, rates and equities, including the degenerate (non-positive rate) inputs a real feed can produce. |
+| TS-INV-002 | U | `paperStakeFor`: the granted stake never lets the PROJECTED portfolio risk (existing openRisk plus the new stake's own loss-at-stop) exceed `maxPortfolioRiskFraction × equity`, over randomized well-formed books. |
+| TS-INV-003 | U | `buildEntrySignal`: a short candidate that mirrors a long one exactly (same confidence, same volatility, opposite direction) gets mirrored stop/target geometry — same distances from the fill, opposite side. |
+| TS-INV-004 | U | `predictionToJson`/`predictionFromJson`: every field of a randomized `Prediction` survives a JSON round trip exactly. |
+| TS-INV-005 | U | `buildTradePlan`: pWin, pLose and breakeven stay in [0, 1], and pWin + pLose never exceeds 1, over randomized series/direction/invest/horizon. |
+| TS-INV-006 | U | `buildTradePlan`: expectedNet always equals expectedGross − expectedCosts exactly, and a wider spread (all else fixed) never produces a smaller cost bill or a larger net. |
+| TS-INV-007 | U | `confluenceFor`: an unknown read never counts as met or against, and turning a known read back to unknown can only ever hold or reduce `met`/`against`, never increase them. |
+| TS-INV-008 | U | `confirmPress`: a press commits only on a valid, same-action, strictly-in-window second press — every other randomized combination (different action, stale press, no prior arm) refuses, and a commit always clears the gate. |

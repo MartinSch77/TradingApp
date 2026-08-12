@@ -52,7 +52,14 @@ struct StrategyDecision {
 class ITradingStrategy
 {
 public:
+    ITradingStrategy() = default;
     virtual ~ITradingStrategy() = default;
+    // Deleted rather than defaulted: copying/assigning through the base would slice a
+    // concrete strategy down to nothing but the interface's (empty) own state.
+    ITradingStrategy(const ITradingStrategy &) = delete;
+    ITradingStrategy &operator=(const ITradingStrategy &) = delete;
+    ITradingStrategy(ITradingStrategy &&) = delete;
+    ITradingStrategy &operator=(ITradingStrategy &&) = delete;
     [[nodiscard]] virtual StrategyDecision evaluate(const StrategySnapshot &snapshot) const = 0;
     // A short, stable name recorded in Prediction::strategyVersion, so a ledger
     // mixing several strategies' calls can be scored separately.

@@ -76,7 +76,7 @@ struct SwingPullbackConfig {
 class SwingPullbackStrategyV1 final : public ITradingStrategy
 {
 public:
-    explicit SwingPullbackStrategyV1(SwingPullbackConfig config = {});
+    explicit SwingPullbackStrategyV1(const SwingPullbackConfig &config = {});
 
     [[nodiscard]] StrategyDecision evaluate(const StrategySnapshot &snapshot) const override;
     [[nodiscard]] QString version() const override;

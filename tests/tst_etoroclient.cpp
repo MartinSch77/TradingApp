@@ -19,8 +19,50 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <optional>
 
 namespace {
+
+// The SPX500 search/pnl/portfolio bodies shared by every test in this file that marks
+// a single 10-unit, x20, open-5000 position: identical across TS_CLI_015 and
+// TS_CLI_020 (a PMD CPD clone before this was pulled out), so the two tests differ
+// only in the candle/rates handling each one actually exists to exercise. Returns
+// nullopt for any other path so the caller's own lambda keeps deciding those.
+std::optional<MockHttpServer::Response> standardSpx500Responses(const QString &path)
+{
+    if (path.contains(QStringLiteral("/market-data/search"))) {
+        return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
+            "internalSymbolFull":"SPX500","currentRate":5000.0}]})", {}};
+    }
+    if (path.contains(QStringLiteral("/pnl"))) {
+        // eToro's own snapshot, marked at ITS delayed rate (5015 -> 150 on 10 units).
+        return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+            {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+             "leverage":20,"units":10.0,"openRate":5000.0,
+             "unrealizedPnL":{"pnL":150.0,"closeRate":5015.0}}]}})", {}};
+    }
+    if (path.contains(QStringLiteral("/portfolio"))) {
+        return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
+            {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
+             "leverage":20,"units":10.0,"openRate":5000.0,
+             "openDateTime":"2026-07-30T14:12:00Z"}],"orders":[]}})", {}};
+    }
+    return std::nullopt;
+}
+
+// The rest of the setup shared by the same two tests: tradable set to SPX500 and the
+// portfolio spy armed — BEFORE the caller's client.start(), so it catches start's own
+// first synchronous poll. Returned as the constructor call itself (a prvalue), not a
+// named local, so C++17's mandatory copy elision applies: QSignalSpy has no copy or
+// move constructor:
+//   EtoroClient client(cfg);
+//   const QSignalSpy portfolio = armSpx500(client);
+//   client.start();
+QSignalSpy armSpx500(EtoroClient &client)
+{
+    client.setTradableSymbols({QStringLiteral("SPX500")});
+    return {&client, &EtoroClient::portfolioUpdated};
+}
 
 // Generous shared bound for spy waits: the mock answers in milliseconds, the
 // margin only absorbs CI load. Deliberate short waits stay literal.
@@ -1277,9 +1319,8 @@ private slots:
             QDateTime(nowUtc.date(), QTime(nowUtc.time().hour(), nowUtc.time().minute()),
                       QTimeZone::UTC).toString(Qt::ISODate);
         MockHttpServer server([stale, thisMinute](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
-                    "internalSymbolFull":"SPX500","currentRate":5000.0}]})", {}};
+            if (const auto standard = standardSpx500Responses(path)) {
+                return *standard;
             }
             if (path.contains(QStringLiteral("/history/candles"))) {
                 // Live: this minute's candle, whose close is the current bid.
@@ -1298,19 +1339,6 @@ private slots:
                                                  "date":"%1"}]})").arg(stale).toUtf8(),
                     {}};
             }
-            if (path.contains(QStringLiteral("/pnl"))) {
-                // eToro's own snapshot, marked at ITS delayed rate (5015 → 150 on 10 units).
-                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
-                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
-                     "leverage":20,"units":10.0,"openRate":5000.0,
-                     "unrealizedPnL":{"pnL":150.0,"closeRate":5015.0}}]}})", {}};
-            }
-            if (path.contains(QStringLiteral("/portfolio"))) {
-                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
-                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
-                     "leverage":20,"units":10.0,"openRate":5000.0,
-                     "openDateTime":"2026-07-30T14:12:00Z"}],"orders":[]}})", {}};
-            }
             return MockHttpServer::Response{404, "{}", {}};
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
@@ -1318,8 +1346,7 @@ private slots:
         Config cfg = mockConfig(server);
         cfg.pollIntervalMs = 25;
         EtoroClient client(cfg);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        const QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        const QSignalSpy portfolio = armSpx500(client);
         client.start();
 
         // The candle bid marks the trade: 10 units × (5100 − 5000) = 1000.
@@ -1355,9 +1382,8 @@ private slots:
         const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
         const QString stale = nowUtc.addSecs(-3 * 60LL).toString(Qt::ISODate);
         MockHttpServer server([stale](const QByteArray &, const QString &path) {
-            if (path.contains(QStringLiteral("/market-data/search"))) {
-                return MockHttpServer::Response{200, R"({"items":[{"instrumentId":27,
-                    "internalSymbolFull":"SPX500","currentRate":5000.0}]})", {}};
+            if (const auto standard = standardSpx500Responses(path)) {
+                return *standard;
             }
             if (path.contains(QStringLiteral("/history/candles"))) {
                 return MockHttpServer::Response{404, "{}", {}};
@@ -1371,18 +1397,6 @@ private slots:
                                                  "date":"%1"}]})").arg(stale).toUtf8(),
                     {}};
             }
-            if (path.contains(QStringLiteral("/pnl"))) {
-                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
-                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
-                     "leverage":20,"units":10.0,"openRate":5000.0,
-                     "unrealizedPnL":{"pnL":150.0,"closeRate":5015.0}}]}})", {}};
-            }
-            if (path.contains(QStringLiteral("/portfolio"))) {
-                return MockHttpServer::Response{200, R"({"clientPortfolio":{"positions":[
-                    {"positionId":77,"instrumentID":27,"isBuy":true,"amount":2500.0,
-                     "leverage":20,"units":10.0,"openRate":5000.0,
-                     "openDateTime":"2026-07-30T14:12:00Z"}],"orders":[]}})", {}};
-            }
             return MockHttpServer::Response{404, "{}", {}};
         });
         QVERIFY(server.listen(QHostAddress::LocalHost));
@@ -1390,8 +1404,7 @@ private slots:
         Config cfg = mockConfig(server);
         cfg.pollIntervalMs = 25;
         EtoroClient client(cfg);
-        client.setTradableSymbols({QStringLiteral("SPX500")});
-        QSignalSpy portfolio(&client, &EtoroClient::portfolioUpdated);
+        QSignalSpy portfolio = armSpx500(client);
         client.start();
 
         // First wait for the bulk quote poll to actually have parsed the stale rates

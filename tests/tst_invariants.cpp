@@ -23,6 +23,7 @@
 #include <QtTest/QtTest>
 #include <QTimeZone>
 
+#include <array>
 #include <cmath>
 #include <random>
 
@@ -68,6 +69,7 @@ private slots:
     // zero equity) that a real feed or a mis-set config can actually produce.
     void TS_INV_001_positionSizeNeverNegativeNanOrInfinite()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed);
         // Stake is an amount of money invested — never negative in any real caller.
         // Leverage and rate keep their degenerate (<=0) values on purpose: paperUnits
@@ -90,7 +92,7 @@ private slots:
             BookState book;
             book.equity = equityDist(rng);
             book.cash = book.equity;
-            BotConfig cfg;
+            const BotConfig cfg;
             const double riskPerStake = riskPerStakeDist(rng);
             const double sized = paperStakeFor(book, cfg, riskPerStake);
             QVERIFY(!std::isnan(sized));
@@ -108,6 +110,7 @@ private slots:
     // comment on BotConfig::maxPortfolioRiskFraction describes.
     void TS_INV_002_stakeRoomNeverExceedsPortfolioRiskBudget()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 1);
         std::uniform_real_distribution<double> equityDist(1000.0, 200000.0);
         std::uniform_real_distribution<double> riskPerStakeDist(0.001, 2.0);
@@ -152,6 +155,7 @@ private slots:
     // side — never a different risk profile just because it is a sell.
     void TS_INV_003_buySellGeometryIsMirrored()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 2);
         std::uniform_real_distribution<double> confDist(15.0, 95.0);
 
@@ -217,6 +221,7 @@ private slots:
     // exists to keep honest.
     void TS_INV_004_predictionJsonRoundTripPreservesValue()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 3);
         std::uniform_int_distribution<qint32> dirDist(-1, 1);
         std::uniform_real_distribution<double> strengthDist(0.0, 100.0);
@@ -243,6 +248,11 @@ private slots:
             const QJsonObject json = predictionToJson(p);
             const std::optional<Prediction> back = predictionFromJson(json);
             QVERIFY(back.has_value());
+            // clang-tidy's optional-access checker does not recognise QVERIFY's macro
+            // expansion as the guard it is (QVERIFY returns out of the test function on
+            // failure, same as the has_value() check above) — every access below is
+            // reached only when back is engaged.
+            // NOLINTBEGIN(bugprone-unchecked-optional-access)
             QCOMPARE(back->at, p.at);
             QCOMPARE(back->symbol, p.symbol);
             QCOMPARE(back->dir, p.dir);
@@ -255,6 +265,7 @@ private slots:
             QCOMPARE(back->refusal, p.refusal);
             QCOMPARE(back->priorMoveDir, p.priorMoveDir);
             QCOMPARE(back->vwapSide, p.vwapSide);
+            // NOLINTEND(bugprone-unchecked-optional-access)
         }
     }
 
@@ -266,6 +277,7 @@ private slots:
     // that range is not a rounding slip, it is a broken model.
     void TS_INV_005_planProbabilitiesStayInUnitRange()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 4);
         std::uniform_int_distribution<qint32> dirDist(-1, 1);
         std::uniform_real_distribution<double> investDist(10.0, 50000.0);
@@ -306,6 +318,7 @@ private slots:
     // lower or hold the expected net, never raise it.
     void TS_INV_006_costsNeverIncreaseExpectedNet()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 5);
         std::uniform_real_distribution<double> investDist(100.0, 20000.0);
         std::uniform_real_distribution<double> spreadDist(0.0, 3.0);
@@ -361,6 +374,7 @@ private slots:
     // how many reads confluenceFor counts as agreeing.
     void TS_INV_007_missingMeasurementNeverIncreasesEvidence()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 6);
         // +1/-1 only: a known-but-neutral read (dir == 0) is a real, distinct
         // outcome confluenceFor deliberately counts as neither met nor against
@@ -397,14 +411,13 @@ private slots:
 
             // Now take ONE known read away (flip it to unknown) and recompute.
             // Whatever it was previously counted as, evidence must not go up.
-            Read *const fields[] = {&reads.futuresLead, &reads.futuresMomentum,
-                                    &reads.volatility,   &reads.yields,
-                                    &reads.curve,        &reads.participation,
-                                    &reads.aboveVwap,    &reads.upDownVolume,
-                                    &reads.structure};
+            const std::array<Read *, 9> fields{
+                &reads.futuresLead, &reads.futuresMomentum, &reads.volatility,
+                &reads.yields,      &reads.curve,           &reads.participation,
+                &reads.aboveVwap,   &reads.upDownVolume,    &reads.structure};
             qint32 knownIndex = -1;
-            for (qint32 f = 0; f < 9; ++f) {
-                if (fields[f]->known) {
+            for (qint32 f = 0; f < static_cast<qint32>(fields.size()); ++f) {
+                if (fields.at(static_cast<std::size_t>(f))->known) {
                     knownIndex = f;
                     break;
                 }
@@ -412,8 +425,8 @@ private slots:
             if (knownIndex < 0) {
                 continue;   // every read was already unknown — nothing to take away
             }
-            fields[knownIndex]->known = false;
-            fields[knownIndex]->dir = 0;
+            fields.at(static_cast<std::size_t>(knownIndex))->known = false;
+            fields.at(static_cast<std::size_t>(knownIndex))->dir = 0;
             const Confluence reduced = confluenceFor(reads, dir);
             QCOMPARE(reduced.unknown, baseline.unknown + 1);
             QVERIFY(reduced.met <= baseline.met);
@@ -431,6 +444,7 @@ private slots:
     // anything else in ConfirmDecision to decide whether to place the order.
     void TS_INV_008_rejectedPressNeverCommits()
     {
+        // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - fixed seed is REQUIRED: a property test must be reproducible from its name alone.
         std::mt19937 rng(kSeed + 7);
         std::uniform_int_distribution<qint32> actionDist(0, 3);
         std::uniform_int_distribution<qint64> nowDist(0, 10'000);
@@ -446,7 +460,7 @@ private slots:
             gate.action = actions[actionDist(rng)];
             gate.armedAtMs = nowDist(rng);
 
-            const QString pressAction = actions[actionDist(rng)];
+            const QString &pressAction = actions[actionDist(rng)];
             const qint64 gap = gapDist(rng);
             const qint64 nowMs = gate.armedAtMs + gap;
 
@@ -473,7 +487,7 @@ private slots:
 
         // A stray first-ever press (nothing armed at all) never commits.
         for (qint32 i = 0; i < kIterations; ++i) {
-            const QString pressAction = actions[actionDist(rng)];
+            const QString &pressAction = actions[actionDist(rng)];
             const ConfirmDecision decision =
                 confirmPress(ConfirmGate{}, pressAction, nowDist(rng), kWindow);
             QVERIFY(!decision.commit);

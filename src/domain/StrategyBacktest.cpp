@@ -36,12 +36,19 @@ double fiveDayLowOf(const QList<DailyBar> &bars, qint32 i)
 }
 
 // Everything the per-day steps below share, bundled so each stays under the
-// parameter-count budget.
+// parameter-count budget. Stack-only and function-local by construction (built
+// and destroyed within runBacktest's own call, never stored or copied further),
+// so the usual dangling-reference risk cppcoreguidelines-avoid-const-or-ref-
+// data-members warns about does not apply — the referents all outlive it by
+// definition. NOLINT rather than a pointer conversion: pointers would satisfy
+// the check mechanically without changing the actual lifetime story.
 struct BacktestContext {
+    // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
     PaperBook &book;
     const BacktestInput &input;
     const BotConfig &cfg;
     const SwingPullbackConfig &exitConfig;
+    // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
     double effectiveSpread = 0.0;
 };
 
@@ -183,8 +190,8 @@ BacktestSummary runBacktest(const ITradingStrategy &strategy, const SwingPullbac
 
     for (qint32 i = 0; i < input.bars.size(); ++i) {
         const QDateTime now = epoch.addDays(i);
-        BacktestDayResult day = (rs.openId != 0) ? stepExit(ctx, rs, i, now)
-                                                 : stepEntry(ctx, rs, strategy, i, now);
+        const BacktestDayResult day = (rs.openId != 0) ? stepExit(ctx, rs, i, now)
+                                                       : stepEntry(ctx, rs, strategy, i, now);
         summary.days.append(day);
     }
     summary.stats = book.stats();

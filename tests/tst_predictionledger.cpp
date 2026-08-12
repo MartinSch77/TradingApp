@@ -358,6 +358,9 @@ private slots:
                  QStringLiteral("swing-pullback-v1"));
         const std::optional<Prediction> back = predictionFromJson(json);
         QVERIFY(back.has_value());
+        // QVERIFY(has_value()) above already guards this; clang-tidy does not
+        // recognise the macro's early return on failure.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         QCOMPARE(back->strategyVersion, QStringLiteral("swing-pullback-v1"));
 
         // A row written before this field existed has no such key at all — it must load
@@ -366,6 +369,7 @@ private slots:
         older.remove(QStringLiteral("strategyVersion"));
         const std::optional<Prediction> fromOlder = predictionFromJson(older);
         QVERIFY(fromOlder.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         QVERIFY(fromOlder->strategyVersion.isEmpty());
     }
 };

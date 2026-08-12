@@ -13,4 +13,8 @@ skip = build*,docs/html,docs/strictdoc,docs/sphinx-html,.git,coverage,analysis-r
 #           named in tools/clang_analyzer.py and .clang-tidy
 #   zink = Mesa's OpenGL-on-Vulkan driver (QSG_RHI_BACKEND notes in main.cpp /
 #          cockpit_main.cpp), not a typo of "zinc"
-ignore-words-list = nam,hsi,nd,fo,synopsys,optin,zink
+#   exitin = local variable `exitIn` (SwingExitInputs), 2 hits in
+#            StrategyBacktest.cpp — short for "exit inputs", not "exiting"
+#   confirmin = local variable `confirmIn` (ConfirmInputs), 8 hits in
+#               SwingPullbackStrategy.cpp — short for "confirm inputs", not "confirming"
+ignore-words-list = nam,hsi,nd,fo,synopsys,optin,zink,exitin,confirmin

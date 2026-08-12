@@ -121,7 +121,7 @@ StrategyDecision confirmAndSize(const ConfirmInputs &in, const SwingPullbackConf
 }
 } // namespace
 
-SwingPullbackStrategyV1::SwingPullbackStrategyV1(SwingPullbackConfig config)
+SwingPullbackStrategyV1::SwingPullbackStrategyV1(const SwingPullbackConfig &config)
     : m_config(config)
 {
 }

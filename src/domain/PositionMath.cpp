@@ -3,6 +3,8 @@
 
 #include "domain/PositionMath.h"
 
+#include "domain/PriceDecimalsCore.h"
+
 #include <QLocale>
 #include <QSet>
 
@@ -12,17 +14,7 @@ namespace trading {
 
 qint32 priceDecimals(double price) noexcept
 {
-    const double a = std::abs(price);
-    if (a >= 100.0) {
-        return 2;
-    }
-    if (a >= 10.0) {
-        return 3;
-    }
-    if (a >= 1.0) {
-        return 4;
-    }
-    return 5;
+    return static_cast<qint32>(priceDecimalsCore(price));
 }
 
 double accountValuePerPoint(const Position &p)

@@ -143,6 +143,8 @@ qt_add_library(trading_domain STATIC
     src/domain/SignalEnsemble.h
     src/domain/PositionMath.cpp
     src/domain/PositionMath.h
+    src/domain/PriceDecimalsCore.cpp
+    src/domain/PriceDecimalsCore.h
     src/domain/EventInsight.cpp
     src/domain/EventInsight.h
     src/domain/DecisionEngine.cpp

@@ -33,6 +33,9 @@
 #   ./setup.sh mull      Mull mutation testing (tools/mutation_test.sh), matched to
 #                        the host's clang major version — Linux/clang only, no
 #                        Windows counterpart (mirrors the clazy/TSan/valgrind split)
+#   ./setup.sh cbmc      CBMC bounded model checker (tools/cbmc_check.sh) — Ubuntu
+#                        only (uses apt-get download against the distro's own
+#                        archive, no root needed), no Windows counterpart yet
 #
 # NOT installable here — LICENSE-BOUND, so they are detected and reported, and
 # the stages that need them SKIP with a message instead of failing (exit 3 =
@@ -365,6 +368,42 @@ mull_install() {
     echo "mull: $("$MULL_DIR/usr/bin/mull-runner-$major" --version 2>&1 | head -1)"
     echo
     echo "Pilot it with: tools/mutation_test.sh"
+}
+
+# CBMC (tools/cbmc_check.sh): installed into ~/.local rather than system-wide, via
+# `apt-get download` against Ubuntu's own configured archive — no root needed
+# (mirrors mull_install's dpkg-deb -x approach). CBMC pulls in minisat as its SAT
+# backend; both packages come from the same apt sources, version-matched to the
+# host's Ubuntu release automatically.
+CBMC_DIR="${CBMC_DIR:-$HOME/.local/cbmc}"
+
+cbmc_install() {
+    echo "== CBMC bounded model checker ($CBMC_DIR) =="
+    local os_id
+    os_id="$(. /etc/os-release && echo "$ID")"
+    if [ "$os_id" != "ubuntu" ]; then
+        echo "CBMC install here uses 'apt-get download' against Ubuntu's own apt sources; $os_id is unsupported by this installer" >&2
+        return 1
+    fi
+    if [ -x "$CBMC_DIR/usr/bin/cbmc" ]; then
+        echo "already present: $(LD_LIBRARY_PATH="$CBMC_DIR/usr/lib" "$CBMC_DIR/usr/bin/cbmc" --version 2>&1)"
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp -d)"
+    if ! (cd "$tmp" && apt-get download cbmc minisat) >/dev/null; then
+        echo "apt-get download cbmc minisat failed — is the 'universe' component enabled?" >&2
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$CBMC_DIR"
+    for deb in "$tmp"/*.deb; do
+        dpkg-deb -x "$deb" "$CBMC_DIR" || { echo "dpkg-deb extraction failed for $deb" >&2; rm -rf "$tmp"; return 1; }
+    done
+    rm -rf "$tmp"
+    echo "cbmc: $(LD_LIBRARY_PATH="$CBMC_DIR/usr/lib" "$CBMC_DIR/usr/bin/cbmc" --version 2>&1)"
+    echo
+    echo "Run it with: tools/cbmc_check.sh"
 }
 
 status() {
@@ -772,11 +811,14 @@ ml)
 mull)
     mull_install
     ;;
+cbmc)
+    cbmc_install
+    ;;
 squish)
     squish_status
     ;;
 *)
-    echo "usage: $0 [install|update|status|android|ollama|ml|mull|squish]" >&2
+    echo "usage: $0 [install|update|status|android|ollama|ml|mull|cbmc|squish]" >&2
     exit 2
     ;;
 esac

@@ -28,6 +28,9 @@ tools/fuzz.sh [seconds-per-target]   # libFuzzer over fuzz/*.cpp harnesses (Trad
 tools/reuse_lint.sh            # REUSE/SPDX license-compliance lint (pure Python,
                                # both platforms); a REAL CI GATE (.github/workflows/
                                # ci.yml `reuse` job, fsfe/reuse-action) — see REUSE.toml
+tools/cbmc_check.sh            # CBMC bounded-model-checking proof (./setup.sh cbmc);
+                               # ONE Qt-free function (cbmc/priceDecimals_proof.cpp);
+                               # Ubuntu only, informational, not a gate; see docs/tools.md
 tools/check_reproducibility.sh # two independent AppImage builds, compared byte-for-byte
                                # and content-by-content; Linux only, informational,
                                # not a gate; see docs/tools.md

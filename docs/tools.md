@@ -393,6 +393,50 @@ the problem is solved. Exits 3 when the AppImage packaging's own prerequisites
 `tools/package_appimage.sh` itself. Linux only — there is no equivalent for
 `tools/package_portable.ps1` yet.
 
+## CBMC: bounded model checking, deliberately narrow
+
+`tools/cbmc_check.sh` runs [CBMC](https://www.cprover.org/cbmc/) — a bounded
+model checker that PROVES a property over every possible input in its bound,
+not just the ones a test or a fuzzer happened to try. `./setup.sh cbmc`
+installs it (Ubuntu only: `apt-get download cbmc minisat` against the
+distro's own archive, no root needed, unpacked into `~/.local/cbmc` the same
+way `mull_install` unpacks Mull's `.deb`).
+
+**Why there is exactly one proof, not many.** CBMC's C++ front-end ships no
+model for Qt's headers, and this codebase is Qt almost everywhere — every
+other pure-algorithmic candidate considered (`PositionMath`'s other
+functions, `domain/Indicators`, `domain/ConfirmGate`) still needs `QString`/
+`QList`/`QHash` somewhere in the same translation unit. `cbmc/
+priceDecimals_proof.cpp` proves ONE function pulled out specifically because
+it has no Qt dependency at all: `trading::priceDecimalsCore`
+(`src/domain/PriceDecimalsCore.h/.cpp`), with `PositionMath::priceDecimals`
+now a one-line wrapper around it — exactly the same "extract the Qt-free
+kernel into its own file" move used for the Ollama/Yahoo parsers above, just
+for CBMC's sake rather than libFuzzer's. The proof itself needs no
+precondition: for every possible `double` — NaN, +-Inf, subnormals included —
+the function returns exactly one of `{2, 3, 4, 5}`, because a comparison
+against a NaN magnitude is always false and falls through to the same
+answer an ordinary sub-1.0 price gets.
+
+**Two more CBMC-specific frictions, both measured and both worked around
+in the extracted header/impl rather than by fighting the tool:**
+- CBMC 5.95's C++ front-end cannot parse the `[[attribute]]` bracket syntax
+  AT ALL, in any `--cppNN` mode (measured: even a bare `[[nodiscard]] int
+  foo();` is a parse error). `PriceDecimalsCore.h` guards it behind
+  `TRADINGAPP_NODISCARD`, defined away only when `tools/cbmc_check.sh` passes
+  `-DTRADINGAPP_CBMC_PROOF`; every normal build keeps the real attribute.
+- `<cmath>` drags in glibc's extended-float declarations (`_Float32`/
+  `_Float64`), which the same front-end cannot parse either. `std::abs` is
+  therefore replaced with a manual `(price < 0.0) ? -price : price` — a real
+  simplification (one fewer include, behaviourally identical for every input
+  this function cares about), not a proof-only shim.
+
+Deliberately informational and narrower even than Mull/libFuzzer's own
+"measured, not yet enforced" stance, since this proves one property of one
+function rather than establishing a repeatable coverage metric across the
+codebase. Exits 3 when CBMC is not installed. No Windows counterpart yet
+(the installer is Ubuntu-`apt`-specific).
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |

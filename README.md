@@ -161,10 +161,10 @@ an [architecture-as-code model](docs/case-studies/axivion.md) on every Axivion r
 
 ```mermaid
 flowchart TD
-    M["main.cpp — composition root"] --> U
-    U["<b>ui</b> — Qt Widgets, Qt Charts, Model/View"] --> S
-    S["<b>services</b> — Qt Network: eToro REST, market feeds, config"] --> D
-    D["<b>domain</b> — Qt Core ONLY: pure trading logic, no I/O, no UI"]
+    M["main.cpp<br/>composition root"] --> U
+    U["ui<br/>Qt Widgets, Qt Charts, Model/View"] --> S
+    S["services<br/>Qt Network: eToro REST, market feeds, config"] --> D
+    D["domain — Qt Core ONLY<br/>pure trading logic, no I/O, no UI"]
 ```
 
 `trading_domain` links Qt::Core and nothing else, so a domain file that reaches for a

@@ -567,3 +567,19 @@ by tst_swingpullbackstrategy.cpp) lining up numerically.
 | TS-BT-003 | U | A stop-loss day fires the conservative bar resolution, closes the position and frees the book — the closed record is a loss and `closedTrades` is 1. |
 | TS-BT-004 | U | Widening the assumed spread via `spreadMultiplier`, with every other input identical, never IMPROVES the recorded result (`totalPnl`) and never pays LESS in costs — the property the design's 1x/1.5x/2x cost sweep exists to check, not trusted by inspection. |
 | TS-BT-005 | U | A refused sizing (`riskPerTrade` switched off entirely) leaves the day unopened and named `sizing-refused`, rather than opening at whatever sizing happened to be computed. |
+
+## Path-dependent decision labelling (tests/tst_pathoutcome.cpp, DES-DOM-PATHOUTCOME, REQ-F-037)
+
+`resolvePathLabel`/`resolvePathLabelForPrediction` (2026-08-12 redesign, item 8): a label
+decided by the PATH price actually took, not an endpoint question — closing the
+selection-bias gap where training data only ever saw outcomes for entries an existing gate
+already chose.
+
+| ID | L | Case |
+|----|---|------|
+| TS-PATH-001 | U | A path that rises to +1R without touching -1R labels Long; the mirror (falls to a short's own +1R-equivalent without touching its stop) labels Short. |
+| TS-PATH-002 | U | Neither side ever reaches its own target within the horizon (a path chopping inside the stop/target band the whole way) labels NoTrade. |
+| TS-PATH-003 | U | Same-candle ambiguity — a bar wide enough to cover both a direction's own stop and target — is resolved conservatively: the stop is assumed hit FIRST, the same rule `StrategyBacktest::resolveBarAgainstStop` uses for a live position. |
+| TS-PATH-004 | U | `costBufferFraction` inflates the target distance: a move that clears the raw R target but not the cost-inclusive one does not count as a win. |
+| TS-PATH-005 | U | A degenerate R (no stop distance configured) refuses to walk anything and reports NoTrade rather than dividing by, or comparing against, zero. |
+| TS-PATH-006 | U | The `PredictionLedger` bridge: only later rows (strictly after the decision) for the SAME symbol become the path — an earlier row and a different instrument's row do not corrupt the label, and rows are walked in TIME order regardless of arrival order. |

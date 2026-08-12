@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Martin Schuler
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# OpenSSF Scorecard (tooling backlog item 6): a fixed set of supply-chain-hygiene
+# checks over the repository itself (branch protection, pinned dependencies,
+# CI best practices, dangerous workflow patterns, vulnerability disclosure) —
+# a DIFFERENT layer from every other analyzer in this project, none of which
+# look at the repository/workflow configuration itself. INFORMATIONAL, same
+# stance as SonarCloud/Coverity: the score is published (this is a public repo)
+# and uploaded as a SARIF report to the Security tab, but nothing here gates a
+# build or a release. Weekly cron + push to main, not per-PR — Scorecard grades
+# the repository's current state as a whole, not a diff.
+name: Scorecard supply-chain security
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '30 1 * * 6'   # weekly, Saturday 01:30 UTC
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    permissions:
+      # Needed for Code Scanning upload.
+      security-events: write
+      # Needed for the OIDC token used to publish results to the public
+      # Scorecard API (api.securityscorecards.dev) — the repo is public.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif

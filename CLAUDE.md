@@ -28,6 +28,12 @@ tools/fuzz.sh [seconds-per-target]   # libFuzzer over fuzz/*.cpp harnesses (Trad
 tools/reuse_lint.sh            # REUSE/SPDX license-compliance lint (pure Python,
                                # both platforms); a REAL CI GATE (.github/workflows/
                                # ci.yml `reuse` job, fsfe/reuse-action) — see REUSE.toml
+tools/check_reproducibility.sh # two independent AppImage builds, compared byte-for-byte
+                               # and content-by-content; Linux only, informational,
+                               # not a gate; see docs/tools.md
+                               # (.github/workflows/scorecard.yml — weekly + push to main,
+                               # informational, not a gate; see docs/tools.md — is the
+                               # OpenSSF Scorecard supply-chain check, no local script)
 tools/publish_release.sh       # release: REFUSES unless the evidence is there
                                # (tests green, 8 analyzers at 0, ratchet clean,
                                # 0 hard gaps, PDF newer than the sources), then

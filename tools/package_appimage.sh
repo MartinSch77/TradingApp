@@ -50,9 +50,12 @@ for a in "$@"; do
     esac
 done
 
-BUILD="$ROOT/build-appimage"
+# Overridable so tools/check_reproducibility.sh can run two independent builds
+# side by side without one clobbering the other; every normal caller gets the
+# same defaults as before.
+BUILD="${APPIMAGE_BUILD_DIR:-$ROOT/build-appimage}"
 APPDIR="$BUILD/AppDir"
-OUT_DIR="$ROOT/downloads"
+OUT_DIR="${APPIMAGE_OUT_DIR:-$ROOT/downloads}"
 JOBS="$(nproc)"
 
 if [ -z "${QT_PREFIX:-}" ]; then
@@ -152,6 +155,17 @@ export QMAKE="$QT_PREFIX/bin/qmake"
 # run time), so without this it stops at "Could not find dependency:
 # libQt6Charts.so.6".
 export LD_LIBRARY_PATH="$QT_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Same reasoning, for the optional ONNX Runtime dependency (CMakeLists.txt's own
+# ONNXRUNTIME_ROOT resolution, mirrored here): when trading_services linked against
+# it (crowd-model inference, REQ-F-041), TradingApp needs libonnxruntime.so.1 to
+# resolve for linuxdeploy's dependency walk too, or the deploy step fails outright
+# with "Could not find dependency: libonnxruntime.so.1" on any machine that HAS the
+# feature enabled — measured, not hypothetical. Silently absent when the library
+# was never installed (the feature is optional; the app builds without it either way).
+ONNXRUNTIME_ROOT="${ONNXRUNTIME_ROOT:-$HOME/.local/onnxruntime}"
+if [ -d "$ONNXRUNTIME_ROOT/lib" ]; then
+    export LD_LIBRARY_PATH="$ONNXRUNTIME_ROOT/lib:$LD_LIBRARY_PATH"
+fi
 
 # The app's only SQL driver is SQLite (the crowd store), but linking Qt6::Sql makes the Qt
 # plugin deploy EVERY driver in the kit — and a driver whose native client library is absent

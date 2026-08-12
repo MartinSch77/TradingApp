@@ -329,6 +329,30 @@ own parser already treats as ignorable); everything else — JSON configs, CI/
 editor/IDE metadata, most of `docs/`, one binary PNG — is annotated in bulk via
 `REUSE.toml`, exactly the case that mechanism exists for.
 
+## Reproducibility check for the Linux AppImage (tooling backlog item 5)
+
+`tools/check_reproducibility.sh` builds the AppImage **twice, independently**
+(own `build-appimage` tree, own output directory each — via new `APPIMAGE_
+BUILD_DIR`/`APPIMAGE_OUT_DIR` overrides in `tools/package_appimage.sh`) and
+compares the two results: first the whole file by SHA-256, then — if those
+differ — every file inside the SquashFS via `--appimage-extract` + `diff -rq`.
+`SOURCE_DATE_EPOCH` is pinned to `HEAD`'s own commit time (the
+[reproducible-builds.org](https://reproducible-builds.org/) convention) so any
+tool in the chain that respects it sees the same clock on both runs instead of
+"now" twice.
+
+This answers the actual supply-chain question — "does this pipeline produce the
+same bytes twice from the same source and toolchain" — rather than "did
+packaging exit zero." Deliberately informational, same stance as Mull/
+libFuzzer: full bit-for-bit reproducibility of a real Qt/C++ binary (ELF
+build-ids, embedded absolute paths, archive member ordering, SquashFS
+timestamps) is a genuine, ongoing effort, and this script's job is to say
+honestly how close the pipeline is and name exactly what differs, not to claim
+the problem is solved. Exits 3 when the AppImage packaging's own prerequisites
+(a Qt kit with Charts, linuxdeploy) are unavailable, same convention as
+`tools/package_appimage.sh` itself. Linux only — there is no equivalent for
+`tools/package_portable.ps1` yet.
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |
@@ -364,3 +388,26 @@ permissions and unpinned action versions, 24 are taint warnings in the Python
 tooling and 3 are the reproducible-RNG rule in the simulation feed. None is a
 finding about the trading path; they are on the backlog as hygiene, not as
 blockers.
+
+## OpenSSF Scorecard (tooling backlog item 6)
+
+`.github/workflows/scorecard.yml` runs [OpenSSF
+Scorecard](https://github.com/ossf/scorecard) weekly (plus on every push to
+`main`) — a fixed set of checks over the REPOSITORY and its CI configuration
+itself: branch protection, whether dependencies/actions are pinned to a commit
+SHA, dangerous workflow patterns (`pull_request_target` with a checkout of
+untrusted code, script injection via unsanitised `${{ }}` expansion), a security
+policy, fuzzing/SAST presence, and more. This is a genuinely different layer
+from every other analyzer in this project: cppcheck/clang-tidy/Axivion/Mull/
+libFuzzer all look at the C++ *source*, and Scorecard instead grades the
+*supply chain* around it — the one place a compromised CI action or an
+unreviewed dependency bump would actually land.
+
+Same informational stance as SonarCloud/Coverity: the score is published (this
+is a public repository) and the findings are uploaded as SARIF to the repo's
+Security tab, but nothing here gates a build or blocks a release — Scorecard's
+own checks include things this project has made a *documented, deliberate*
+choice not to do (e.g. GitHub Actions here are pinned by tag, not by commit
+SHA, matching the versioning convention every other workflow in this repo
+already uses), and a mechanical gate would fight that decision rather than
+inform it.

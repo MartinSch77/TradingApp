@@ -69,6 +69,7 @@ build-san-ubsan/
 build-cov-msvc/
 build-mull/
 build-fuzz/
+build-repro/
 build-release/
 # Generated Visual Studio solution (tools/make_vs_solution.ps1). CMakeLists.txt
 # is the single description of the build; the .sln is never committed.

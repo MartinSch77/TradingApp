@@ -36,6 +36,7 @@ GENERATED=(
     build-cov-msvc
     build-mull
     build-fuzz
+    build-repro
     build-release
     build-vs
     build_axivion

@@ -147,6 +147,7 @@ gaps, and every artefact is newer than the newest source.
 [![sonarcloud bugs](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=bugs)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![sonarcloud code smells](https://sonarcloud.io/api/project_badges/measure?project=MartinSch77_TradingApp&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=MartinSch77_TradingApp)
 [![coverity](https://scan.coverity.com/projects/33200/badge.svg)](https://scan.coverity.com/projects/TradingApp)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/MartinSch77/TradingApp/badge)](https://securityscorecards.dev/viewer/?uri=github.com/MartinSch77/TradingApp)
 
 Most of this code was written with an AI assistant. The interesting question is how you
 know it is right — [docs/ai-assisted-development.md](docs/ai-assisted-development.md)

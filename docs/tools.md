@@ -301,6 +301,46 @@ stance as Mull and SonarCloud: a found crash lands under `fuzz/crashes/<target>/
 ` (git-ignored) and is reproduced by running the harness binary directly on that
 one file, but nothing here fails a build yet.
 
+**Two more targets (tooling backlog item 7), each reached a REFACTOR first, not
+just a new harness.** Both `services/OllamaAdvisor`'s response parse and
+`services/MarketFeeds`'s Yahoo chart parse were `static` helpers in an anonymous
+namespace, private to their own TU, which publicly links `Qt6::Network` — the
+existing harness pattern links only `trading_domain`/`Qt6::Core`. Rather than
+`#include` the whole `.cpp` into a fuzz target (which would fight this project's
+own linker-enforced layering: "domain (Qt Core only) <- services <- ui"), both
+parsers were moved into proper domain-layer modules with declared entry points:
+
+- `domain/OllamaResponseParser.h/.cpp` (`jsonPayloadIn`, `repairTruncatedJson`,
+  `picksFrom`) — `fuzz/ollama_response_fuzzer.cpp` fuzzes `picksFrom` directly,
+  asserting every accepted pick carries a non-empty symbol (the one invariant
+  `PaperTrader::matchProposalSymbol`, the next step in the real pipeline, trusts
+  without re-checking).
+- `domain/YahooChartParser.h/.cpp` (`yahooChartResult`, `yahooCloses`,
+  `yahooOhlc`, `yahooMetaSessionChange`, `yahooBars`) — `fuzz/yahoo_chart_fuzzer.
+  cpp` chains raw bytes through `QJsonDocument::fromJson` and every one of the
+  five functions, asserting `yahooBars`' closes/volumes stay aligned index for
+  index and that filtering can only shrink a series, never grow it.
+
+Both moves are behavior-preserving (verified: `tst_ollamaadvisor`'s 11 tests and
+`tst_marketfeeds`'s 17 both still pass unchanged) and land the parsers where
+this project's own layering rule already says code needing "nothing but Qt
+Core" belongs — `services/OllamaAdvisor.cpp`/`MarketFeeds.cpp` now `using
+trading::picksFrom` etc. rather than defining it locally. The move also closed
+a real, pre-existing gap: `yahooBars` had ZERO direct test coverage before this
+(`tests/tst_yahoochartparser.cpp`'s `TS-YAHOO-006` is the first).
+
+**The fuzzer found a real bug on its first run — in the HARNESS, not the
+parser**, which is itself worth recording: `yahoo_chart_fuzzer`'s first draft
+asserted all four `CandleColumns` (open/high/low/close) always come back the
+same length. `domain/Candles::candlesFrom` is explicitly designed to coexist
+with columns of DIFFERENT lengths (it takes the shortest, never pads) — a feed
+that omits one of the four arrays entirely is a real, legitimate case, and the
+assertion was simply wrong. Fixed by removing the false invariant rather than
+"fixing" `yahooOhlc` to manufacture padding it should not have. The lesson
+generalises: a fuzz harness's own assertions are claims about the code's
+CONTRACT, and need the same scrutiny as the code itself — an over-eager
+assertion turns a correct answer into a false "crash."
+
 ## REUSE/SPDX license compliance — a real CI gate
 
 `tools/reuse_lint.sh` / `tools/reuse_lint.ps1` run [reuse](https://reuse.software)

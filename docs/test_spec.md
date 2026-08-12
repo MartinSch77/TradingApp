@@ -460,6 +460,18 @@ Against an in-process mock of Ollama's HTTP API — no test needs a running daem
 | TS-FEED-008 | I | Intraday 1-minute close series: null minutes are skipped, a genuine 0.0 close survives (positiveOnly off), and instruments without a Yahoo ticker issue no request (REQ-F-022). |
 | TS-FEED-009 | I | A failing feed logs ONE throttled line per 10-minute window — repeated failing fetches within the window add no further lines. |
 
+## Yahoo chart JSON parser (tests/tst_yahoochartparser.cpp, DES-DOM-YAHOOPARSE, REQ-F-035/-022) — unit, extracted from MarketFeeds (tooling backlog item 7) so it is directly testable and fuzzable
+
+| ID | L | Case |
+|----|---|------|
+| TS-YAHOO-001 | U | `yahooChartResult` degrades to an empty object for empty bytes, a `result` array with no entries, a wrong top-level key or text that is not JSON at all — never faults. |
+| TS-YAHOO-002 | U | `yahooCloses` skips `null` entries and, with `positiveOnly`, additionally drops zero/negative values. |
+| TS-YAHOO-003 | U | `yahooOhlc`'s four columns are allowed to differ in length when the payload omits one of open/high/low/close entirely (only close+volume present) — `domain/Candles::candlesFrom` is the function that copes with the mismatch. |
+| TS-YAHOO-004 | U | A `null` minute in one OHLC column becomes `0.0` rather than being dropped, so it does not shift that column against the other three. |
+| TS-YAHOO-005 | U | `yahooMetaSessionChange` needs BOTH `regularMarketPrice` and `previousClose` present and positive; missing or non-positive either one returns empty rather than a fabricated change. |
+| TS-YAHOO-006 | U | `yahooBars` drops a bar WHOLE when either its close or its volume is null/non-positive at that index — previously zero direct coverage (only reached through `MarketFeeds`' HTTP mock); pins that closes/volumes stay aligned index for index. |
+| TS-YAHOO-007 | U | A quote with no `volume` array at all (the volatility/yield indices) returns empty closes AND empty volumes — UNKNOWN, never a fabricated zero series. |
+
 ## Economic calendar (tests/tst_economiccalendar.cpp, DES-SVC-CAL, REQ-F-020) — integration, local mock server
 
 | ID | L | Case |

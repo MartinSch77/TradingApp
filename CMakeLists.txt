@@ -127,6 +127,10 @@ qt_add_library(trading_domain STATIC
     src/domain/Models.h
     src/domain/Money.cpp
     src/domain/Money.h
+    src/domain/OllamaResponseParser.cpp
+    src/domain/OllamaResponseParser.h
+    src/domain/YahooChartParser.cpp
+    src/domain/YahooChartParser.h
     src/domain/OrderRequestValidator.cpp
     src/domain/OrderRequestValidator.h
     src/domain/InstrumentCatalog.cpp

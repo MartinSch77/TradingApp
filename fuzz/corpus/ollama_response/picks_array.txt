@@ -1,0 +1,1 @@
+{"picks":[{"symbol":"SPX500","action":"BUY","confidence":"high","leverage":"x5","rationale":"trend"},{"symbol":"NSDQ100","action":"HOLD","confidence":0.4}]}

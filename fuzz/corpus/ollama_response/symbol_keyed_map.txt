@@ -1,0 +1,1 @@
+{"picks":{"SPX500":{"action":"BUY","confidence":62,"rationality":"momentum"},"BTC":{"action":"sell (short)"}}}

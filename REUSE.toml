@@ -84,3 +84,10 @@ path = ["packaging/TradingApp.desktop", "packaging/android/AndroidManifest.xml",
     "packaging/tradingapp.png"]
 SPDX-FileCopyrightText = "2026 Martin Schuler"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+# JSON has no comment syntax, unlike the TradeScript-format fuzz seeds under
+# fuzz/corpus/tradescript/ (which use '#' comments and carry a real inline header).
+path = ["fuzz/corpus/ollama_response/**", "fuzz/corpus/yahoo_chart/**"]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"

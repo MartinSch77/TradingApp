@@ -128,6 +128,7 @@ tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpSer
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclientlive tst_etoroclientlive.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_marketfeeds tst_marketfeeds.cpp MockHttpServer.cpp MockHttpServer.h)
+tradingapp_add_test(tst_yahoochartparser tst_yahoochartparser.cpp)
 tradingapp_add_test(tst_economiccalendar tst_economiccalendar.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_aiadvisor tst_aiadvisor.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_ollamaadvisor tst_ollamaadvisor.cpp MockHttpServer.cpp MockHttpServer.h)

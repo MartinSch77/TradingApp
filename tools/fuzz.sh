@@ -35,7 +35,7 @@ BUDGET="${1:-30}"
 BUILD_DIR="${FUZZ_BUILD_DIR:-$ROOT/build-fuzz}"
 QT_PREFIX="$(qt_prefix)"
 
-TARGETS=(fuzz_tradescript)
+TARGETS=(fuzz_tradescript fuzz_ollama_response fuzz_yahoo_chart)
 
 echo "== configuring $BUILD_DIR (clang++$suffix, libFuzzer+ASan+UBSan) =="
 CONFIG_ARGS=(-S "$ROOT" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug

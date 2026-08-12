@@ -1,0 +1,1 @@
+{"symbol":"SPX500","action":"BUY","confidence":61,"leverage":5,"rationale":"trend and rating agree"}

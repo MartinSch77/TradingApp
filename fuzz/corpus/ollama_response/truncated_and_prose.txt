@@ -1,0 +1,2 @@
+Sure, here is my answer: ```json
+{"picks":[{"symbol":"SPX500","action":"BUY","confidence":70,"leverage":10,"rationale":"low volatilit

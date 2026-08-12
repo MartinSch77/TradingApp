@@ -264,6 +264,43 @@ the mutants the first pilot run surfaced); `ConfirmGate.cpp`, `PositionMath.cpp`
 and `Money.cpp` still carry a small number of documented survivors left for a
 follow-up pass.
 
+## Fuzzing: libFuzzer over hand-rolled text parsers
+
+`tools/fuzz.sh [seconds-per-target]` builds the harnesses under `fuzz/` into a
+separate `build-fuzz/` tree (`-DTRADINGAPP_BUILD_FUZZERS=ON` there and nowhere
+else — the option is off by default, since `-fsanitize=fuzzer,address,undefined`
+changes code generation project-wide if applied anywhere else) and runs each one
+for a bounded time (default 30 s smoke run; pass a larger budget for a real
+campaign) against its own seed corpus. libFuzzer is a clang compiler-rt runtime,
+not a separate install — any clang build already has it, so there is no
+`./setup.sh` step, unlike Mull's prebuilt `.deb`. Linux/clang only, same split as
+clazy/TSan/valgrind/Mull; exits 3 when no clang >= 18 is present.
+
+**First target (tooling backlog item 3): `fuzz/tradescript_fuzzer.cpp`**, over
+`trading::parseTradeScript` (`src/domain/TradeScript.cpp`, REQ-F-028) — the one
+parser in this codebase that reads untrusted text straight off disk, hand-split
+on `;` and coerced through `QDateTime::fromString`/`QString::toDouble`/`toInt`.
+The harness also re-asserts (via `__builtin_trap()`, sanitizer-visible) the two
+invariants the rest of the domain trusts a parsed entry to already satisfy —
+`amount > 0`, `leverage >= 1` — so a parser bug that lets either slip through
+turns into a crash HERE rather than a silent bad trade downstream.
+
+**Seed corpus vs discovered corpus — do not conflate them.** `fuzz/corpus/
+<target>/` is a handful of curated, TRACKED example inputs (the shipped
+`docs/tradescript-example.txt`, a minimal line, an all-fields line). Passing
+that directory to libFuzzer as ITS corpus would be wrong: libFuzzer writes every
+new minimized/interesting input it discovers directly into whatever directory it
+is given — measured once, a single 30 s run turned 3 tracked seed files into 53,
+all untracked noise. `tools/fuzz.sh` therefore passes an ignored output
+directory (`analysis-results/fuzz-corpus/<target>/`, or `$FUZZ_CORPUS_DIR`) as
+the PRIMARY corpus argument and the tracked seed directory as an extra read-only
+input — the seeds stay exactly as committed after any number of runs.
+
+Deliberately informational, not a gate, the same "measured, not yet enforced"
+stance as Mull and SonarCloud: a found crash lands under `fuzz/crashes/<target>/
+` (git-ignored) and is reproduced by running the harness binary directly on that
+one file, but nothing here fails a build yet.
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |

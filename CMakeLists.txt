@@ -537,6 +537,23 @@ if(NOT ANDROID AND NOT IOS)
 endif()
 
 # ---------------------------------------------------------------------------
+# Fuzzing (Linux/clang only, off by default — see tools/fuzz.sh, docs/tools.md).
+# libFuzzer is a clang runtime, not a separate install, so no ./setup.sh step:
+# any clang build already has it. Guarded by a dedicated option rather than
+# BUILD_TESTING because -fsanitize=fuzzer changes CODE GENERATION project-wide
+# if applied to the whole build — tools/fuzz.sh configures a SEPARATE build-fuzz
+# tree with this ON and nothing else, exactly like build-mull/build-san do for
+# their own instrumentation.
+# ---------------------------------------------------------------------------
+option(TRADINGAPP_BUILD_FUZZERS "Build libFuzzer harnesses (clang only)" OFF)
+if(TRADINGAPP_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "TRADINGAPP_BUILD_FUZZERS needs clang (libFuzzer is a clang runtime)")
+    endif()
+    add_subdirectory(fuzz)
+endif()
+
+# ---------------------------------------------------------------------------
 # Android
 # ---------------------------------------------------------------------------
 # Only evaluated when configuring with an Android Qt kit (use the kit's

@@ -60,11 +60,15 @@ build-appimage/
 build-android-*/
 build-portable/
 analysis-results/
+# libFuzzer writes crash artifacts here at run time (tools/fuzz.sh); fuzz/corpus/ is
+# the curated, TRACKED seed set and stays out of this rule on purpose.
+fuzz/crashes/
 build-san/
 build-san-tsan/
 build-san-ubsan/
 build-cov-msvc/
 build-mull/
+build-fuzz/
 build-release/
 # Generated Visual Studio solution (tools/make_vs_solution.ps1). CMakeLists.txt
 # is the single description of the build; the .sln is never committed.

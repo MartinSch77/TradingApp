@@ -1,0 +1,16 @@
+# TradingApp trade script — REQ-F-028. One order per line, ';'-separated:
+#   <instrument>; BUY|SELL @ <trigger>; then optional fields in any order.
+# BUY enters at the trigger rate or LOWER, SELL at the trigger or HIGHER —
+# placed at eToro as limit orders the moment the script is ARMED (loading
+# alone never trades; while disarmed the log shows what WOULD be placed).
+
+# Buy the S&P dip during Monday's session, only while signals AND AI agree,
+# risking at most 50 against a 120 target, trailing stop, tenfold leverage:
+SPX500; BUY @ 6100; FROM 2026-08-03 09:00; TO 2026-08-03 17:30; SIGNALS; AMOUNT 500; SL 50; TP 120; TRAILING; LEV 10
+
+# Sell gold strength any time this week (no signals condition, fixed stop):
+Gold.24-7; SELL @ 2520; TO 2026-08-07 22:00; AMOUNT 250; SL 30; TP 60; LEV 20
+
+# Open-ended: rest at the broker until filled or the script is disarmed.
+# LEV 15 is not offered for EURUSD, so the next lower offered value is used.
+EURUSD; BUY @ 1.05; AMOUNT 300; SL 25; TP 40; LEV 15

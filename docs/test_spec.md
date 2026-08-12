@@ -583,3 +583,15 @@ already chose.
 | TS-PATH-004 | U | `costBufferFraction` inflates the target distance: a move that clears the raw R target but not the cost-inclusive one does not count as a win. |
 | TS-PATH-005 | U | A degenerate R (no stop distance configured) refuses to walk anything and reports NoTrade rather than dividing by, or comparing against, zero. |
 | TS-PATH-006 | U | The `PredictionLedger` bridge: only later rows (strictly after the decision) for the SAME symbol become the path — an earlier row and a different instrument's row do not corrupt the label, and rows are walked in TIME order regardless of arrival order. |
+
+## Bot-model training pipeline (tests/tst_botml.cpp, DES-ML-BOTTRAIN, REQ-F-037) — the C++ ledger writer feeds real fixtures, the Python tools read them
+
+Item 9 of the 2026-08-12 redesign. Companion to the crowd model's own DES-ML-TRAIN tests
+above — `bot_dataset.py` imports `crowd_dataset.walk_forward_splits` verbatim, and this test
+reuses `crowdtest`'s generic process/CSV fixtures the same way tst_crowdml.cpp does, over a
+ledger fixture built with the REAL `trading::appendPrediction`.
+
+| ID | L | Case |
+|----|---|------|
+| TS-BOTML-001 | I | `bot_dataset.py build` over a REAL `PredictionLedger` fixture (written via `appendPrediction`, not hand-typed JSON): every survivable row labels LONG/SHORT/NO_TRADE, rows too close to the end of the ledger to resolve a label are dropped rather than guessed at, and the manifest carries the feature list and label classes a trainer needs. |
+| TS-BOTML-002 | I | The end-to-end pipeline (dataset build, then the fitting half) over the same learnable fixture: SKIPS honestly when the ML environment is not provisioned, otherwise runs to completion and writes both ONNX exports plus a training report whose numbers come from purged walk-forward folds and name the bot's own composite-sign baseline. |

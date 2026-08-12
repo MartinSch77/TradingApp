@@ -61,6 +61,9 @@ tradingapp_add_test(tst_crowdproviders tst_crowdproviders.cpp MockHttpServer.cpp
 tradingapp_add_test(tst_crowdml tst_crowdml.cpp CrowdFixtures.cpp CrowdFixtures.h)
 target_compile_definitions(tst_crowdml PRIVATE
     TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+tradingapp_add_test(tst_botml tst_botml.cpp CrowdFixtures.cpp CrowdFixtures.h)
+target_compile_definitions(tst_botml PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # Phase 5 — the OPTIONAL in-process inference (REQ-F-042): the pure metadata/assembly rules
 # run everywhere; the round-trip test loads the very files the pipeline exports and skips
 # without the runtime or the training environment — the licence-bound-stage discipline.

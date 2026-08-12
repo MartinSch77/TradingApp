@@ -135,6 +135,29 @@ private slots:
         QVERIFY(e.last() > 150.0);           // pulled towards the recent level
         QVERIFY(e.last() < 200.0);           // but lagging it
     }
+
+    //! @tstid TS-IND-010 @design DES-DOM-IND
+    // @relation(REQ-F-005, scope=function)
+    void TS_IND_010_averageTrueRange()
+    {
+        // Four flat bars (high-low = 2, no gaps) then a gap-up bar whose own
+        // high-low is narrow (1) but whose gap from the prior close (8) is the
+        // true range that matters — the reason ATR looks at the prior close at
+        // all, not just each bar's own high-low.
+        const QList<double> highs = {101.0, 101.0, 101.0, 101.0, 110.0};
+        const QList<double> lows = {99.0, 99.0, 99.0, 99.0, 109.0};
+        const QList<double> closes = {100.0, 100.0, 100.0, 100.0, 109.5};
+        // Over the last 4 bars (indices 1..4): TR = 2, 2, 2, max(1, |110-100|=10,
+        // |109-100|=9) = 10. Average = (2+2+2+10)/4 = 4.0.
+        QVERIFY(std::abs(averageTrueRange(highs, lows, closes, 4) - 4.0) < 1e-9);
+
+        // Not enough data (needs n+1 bars: the first true range needs a
+        // previous close) and mismatched array lengths both refuse rather
+        // than reading past the end or inventing a range.
+        QCOMPARE(averageTrueRange(highs, lows, closes, 5), 0.0);
+        QCOMPARE(averageTrueRange(highs, lows, closes, 0), 0.0);
+        QCOMPARE(averageTrueRange(highs, lows.mid(0, 3), closes, 2), 0.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestIndicators)

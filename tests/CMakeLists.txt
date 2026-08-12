@@ -111,6 +111,7 @@ target_compile_definitions(tst_botnet PRIVATE
     TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 tradingapp_add_test(tst_positionmath tst_positionmath.cpp)
 tradingapp_add_test(tst_invariants tst_invariants.cpp)
+tradingapp_add_test(tst_swingpullbackstrategy tst_swingpullbackstrategy.cpp)
 tradingapp_add_test(tst_eventinsight tst_eventinsight.cpp)
 tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 

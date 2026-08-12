@@ -30,6 +30,7 @@ event loop / local mock HTTP server).
 | TS-IND-007 | U | `roc` equals the percent change over n bars. |
 | TS-IND-008 | U | `returnsOf`/`meanReturn` produce per-bar fractional returns and their trailing mean. |
 | TS-IND-009 | U | `emaSeries` is seeded with the first value and pulls toward the latest values. |
+| TS-IND-010 | U | `averageTrueRange`: a gap-up bar's true range comes from the gap against the PRIOR close, not the bar's own narrow high-low, and both too little data and mismatched OHLC array lengths refuse (0.0) rather than reading past the end or inventing a range. |
 
 ## Forecasting (tests/tst_forecasting.cpp, DES-DOM-FC, REQ-F-006)
 
@@ -528,3 +529,20 @@ tst_confirmgate.cpp), which pin specific measured scenarios and regressions.
 | TS-INV-006 | U | `buildTradePlan`: expectedNet always equals expectedGross − expectedCosts exactly, and a wider spread (all else fixed) never produces a smaller cost bill or a larger net. |
 | TS-INV-007 | U | `confluenceFor`: an unknown read never counts as met or against, and turning a known read back to unknown can only ever hold or reduce `met`/`against`, never increase them. |
 | TS-INV-008 | U | `confirmPress`: a press commits only on a valid, same-action, strictly-in-window second press — every other randomized combination (different action, stale press, no prior arm) refuses, and a commit always clears the gate. |
+
+## Swing pullback strategy (tests/tst_swingpullbackstrategy.cpp, DES-DOM-SWING, REQ-F-031)
+
+`SwingPullbackStrategyV1` (2026-08-12 redesign, item 5): only trades WITH an established
+daily uptrend, on a shallow, controlled pullback that has just turned back up. Entry-time
+scope only — partial exits, the trailing stop and the time/session caps are exit-time
+rules that need PaperBook's multi-leg support (item 6, not yet built).
+
+| ID | L | Case |
+|----|---|------|
+| TS-SWING-001 | U | The full happy path: an established uptrend (close/EMA20/EMA50/EMA200 stacked), a controlled 3-session pullback that reaches within the (generously configured) fast-EMA proximity, confirmed today by a higher low — enters long with a sane stop below the pullback's own low. |
+| TS-SWING-002 | U | A flat/ranging series (no uptrend stacking) refuses as `no-uptrend`, whatever else about it might look like a pullback. |
+| TS-SWING-003 | U | A strongly inverted VIX term structure refuses as `vix-inverted` even on an otherwise-qualifying setup; an imminent scheduled release refuses independently as `event-risk`. |
+| TS-SWING-004 | U | An essentially impossible EMA-proximity tolerance (0.0001 ATR) turns the SAME otherwise-qualifying setup from TS-SWING-001 into a `pullback-too-shallow-or-deep` refusal, pinning that the gate is load-bearing rather than a no-op. |
+| TS-SWING-005 | U | Session-count bounds: a 1-session dip refuses as `no-pullback` (too short to count), a 6+-session decline refuses as `pullback-too-long`. |
+| TS-SWING-006 | U | A pullback that has not yet turned back up — today still the smallest of the down days, neither a higher low nor a close above yesterday's high — refuses as `no-confirmation`: the reversal has to show itself today, not be inferred from the pullback merely ending. |
+| TS-SWING-007 | U | Too little daily history (short of the EMA200/pullback/ATR windows combined) refuses outright as `insufficient-history` rather than computing a padded EMA200. |

@@ -163,6 +163,9 @@ qt_add_library(trading_domain STATIC
     src/domain/DecisionLog.h
     src/domain/PaperTrader.cpp
     src/domain/PaperTrader.h
+    src/domain/TradingStrategy.h
+    src/domain/SwingPullbackStrategy.cpp
+    src/domain/SwingPullbackStrategy.h
     src/domain/CrowdObservation.cpp
     src/domain/CrowdObservation.h
     src/domain/RollingZScore.cpp

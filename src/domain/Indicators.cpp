@@ -176,4 +176,21 @@ double meanReturn(const QList<double> &values, qsizetype n)
     return (count > 0) ? (sum / static_cast<double>(count)) : 0.0;
 }
 
+double averageTrueRange(const QList<double> &highs, const QList<double> &lows,
+                        const QList<double> &closes, qsizetype n)
+{
+    if ((n <= 0) || (highs.size() != lows.size()) || (highs.size() != closes.size())
+        || (highs.size() < (n + 1))) {
+        return 0.0;
+    }
+    double sum = 0.0;
+    for (qsizetype i = highs.size() - n; i < highs.size(); ++i) {
+        const double highLow = highs[i] - lows[i];
+        const double highPrevClose = std::abs(highs[i] - closes[i - 1]);
+        const double lowPrevClose = std::abs(lows[i] - closes[i - 1]);
+        sum += std::max({highLow, highPrevClose, lowPrevClose});
+    }
+    return sum / static_cast<double>(n);
+}
+
 } // namespace trading

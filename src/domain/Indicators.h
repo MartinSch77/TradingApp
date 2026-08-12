@@ -43,6 +43,19 @@ namespace trading {
 // Average per-bar simple return over the last n bars (the drift estimate).
 [[nodiscard]] double meanReturn(const QList<double> &values, qsizetype n);
 
+// Average True Range over the last n bars: the mean of each bar's true range
+// (the largest of high-low, |high-prevClose| and |low-prevClose| — so a gap
+// through the previous close counts as range even when that bar's own
+// high-low is narrow). A simple average of the true ranges, not Wilder's
+// smoothing — close enough for a stop-distance buffer, and it keeps this
+// function as parameter-free and easy to reason about as its siblings above.
+// 0 when there is not enough data (needs n+1 bars: the first true range needs
+// a previous close). The three lists must be the same length and index-aligned
+// (candlesFrom's own precondition) — a caller with unaligned OHLC has a worse
+// problem than this function can catch.
+[[nodiscard]] double averageTrueRange(const QList<double> &highs, const QList<double> &lows,
+                                      const QList<double> &closes, qsizetype n);
+
 } // namespace trading
 
 #endif // TRADINGAPP_DOMAIN_INDICATORS_H

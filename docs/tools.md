@@ -229,6 +229,41 @@ Three things about this configuration are load-bearing:
   handshake timeout is 30 s, so both servers fail — with a *timeout*, which looks
   nothing like a configuration error. The project settings raise it to 180 s.
 
+## Mutation testing pilot: does a passing suite actually notice a bug?
+
+`tools/mutation_test.sh` runs [Mull](https://mull.readthedocs.io/) — an LLVM
+IR-level mutation-testing tool — over a small, curated pilot set of domain test
+programs (`tst_confirmgate`, `tst_positionmath`, `tst_money`, `tst_pathoutcome`
+by default). It answers a question code coverage cannot: not "did the test run
+this line" but "would the test have FAILED if this line were subtly wrong."
+
+Install with `./setup.sh mull` (Linux/clang only — mirrors the clazy/TSan/
+valgrind split already in this project; there is no Windows counterpart). It
+unpacks Mull's own `.deb` release asset into `~/.local/mull`, matched to the
+host's LLVM major version (`tools/common.sh`'s `llvm_suffix`) — no root needed,
+since the runtime dependencies are already satisfied by the clang toolchain
+`setup.sh` installs. Run the pilot with `tools/mutation_test.sh` (exits 3 if
+Mull or clang >= 18 is missing); it configures a separate `build-mull/` tree
+(clean_all.sh removes it), builds the pilot targets, and writes
+`analysis-results/mutation-pilot.txt`.
+
+**Scoping is load-bearing.** Every test binary here links the whole
+`trading_domain` static library, so an unscoped run mutates code the test under
+pilot never even calls — measured once on `tst_pathoutcome`: 435 mutants across
+the entire library and a meaningless 4% score, almost none of them actually in
+`PathOutcome.cpp`. The script writes a per-target `mull.yml` with an
+`includePaths` regex scoped to the ONE source file each test is meant to pilot,
+before every run, and removes it afterwards.
+
+This is **deliberately informational, not a gate** — a pilot establishing the
+capability and a first baseline, the same "measured, not yet enforced" stance
+this project already takes with SonarCloud/Coverity, until a real threshold
+policy exists. `src/domain/PathOutcome.cpp` reached 100% on this pilot
+(`tests/tst_pathoutcome.cpp`'s `TS-PATH-007`..`011`, added specifically to kill
+the mutants the first pilot run surfaced); `ConfirmGate.cpp`, `PositionMath.cpp`
+and `Money.cpp` still carry a small number of documented survivors left for a
+follow-up pass.
+
 ## Sound runtime-error provers (documented, not installed)
 
 | Tool | Origin | Note |

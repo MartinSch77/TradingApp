@@ -8,6 +8,9 @@ build/
 build_axivion/
 dist/
 *.user
+# Per-run Mull scope config (tools/mutation_test.sh writes/removes it around each
+# target; left behind only if a run is interrupted mid-flight).
+/mull.yml
 
 # Axivion incremental-analysis state (includes a private shadow Fossil repo).
 # The checkout database is named .fslckout on Linux and _FOSSIL_ on Windows.
@@ -61,6 +64,7 @@ build-san/
 build-san-tsan/
 build-san-ubsan/
 build-cov-msvc/
+build-mull/
 build-release/
 # Generated Visual Studio solution (tools/make_vs_solution.ps1). CMakeLists.txt
 # is the single description of the build; the .sln is never committed.

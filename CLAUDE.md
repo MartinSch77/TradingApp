@@ -19,6 +19,9 @@ tools/static_analysis.sh build [--fix]   # cppcheck+clang-tidy+CSA+clazy+
                                # g++ -fanalyzer+lizard+PMD CPD+codespell
 tools/lizard_metrics.py . analysis-results --update-baseline  # re-ratchet metrics
 tools/sanitize.sh [asan-ubsan|tsan|valgrind|all]
+tools/mutation_test.sh [target:source-regex ...]   # Mull mutation-testing pilot
+                               # (./setup.sh mull); Linux/clang only, informational,
+                               # not a gate; see docs/tools.md
 tools/publish_release.sh       # release: REFUSES unless the evidence is there
                                # (tests green, 8 analyzers at 0, ratchet clean,
                                # 0 hard gaps, PDF newer than the sources), then

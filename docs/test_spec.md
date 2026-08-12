@@ -583,6 +583,11 @@ already chose.
 | TS-PATH-004 | U | `costBufferFraction` inflates the target distance: a move that clears the raw R target but not the cost-inclusive one does not count as a win. |
 | TS-PATH-005 | U | A degenerate R (no stop distance configured) refuses to walk anything and reports NoTrade rather than dividing by, or comparing against, zero. |
 | TS-PATH-006 | U | The `PredictionLedger` bridge: only later rows (strictly after the decision) for the SAME symbol become the path — an earlier row and a different instrument's row do not corrupt the label, and rows are walked in TIME order regardless of arrival order. |
+| TS-PATH-007 | U | Touching a stop or target EXACTLY (bar low/high equal to the price) counts as a hit in both directions — pins the `<=`/`>=` boundary rather than leaving it to whichever side an off-by-one comparison lands on. |
+| TS-PATH-008 | U | The degenerate-input refusal (`entryPrice <= 0`, `stopFraction <= 0`) fires exactly AT zero, using bars where skipping the refusal would visibly change the answer (not merely a bar that agrees either way). |
+| TS-PATH-009 | U | `targetR` scales the target distance by multiplication, not division — pinned with a target reward twice the raw stop distance so the two operations are distinguishable. |
+| TS-PATH-010 | U | `barsToResolve` on the TARGET-hit branch reports the exact 1-based bar index, not an off-by-one in either direction. |
+| TS-PATH-011 | U | `stopR` scales the stop distance by multiplication, not division — mirrors TS-PATH-009 for the stop side. |
 
 ## Bot-model training pipeline (tests/tst_botml.cpp, DES-ML-BOTTRAIN, REQ-F-037) — the C++ ledger writer feeds real fixtures, the Python tools read them
 

@@ -30,6 +30,9 @@
 #                        what the bot simulation's proposal source uses (REQ-F-030)
 #   ./setup.sh ml        Python venv for the OFFLINE crowd-model training pipeline
 #                        (REQ-F-041, tools/ml/) — the app itself never needs it
+#   ./setup.sh mull      Mull mutation testing (tools/mutation_test.sh), matched to
+#                        the host's clang major version — Linux/clang only, no
+#                        Windows counterpart (mirrors the clazy/TSan/valgrind split)
 #
 # NOT installable here — LICENSE-BOUND, so they are detected and reported, and
 # the stages that need them SKIP with a message instead of failing (exit 3 =
@@ -311,6 +314,57 @@ PYCHECK
     echo "      --out dataset.csv --manifest manifest.json     # stdlib-only, no venv needed"
     echo "  $ML_VENV_DIR/bin/python3 tools/ml/train_crowd_model.py \\"
     echo "      --dataset dataset.csv --manifest manifest.json --out-dir ml-out"
+}
+
+# Mull mutation testing (tools/mutation_test.sh): installed into ~/.local rather than
+# system-wide, because the .deb's own dependencies are already satisfied by the clang-18
+# toolchain apt already installed — dpkg -i would need root this host does not hand out
+# non-interactively, and unpacking the .deb ourselves needs none. Matched by LLVM MAJOR
+# version to whatever clang tools/common.sh's llvm_suffix() already resolved (>= 18): Mull
+# ships one package per major LLVM version, and mixing e.g. a LLVM-20 Mull with this host's
+# clang-18 IR would silently analyze nothing.
+MULL_VERSION="${MULL_VERSION:-0.34.0}"
+MULL_DIR="${MULL_DIR:-$HOME/.local/mull}"
+
+mull_install() {
+    echo "== Mull mutation testing ($MULL_DIR) =="
+    local suffix major arch os_id os_ver asset url
+    suffix="$(llvm_suffix)" || { echo "no clang >= 18 found — install it first (./setup.sh)" >&2; return 1; }
+    major="${suffix#-}"
+    case "$(host_arch)" in
+    x86_64) arch="amd64" ;;
+    aarch64) arch="aarch64" ;;
+    *)
+        echo "no Mull build for $(host_arch)" >&2
+        return 1
+        ;;
+    esac
+    os_id="$(. /etc/os-release && echo "$ID")"
+    os_ver="$(. /etc/os-release && echo "$VERSION_ID")"
+    if [ "$os_id" != "ubuntu" ]; then
+        echo "Mull's prebuilt .deb targets Ubuntu; $os_id is unsupported by this installer" >&2
+        return 1
+    fi
+
+    if [ -x "$MULL_DIR/usr/bin/mull-runner-$major" ]; then
+        echo "already present: $("$MULL_DIR/usr/bin/mull-runner-$major" --version 2>&1 | head -1)"
+        return 0
+    fi
+    local clang_full_version
+    clang_full_version="$("clang++$suffix" --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    asset="Mull-$major-$MULL_VERSION-LLVM-$clang_full_version-ubuntu-$arch-$os_ver.deb"
+    url="https://github.com/mull-project/mull/releases/download/$MULL_VERSION/$asset"
+    echo "-- downloading $asset"
+    local tmp_deb="$HOME/.local/mull.deb"
+    mkdir -p "$HOME/.local"
+    curl --proto '=https' --tlsv1.2 -sSL -o "$tmp_deb" "$url" ||
+        { echo "download failed — check $url is a real asset (see the project's releases page)" >&2; return 1; }
+    mkdir -p "$MULL_DIR"
+    dpkg-deb -x "$tmp_deb" "$MULL_DIR" || { echo "dpkg-deb extraction failed" >&2; return 1; }
+    rm -f "$tmp_deb"
+    echo "mull: $("$MULL_DIR/usr/bin/mull-runner-$major" --version 2>&1 | head -1)"
+    echo
+    echo "Pilot it with: tools/mutation_test.sh"
 }
 
 status() {
@@ -715,11 +769,14 @@ ollama)
 ml)
     ml_install
     ;;
+mull)
+    mull_install
+    ;;
 squish)
     squish_status
     ;;
 *)
-    echo "usage: $0 [install|update|status|android|ollama|ml|squish]" >&2
+    echo "usage: $0 [install|update|status|android|ollama|ml|mull|squish]" >&2
     exit 2
     ;;
 esac

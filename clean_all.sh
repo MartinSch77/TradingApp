@@ -34,6 +34,7 @@ GENERATED=(
     build-san-tsan
     build-san-ubsan
     build-cov-msvc
+    build-mull
     build-release
     build-vs
     build_axivion

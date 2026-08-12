@@ -232,6 +232,107 @@ private slots:
         QVERIFY(!decision.enter);
         QCOMPARE(decision.code, QStringLiteral("insufficient-history"));
     }
+
+    //! @tstid TS-SWING-008 @design DES-DOM-SWING
+    // @relation(REQ-F-031, scope=function)
+    //
+    // The 2R partial fires exactly once, and the trailing stop tightens toward
+    // the higher of the 5-day low or EMA10 the same call it fires on — a partial
+    // and a stop update are not mutually exclusive, unlike a full close.
+    void TS_SWING_008_partialTargetFiresOnceAndTightensTheStop()
+    {
+        const SwingPullbackConfig cfg;   // entry=100 implied by the test's own numbers below
+        SwingPositionState state;
+        state.stopPrice = 95.0;   // seeded with the entry's own initial stop, as documented
+
+        // R = 100 - 95 = 5; a close of 110 is +2.0R, exactly the partial target.
+        const SwingExitAction first =
+            swingExitDecision(state, SwingExitInputs{100.0, 95.0, 110.0, 102.0, 101.0}, cfg);
+        QVERIFY(first.partialClose);
+        QVERIFY(!first.fullClose);
+        QCOMPARE(first.partialFraction, cfg.partialCloseFraction);
+        QCOMPARE(first.code, QStringLiteral("partial-target"));
+        QVERIFY(first.nextState.partialTaken);
+        QCOMPARE(first.nextState.sessionsHeld, 1);
+        // The stop tightened to the higher of the two trailing references.
+        QCOMPARE(first.nextState.stopPrice, 102.0);
+
+        // The SAME gain, on a position that already took its partial, does not
+        // fire a second one — it just holds (and may tighten the stop further).
+        const SwingExitAction second =
+            swingExitDecision(first.nextState, SwingExitInputs{100.0, 95.0, 110.0, 103.0, 101.0}, cfg);
+        QVERIFY(!second.partialClose);
+        QVERIFY(!second.fullClose);
+        QCOMPARE(second.nextState.stopPrice, 103.0);   // tightened further (103 > 102)
+
+        // The stop NEVER loosens: a lower trailing candidate than the current
+        // stop leaves the stop exactly where it was.
+        const SwingExitAction third =
+            swingExitDecision(second.nextState, SwingExitInputs{100.0, 95.0, 110.0, 98.0, 97.0}, cfg);
+        QCOMPARE(third.nextState.stopPrice, 103.0);
+    }
+
+    //! @tstid TS-SWING-009 @design DES-DOM-SWING
+    // @relation(REQ-F-031, scope=function)
+    //
+    // The time stop and the max-hold ceiling both close the WHOLE remaining
+    // position (never a partial), and each is distinct from the other by name.
+    void TS_SWING_009_timeStopAndMaxHoldCloseEverything()
+    {
+        const SwingPullbackConfig cfg;
+
+        // 4 sessions already held; this call is the 5th (timeStopSessions), and
+        // the gain (+0.2R) is under the 0.5R floor.
+        SwingPositionState nearTimeStop;
+        nearTimeStop.sessionsHeld = 4;
+        const SwingExitAction timeStop =
+            swingExitDecision(nearTimeStop, SwingExitInputs{100.0, 95.0, 101.0, 96.0, 95.5}, cfg);
+        QVERIFY(timeStop.fullClose);
+        QVERIFY(!timeStop.partialClose);
+        QCOMPARE(timeStop.code, QStringLiteral("time-stop"));
+        QCOMPARE(timeStop.nextState.sessionsHeld, 5);
+
+        // A good gain past the time-stop floor is NOT closed by it.
+        const SwingExitAction stillRunning =
+            swingExitDecision(nearTimeStop, SwingExitInputs{100.0, 95.0, 103.0, 96.0, 95.5}, cfg);
+        QVERIFY(!stillRunning.fullClose);
+
+        // 9 sessions already held; this call is the 10th (maxHoldSessions) —
+        // closed regardless of how well it is doing.
+        SwingPositionState nearMaxHold;
+        nearMaxHold.sessionsHeld = 9;
+        nearMaxHold.partialTaken = true;
+        const SwingExitAction maxHold =
+            swingExitDecision(nearMaxHold, SwingExitInputs{100.0, 95.0, 130.0, 125.0, 124.0}, cfg);
+        QVERIFY(maxHold.fullClose);
+        QCOMPARE(maxHold.code, QStringLiteral("max-hold"));
+        QCOMPARE(maxHold.nextState.sessionsHeld, 10);
+    }
+
+    //! @tstid TS-SWING-010 @design DES-DOM-SWING
+    // @relation(REQ-F-031, scope=function)
+    //
+    // A degenerate R (the stop is not below the entry) refuses to compute
+    // anything from it rather than dividing by a non-positive number, and an
+    // ordinary mid-position call with no rule triggered just holds.
+    void TS_SWING_010_degenerateRRefusesAndOrdinaryHoldsReportHold()
+    {
+        const SwingPullbackConfig cfg;
+        const SwingPositionState state;
+
+        const SwingExitAction badR = swingExitDecision(state, SwingExitInputs{100.0, 100.0, 101.0, 99.0, 98.0}, cfg);
+        QVERIFY(!badR.fullClose);
+        QVERIFY(!badR.partialClose);
+        QCOMPARE(badR.code, QStringLiteral("invalid-risk-unit"));
+        QCOMPARE(badR.nextState.sessionsHeld, 1);   // a session still passed
+
+        // A modest, unremarkable gain triggers no rule at all.
+        const SwingExitAction holding =
+            swingExitDecision(state, SwingExitInputs{100.0, 95.0, 102.0, 96.0, 95.5}, cfg);
+        QVERIFY(!holding.fullClose);
+        QVERIFY(!holding.partialClose);
+        QCOMPARE(holding.code, QStringLiteral("hold"));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSwingPullbackStrategy)

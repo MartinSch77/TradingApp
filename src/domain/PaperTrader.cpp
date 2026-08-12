@@ -2135,6 +2135,71 @@ PaperClosedTrade PaperBook::close(qint64 id, double closeRate, double spreadPct,
     return done;
 }
 
+PaperClosedTrade PaperBook::partialClose(qint64 id, double fraction, const ExitPricing &pricing)
+{
+    if (fraction <= 0.0) {
+        return PaperClosedTrade{};
+    }
+    if (fraction >= 1.0) {
+        // No remainder to keep: exactly a full close().
+        return close(id, pricing.closeRate, pricing.spreadPct, pricing.reason, pricing.now);
+    }
+    PaperClosedTrade done;
+    const qsizetype idx = indexOf(id);
+    if (idx < 0) {
+        return done;
+    }
+    PaperTrade &t = m_open[idx];
+    const double exitRate = (pricing.closeRate > 0.0) ? pricing.closeRate : t.effectiveRate();
+    const double portionStake = t.stake * fraction;
+    const double portionOpenCost = t.openCost * fraction;
+    const double portionFeesPaid = t.feesPaid * fraction;
+    const double closeCost = paperHalfSpreadCost(portionStake, t.leverage, pricing.spreadPct);
+    const double gross = paperGrossPnl(portionStake, t.leverage, t.openRate, exitRate, t.isBuy);
+
+    done.id = t.id;
+    done.symbol = t.symbol;
+    done.isBuy = t.isBuy;
+    done.stake = portionStake;
+    done.leverage = t.leverage;
+    done.openRate = t.openRate;
+    done.closeRate = exitRate;
+    done.openTime = t.openTime;
+    done.closeTime = pricing.now;
+    done.grossPnl = gross;
+    done.openCost = portionOpenCost;
+    done.closeCost = closeCost;
+    done.feesPaid = portionFeesPaid;
+    done.netPnl = gross - done.totalCost();
+    done.reason = pricing.reason;
+    done.features = t.features;
+    done.partial = true;
+
+    // The stake comes back with the gross result, exactly like close() — just
+    // scaled to the portion closed.
+    m_cash += (portionStake + gross - closeCost);
+    m_costsPaid += closeCost;
+    m_realized += done.netPnl;
+    if (pricing.now.isValid()) {
+        if (m_day.date != pricing.now.date()) {
+            m_day = BotDay{};
+            m_day.date = pricing.now.date();
+        }
+        m_day.realized += done.netPnl;
+        // NOT counted in m_day.closed: the position itself is still open, so a
+        // scan summary reporting "N closed today" should not count a partial as
+        // a full round trip.
+    }
+
+    // The remainder stays open at the reduced size, same id.
+    t.stake -= portionStake;
+    t.openCost -= portionOpenCost;
+    t.feesPaid -= portionFeesPaid;
+
+    m_closed.append(done);
+    return done;
+}
+
 QJsonObject PaperBook::toJson() const
 {
     QJsonObject root;
@@ -2201,6 +2266,7 @@ QJsonObject PaperBook::toJson() const
         o.insert(QStringLiteral("feesPaid"), c.feesPaid);
         o.insert(QStringLiteral("netPnl"), c.netPnl);
         o.insert(QStringLiteral("reason"), static_cast<int>(c.reason));
+        o.insert(QStringLiteral("partial"), c.partial);
         closedArr.append(o);
     }
     root.insert(QStringLiteral("closed"), closedArr);
@@ -2259,6 +2325,10 @@ bool PaperBook::fromJson(const QJsonObject &obj)
         c.feesPaid = jsonNum(o, "feesPaid");
         c.netPnl = jsonNum(o, "netPnl");
         c.reason = static_cast<CloseReason>(o.value(QStringLiteral("reason")).toInt());
+        // Absent on a book saved before this field existed: toBool() on a missing
+        // key already yields false, which is exactly the pre-partial-close meaning
+        // ("an ordinary close") — no special casing needed to read an older book.
+        c.partial = o.value(QStringLiteral("partial")).toBool();
         restoredClosed.append(c);
     }
 

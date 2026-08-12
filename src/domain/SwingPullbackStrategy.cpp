@@ -223,4 +223,60 @@ StrategyDecision SwingPullbackStrategyV1::evaluate(const StrategySnapshot &snaps
     return confirmAndSize(confirmIn, m_config, pullback.sessions);
 }
 
+SwingExitAction swingExitDecision(const SwingPositionState &state, const SwingExitInputs &in,
+                                  const SwingPullbackConfig &cfg)
+{
+    SwingExitAction out;
+    out.nextState = state;
+    ++out.nextState.sessionsHeld;
+
+    const double r = in.entryPrice - in.initialStopPrice;
+    if (r <= 0.0) {
+        out.code = QStringLiteral("invalid-risk-unit");
+        out.why = QStringLiteral("entry/stop do not define a positive R");
+        return out;   // hold: nothing safe to compute from a degenerate R
+    }
+    const double gainR = (in.todayClose - in.entryPrice) / r;
+
+    if (out.nextState.sessionsHeld >= cfg.maxHoldSessions) {
+        out.fullClose = true;
+        out.code = QStringLiteral("max-hold");
+        out.why = QStringLiteral("%1 sessions held, at the %2-session ceiling")
+                      .arg(out.nextState.sessionsHeld)
+                      .arg(cfg.maxHoldSessions);
+        return out;
+    }
+    if ((out.nextState.sessionsHeld >= cfg.timeStopSessions) && (gainR < cfg.timeStopMinR)) {
+        out.fullClose = true;
+        out.code = QStringLiteral("time-stop");
+        out.why = QStringLiteral("%1 sessions held at only %2R, under the %3R floor")
+                      .arg(out.nextState.sessionsHeld)
+                      .arg(gainR, 0, 'f', 2)
+                      .arg(cfg.timeStopMinR, 0, 'f', 2);
+        return out;
+    }
+    if (!state.partialTaken && (gainR >= cfg.partialTargetR)) {
+        out.partialClose = true;
+        out.partialFraction = cfg.partialCloseFraction;
+        out.nextState.partialTaken = true;
+        out.code = QStringLiteral("partial-target");
+        out.why = QStringLiteral("reached %1R, taking %2% off")
+                      .arg(gainR, 0, 'f', 2)
+                      .arg(cfg.partialCloseFraction * 100.0, 0, 'f', 0);
+        // Falls through to the trailing-stop update below — a partial and a stop
+        // tightening are not mutually exclusive, unlike a full close.
+    }
+    // The trailing stop only tightens (never loosens), and only once the position
+    // is in profit at all — before that there is nothing yet to protect.
+    if (gainR > 0.0) {
+        const double candidate = std::max(in.fiveDayLow, in.ema10);
+        out.nextState.stopPrice = std::max(state.stopPrice, candidate);
+    }
+    if (!out.partialClose) {
+        out.code = QStringLiteral("hold");
+        out.why = QStringLiteral("%1R, no exit rule triggered").arg(gainR, 0, 'f', 2);
+    }
+    return out;
+}
+
 } // namespace trading

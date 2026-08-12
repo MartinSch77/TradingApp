@@ -2956,6 +2956,81 @@ private slots:
         QVERIFY(!sizeByExplicitRisk(50000.0, 0.0025, -0.01, 5).valid);
         QVERIFY(!sizeByExplicitRisk(50000.0, 0.0025, 0.01, 0).valid);
     }
+
+    //! @tstid TS-PAPER-041 @design DES-DOM-PAPER
+    // @relation(REQ-F-031, scope=function)
+    //
+    // Partial closes (2026-08-12 redesign, item 6 — a swing strategy's 2R partial
+    // target needs this): the SAME cost model as a full close, scaled to the
+    // fraction closed; the remainder stays open under the SAME id at the reduced
+    // stake; a fraction >= 1.0 behaves exactly like close() (no remainder).
+    void TS_PAPER_041_partialCloseKeepsTheRemainderOpenUnderTheSameId()
+    {
+        const BotConfig cfg;
+        PaperBook book(cfg);
+        const QDateTime now(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        const EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        QVERIFY(good.valid);
+
+        const qint64 id = book.open(good, 2000.0, now);
+        QVERIFY(id != 0);
+        const double fullOpenCost = book.openTrades().constFirst().openCost;
+        QCOMPARE(book.state().openCount, 1);
+        const BookState afterOpen = book.state();
+
+        // Close 40% at a profitable rate.
+        const double exitRate = good.fillRate * 1.02;
+        const PaperBook::ExitPricing pricing{exitRate, 0.02, CloseReason::TakeProfit,
+                                             now.addSecs(3600)};
+        const PaperClosedTrade partial = book.partialClose(id, 0.40, pricing);
+        QCOMPARE(partial.id, id);
+        QVERIFY(partial.partial);
+        QVERIFY(qAbs(partial.stake - 800.0) < 1e-9);            // 40% of the 2000 stake
+        QVERIFY(qAbs(partial.openCost - (fullOpenCost * 0.40)) < 1e-6);
+        QVERIFY(partial.grossPnl > 0.0);                        // the rate moved in its favour
+
+        // The position is STILL OPEN, same id, at the reduced stake.
+        QCOMPARE(book.state().openCount, 1);
+        const PaperTrade &remainder = book.openTrades().constFirst();
+        QCOMPARE(remainder.id, id);
+        QVERIFY(qAbs(remainder.stake - 1200.0) < 1e-9);          // the 60% that is left
+        QVERIFY(qAbs(remainder.openCost - (fullOpenCost * 0.60)) < 1e-6);
+
+        // The partial record landed in closedTrades() (so its history is not lost)
+        // WITHOUT counting as a full round trip in the day's closed count.
+        QCOMPARE(book.closedTrades().size(), 1);
+        QCOMPARE(book.closedTrades().constFirst().id, id);
+        QCOMPARE(book.day().closed, 0);
+        QVERIFY(book.day().realized > 0.0);            // the booked P/L still counts
+
+        // Cash/equity reflect exactly the closed portion's stake + gross − cost,
+        // the same identity a full close uses.
+        QVERIFY(book.state().equity > afterOpen.equity);
+
+        // Closing the remaining 100% behaves exactly like an ordinary close().
+        const PaperClosedTrade rest =
+            book.close(id, exitRate, 0.02, CloseReason::TakeProfit, now.addSecs(7200));
+        QCOMPARE(rest.id, id);
+        QVERIFY(!rest.partial);
+        QCOMPARE(book.state().openCount, 0);
+        QCOMPARE(book.day().closed, 1);
+
+        // A fraction >= 1.0 is exactly a full close — no remainder, no partial flag.
+        const PaperBook::ExitPricing wholePricing{exitRate, 0.02, CloseReason::TakeProfit, now};
+        PaperBook wholeBook(cfg);
+        const qint64 wholeId = wholeBook.open(good, 1000.0, now);
+        const PaperClosedTrade whole = wholeBook.partialClose(wholeId, 1.0, wholePricing);
+        QVERIFY(!whole.partial);
+        QCOMPARE(wholeBook.state().openCount, 0);
+
+        // Degenerate fractions and an unknown id are refused rather than acting.
+        PaperBook guardBook(cfg);
+        const qint64 guardId = guardBook.open(good, 1000.0, now);
+        QCOMPARE(guardBook.partialClose(guardId, 0.0, wholePricing).id, 0);
+        QCOMPARE(guardBook.partialClose(guardId, -0.5, wholePricing).id, 0);
+        QCOMPARE(guardBook.partialClose(9999, 0.5, wholePricing).id, 0);
+        QCOMPARE(guardBook.state().openCount, 1);   // untouched by every refused call above
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPaperTrader)

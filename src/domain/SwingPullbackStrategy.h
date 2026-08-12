@@ -27,6 +27,21 @@ struct SwingPullbackConfig {
     // elsewhere as a damper, never a direction: here it is strong enough to
     // refuse the entry outright).
     double maxTermStructureRatio = 1.05;
+
+    // --- Exit-time parameters (2026-08-12 redesign, item 6) ---------------------
+    // Take partialCloseFraction off the stake once the gain reaches this many R
+    // (multiples of the ORIGINAL entry-to-stop distance). 2R is the design's own
+    // figure: banking part of the winner before the give-back rule ever has
+    // something to give back.
+    double partialTargetR = 2.0;
+    double partialCloseFraction = 0.45;   // 40-50%, the design's own range's midpoint
+    // If still under timeStopMinR after timeStopSessions, the setup has not
+    // delivered what it needed to by now — close rather than keep waiting.
+    qint32 timeStopSessions = 5;
+    double timeStopMinR = 0.5;
+    // Close regardless past this many sessions, win or lose — a swing trade is
+    // meant to resolve within days, not become an unbounded hold.
+    qint32 maxHoldSessions = 10;
 };
 
 // The trend-pullback strategy (2026-08-12 redesign, item 5): only trades WITH an
@@ -53,11 +68,11 @@ struct SwingPullbackConfig {
 //     merely ending.
 //
 // The stop sits below the pullback's own low (by bar LOW, not close), with an ATR
-// buffer so ordinary noise cannot tag it. Partial exits, the trailing stop and the
-// time/session caps are EXIT-time rules that need PaperBook's multi-leg support
-// (2026-08-12 redesign item 6, not yet built) and are deliberately NOT implemented
-// here — this class answers only "enter or not, and where's the stop", the same
-// scope EntrySignal has for the composite/lead bot.
+// buffer so ordinary noise cannot tag it. This class answers only "enter or not,
+// and where's the stop" — the same scope EntrySignal has for the composite/lead
+// bot; the exit-time rules below (swingExitDecision) are a separate pure function,
+// not a method here, because they need day-by-day STATE (has the partial already
+// fired, how many sessions held) that an entry evaluation does not.
 class SwingPullbackStrategyV1 final : public ITradingStrategy
 {
 public:
@@ -69,6 +84,59 @@ public:
 private:
     SwingPullbackConfig m_config;
 };
+
+// What must be tracked ACROSS calls for one open swing position — kept separate
+// from PaperTrade so this one strategy's bookkeeping does not grow a struct
+// every other strategy also carries; the caller (BotSimRunner, once wired)
+// persists this itself alongside the position id. stopPrice must be SEEDED with
+// the entry's own initial stop when the position opens — swingExitDecision only
+// ever tightens it from there, never loosens it (the design's own "stop never
+// moved outward" rule).
+struct SwingPositionState {
+    bool partialTaken = false;
+    double stopPrice = 0.0;
+    qint32 sessionsHeld = 0;
+};
+
+// What to do with an open swing position today, and the state to keep for
+// tomorrow's call.
+struct SwingExitAction {
+    bool partialClose = false;   // true -> close partialFraction of the stake now
+    double partialFraction = 0.0;
+    bool fullClose = false;      // true -> close what remains (mutually exclusive
+                                 // with partialClose: the position is gone either way)
+    QString code;                // "hold" while holding, else the reason category
+    QString why;
+    SwingPositionState nextState;
+};
+
+// What swingExitDecision needs beyond the state it tracks and the config it
+// reads, bundled so the function itself stays under the parameter-count
+// budget. entryPrice/initialStopPrice fix R = entryPrice - initialStopPrice —
+// long-only, matching SwingPullbackStrategyV1's own scope.
+struct SwingExitInputs {
+    double entryPrice = 0.0;
+    double initialStopPrice = 0.0;
+    double todayClose = 0.0;
+    double fiveDayLow = 0.0;
+    double ema10 = 0.0;
+};
+
+// The four exit rules the design specifies, checked in the order that matters —
+// a full close beats a partial, and a stale/degenerate R refuses to compute
+// anything rather than dividing by a non-positive number:
+//  1. Max hold: past maxHoldSessions, close everything regardless of result.
+//  2. Time stop: past timeStopSessions still under timeStopMinR, close
+//     everything — the setup has not delivered what it needed to by now.
+//  3. The 2R partial (once): close partialCloseFraction of the stake.
+//  4. The trailing stop: once in profit, tighten (never loosen) toward the
+//     higher of the 5-day low or the 10-day EMA — reported back in
+//     nextState.stopPrice, not enforced here (a live price-crossing check
+//     against it is the caller's job, the same way a stop/target barrier is
+//     checked elsewhere in this codebase).
+[[nodiscard]] SwingExitAction swingExitDecision(const SwingPositionState &state,
+                                                const SwingExitInputs &in,
+                                                const SwingPullbackConfig &cfg);
 
 } // namespace trading
 

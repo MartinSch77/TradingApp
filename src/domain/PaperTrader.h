@@ -654,6 +654,10 @@ struct PaperClosedTrade {
     double netPnl = 0.0;        // gross − every cost above: what the account kept
     CloseReason reason = CloseReason::None;
     EntryFeatures features;     // the entry's own numbers, carried to the record
+    // true when this record came from PaperBook::partialClose rather than close():
+    // the position it belonged to may still be open, at a reduced stake, under the
+    // SAME id — a reader must not assume a partial record means the position ended.
+    bool partial = false;
 
     [[nodiscard]] double totalCost() const;
     // Holding time in hours (0 when either stamp is invalid).
@@ -1113,6 +1117,27 @@ public:
     // `spreadPct`. Returns the closed record; its id is 0 when nothing matched.
     PaperClosedTrade close(qint64 id, double closeRate, double spreadPct, CloseReason reason,
                            const QDateTime &now);
+
+    // What partialClose (below) needs beyond the id/fraction it closes — bundled
+    // so the function itself stays under the parameter-count budget.
+    struct ExitPricing {
+        double closeRate = 0.0;
+        double spreadPct = 0.0;
+        CloseReason reason = CloseReason::None;
+        QDateTime now;
+    };
+
+    // Close only `fraction` (0, 1] of a position's stake, at the SAME cost model
+    // close() uses, scaled — never a second cost formula that could drift from it
+    // (2026-08-12 redesign, item 6: a swing strategy's partial-target and trailing-
+    // stop exits need this). fraction >= 1.0 closes the whole position exactly as
+    // close() would (there is no remainder to keep open). The already-paid openCost
+    // and feesPaid are prorated onto the closed portion, and the SAME id stays open
+    // at the reduced stake — callers tracking a position by id (the decision log,
+    // the experience log) do not need to learn a new one mid-trade. Returns the
+    // partial record (its `partial` flag set); id is 0 when nothing matched or
+    // fraction is out of (0, 1].
+    PaperClosedTrade partialClose(qint64 id, double fraction, const ExitPricing &pricing);
 
     // Persistence (REQ-F-029: an experiment runs over days, not one session).
     // Qt Core only — the runner decides WHERE this lands.

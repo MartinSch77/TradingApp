@@ -864,7 +864,11 @@ private slots:
     // @relation(REQ-F-029, scope=function)
     void TS_PAPER_013_carryCostsCloseTradesThatCannotOutEarnTheirRent()
     {
-        const BotConfig cfg;
+        BotConfig cfg;
+        // This test exercises the AI-carry-override behavior below (REQ-F-032), so it opts
+        // into it explicitly rather than relying on BotConfig's own default, which is OFF
+        // since 2026-08-12 (the local model explains, it does not override carry rules).
+        cfg.aiMayOverrideCarry = true;
         // A Wednesday, so the weekend rule is out of the way until asked for.
         const QDateTime wed(QDate(2026, 8, 5), QTime(12, 0), QTimeZone::UTC);
         PaperTrade t = tradeAt(5000.0, true);   // 3000 x5 = 15 000 notional, 3 units
@@ -2902,6 +2906,55 @@ private slots:
         PaperBook timeless(cfg);
         QVERIFY(timeless.open(good, 500.0, QDateTime()) != 0);
         QCOMPARE(timeless.state().openCount, 1);
+    }
+
+    //! @tstid TS-PAPER-040 @design DES-DOM-PAPER
+    // @relation(REQ-F-031, scope=function)
+    //
+    // The explicit risk-per-trade model (2026-08-12 redesign): the euro loss at the stop
+    // is fixed FIRST, off it, and leverage only decides how that notional splits between
+    // margin and free cash — it does not decide how much is risked. OFF by default, so
+    // paperStakeFor's existing fraction-of-stake sizing is untouched for the general bot.
+    void TS_PAPER_040_explicitRiskModelSizesFromTheStopNotTheStake()
+    {
+        const BotConfig cfg;   // useExplicitRiskModel is OFF by default — not exercised here
+        QVERIFY(!cfg.useExplicitRiskModel);
+
+        // Per-symbol override: NSDQ100 is deliberately sized at a fraction of SPX500's
+        // risk; a symbol with no entry falls back to the config's own default.
+        QCOMPARE(riskPerTradeFor(cfg, QStringLiteral("SPX500")), cfg.riskPerTrade);
+        QVERIFY(riskPerTradeFor(cfg, QStringLiteral("NSDQ100")) < cfg.riskPerTrade);
+        QCOMPARE(riskPerTradeFor(cfg, QStringLiteral("GER40")), cfg.riskPerTrade);
+
+        // The worked example from the design: 50 000 equity, 0.25% risk, a 1% stop, x5.
+        const ExplicitRiskSizing sized = sizeByExplicitRisk(50000.0, 0.0025, 0.01, 5);
+        QVERIFY(sized.valid);
+        QVERIFY(qAbs(sized.riskAmount - 125.0) < 1e-9);     // 50000 * 0.0025
+        QVERIFY(qAbs(sized.notional - 12500.0) < 1e-9);     // 125 / 0.01
+        QVERIFY(qAbs(sized.margin - 2500.0) < 1e-9);        // 12500 / 5
+
+        // The point of the whole model: a stop-out loses EXACTLY riskAmount, whatever
+        // leverage was chosen — the algebraic identity margin * leverage * stopFraction
+        // == riskAmount holds by construction, not by coincidence.
+        QVERIFY(qAbs((sized.margin * 5.0 * 0.01) - sized.riskAmount) < 1e-9);
+
+        // Doubling leverage halves the margin but leaves the risk untouched — leverage
+        // decides how much of the notional is committed as margin, never how much is
+        // risked, which is the entire reason this model exists.
+        const ExplicitRiskSizing doubled = sizeByExplicitRisk(50000.0, 0.0025, 0.01, 10);
+        QVERIFY(doubled.valid);
+        QCOMPARE(doubled.riskAmount, sized.riskAmount);
+        QCOMPARE(doubled.notional, sized.notional);
+        QVERIFY(qAbs(doubled.margin - (sized.margin / 2.0)) < 1e-9);
+
+        // Every degenerate input refuses rather than inventing a stake.
+        QVERIFY(!sizeByExplicitRisk(0.0, 0.0025, 0.01, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(-1000.0, 0.0025, 0.01, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(50000.0, 0.0, 0.01, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(50000.0, -0.01, 0.01, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(50000.0, 0.0025, 0.0, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(50000.0, 0.0025, -0.01, 5).valid);
+        QVERIFY(!sizeByExplicitRisk(50000.0, 0.0025, 0.01, 0).valid);
     }
 };
 

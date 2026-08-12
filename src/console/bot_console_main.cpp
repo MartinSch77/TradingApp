@@ -278,15 +278,15 @@ int main(int argc, char *argv[])
     OllamaAdvisor advisor(config.ollamaHost, config.ollamaModel);
 
     BotSimRunner runner(&client, &advisor);
-    // LLM LEAD by default (the user's choice). TRADINGAPP_BOT_AI overrides for parity with
-    // the GUI, but a bare `TradingBot` leads with the model — the same off|confirm|lead
-    // words MainWindow reads.
+    // OFF by default (2026-08-12): the LLM explains, it does not pick a side. TRADINGAPP_BOT_AI
+    // overrides for parity with the GUI, and a bare `TradingBot` matches BotConfig::aiMode's own
+    // default — the same off|confirm|lead words MainWindow reads.
     const QString aiEnv = qEnvironmentVariable("TRADINGAPP_BOT_AI").trimmed().toLower();
-    trading::BotAiMode aiMode = trading::BotAiMode::Lead;
-    if (aiEnv == QStringLiteral("off")) {
-        aiMode = trading::BotAiMode::Off;
-    } else if (aiEnv == QStringLiteral("confirm")) {
+    trading::BotAiMode aiMode = trading::BotAiMode::Off;
+    if (aiEnv == QStringLiteral("confirm")) {
         aiMode = trading::BotAiMode::Confirm;
+    } else if (aiEnv == QStringLiteral("lead")) {
+        aiMode = trading::BotAiMode::Lead;
     }
     runner.setAiMode(aiMode);
     runner.setArmed(true);   // a console launched to watch the bot is launched to run it

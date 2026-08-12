@@ -1236,6 +1236,26 @@ double paperStakeFor(const BookState &book, const BotConfig &cfg, double riskPer
     return paperStakeRoom(book, cfg, riskPerStake).stake;
 }
 
+double riskPerTradeFor(const BotConfig &cfg, const QString &symbol)
+{
+    return cfg.riskPerTradeBySymbol.value(symbol, cfg.riskPerTrade);
+}
+
+ExplicitRiskSizing sizeByExplicitRisk(double equity, double riskPerTrade, double stopFraction,
+                                      qint32 leverage)
+{
+    ExplicitRiskSizing out;
+    if ((equity <= 0.0) || (riskPerTrade <= 0.0) || (stopFraction <= 0.0)
+        || (leverage < 1)) {
+        return out;   // degenerate input: no stop distance to size a loss against
+    }
+    out.riskAmount = equity * riskPerTrade;
+    out.notional = out.riskAmount / stopFraction;
+    out.margin = out.notional / static_cast<double>(leverage);
+    out.valid = true;
+    return out;
+}
+
 QString correlationGroup(const QString &symbol)
 {
     // The catalog's selector group is the base: Indices / Forex / Commodities.

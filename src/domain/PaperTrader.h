@@ -214,6 +214,25 @@ struct BotConfig {
     double minConfidence = 12.0;       // composite confidence floor to enter (0..100)
     qint32 leverageCap = 10;           // hard cap on top of the instrument's own
     double riskBudgetFraction = 0.25;  // loss at the stop ≤ this × stake (sets leverage)
+    // The EXPLICIT risk-per-trade model (2026-08-12 redesign), OFF by default so the
+    // fraction-of-stake sizing above (stakeFraction × riskBudgetFraction, via
+    // paperStakeFor/buildEntrySignal) is unchanged for the general-purpose bot. When on,
+    // riskPerTradeFor(cfg, symbol) and sizeByExplicitRisk decide the stake directly: the
+    // euro loss at the stop is fixed FIRST (equity × the fraction below), the notional
+    // follows from the stop's own distance, and leverage only decides how much of that
+    // notional is committed as margin — it no longer decides how much is risked. A swing
+    // strategy wants exactly that order of derivation; the composite/lead bot does not
+    // need it and keeps its existing, separately-measured sizing.
+    bool useExplicitRiskModel = false;
+    // Fraction of CURRENT equity lost if the stop is hit, for a symbol with no entry in
+    // riskPerTradeBySymbol below. 0.25% is deliberately conservative for a multi-day
+    // swing hold, well under the ~1.5% a typical trade risks indirectly today
+    // (stakeFraction × riskBudgetFraction = 6% × 25%).
+    double riskPerTrade = 0.0025;
+    // Per-symbol override, so a symbol judged less liquid or more volatile than the
+    // default (e.g. NSDQ100 at 60-75% of SPX500's risk) does not inherit the same euro
+    // budget by accident. Falls back to riskPerTrade for a symbol with no entry here.
+    QHash<QString, double> riskPerTradeBySymbol{{QStringLiteral("NSDQ100"), 0.0025 * 0.7}};
     qint32 horizonHours = 24;          // intended holding horizon (drives the SL/TP geometry)
     qint32 maxHoldHours = 72;          // …and the hard exit if neither leg is touched
     double flipConfidence = 30.0;
@@ -284,10 +303,12 @@ struct BotConfig {
     bool aiLeadFallbackToComposite = true;
     // Whether an ACTIVE keep from the model may override the automatic carry closes (the
     // costs-beat-edge and unearned-weekend-charge rules), letting a conviction position ride
-    // overnight or over the weekend. On by default (the user's choice); the fees are still
-    // charged, and the stop still protects the downside. Off restores strict carry
-    // discipline — the bot closes anything that cannot out-earn its own rent.
-    bool aiMayOverrideCarry = true;
+    // overnight or over the weekend. OFF by default (2026-08-12, superseding the earlier
+    // on-by-default choice): the strategic direction is a quantitative, explainable model
+    // with the local LLM restricted to explaining decisions rather than making or overriding
+    // them, so a carry decision must come from the deterministic rules, not the model's
+    // opinion. The fees are still charged, and the stop still protects the downside either way.
+    bool aiMayOverrideCarry = false;
     // For those: the expected move per HOUR at the chosen leverage, as a percentage of
     // the stake, must reach this…
     double reluctantMinHourlyMovePct = 1.0;
@@ -364,13 +385,15 @@ struct BotConfig {
     double dailyProfitTarget = 350.0;  // EUR of realised net; 0 disables the rule
     double dailyLossLimit = 350.0;     // EUR of realised net loss; 0 disables the rule
     bool tradeWeekdaysOnly = true;     // Mon-Fri; the weekend has no session to trade
-    // How an AI advisor's proposal is used (REQ-F-030). Off by default: turning a
-    // local model into the decision maker is the user's explicit choice, never a
-    // silent change of what the simulation measures.
-    // Lead by default: the local model picks, and the risk rules bound what it
-    // picked (REQ-F-030). A book saved earlier keeps whatever mode it was left in —
-    // a running experiment must not change what it measures on an upgrade.
-    BotAiMode aiMode = BotAiMode::Lead;
+    // How an AI advisor's proposal is used (REQ-F-030). OFF by default (2026-08-12,
+    // reverting the earlier Lead-by-default choice): the strategic direction is a
+    // quantitative, explainable model, with the local LLM restricted to explaining what the
+    // deterministic strategy measured and decided — never picking a side, an exit or a
+    // leverage itself, and never overriding a carry rule (see aiMayOverrideCarry). Lead/Confirm
+    // remain available for whoever explicitly opts back in. A book saved earlier keeps
+    // whatever mode it was left in — a running experiment must not change what it measures
+    // on an upgrade.
+    BotAiMode aiMode = BotAiMode::Off;
 
     [[nodiscard]] bool operator==(const BotConfig &other) const = default;
 };
@@ -809,6 +832,28 @@ struct EntryVerdict {
 // (paperEntrySignalRisk). 0 or less falls back to the per-trade risk budget.
 [[nodiscard]] double paperStakeFor(const BookState &book, const BotConfig &cfg,
                                    double riskPerStake);
+
+// riskPerTrade for `symbol`: the override in riskPerTradeBySymbol when one exists,
+// else the config's own default. Named so a caller never has to know the map exists.
+[[nodiscard]] double riskPerTradeFor(const BotConfig &cfg, const QString &symbol);
+
+// A stake sized so that a stop-out loses EXACTLY the risk budget, at a CHOSEN leverage
+// — the explicit-risk-first model (2026-08-12 redesign): the loss is fixed FIRST
+// (riskAmount = equity × riskPerTrade), the notional follows from the stop's own
+// distance (notional = riskAmount / stopFraction), and leverage only decides how much
+// of that notional is committed as margin (margin = notional / leverage) versus left
+// as free cash. Contrast with paperStakeFor, where the stake is a fraction of equity
+// and the loss-at-stop falls out afterward — a swing strategy wants the opposite
+// order of derivation, because it is the loss it is willing to take that is the
+// deliberate choice, not the size of the position.
+struct ExplicitRiskSizing {
+    bool valid = false;         // false on a degenerate input (no/negative stop distance)
+    double riskAmount = 0.0;    // equity × riskPerTradeFor(cfg, symbol), EUR
+    double notional = 0.0;      // riskAmount / stopFraction
+    double margin = 0.0;        // notional / leverage — the stake to commit
+};
+[[nodiscard]] ExplicitRiskSizing sizeByExplicitRisk(double equity, double riskPerTrade,
+                                                    double stopFraction, qint32 leverage);
 
 // The same sizing, but naming WHICH limit bound it — the scan summary reports the
 // binding limit per refusal, and reporting the wrong one is worse than reporting

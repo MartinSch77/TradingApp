@@ -431,6 +431,7 @@ QJsonObject predictionToJson(const Prediction &prediction)
     out.insert(QStringLiteral("refusal"), prediction.refusal);
     out.insert(QStringLiteral("priorMoveDir"), prediction.priorMoveDir);
     out.insert(QStringLiteral("vwapSide"), prediction.vwapSide);
+    out.insert(QStringLiteral("strategyVersion"), prediction.strategyVersion);
     return out;
 }
 
@@ -449,6 +450,10 @@ std::optional<Prediction> predictionFromJson(const QJsonObject &object)
     out.refusal = object.value(QStringLiteral("refusal")).toString();
     out.priorMoveDir = object.value(QStringLiteral("priorMoveDir")).toInt();
     out.vwapSide = object.value(QStringLiteral("vwapSide")).toInt();
+    // Absent on a row written before this field existed: toString() on a missing key
+    // already yields an empty string, which is exactly "not attributed" — no special
+    // casing needed to read an older ledger.
+    out.strategyVersion = object.value(QStringLiteral("strategyVersion")).toString();
     const QString regime = object.value(QStringLiteral("regime")).toString();
     for (const Regime candidate : {Regime::Trend, Regime::Range, Regime::HighVolatility,
                                    Regime::EventWindow}) {

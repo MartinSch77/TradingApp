@@ -89,6 +89,13 @@ struct Prediction {
     // hindsight about which bars mattered.
     qint32 priorMoveDir = 0;      // the previous five minutes' direction
     qint32 vwapSide = 0;          // +1 above the session VWAP, −1 below, 0 unknown
+    // Which strategy/config produced this row (e.g. "composite-v1", "swing-pullback-v1"),
+    // empty when the caller does not name one. A ledger mixing several strategies' calls
+    // under one set of numbers would average away exactly the comparison it exists to make
+    // — this field is what lets scoreHorizon and friends be filtered to one strategy at a
+    // time. An empty string is a fact ("not attributed"), not a wildcard: it groups with
+    // other empty rows, never with a named strategy's.
+    QString strategyVersion;
 
     [[nodiscard]] bool isValid() const;
 };

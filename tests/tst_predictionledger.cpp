@@ -343,6 +343,31 @@ private slots:
         QCOMPARE(horizonMinutes(Horizon::M180), 180);
         QCOMPARE(horizonWord(Horizon::M15), QStringLiteral("15 min"));
     }
+
+    //! @tstid TS-LEDGER-006 @design DES-DOM-LEDGER
+    // @relation(REQ-F-037, scope=function)
+    void TS_LEDGER_006_strategyVersionRoundTripsAndDefaultsOnAnOlderRow()
+    {
+        // A ledger that mixes several strategies' calls under one set of numbers would
+        // average away exactly the comparison it exists to make (2026-08-12 redesign:
+        // multiple strategies now need to be run and scored separately).
+        Prediction p = callAt(0, 1, 20000.0, 60.0);
+        p.strategyVersion = QStringLiteral("swing-pullback-v1");
+        const QJsonObject json = predictionToJson(p);
+        QCOMPARE(json.value(QStringLiteral("strategyVersion")).toString(),
+                 QStringLiteral("swing-pullback-v1"));
+        const std::optional<Prediction> back = predictionFromJson(json);
+        QVERIFY(back.has_value());
+        QCOMPARE(back->strategyVersion, QStringLiteral("swing-pullback-v1"));
+
+        // A row written before this field existed has no such key at all — it must load
+        // as "not attributed" (empty), not fail to parse.
+        QJsonObject older = json;
+        older.remove(QStringLiteral("strategyVersion"));
+        const std::optional<Prediction> fromOlder = predictionFromJson(older);
+        QVERIFY(fromOlder.has_value());
+        QVERIFY(fromOlder->strategyVersion.isEmpty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPredictionLedger)

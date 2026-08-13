@@ -372,6 +372,30 @@ private slots:
         QVERIFY(!eur(1000000.00).scaledBy(1.0e18).isValid());
     }
 
+    //! @tstid TS-MONEY-004 @design DES-DOM-MONEY
+    // @relation(REQ-N-008, scope=function)
+    //
+    // Two boundaries, exactly on the line rather than clearly past it (Mull
+    // mutation-testing pilot, 2026-08-13):
+    void TS_MONEY_004_boundariesAreExact()
+    {
+        // fromDouble's representable-range refusal fires when the scaled minor-unit
+        // value's magnitude EXCEEDS the limit — a value that lands EXACTLY on it is
+        // still a representable qint64 and must stay valid (a mutated > -> >= would
+        // refuse this one too). 9.0e16 major units scales to exactly 9.0e18 minor
+        // units, this function's own limit.
+        QVERIFY(Money::fromDouble(9.0e16, Currency::Eur).isValid());
+        QVERIFY(!Money::fromDouble(9.0e16 * 1.1, Currency::Eur).isValid());
+
+        // operator<=> for two EQUAL amounts must answer "equivalent" — neither less
+        // nor greater — which the existing operator== tests never exercise (Money
+        // hand-writes == separately rather than deriving it from <=>, so an equal
+        // comparison through <=> specifically needed its own test; a mutated
+        // < -> <= here would misreport equal amounts as "less").
+        QVERIFY((eur(5.00) <=> eur(5.00)) == std::partial_ordering::equivalent);
+        QVERIFY(!((eur(5.00) <=> eur(5.00)) == std::partial_ordering::less));
+    }
+
     //! @tstid TS-ORDVAL-003 @design DES-DOM-ORDERVAL
     // @relation(REQ-N-009, scope=function)
     void TS_ORDVAL_003_theUnknownAndTheImpossibleAreBothHandled()

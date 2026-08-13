@@ -42,6 +42,13 @@ double positionPnl(const Position &p, const Quote &q)
 QString slTpAmountText(const Position &p, double rate, double eurPerUsd)
 {
     const double perPoint = accountValuePerPoint(p);
+    // The third condition is a documented EQUIVALENT MUTANT under Mull (measured
+    // 2026-08-13): accountValuePerPoint's own first line already returns 0.0
+    // whenever p.openRate <= 0.0, so perPoint <= 0.0 is already guaranteed true in
+    // that case — mutating this comparison's operator can never change the OR's
+    // result for any reachable input. Kept for readability (a reader should not
+    // have to trace accountValuePerPoint to see why openRate matters here), not
+    // because a test could ever tell the two forms apart.
     if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
         return {};
     }
@@ -53,6 +60,13 @@ QString slSignedAmountText(const Position &p, double eurPerUsd)
 {
     const double rate = p.stopLossRate;
     const double perPoint = accountValuePerPoint(p);
+    // The third condition is a documented EQUIVALENT MUTANT under Mull (measured
+    // 2026-08-13): accountValuePerPoint's own first line already returns 0.0
+    // whenever p.openRate <= 0.0, so perPoint <= 0.0 is already guaranteed true in
+    // that case — mutating this comparison's operator can never change the OR's
+    // result for any reachable input. Kept for readability (a reader should not
+    // have to trace accountValuePerPoint to see why openRate matters here), not
+    // because a test could ever tell the two forms apart.
     if ((rate <= 0.0) || (perPoint <= 0.0) || (p.openRate <= 0.0)) {
         return {};
     }

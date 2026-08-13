@@ -104,6 +104,35 @@ private slots:
         // …not even for an empty action, which would otherwise "match" the empty gate.
         QVERIFY(!confirmPress(ConfirmGate{}, QString(), 1000, kWindow).commit);
     }
+
+    //! @tstid TS-GATE-005 @design DES-DOM-GATE
+    // @relation(REQ-N-005, scope=function)
+    //
+    // Two boundaries, exactly on the line rather than clearly past it (Mull
+    // mutation-testing pilot, 2026-08-13). elapsed == 0 (the second press landing on
+    // the SAME millisecond as the arming) must still be fresh enough to commit — a
+    // mutated >= -> > would refuse this one, which is a real case (two presses can
+    // land in the same tick on a fast machine or in a test), not a hypothetical one.
+    void TS_GATE_005_zeroElapsedStillCommits()
+    {
+        const ConfirmDecision armed = confirmPress(ConfirmGate{}, kBuy, 1000, kWindow);
+        const ConfirmDecision second = confirmPress(armed.next, kBuy, /*nowMs=*/1000, kWindow);
+        QVERIFY(second.commit);
+    }
+
+    //! @tstid TS-GATE-006 @design DES-DOM-GATE
+    // @relation(REQ-N-005, scope=function)
+    //
+    // The prompt's seconds figure is windowMs DIVIDED by 1000.0, not multiplied (Mull
+    // pilot): pinned with a windowMs whose divided and multiplied results are nowhere
+    // near each other (2500 ms -> "2.5", not "2.5e+6") so a mutated / -> * cannot pass
+    // by coincidence.
+    void TS_GATE_006_promptSecondsIsDivisionNotMultiplication()
+    {
+        const ConfirmDecision armed = confirmPress(ConfirmGate{}, kBuy, 1000, /*windowMs=*/2500);
+        QVERIFY(armed.prompt.contains(QStringLiteral("2.5")));
+        QVERIFY(!armed.prompt.contains(QStringLiteral("2.5e")));
+    }
 };
 
 QTEST_MAIN(TestConfirmGate)

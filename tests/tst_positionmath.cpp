@@ -307,6 +307,132 @@ private slots:
         QVERIFY(none.expired.isEmpty());
         QVERIFY(none.confirmed.isEmpty());
     }
+
+    //! @tstid TS-POS-013 @design DES-DOM-POS
+    // @relation(REQ-F-025, scope=function)
+    //
+    // The suppression window's two boundaries, exactly on the line rather than clearly
+    // past it (Mull mutation-testing pilot, 2026-08-13): elapsed == 0 is NOT a
+    // backwards clock (the close is still fresh, stays hidden), and elapsed == windowMs
+    // exactly IS expired (>= windowMs, not merely > it) — the same "the close did not
+    // take" row-comes-back behaviour TS-POS-012 pins for clearly-late cases.
+    void TS_POS_013_suppressionWindowBoundariesAreExact()
+    {
+        Position p = makePosition();
+        p.positionId = QStringLiteral("444");
+        const QHash<QString, qint64> closed{{QStringLiteral("444"), 1000}};
+
+        // elapsed == 0 exactly: still fresh, stays hidden (visible empty, not expired).
+        const CloseSuppression exactlyNow =
+            suppressClosedPositions({p}, closed, /*nowMs=*/1000, /*windowMs=*/30000);
+        QVERIFY(exactlyNow.visible.isEmpty());
+        QVERIFY(exactlyNow.expired.isEmpty());
+
+        // elapsed == windowMs exactly: expired (a mutated >= -> > would keep this hidden).
+        const CloseSuppression exactlyAtWindow =
+            suppressClosedPositions({p}, closed, /*nowMs=*/1000 + 30000, /*windowMs=*/30000);
+        QCOMPARE(exactlyAtWindow.visible.size(), 1);
+        QCOMPARE(exactlyAtWindow.expired, QStringList{QStringLiteral("444")});
+    }
+
+    //! @tstid TS-POS-014 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
+    //
+    // positionPnl refuses at EXACTLY zero, not only below it (Mull pilot): a close rate
+    // or an open rate of precisely 0.0 is degenerate and must report 0.0 P/L rather than
+    // treat 0.0 as a valid, if extreme, price.
+    void TS_POS_014_pnlRefusesAtExactlyZero()
+    {
+        Position p = makePosition();
+        // Both sides zero: closeRate's own bid<=0-falls-back-to-ask logic (Models.cpp)
+        // means a single zeroed side is not enough to reach "close == 0" here.
+        QCOMPARE(positionPnl(p, Quote{}), 0.0);
+
+        Position zeroOpen = makePosition();
+        zeroOpen.openRate = 0.0;
+        Quote q;
+        q.bid = 5100.0;
+        q.ask = 5101.0;
+        QCOMPARE(positionPnl(zeroOpen, q), 0.0);
+    }
+
+    //! @tstid TS-POS-015 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
+    //
+    // slTpAmountText/slSignedAmountText refuse at EXACTLY zero for each of their three
+    // guarded inputs (Mull pilot), and slSignedAmountText's sign at pnl == 0.0 exactly
+    // renders "+" (0 is not negative) — pinning the boundary rather than only values
+    // clearly on one side of it.
+    void TS_POS_015_slTextRefusesAtExactlyZeroAndSignsZeroAsPositive()
+    {
+        const Position p = makePosition();   // openRate 5000, value/point = 4
+        QCOMPARE(slTpAmountText(p, 0.0, 0.0), QString());       // rate == 0 exactly
+        Position zeroOpen = p;
+        zeroOpen.openRate = 0.0;
+        QCOMPARE(slTpAmountText(zeroOpen, 4900.0, 0.0), QString());   // openRate == 0
+        Position zeroPerPoint = p;
+        zeroPerPoint.amount = 0.0;
+        zeroPerPoint.units = 0.0;
+        QCOMPARE(slTpAmountText(zeroPerPoint, 4900.0, 0.0), QString());   // perPoint == 0
+
+        // A stop AT the open rate: zero distance, zero P/L, rendered with a "+" sign.
+        Position atOpen = p;
+        atOpen.stopLossRate = p.openRate;
+        QCOMPARE(slSignedAmountText(atOpen, 0.0),
+                 QLatin1Char('+') + QLocale().toString(0.0, 'f', 2));
+    }
+
+    //! @tstid TS-POS-017 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
+    //
+    // slSignedAmountText's OWN guard (Mull pilot): rate == 0 (no stop-loss set, the
+    // documented "0 = none") and perPoint == 0 independently refuse, and the SHORT
+    // side's multiplication (perPoint * (openRate - rate), the mirror of TS-POS-016's
+    // long-side pin) is really a multiplication too. openRate == 0 is deliberately NOT
+    // repeated here: accountValuePerPoint already returns 0.0 whenever openRate <= 0
+    // (its own very first line), so perPoint == 0 already follows from it — the
+    // openRate <= 0 comparison in this guard can never change the guard's outcome for
+    // any reachable input, an equivalent mutant no test can kill.
+    void TS_POS_017_signedAmountGuardsAndTheShortSideMultiplication()
+    {
+        Position noStop = makePosition();
+        noStop.stopLossRate = 0.0;   // documented "0 = none"
+        QCOMPARE(slSignedAmountText(noStop, 0.0), QString());
+
+        Position zeroPerPoint = makePosition();
+        zeroPerPoint.amount = 0.0;
+        zeroPerPoint.units = 0.0;
+        zeroPerPoint.stopLossRate = 4900.0;
+        QCOMPARE(slSignedAmountText(zeroPerPoint, 0.0), QString());
+
+        Position shortP = makePosition();   // value/point = 4, openRate 5000
+        shortP.isBuy = false;
+        shortP.stopLossRate = 6000.0;   // 1000 points ABOVE open -> a short's loss
+        // eurPerUsd = 2.0, same reasoning as TS-POS-016: only a real multiplication at
+        // EVERY step lands on this exact value.
+        const QString text = slSignedAmountText(shortP, 2.0);
+        QVERIFY(text.startsWith(QLatin1Char('-')));
+        QCOMPARE(text, QLatin1Char('-') + QLocale().toString(8000.0, 'f', 2));
+    }
+
+    //! @tstid TS-POS-016 @design DES-DOM-POS
+    // @relation(REQ-F-003, REQ-F-016, scope=function)
+    //
+    // Every multiplication in slSignedAmountText's P/L formula is a MULTIPLICATION, not
+    // interchangeable with division (Mull pilot): pinned with an EUR/USD rate and a
+    // stop distance chosen so multiplying and dividing by them give answers far enough
+    // apart that a mutated `*` -> `/` cannot pass by coincidence.
+    void TS_POS_016_signedAmountFormulaUsesMultiplicationThroughout()
+    {
+        Position p = makePosition();   // value/point = 4, openRate 5000
+        p.stopLossRate = 4000.0;       // 1000 points below open -> 4 * 1000 = 4000 (long loss)
+        // eurPerUsd = 2.0, chosen so the EXACT expected value below (8000.00) is only
+        // reached if every one of the formula's three multiplications is really a
+        // multiplication — any one turned into a division lands far from 8000.00.
+        const QString text = slSignedAmountText(p, 2.0);
+        QVERIFY(text.startsWith(QLatin1Char('-')));
+        QCOMPARE(text, QLatin1Char('-') + QLocale().toString(8000.0, 'f', 2));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPositionMath)

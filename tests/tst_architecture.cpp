@@ -78,6 +78,28 @@ const QStringList &forbiddenHeaderPatterns()
     return patterns;
 }
 
+// The patterns above, COMPILED ONCE rather than once per include line checked
+// (this test's original form built a fresh QRegularExpression per pattern per
+// matched #include across every domain file — thousands of PCRE2/JIT
+// compilations for a handful of distinct patterns). Measured 2026-08-13: that
+// churn is also what triggered ~1000 valgrind "Conditional jump depends on
+// uninitialised value(s)" reports, all from the same unresolved JIT address —
+// the documented PCRE2-JIT/Valgrind interaction, not a real defect (0 bytes
+// definitely/possibly lost in the same run). Compiling once removes the churn
+// this test controls rather than adding a suppression for noise it caused.
+const QList<QRegularExpression> &forbiddenHeaderRegexes()
+{
+    static const QList<QRegularExpression> compiled = [] {
+        QList<QRegularExpression> out;
+        out.reserve(forbiddenHeaderPatterns().size());
+        for (const QString &pattern : forbiddenHeaderPatterns()) {
+            out.append(QRegularExpression(pattern));
+        }
+        return out;
+    }();
+    return compiled;
+}
+
 } // namespace
 
 class TestArchitecture : public QObject
@@ -118,8 +140,8 @@ private slots:
                     continue;
                 }
                 const QString header = m.captured(1);
-                for (const QString &pattern : forbiddenHeaderPatterns()) {
-                    if (QRegularExpression(pattern).match(header).hasMatch()) {
+                for (const QRegularExpression &re : forbiddenHeaderRegexes()) {
+                    if (re.match(header).hasMatch()) {
                         violations << QStringLiteral("%1:%2: #include <%3>")
                                           .arg(fileName)
                                           .arg(lineNo)

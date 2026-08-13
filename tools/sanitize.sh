@@ -107,6 +107,16 @@ run_valgrind() {
         echo "SKIPPED: valgrind is not installed (Debian/Ubuntu: apt-get install valgrind)." >&2
         return 3
     fi
+    # PCRE2's JIT compiler (QRegularExpression's backend) generates raw machine code
+    # valgrind's memcheck cannot fully instrument, and reports every one of its
+    # matches as "Conditional jump or move depends on uninitialised value(s)" — a
+    # well-documented PCRE2-JIT/Valgrind interaction, not a real defect. Measured
+    # 2026-08-13 on tst_architecture (a regex-heavy source scan, REQ-N-002): 1000
+    # such reports, 0 bytes definitely/possibly lost in the SAME run, and setting
+    # QT_ENABLE_REGEXP_JIT=0 made the count exactly 0 — conclusive, not assumed.
+    # Disabled for every test here rather than only the one that surfaced it: any
+    # future regex-heavy test would hit the identical false positive.
+    export QT_ENABLE_REGEXP_JIT=0
     : > "$OUT/sanitize-valgrind.raw.txt"
     local name out
     for exe in "$BUILD"/tests/tst_*; do

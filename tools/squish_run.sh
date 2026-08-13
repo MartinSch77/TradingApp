@@ -151,39 +151,53 @@ echo "AUT:      $AUT"
 echo "suite:    $SUITE"
 echo "mode:     FORCED SIMULATION (TRADINGAPP_FORCE_SIMULATION=1, isolated XDG_CONFIG_HOME)"
 
-# Extra environment for the AUT: appended to the SUITE'S OWN envvars file, not an
-# export and not squishrunner's --envvar flag — and done BEFORE `--config addAUT`/
-# `--daemon` below, not after.
+# Extra environment for the AUT: appended DIRECTLY to the suite's own envvars file
+# (the one suite.conf's ENVVARS=envvars names), restored on exit via the trap below.
 #
-# This is what makes GUI coverage work, and getting it wrong cost THREE separate
-# attempts: Squish starts the AUT through squishserver with a CONTROLLED environment,
-# so (1) a variable exported by the caller never reaches the application — measured:
-# the suite passed 62 of 62 and Coco wrote no .csexe at all; (2) squishrunner's
-# --envvar KEY=VALUE flag ALSO never reached the AUT on this Squish installation,
-# same reason; and (3) appending to squish/suite_gui/envvars (the file suite.conf's
-# ENVVARS=envvars names) ALSO did not work, mutated before OR after `--config addAUT`.
-# squishrunner's OWN `--envvars <filename>` flag (plural, a whole file — distinct
-# from both the singular --envvar flag and the suite's static file) is used below on
-# the theory that it is the most likely correct API for a per-run value, and it is
-# at minimum not worse than the three already-ruled-out mechanisms. MEASURED 2026-08-
-# 13, though: it ALSO does not get COVERAGESCANNER_ARGS to the AUT (still 0 findings
-# after this change). TRADINGAPP_FORCE_SIMULATION "arriving" every run is NOT proof
-# any of these mechanisms works — Config::hasCredentials() answers false by simple
-# absence of apiKeyEtoro.json on a clean run too, so the assertion passes whether or
-# not the env var was actually delivered, and cannot be used to validate delivery.
-# Root cause is NOT confirmed. Left in this state (harmless, and closest to correct)
-# rather than reverted; further progress needs Squish support or --verbose server
-# tracing this session did not have time for.
-ENVVARS_ARGS=()
+# CORRECTED 2026-08-13, after the ORIGINAL comment here (kept in git history) spent a
+# session across four mechanisms concluding root cause was env-var delivery and left
+# it unconfirmed. It was not delivery. Measured directly this session, with
+# squishserver/squishrunner actually run and the AUT's live /proc/<pid>/environ read
+# while a suite was executing:
+#   * A brand-new marker var appended to squish/suite_gui/envvars WHILE squishserver
+#     was already daemonized DID reach the AUT's real environment — confirmed via
+#     /proc/<pid>/environ, not inferred from a side effect.
+#   * COVERAGESCANNER_ARGS=--cs-exec=<path> (the exact value/shape coverage.sh uses,
+#     embedded "=" and all) delivered the SAME way, on the ACTUAL Coco-instrumented
+#     build-cov-coco-gui/TradingApp binary — confirmed present in its environment.
+#   * The suite still passed 62/62 and still wrote NO .csexe. Delivery is not, and
+#     was never, the blocker — the earlier investigation's own "TRADINGAPP_FORCE_
+#     SIMULATION arrives" signal was a true confirmation of THIS mechanism working;
+#     it was only invalid as a proxy for validating the OTHER three mechanisms tried.
+#   * Root cause instead: Coco's CoverageScanner runtime writes its execution report
+#     at exit() by default (Coco manual, "Control of execution report generation") —
+#     but Squish does not let a GUI AUT exit() on its own; it terminates it. A GUI app
+#     under Squish is exactly the "daemon which never terminates" case that manual
+#     page names as needing --cs-dump-on-signal=<sig>. TESTED: instrumented with
+#     --cs-dump-on-signal=SIGTERM and even sent a MANUAL `kill -TERM` to the live AUT
+#     mid-suite — no .csexe, and the process did not even terminate, so something in
+#     Squish's hooked/instrumented runtime is intercepting or swallowing SIGTERM
+#     before Coco's own handler (or the default disposition) can act on it. SIGUSR1
+#     (the Coco manual's own example) was not yet tried — the likelier candidate,
+#     since nothing in Qt or Squish has an a priori reason to special-case it the way
+#     SIGTERM plausibly is (a "clean shutdown" signal many frameworks intercept).
+# Next step for whoever picks this up: rebuild build-cov-coco-gui with
+# --cs-dump-on-signal=SIGUSR1 instead, repeat the manual `kill -SIGUSR1 <aut-pid>`
+# test above, and if that ALSO does not dump, the question moves to Squish/froglogic
+# support (does squishserver's teardown SIGKILL rather than SIGTERM the AUT, with no
+# grace period at all) rather than anything further guessable from this side.
 EXTRA_ENVVARS=""
 if [ -n "${COVERAGESCANNER_ARGS:-}" ]; then
-    EXTRA_ENVVARS="$(mktemp)"
-    cat "$SUITE/envvars" > "$EXTRA_ENVVARS"
+    EXTRA_ENVVARS="$SUITE/envvars"
+    cp "$EXTRA_ENVVARS" "$EXTRA_ENVVARS.orig"
     echo "COVERAGESCANNER_ARGS=$COVERAGESCANNER_ARGS" >> "$EXTRA_ENVVARS"
-    ENVVARS_ARGS=(--envvars "$EXTRA_ENVVARS")
     echo "coverage:  AUT will write $COVERAGESCANNER_ARGS"
 fi
-cleanup_envvars() { [ -n "$EXTRA_ENVVARS" ] && rm -f "$EXTRA_ENVVARS"; }
+cleanup_envvars() {
+    if [ -n "$EXTRA_ENVVARS" ] && [ -f "$EXTRA_ENVVARS.orig" ]; then
+        mv "$EXTRA_ENVVARS.orig" "$EXTRA_ENVVARS"
+    fi
+}
 trap cleanup_envvars EXIT
 
 "$server" --stop >/dev/null 2>&1 || true
@@ -214,7 +228,6 @@ fi
 RC=0
 "$runner" --testsuite "$SUITE" \
     "${AI_ARGS[@]}" \
-    "${ENVVARS_ARGS[@]}" \
     "${CASE_ARGS[@]}" \
     --reportgen "junit,$RESULTS/squish-suite_gui.xml" \
     --reportgen "stdout" || RC=$?

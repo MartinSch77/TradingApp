@@ -94,18 +94,31 @@ if [ -f "$BUILD/CMakeCache.txt" ]; then
     fi
 fi
 
+# TRADINGAPP_REQUIRE_QT_GRAPHS=1 (set by .github/workflows/release.yml, not by a
+# plain developer run) turns a missing Qt Graphs into a hard configure-time failure
+# instead of a silently smaller AppImage — REQ-F-038 promises the cockpit ships too.
+REQUIRE_GRAPHS_ARGS=()
+[ "${TRADINGAPP_REQUIRE_QT_GRAPHS:-0}" = "1" ] && REQUIRE_GRAPHS_ARGS+=(-DTRADINGAPP_REQUIRE_QT_GRAPHS=ON)
+
 if [ "$SKIP_BUILD" -eq 0 ]; then
     cmake -S "$ROOT" -B "$BUILD" \
         -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DTRADINGAPP_WARNINGS_AS_ERRORS=ON \
-        -DTRADINGAPP_SKIP_QT_DEPLOY=ON
+        -DTRADINGAPP_SKIP_QT_DEPLOY=ON \
+        "${REQUIRE_GRAPHS_ARGS[@]}"
     cmake --build "$BUILD" --target TradingApp -j"$JOBS"
     # The second front end too, when Qt Graphs is present. Named explicitly rather than
     # building `all`, which would also build the 30 test executables into the AppImage tree.
     if cmake --build "$BUILD" --target TradingCockpit -j"$JOBS" 2>/dev/null; then
         echo "  (TradingCockpit built — the Qt Quick front end will travel too)"
+    elif [ "${TRADINGAPP_REQUIRE_QT_GRAPHS:-0}" = "1" ]; then
+        # The configure step above would already have failed if Qt Graphs were
+        # absent; reaching here means the TARGET exists but its build itself failed,
+        # which IS a build failure and must not be swallowed as a mere note.
+        echo "TradingCockpit build failed and TRADINGAPP_REQUIRE_QT_GRAPHS=1 — refusing to package an AppImage missing the cockpit" >&2
+        exit 1
     else
         # Said out loud: an AppImage without it is missing the candlestick chart entirely,
         # and that is a fact about the artefact rather than a build failure.
@@ -120,6 +133,10 @@ rm -rf "$APPDIR"
 DESTDIR="$APPDIR" cmake --install "$BUILD"
 if [ ! -x "$APPDIR/usr/bin/TradingApp" ]; then
     echo "install produced no $APPDIR/usr/bin/TradingApp — nothing to package" >&2
+    exit 1
+fi
+if [ "${TRADINGAPP_REQUIRE_QT_GRAPHS:-0}" = "1" ] && [ ! -x "$APPDIR/usr/bin/TradingCockpit" ]; then
+    echo "TRADINGAPP_REQUIRE_QT_GRAPHS=1 but install produced no $APPDIR/usr/bin/TradingCockpit" >&2
     exit 1
 fi
 

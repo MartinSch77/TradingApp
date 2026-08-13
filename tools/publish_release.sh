@@ -323,7 +323,36 @@ else
 fi
 rm -f "$NOTES"
 
-gh release upload "$TAG" "${ASSETS[@]}" --clobber
+
+# gh release upload can fail PARTWAY through its own batch (measured: a transient
+# API 404 on one asset aborted the whole call, silently skipping every asset still
+# queued after it — the FIRST bug in this script, until this fix, was not checking
+# whether that happened at all). Retry the whole batch on failure — --clobber makes
+# a retry safe, since anything that DID land the first time is simply re-uploaded —
+# then verify by NAME that every asset this run means to publish actually landed,
+# rather than trusting the command's exit code alone.
+UPLOAD_ATTEMPTS=0
+until gh release upload "$TAG" "${ASSETS[@]}" --clobber; do
+    UPLOAD_ATTEMPTS=$((UPLOAD_ATTEMPTS + 1))
+    if [ "$UPLOAD_ATTEMPTS" -ge 3 ]; then
+        bad "gh release upload failed after $UPLOAD_ATTEMPTS attempts — see the error above"
+        exit 1
+    fi
+    say "gh release upload failed (attempt $UPLOAD_ATTEMPTS) — retrying the batch"
+    sleep 5
+done
+
 say ""
 say "attached ${#ASSETS[@]} asset(s) to $TAG"
-gh release view "$TAG" --json assets -q '.assets[].name' | sed 's/^/    /'
+PUBLISHED="$(gh release view "$TAG" --json assets -q '.assets[].name')"
+MISSING=()
+for f in "${ASSETS[@]}"; do
+    base="$(basename "$f")"
+    grep -qxF "$base" <<<"$PUBLISHED" || MISSING+=("$base")
+done
+if [ "${#MISSING[@]}" -gt 0 ]; then
+    bad "upload reported success but ${#MISSING[@]} asset(s) are NOT on the release:"
+    for f in "${MISSING[@]}"; do bad "    $f"; done
+    exit 1
+fi
+sed 's/^/    /' <<<"$PUBLISHED"

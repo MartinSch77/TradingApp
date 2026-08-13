@@ -71,13 +71,20 @@ Write-Stage "portable ZIP: TradingApp $version (Qt at $qtPrefix)"
 
 Reset-StaleCMakeCache -BuildDir $Build -SourceDir $Root -QtPrefix $qtPrefix
 
+# TRADINGAPP_REQUIRE_QT_GRAPHS=1 (set by .github/workflows/release.yml, not a plain
+# developer run) turns a missing Qt Graphs into a hard configure-time failure instead
+# of a silently smaller archive - REQ-F-038 promises the cockpit ships too.
+$requireGraphs = $env:TRADINGAPP_REQUIRE_QT_GRAPHS -eq '1'
+$requireGraphsArgs = @()
+if ($requireGraphs) { $requireGraphsArgs = @('-DTRADINGAPP_REQUIRE_QT_GRAPHS=ON') }
+
 if (-not $SkipBuild) {
-    if (-not (Invoke-Native -FilePath 'cmake' -Arguments @(
+    if (-not (Invoke-Native -FilePath 'cmake' -Arguments (@(
                 '-S', $Root, '-B', $Build,
                 "-DCMAKE_PREFIX_PATH=$qtPrefix",
                 '-DCMAKE_BUILD_TYPE=Release',
                 '-DCMAKE_INSTALL_BINDIR=.',
-                '-DTRADINGAPP_WARNINGS_AS_ERRORS=ON'))) {
+                '-DTRADINGAPP_WARNINGS_AS_ERRORS=ON') + $requireGraphsArgs))) {
         Write-Error "configure failed"
         exit 1
     }
@@ -89,12 +96,16 @@ if (-not $SkipBuild) {
     }
     # The second front end too, when Qt Graphs is installed. Named explicitly rather than
     # building 'all', which would also build the 30 test executables into the archive tree.
-    # A failure here is NOT fatal - it means this kit has no Qt Graphs - but it is said out
-    # loud, because an archive without it has no candlestick chart at all.
+    # A failure here is fatal ONLY when TRADINGAPP_REQUIRE_QT_GRAPHS=1 (the configure step
+    # above would already have failed if Qt Graphs itself were absent; reaching here with
+    # it required means the TARGET exists but its build failed, a real build failure).
     if (Invoke-Native -FilePath 'cmake' -Arguments @(
                 '--build', $Build, '--target', 'TradingCockpit',
                 '--config', 'Release', '-j', (Get-JobCount))) {
         Write-Host '  (TradingCockpit built - the Qt Quick front end will travel too)'
+    } elseif ($requireGraphs) {
+        Write-Error "TradingCockpit build failed and TRADINGAPP_REQUIRE_QT_GRAPHS=1 - refusing to package an archive missing the cockpit"
+        exit 1
     } else {
         Write-Warning 'no Qt Graphs here, so TradingCockpit is NOT in this archive'
     }
@@ -110,6 +121,10 @@ if (-not (Invoke-Native -FilePath 'cmake' -Arguments @(
 $exe = Join-Path $stage 'TradingApp.exe'
 if (-not (Test-Path $exe)) {
     Write-Error "install produced no TradingApp.exe in $stage — nothing to package"
+    exit 1
+}
+if ($requireGraphs -and -not (Test-Path (Join-Path $stage 'TradingCockpit.exe'))) {
+    Write-Error "TRADINGAPP_REQUIRE_QT_GRAPHS=1 but install produced no TradingCockpit.exe in $stage"
     exit 1
 }
 # windeployqt is the whole point of this archive: if the platform plugin is

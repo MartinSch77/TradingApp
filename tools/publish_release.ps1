@@ -268,7 +268,35 @@ else {
 }
 Remove-Item $notes.FullName -Force
 
-& gh release upload $Tag @assets --clobber
+# gh release upload can fail PARTWAY through its own batch (measured on Linux: a
+# transient API 404 on one asset aborted the whole call, silently skipping every
+# asset still queued after it). Retry the whole batch on failure - --clobber makes a
+# retry safe - then verify by NAME that every asset this run means to publish
+# actually landed, rather than trusting the command's exit code alone.
+$uploadAttempts = 0
+while ($true) {
+    & gh release upload $Tag @assets --clobber
+    if ($LASTEXITCODE -eq 0) { break }
+    $uploadAttempts++
+    if ($uploadAttempts -ge 3) {
+        Write-Error "gh release upload failed after $uploadAttempts attempts - see the error above"
+        exit 1
+    }
+    Write-Host "gh release upload failed (attempt $uploadAttempts) - retrying the batch"
+    Start-Sleep -Seconds 5
+}
+
 Write-Host ''
 Write-Host "attached $($assets.Count) asset(s) to $Tag"
-& gh release view $Tag --json assets -q '.assets[].name' | ForEach-Object { Write-Host "    $_" }
+$published = & gh release view $Tag --json assets -q '.assets[].name'
+$missing = @()
+foreach ($f in $assets) {
+    $base = Split-Path -Leaf $f
+    if ($published -notcontains $base) { $missing += $base }
+}
+if ($missing.Count -gt 0) {
+    Write-Error "upload reported success but $($missing.Count) asset(s) are NOT on the release:"
+    foreach ($f in $missing) { Write-Host "    $f" }
+    exit 1
+}
+$published | ForEach-Object { Write-Host "    $_" }

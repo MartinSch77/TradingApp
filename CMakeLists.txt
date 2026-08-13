@@ -55,7 +55,18 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Charts Concurrent
 # pick it up from the `import QtGraphs` in PriceChart.qml. Do not "tidy" Qt6::Graphs onto the
 # link line: it builds, and it silently empties the cockpit.
 find_package(Qt6 QUIET COMPONENTS Graphs)
+# Off by default: a developer machine without Qt Graphs still gets TradingApp (the
+# cockpit degrades to a stated note, per the Loader below) rather than a hard failure.
+# The RELEASE packaging scripts turn this ON, because a released artefact silently
+# missing the second front end (no TradingCockpit binary, no candlestick chart) is a
+# packaging defect, not a degraded-but-honest dev build — REQ-F-038 promises both.
+option(TRADINGAPP_REQUIRE_QT_GRAPHS "Fail configuration if Qt Graphs is absent (set by release packaging)" OFF)
 if(NOT Qt6Graphs_FOUND)
+    if(TRADINGAPP_REQUIRE_QT_GRAPHS)
+        message(FATAL_ERROR "Qt Graphs not found and TRADINGAPP_REQUIRE_QT_GRAPHS=ON — "
+                            "this build would silently ship without TradingCockpit. "
+                            "Install it with: aqt/maintenancetool -m qtgraphs")
+    endif()
     message(WARNING "Qt Graphs not found — the cockpit's candlestick chart will not render. "
                     "Install it with: aqt/maintenancetool -m qtgraphs")
 endif()

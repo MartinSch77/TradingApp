@@ -83,12 +83,16 @@ jobs:
 
           echo "Installed runtime tools: graphviz, java, pipx, strictdoc, doorstop, codespell, sphinx, gcovr, aqtinstall, lizard, plantuml.jar, syft, grype, trivy"
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
-          modules: qtcharts
+          # qtgraphs too: without it CMakeLists' `if(Qt6Graphs_FOUND)` guard means
+          # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
+          # here, so a PR breaking it would go undetected by every ordinary CI run —
+          # the release workflow's own gate would be the ONLY thing to catch it.
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install CMake >= 4.2 and Ninja
@@ -166,8 +170,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
-            -m qtcharts -O "$HOME/Qt"
+            -m qtcharts qtgraphs -O "$HOME/Qt"
           test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Charts"
+          test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Graphs"
 
       - name: Toolchain status (host detection)
         run: ./setup.sh status
@@ -237,12 +242,16 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
-          modules: qtcharts
+          # qtgraphs too: without it CMakeLists' `if(Qt6Graphs_FOUND)` guard means
+          # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
+          # here, so a PR breaking it would go undetected by every ordinary CI run —
+          # the release workflow's own gate would be the ONLY thing to catch it.
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install CMake >= 4.2 and Ninja
@@ -281,12 +290,16 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
-          modules: qtcharts
+          # qtgraphs too: without it CMakeLists' `if(Qt6Graphs_FOUND)` guard means
+          # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
+          # here, so a PR breaking it would go undetected by every ordinary CI run —
+          # the release workflow's own gate would be the ONLY thing to catch it.
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install analyzers and CMake
@@ -379,12 +392,12 @@ jobs:
           if (Test-Path $ocv) { Add-Content -Path $env:GITHUB_PATH -Value $ocv }
           Write-Host "Installed/bootstrapped windows runtime tools"
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION_WINDOWS }}
           arch: win64_msvc2022_64
-          modules: qtcharts
+          modules: qtcharts qtgraphs
           cache: true
       - name: Install CMake >= 4.2 and Ninja
         run: python -m pip install --upgrade cmake ninja
@@ -434,12 +447,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
-          modules: qtcharts
+          modules: qtcharts qtgraphs
           cache: true
       - name: Install CMake >= 4.2 and Ninja
         run: python3 -m pip install --break-system-packages --upgrade cmake ninja

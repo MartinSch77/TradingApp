@@ -151,6 +151,41 @@ echo "AUT:      $AUT"
 echo "suite:    $SUITE"
 echo "mode:     FORCED SIMULATION (TRADINGAPP_FORCE_SIMULATION=1, isolated XDG_CONFIG_HOME)"
 
+# Extra environment for the AUT: appended to the SUITE'S OWN envvars file, not an
+# export and not squishrunner's --envvar flag — and done BEFORE `--config addAUT`/
+# `--daemon` below, not after.
+#
+# This is what makes GUI coverage work, and getting it wrong cost THREE separate
+# attempts: Squish starts the AUT through squishserver with a CONTROLLED environment,
+# so (1) a variable exported by the caller never reaches the application — measured:
+# the suite passed 62 of 62 and Coco wrote no .csexe at all; (2) squishrunner's
+# --envvar KEY=VALUE flag ALSO never reached the AUT on this Squish installation,
+# same reason; and (3) appending to squish/suite_gui/envvars (the file suite.conf's
+# ENVVARS=envvars names) ALSO did not work, mutated before OR after `--config addAUT`.
+# squishrunner's OWN `--envvars <filename>` flag (plural, a whole file — distinct
+# from both the singular --envvar flag and the suite's static file) is used below on
+# the theory that it is the most likely correct API for a per-run value, and it is
+# at minimum not worse than the three already-ruled-out mechanisms. MEASURED 2026-08-
+# 13, though: it ALSO does not get COVERAGESCANNER_ARGS to the AUT (still 0 findings
+# after this change). TRADINGAPP_FORCE_SIMULATION "arriving" every run is NOT proof
+# any of these mechanisms works — Config::hasCredentials() answers false by simple
+# absence of apiKeyEtoro.json on a clean run too, so the assertion passes whether or
+# not the env var was actually delivered, and cannot be used to validate delivery.
+# Root cause is NOT confirmed. Left in this state (harmless, and closest to correct)
+# rather than reverted; further progress needs Squish support or --verbose server
+# tracing this session did not have time for.
+ENVVARS_ARGS=()
+EXTRA_ENVVARS=""
+if [ -n "${COVERAGESCANNER_ARGS:-}" ]; then
+    EXTRA_ENVVARS="$(mktemp)"
+    cat "$SUITE/envvars" > "$EXTRA_ENVVARS"
+    echo "COVERAGESCANNER_ARGS=$COVERAGESCANNER_ARGS" >> "$EXTRA_ENVVARS"
+    ENVVARS_ARGS=(--envvars "$EXTRA_ENVVARS")
+    echo "coverage:  AUT will write $COVERAGESCANNER_ARGS"
+fi
+cleanup_envvars() { [ -n "$EXTRA_ENVVARS" ] && rm -f "$EXTRA_ENVVARS"; }
+trap cleanup_envvars EXIT
+
 "$server" --stop >/dev/null 2>&1 || true
 "$server" --config addAUT TradingApp "$ROOT/$BUILD_DIR" >/dev/null 2>&1 || true
 "$server" --daemon >/dev/null 2>&1 || {
@@ -176,29 +211,15 @@ if [ "${SQUISH_AI:-0}" = "1" ]; then
     fi
 fi
 
-# Extra environment for the AUT, as SQUISH's OWN mechanism rather than an export.
-#
-# This is what makes GUI coverage work, and getting it wrong is why it did not: Squish starts
-# the AUT through squishserver with a CONTROLLED environment, so a variable exported by the
-# caller never reaches the application. tools/coverage.sh exported COVERAGESCANNER_ARGS and
-# assumed the Coco runtime inside the AUT would see it "however the AUT was started"; it did
-# not, no .csexe was ever written, and coverage/coco-gui stayed empty while the suite itself
-# passed 62 of 62. `--envvar` is the documented per-run way in (the suite's own envvars file
-# is the same mechanism, and is why TRADINGAPP_FORCE_SIMULATION does arrive).
-ENV_ARGS=()
-if [ -n "${COVERAGESCANNER_ARGS:-}" ]; then
-    ENV_ARGS+=(--envvar "COVERAGESCANNER_ARGS=$COVERAGESCANNER_ARGS")
-    echo "coverage:  AUT will write $COVERAGESCANNER_ARGS"
-fi
-
 RC=0
 "$runner" --testsuite "$SUITE" \
     "${AI_ARGS[@]}" \
-    "${ENV_ARGS[@]}" \
+    "${ENVVARS_ARGS[@]}" \
     "${CASE_ARGS[@]}" \
     --reportgen "junit,$RESULTS/squish-suite_gui.xml" \
     --reportgen "stdout" || RC=$?
 "$server" --stop >/dev/null 2>&1 || true
+cleanup_envvars
 
 echo "JUnit XML: $RESULTS/squish-suite_gui.xml"
 if [ "$RC" -ne 0 ]; then

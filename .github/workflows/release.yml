@@ -46,12 +46,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
-          modules: qtcharts
+          # qtgraphs, not just qtcharts: TradingCockpit (the Qt Quick front end,
+          # REQ-F-038) needs it, and TRADINGAPP_REQUIRE_QT_GRAPHS=1 below makes its
+          # absence a hard failure rather than a release that silently ships without it.
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install build + AppImage dependencies
@@ -68,6 +71,7 @@ jobs:
       - name: Package
         env:
           QT_PREFIX: ${{ env.QT_ROOT_DIR }}
+          TRADINGAPP_REQUIRE_QT_GRAPHS: '1'
         run: ./tools/package_appimage.sh
 
       # Proves the artifact actually starts on a machine with no Qt installed:
@@ -84,6 +88,39 @@ jobs:
             exit 1
           fi
           echo "AppImage started and stayed up"
+
+      # A SEPARATE smoke test for the cockpit specifically: the AppImage above only
+      # proves TradingApp (Qt Widgets + Charts) starts, and a missing/broken Qt Graphs
+      # QML plugin would NOT show up there at all — it fails inside TradingCockpit's
+      # own Qt Quick engine (silently, per the CMakeLists comment on this exact class
+      # of bug: "ValueAxis is not a type", a blank window, no other symptom). AUT_DIR
+      # is where linuxdeploy places both executables side by side inside the AppImage's
+      # own extracted tree.
+      - name: Smoke test the cockpit (Qt Graphs QML actually resolves)
+        run: |
+          set -euo pipefail
+          app="$(ls downloads/TradingApp-*-x86_64.AppImage)"
+          extract_dir="$(mktemp -d)"
+          (cd "$extract_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$OLDPWD/$app" --appimage-extract >/dev/null)
+          cockpit="$extract_dir/squashfs-root/usr/bin/TradingCockpit"
+          if [ ! -x "$cockpit" ]; then
+            echo "no TradingCockpit binary inside the AppImage — Qt Graphs did not ship" >&2
+            exit 1
+          fi
+          QT_QPA_PLATFORM=offscreen QML_XHR_ALLOW_FILE_READ=1 timeout 25 "$cockpit" \
+            2> >(tee /tmp/cockpit-stderr.log >&2) && rc=$? || rc=$?
+          if [ "$rc" -ne 124 ]; then
+            echo "TradingCockpit exited with $rc instead of running" >&2
+            exit 1
+          fi
+          # The exact symptom this class of bug produces, per CMakeLists.txt's own
+          # comment: no crash, no non-zero exit — just this line on stderr.
+          if grep -qi "is not a type\|Multiple C++ types called" /tmp/cockpit-stderr.log; then
+            echo "TradingCockpit started but its QML failed to resolve a Qt Graphs type:" >&2
+            cat /tmp/cockpit-stderr.log >&2
+            exit 1
+          fi
+          echo "TradingCockpit started and its QML loaded cleanly"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -112,14 +149,16 @@ jobs:
       # aqt, not install-qt-action: the ARM64 desktop kit lives under its own aqt
       # host (linux_arm64) and belongs in the ~/Qt layout package_appimage.sh
       # resolves on its own — the same command ./setup.sh runs on a Pi.
-      - name: Install Qt for Linux ARM64 (with Charts)
+      - name: Install Qt for Linux ARM64 (with Charts and Graphs)
         run: |
           set -euo pipefail
           # --break-system-packages: the 24.04 image's python3 is externally
           # managed (PEP 668), unlike the 22.04 one the x86-64 job runs on.
           python3 -m pip install --break-system-packages --upgrade aqtinstall
+          # qtgraphs alongside qtcharts: see the x86-64 job's comment — same reason,
+          # same TRADINGAPP_REQUIRE_QT_GRAPHS=1 below.
           python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
-            -m qtcharts -O "$HOME/Qt"
+            -m qtcharts qtgraphs -O "$HOME/Qt"
 
       - name: Install build + AppImage dependencies
         run: |
@@ -139,6 +178,8 @@ jobs:
       # No QT_PREFIX on purpose: the script has to find ~/Qt/<ver>/gcc_arm64 by
       # itself, exactly as it must on a Raspberry Pi.
       - name: Package
+        env:
+          TRADINGAPP_REQUIRE_QT_GRAPHS: '1'
         run: ./tools/package_appimage.sh
 
       - name: Smoke test (headless start)
@@ -154,6 +195,32 @@ jobs:
           fi
           echo "aarch64 AppImage started and stayed up"
 
+      # Same cockpit-specific check as the x86-64 job, and for the same reason: the
+      # AppImage smoke test above only proves TradingApp (Widgets + Charts) starts.
+      - name: Smoke test the cockpit (Qt Graphs QML actually resolves)
+        run: |
+          set -euo pipefail
+          app="$(ls downloads/TradingApp-*-aarch64.AppImage)"
+          extract_dir="$(mktemp -d)"
+          (cd "$extract_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$OLDPWD/$app" --appimage-extract >/dev/null)
+          cockpit="$extract_dir/squashfs-root/usr/bin/TradingCockpit"
+          if [ ! -x "$cockpit" ]; then
+            echo "no TradingCockpit binary inside the AppImage — Qt Graphs did not ship" >&2
+            exit 1
+          fi
+          QT_QPA_PLATFORM=offscreen timeout 25 "$cockpit" \
+            2> >(tee /tmp/cockpit-stderr.log >&2) && rc=$? || rc=$?
+          if [ "$rc" -ne 124 ]; then
+            echo "TradingCockpit exited with $rc instead of running" >&2
+            exit 1
+          fi
+          if grep -qi "is not a type\|Multiple C++ types called" /tmp/cockpit-stderr.log; then
+            echo "TradingCockpit started but its QML failed to resolve a Qt Graphs type:" >&2
+            cat /tmp/cockpit-stderr.log >&2
+            exit 1
+          fi
+          echo "TradingCockpit started and its QML loaded cleanly"
+
       - uses: actions/upload-artifact@v7
         with:
           name: appimage-arm64
@@ -168,12 +235,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION_WINDOWS }}
           arch: win64_msvc2022_64
-          modules: qtcharts
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install CMake + Ninja
@@ -185,6 +252,7 @@ jobs:
         shell: powershell
         env:
           QT_PREFIX: ${{ env.QT_ROOT_DIR }}
+          TRADINGAPP_REQUIRE_QT_GRAPHS: '1'
         run: |
           .\tools\package_portable.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -248,6 +316,51 @@ jobs:
             downloads/*.apk
             downloads/*.apk.sha256
 
+  # The ACTUAL gate: build_all's core stages, hard-failing. Nothing here is `|| true` —
+  # a red test suite, a hard traceability gap or a non-zero analyzer finding fails
+  # THIS job, and `publish` below needs it, so a failure here blocks the release
+  # outright. This is deliberately separate from `quality-report`: that job's PDF is
+  # evidence to attach, produced even from a failed run (`|| true` there is correct
+  # for THAT job's own purpose, spelled out in its own comment) — but it must never
+  # be the thing standing between a broken build and a published release, which it
+  # was, since `publish` depended on it and not on anything that actually checks.
+  # Money-moving relevance: this app can place real orders, so "the tag that got
+  # released never actually passed its own test suite" is not a theoretical risk.
+  release-gate:
+    name: Release gate (tests + traceability + analysis must pass)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Qt (with Charts and Graphs)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.1"
+          arch: linux_gcc_64
+          modules: qtcharts qtgraphs
+          cache: true
+
+      - name: Install analyzers
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build cppcheck clang-tidy clang-tools clazy \
+            libgl1-mesa-dev libglx-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+          python3 -m pip install --upgrade cmake ninja lizard strictdoc codespell
+          ./tools/fetch_pmd.sh
+
+      # No `|| true`: this is the whole point of this job. build_all.sh already
+      # exits non-zero the moment any of these stages is red (analysis includes the
+      # eight-analyzer + code-metrics-ratchet + PMD-clone gates; trace is the
+      # requirements-traceability hard-gap check).
+      - name: Build, test, trace, analyse
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./build_all.sh build test trace analysis
+
   quality-report:
     name: Quality report (PDF)
     runs-on: ubuntu-24.04
@@ -255,12 +368,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Qt (with Charts)
+      - name: Install Qt (with Charts and Graphs)
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.11.1"
           arch: linux_gcc_64
-          modules: qtcharts
+          modules: qtcharts qtgraphs
           cache: true
 
       - name: Install the tools the report summarises
@@ -317,7 +430,7 @@ jobs:
     # Tag pushes only: a manual run stops after the build jobs, so the
     # packaging can be tested without publishing anything.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [appimage, appimage-arm64, windows-zip, android-apk, quality-report]
+    needs: [appimage, appimage-arm64, windows-zip, android-apk, quality-report, release-gate]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

@@ -32,6 +32,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <utility>
 
 using trading::PaperClosedTrade;
 using trading::PaperStats;
@@ -148,12 +149,16 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     aiRow->addWidget(new QLabel(QStringLiteral("Local model (Ollama):"), account));
     m_aiModeBox = new QComboBox(account);
     m_aiModeBox->setObjectName(QStringLiteral("aiModeBox"));
+    // static_cast<int>, not a bare std::to_underlying: the QVariant stored as combo
+    // data must stay the SAME type (int) findData below compares against — QVariant
+    // equality is type-sensitive, and BotAiMode's qint8 underlying type would store
+    // as a different QMetaType.
     m_aiModeBox->addItem(QStringLiteral("off — composite decides"),
-                         static_cast<int>(trading::BotAiMode::Off));
+                         static_cast<int>(std::to_underlying(trading::BotAiMode::Off)));
     m_aiModeBox->addItem(QStringLiteral("confirm — model must agree"),
-                         static_cast<int>(trading::BotAiMode::Confirm));
+                         static_cast<int>(std::to_underlying(trading::BotAiMode::Confirm)));
     m_aiModeBox->addItem(QStringLiteral("lead — trade the model's pick"),
-                         static_cast<int>(trading::BotAiMode::Lead));
+                         static_cast<int>(std::to_underlying(trading::BotAiMode::Lead)));
     m_aiModeBox->setToolTip(QStringLiteral(
         "How the local model's proposal is used.\n"
         "off:     the multi-source composite decides; the proposal is only logged.\n"
@@ -245,7 +250,8 @@ void BotSimDialog::rebuild()
 
 void BotSimDialog::rebuildAi()
 {
-    const int wanted = m_aiModeBox->findData(static_cast<int>(m_runner->aiMode()));
+    const int wanted =
+        m_aiModeBox->findData(static_cast<int>(std::to_underlying(m_runner->aiMode())));
     if ((wanted >= 0) && (wanted != m_aiModeBox->currentIndex())) {
         const QSignalBlocker block(m_aiModeBox);
         m_aiModeBox->setCurrentIndex(wanted);

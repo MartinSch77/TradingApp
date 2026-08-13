@@ -188,6 +188,10 @@ HeadlineSentiment FinBertSentiment::scoreText(const QString &text)
         return out;
     }
     try {
+        // std::ranges::to (C++23) is not yet implemented in this project's GCC 13
+        // libstdc++ (measured: compile error, "'to' is not a member of 'std::ranges'"),
+        // despite the compiler otherwise accepting -std=c++23 — kept as the
+        // std::copy/back_inserter idiom until the toolchain catches up.
         std::vector<int64_t> tokenIds;
         tokenIds.reserve(static_cast<size_t>(ids.size()));
         std::copy(ids.cbegin(), ids.cend(), std::back_inserter(tokenIds));

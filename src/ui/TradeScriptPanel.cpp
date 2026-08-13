@@ -199,7 +199,7 @@ bool TradeScriptRunner::evaluateEntry(Tracked &t, const QDateTime &now)
     case EntryState::Done:
         return false;
     }
-    return false;  // unreachable; keeps -Wreturn-type certain
+    std::unreachable();  // every EntryState is handled above
 }
 
 void TradeScriptRunner::evaluate()

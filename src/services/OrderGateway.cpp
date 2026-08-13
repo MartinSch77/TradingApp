@@ -11,6 +11,8 @@
 #include <QStandardPaths>
 #include <QTextStream>
 
+#include <utility>
+
 namespace trading {
 
 namespace {
@@ -78,7 +80,7 @@ QString armRefusalCode(ArmRefusal refusal)
     case ArmRefusal::OverDayCap:
         return QStringLiteral("arm-day-cap");
     }
-    return QStringLiteral("unknown");
+    std::unreachable();  // every ArmRefusal is handled above
 }
 
 LiveArm::LiveArm(QObject *parent)

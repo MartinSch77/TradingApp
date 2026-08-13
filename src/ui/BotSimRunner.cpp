@@ -1678,7 +1678,7 @@ void BotSimRunner::save() const
     // time the app is reopened and nobody notices for hours.
     QJsonObject root = m_book.toJson();
     root.insert(QStringLiteral("armed"), m_armed);
-    root.insert(QStringLiteral("aiMode"), std::to_underlying(m_book.config().aiMode));
+    root.insert(QStringLiteral("aiMode"), static_cast<int>(m_book.config().aiMode));
     static_cast<void>(file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)));
     static_cast<void>(file.commit());
 }

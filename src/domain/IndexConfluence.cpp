@@ -142,36 +142,37 @@ Read futuresLeadRead(const QHash<QString, QList<double>> &series)
 // own index (^VXN); everything else is judged by ^VIX.
 Read volatilityRead(const QString &symbol, const QHash<QString, QList<double>> &series)
 {
+    Read out;
     const bool nasdaq = symbol.startsWith(QStringLiteral("NSDQ"), Qt::CaseInsensitive);
     const QString ticker = nasdaq ? QStringLiteral("^VXN") : QStringLiteral("^VIX");
-    return sessionChangePct(series.value(ticker))
-        .transform([&](double change) {
-            Read out;
-            out.known = true;
-            out.dir = (change < 0.0) ? 1 : ((change > 0.0) ? -1 : 0);
-            out.detail = QStringLiteral("%1 %2%3%")
-                             .arg(ticker, (change > 0.0) ? QStringLiteral("+") : QString())
-                             .arg(change, 0, 'f', 2);
-            return out;
-        })
-        .value_or(Read{});
+    const std::optional<double> change = sessionChangePct(series.value(ticker));
+    if (!change.has_value()) {
+        return out;
+    }
+    out.known = true;
+    out.dir = (*change < 0.0) ? 1 : ((*change > 0.0) ? -1 : 0);
+    out.detail = QStringLiteral("%1 %2%3%")
+                     .arg(ticker, (*change > 0.0) ? QStringLiteral("+") : QString())
+                     .arg(*change, 0, 'f', 2);
+    return out;
 }
 
 // The US 10-year yield: rising yields press on growth shares, so a rising yield
 // argues against a long. The relationship is not a law — it is one vote.
 Read yieldRead(const QHash<QString, QList<double>> &series)
 {
-    return sessionChangePct(series.value(QStringLiteral("^TNX")))
-        .transform([](double change) {
-            Read out;
-            out.known = true;
-            out.dir = (change > 0.0) ? -1 : ((change < 0.0) ? 1 : 0);
-            out.detail = QStringLiteral("US 10y %1%2%")
-                             .arg((change > 0.0) ? QStringLiteral("+") : QString())
-                             .arg(change, 0, 'f', 2);
-            return out;
-        })
-        .value_or(Read{});
+    Read out;
+    const std::optional<double> change =
+        sessionChangePct(series.value(QStringLiteral("^TNX")));
+    if (!change.has_value()) {
+        return out;
+    }
+    out.known = true;
+    out.dir = (*change > 0.0) ? -1 : ((*change < 0.0) ? 1 : 0);
+    out.detail = QStringLiteral("US 10y %1%2%")
+                     .arg((*change > 0.0) ? QStringLiteral("+") : QString())
+                     .arg(*change, 0, 'f', 2);
+    return out;
 }
 
 // How many of the heavyweights are actually up. NOT breadth in the professional
@@ -215,11 +216,11 @@ Read curveRead(const QHash<QString, QList<double>> &series)
     Read out;
     const std::optional<double> longEnd = sessionChangePct(series.value(QStringLiteral("^TNX")));
     QString frontName = QStringLiteral("US 2y");
-    const std::optional<double> frontEnd =
-        sessionChangePct(series.value(QStringLiteral("2YY=F"))).or_else([&] {
-            frontName = QStringLiteral("US 13w");
-            return sessionChangePct(series.value(QStringLiteral("^IRX")));
-        });
+    std::optional<double> frontEnd = sessionChangePct(series.value(QStringLiteral("2YY=F")));
+    if (!frontEnd.has_value()) {
+        frontName = QStringLiteral("US 13w");
+        frontEnd = sessionChangePct(series.value(QStringLiteral("^IRX")));
+    }
     if (!frontEnd.has_value() || !longEnd.has_value()) {
         return out;
     }
@@ -451,10 +452,11 @@ TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries
     // Three-month is the preferred far leg; thirty-day is the fallback, because a
     // 9-day above a 30-day is already the inversion this read is looking for.
     QString farName = QStringLiteral("^VIX3M");
-    const std::optional<double> farTerm = lastOf(farName).or_else([&] {
+    std::optional<double> farTerm = lastOf(farName);
+    if (!farTerm.has_value()) {
         farName = QStringLiteral("^VIX");
-        return lastOf(farName);
-    });
+        farTerm = lastOf(farName);
+    }
     if (!nearTerm.has_value() || !farTerm.has_value()) {
         out.detail = QStringLiteral("term structure: not measurable");
         return out;

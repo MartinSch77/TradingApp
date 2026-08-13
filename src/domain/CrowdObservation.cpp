@@ -59,14 +59,14 @@ Freshness Observation::freshness(const QDateTime &now, qint64 staleAfterSec) con
 bool Observation::hasQuality(Quality flag) const
 {
     if (flag == Quality::Ok) {
-        return quality == std::to_underlying(Quality::Ok);
+        return quality == static_cast<quint32>(Quality::Ok);
     }
-    return (quality & std::to_underlying(flag)) != 0U;
+    return (quality & static_cast<quint32>(flag)) != 0U;
 }
 
 void Observation::setQuality(Quality flag)
 {
-    quality |= std::to_underlying(flag);
+    quality |= static_cast<quint32>(flag);
 }
 
 QString sourceToString(Source source)

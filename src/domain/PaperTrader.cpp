@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <utility>
 
 namespace trading {
 
@@ -2312,7 +2311,7 @@ QJsonObject PaperBook::toJson() const
         o.insert(QStringLiteral("closeCost"), c.closeCost);
         o.insert(QStringLiteral("feesPaid"), c.feesPaid);
         o.insert(QStringLiteral("netPnl"), c.netPnl);
-        o.insert(QStringLiteral("reason"), std::to_underlying(c.reason));
+        o.insert(QStringLiteral("reason"), static_cast<int>(c.reason));
         o.insert(QStringLiteral("partial"), c.partial);
         o.insert(QStringLiteral("strategyVersion"), c.strategyVersion);
         closedArr.append(o);

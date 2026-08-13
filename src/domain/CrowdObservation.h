@@ -7,8 +7,6 @@
 #include <QDateTime>
 #include <QString>
 
-#include <utility>
-
 // The normalized, immutable unit the Crowd Sentiment & AI subsystem is built on (REQ-F-039,
 // Phase 1). Every provider — retail positioning, options, institutional positioning, social,
 // macro, market — turns its raw payload into a stream of these, and every feature and score is
@@ -63,7 +61,7 @@ struct Observation {
     double value = 0.0;
     QString unit;              // "index" / "percent" / "contracts" / "ratio"
     bool valid = false;        // false = missing/unusable — NEVER read as 0.0
-    quint32 quality = std::to_underlying(Quality::Ok);
+    quint32 quality = static_cast<quint32>(Quality::Ok);
     qint32 schemaVersion = 1;
 
     // A stable identity for de-duplication and the store's unique key: the same source, series,

@@ -59,7 +59,7 @@ ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
 # the GUI suite, Test Center stores every result. Each exits 3 ("skipped") without
 # its licence, so naming them on a machine that has none reports skipped rather than
 # failing — the quality PDF then lists which licence was missing.
-EXTRA_STAGES=(app release android gui testcenter) # selectable by name, not part of the default run
+EXTRA_STAGES=(app release android gui testcenter qa) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
 # with and refuses to be reused if either changed. This repository invites that
@@ -141,6 +141,21 @@ stage_android() { "$ROOT/tools/build_android.sh" --abi android_arm64_v8a; }
 #  testcenter  every JUnit XML in test-results/ uploaded to Qt Test Center
 stage_gui() { "$ROOT/tools/squish_run.sh" build; }
 stage_testcenter() { "$ROOT/tools/testcenter_upload.sh"; }
+
+# Extra stage (named only): the process-conformance report (process/processes/
+# SUP.1-quality-assurance.md), distinct from `report` above — this answers
+# "was the process followed," never "is the product correct" (process/
+# process-model.md Section 2). Not part of the default run because it is
+# INFORMATIONAL except one case its own exit code carries: missing/stale
+# test-report evidence, which tools/publish_release.sh's own gate already
+# catches independently — this stage exists for visibility, not as a second
+# copy of that gate. check_process_docs.py's traceability check runs first,
+# since a broken process-framework cross-reference makes the QA report's own
+# SUP.1 verdict meaningless.
+stage_qa() {
+    python3 "$ROOT/tools/check_process_docs.py" &&
+        python3 "$ROOT/tools/qa_report.py"
+}
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

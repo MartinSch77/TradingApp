@@ -18,6 +18,24 @@ ELEMENTS:
   - TITLE: STATEMENT
     TYPE: String
     REQUIRED: True
+  - TITLE: SOURCE
+    TYPE: String
+    REQUIRED: False
+  - TITLE: RATIONALE
+    TYPE: String
+    REQUIRED: False
+  - TITLE: PRIORITY
+    TYPE: String
+    REQUIRED: False
+  - TITLE: STATUS
+    TYPE: String
+    REQUIRED: False
+  - TITLE: ACCEPTANCE_CRITERIA
+    TYPE: String
+    REQUIRED: False
+  - TITLE: ISSUE
+    TYPE: String
+    REQUIRED: False
   RELATIONS:
   - TYPE: File
 
@@ -322,6 +340,12 @@ The local model's read shall be shown as a SOURCE wherever the app presents its 
 
 Leverage shall never be a value the instrument does not offer: every ceiling — the account cap, the bucket cap, the instrument's own maximum — shall be applied BEFORE folding to the offered ladder, since clamping an already-folded value to a cap lands on a step nobody sells (an x8 ceiling on an instrument offering 1/2/5/20 must fold to x5).
 <<<
+SOURCE: Measured from the paper-trading ledger (six closes/hour, 5.2 min median hold, 1.64 EUR gross against 19.38 EUR of costs) plus subsequent live measurements cited inline (the dollar-index and oil-concentration cases).
+RATIONALE: Bundles roughly a dozen independently verifiable obligations (churn control, reversal conviction/economics gates, session-phase sit-outs, reluctant-symbol handling, exit-reason reporting, correlation-bucket leverage cap, session-structure reads, model-as-source display, leverage-ladder folding order) under one requirement id. Flagged for atomic decomposition (process/requirements-schema-upgrade.md tracks the plan); kept as one STATEMENT for now rather than split with a rushed, unverified re-mapping of the ~15 tests and design elements that already cite it — see the linked issue for the scoped, reviewed split.
+PRIORITY: must
+STATUS: proposed
+ACCEPTANCE_CRITERIA: Superseded by N atomic REQ-F-034-x requirements, each independently traced to its own design element and test, with 0 new hard gaps after the split.
+ISSUE: See process/requirements-schema-upgrade.md and the tracking GitHub issue it references.
 
 [REQUIREMENT]
 UID: REQ-F-035
@@ -344,6 +368,12 @@ Beside the equal-weight average, the app shall report a single SUMMARISED direct
 
 The count of agreeing reads shall be shown per instrument alongside the app's other signals, shall be given to the model as evidence in those words, and shall gate the bot: an index position shall not be opened while fewer than a configured number of the MEASURED reads agree with its side. That threshold shall be configurable, shall be satisfiable (never more than the number of reads actually available), and shall be able to be switched off — with the reads still shown and still given to the model, because a read nobody acts on is still information a reader is owed.
 <<<
+SOURCE: Design decision (REQ-F-035 predates this schema); the majority-agreement floor is additionally grounded in the measured regression TS-PAPER-025 documents (an absolute floor of 3 silently weakened as reads were added).
+RATIONALE: Bundles the nine independent reads, their measurability/keying/agreement rules, and two DISPLAY-only work products (the constituent own-view panel, the cap-weighted lead indicator) under one requirement id. Flagged for atomic decomposition alongside REQ-F-034 — see process/requirements-schema-upgrade.md.
+PRIORITY: must
+STATUS: proposed
+ACCEPTANCE_CRITERIA: Superseded by one atomic requirement per read plus one for the agreement gate, each independently traced to DES-DOM-CONFLUENCE (or the specific display DES for the two UI-only obligations) and its own test(s), with 0 new hard gaps after the split.
+ISSUE: See process/requirements-schema-upgrade.md and the tracking GitHub issue it references.
 
 [REQUIREMENT]
 UID: REQ-N-008

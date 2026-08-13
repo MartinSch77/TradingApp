@@ -82,7 +82,7 @@ $AllStages = @('build', 'test', 'trace', 'docs', 'coverage', 'analysis', 'saniti
 # its licence, so naming them on a machine that has none reports skipped rather than
 # failing — the quality PDF then lists which licence was missing. Lockstep with
 # build_all.sh.
-$ExtraStages = @('app', 'release', 'android', 'vs', 'deploy', 'gui', 'testcenter')   # selectable by name, not part of the default run
+$ExtraStages = @('app', 'release', 'android', 'vs', 'deploy', 'gui', 'testcenter', 'qa')   # selectable by name, not part of the default run
 
 # ---------------------------------------------------------------------------
 # toolchain
@@ -212,6 +212,16 @@ function Invoke-DeployStage { & "$Root\tools\deploy_app.ps1" -BuildDir 'build' |
 #  testcenter  every JUnit XML in test-results\ uploaded to Qt Test Center
 function Invoke-GuiStage { & "$Root\tools\squish_run.ps1" -BuildDir 'build' | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
 function Invoke-TestcenterStage { & "$Root\tools\testcenter_upload.ps1" | ForEach-Object { Write-Host $_ }; return (ConvertTo-StageResult $LASTEXITCODE) }
+# Extra stage (named only): the process-conformance report (process\processes\
+# SUP.1-quality-assurance.md) — see build_all.sh's stage_qa for the full
+# rationale (kept in sync, this is the Windows counterpart, pure Python so it
+# runs identically on both platforms).
+function Invoke-QaStage {
+    if (-not (Invoke-Python -Arguments @("$Root\tools\check_process_docs.py"))) {
+        return 'FAILED'
+    }
+    return (ConvertFrom-Bool (Invoke-Python -Arguments @("$Root\tools\qa_report.py")))
+}
 
 # ---------------------------------------------------------------------------
 # stage selection

@@ -161,11 +161,17 @@ an [architecture-as-code model](docs/case-studies/axivion.md) on every Axivion r
 
 ```mermaid
 flowchart TD
-    M["main.cpp<br/>composition root"] --> U
-    U["ui<br/>Qt Widgets, Qt Charts, Model/View"] --> S
-    S["services<br/>Qt Network: eToro REST, market feeds, config"] --> D
-    D["domain — Qt Core ONLY<br/>pure trading logic, no I/O, no UI"]
+    M[main.cpp] --> U[ui]
+    U --> S[services]
+    S --> D[domain]
 ```
+
+| Layer | Depends on | Owns |
+|---|---|---|
+| `main.cpp` | — | composition root |
+| `ui` | `services` | Qt Widgets, Qt Charts, Model/View |
+| `services` | `domain` | Qt Network: eToro REST, market feeds, config |
+| `domain` | — | Qt Core ONLY: pure trading logic, no I/O, no UI |
 
 `trading_domain` links Qt::Core and nothing else, so a domain file that reaches for a
 socket or a widget **does not compile**. Details and per-module responsibilities:

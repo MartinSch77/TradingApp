@@ -84,6 +84,14 @@ if [ "$LIST_CASES" = "1" ]; then
 fi
 RESULTS="$ROOT/test-results/squish"
 SCRATCH="${TMPDIR:-/tmp}/tradingapp-squish"
+# A DEDICATED port, never Squish's default (4322) — measured 2026-08-13: this script
+# used to call `squishserver --stop` with no --port, which stops whatever server is
+# listening on the DEFAULT port. A developer's own interactive Squish IDE session
+# normally listens there too, so running this script while one was open silently
+# killed it mid-test, surfacing as a bare "Connection to server was closed" FATAL in
+# the IDE with no obvious cause. Every squishserver/squishrunner call below is now
+# pinned to this port so an automated run can never collide with an interactive one.
+SQUISH_PORT="${SQUISH_PORT:-4323}"
 
 # Where Squish is. In order: an explicit SQUISH_DIR/SQUISH_PREFIX, whatever is on
 # PATH, then the places the official installer actually puts it — its default is
@@ -200,9 +208,9 @@ cleanup_envvars() {
 }
 trap cleanup_envvars EXIT
 
-"$server" --stop >/dev/null 2>&1 || true
+"$server" --port "$SQUISH_PORT" --stop >/dev/null 2>&1 || true
 "$server" --config addAUT TradingApp "$ROOT/$BUILD_DIR" >/dev/null 2>&1 || true
-"$server" --daemon >/dev/null 2>&1 || {
+"$server" --port "$SQUISH_PORT" --daemon >/dev/null 2>&1 || {
     echo "SKIPPED: squishserver would not start — see its own output above"
     exit 3
 }
@@ -226,12 +234,12 @@ if [ "${SQUISH_AI:-0}" = "1" ]; then
 fi
 
 RC=0
-"$runner" --testsuite "$SUITE" \
+"$runner" --port "$SQUISH_PORT" --testsuite "$SUITE" \
     "${AI_ARGS[@]}" \
     "${CASE_ARGS[@]}" \
     --reportgen "junit,$RESULTS/squish-suite_gui.xml" \
     --reportgen "stdout" || RC=$?
-"$server" --stop >/dev/null 2>&1 || true
+"$server" --port "$SQUISH_PORT" --stop >/dev/null 2>&1 || true
 cleanup_envvars
 
 echo "JUnit XML: $RESULTS/squish-suite_gui.xml"

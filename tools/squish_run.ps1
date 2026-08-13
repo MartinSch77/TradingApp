@@ -37,6 +37,13 @@ $Aut = Join-Path $Root "$BuildDir\TradingApp.exe"
 $Suite = Join-Path $Root 'squish\suite_gui'
 $Results = Join-Path $Root 'test-results\squish'
 $Scratch = Join-Path $env:TEMP 'tradingapp-squish'
+# A DEDICATED port, never Squish's default (4322) — kept in lockstep with
+# squish_run.sh's own fix (2026-08-13): `squishserver --stop` with no port stops
+# whatever server is on the DEFAULT port, which is exactly where a developer's own
+# interactive Squish IDE session normally listens too. Running this script while one
+# was open silently killed it mid-test. Every squishserver/squishrunner call below is
+# now pinned to this port so an automated run can never collide with an interactive one.
+$SquishPort = if ($env:SQUISH_PORT) { $env:SQUISH_PORT } else { '4323' }
 
 # %SQUISH_DIR% wins; otherwise the installer's own default location.
 $SquishDir = if ($env:SQUISH_DIR) { $env:SQUISH_DIR }
@@ -91,9 +98,9 @@ Write-Host "AUT:    $Aut"
 Write-Host "suite:  $Suite"
 Write-Host 'mode:   FORCED SIMULATION (TRADINGAPP_FORCE_SIMULATION=1, isolated APPDATA)'
 
-& $server --stop *> $null
+& $server --port $SquishPort --stop *> $null
 & $server --config addAUT TradingApp (Join-Path $Root $BuildDir) *> $null
-Start-Process -FilePath $server -ArgumentList '--daemon' -WindowStyle Hidden | Out-Null
+Start-Process -FilePath $server -ArgumentList @('--port', $SquishPort, '--daemon') -WindowStyle Hidden | Out-Null
 Start-Sleep -Seconds 2
 
 # Squish's AI-assisted object lookup (Squish 8.x) can find a widget whose properties
@@ -116,9 +123,9 @@ if ($env:SQUISH_AI -eq '1') {
 }
 
 $xml = Join-Path $Results 'squish-suite_gui.xml'
-& $runner --testsuite $Suite @aiArgs --reportgen "junit,$xml" --reportgen stdout
+& $runner --port $SquishPort --testsuite $Suite @aiArgs --reportgen "junit,$xml" --reportgen stdout
 $rc = $LASTEXITCODE
-& $server --stop *> $null
+& $server --port $SquishPort --stop *> $null
 
 Write-Host "JUnit XML: $xml"
 if ($rc -ne 0) { Write-Host "Squish reported failures (rc=$rc)" -ForegroundColor Red }

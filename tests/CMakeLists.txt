@@ -150,3 +150,9 @@ target_link_libraries(tst_leadgauge PRIVATE Qt6::Widgets)
 # that every claim the QML makes is checkable headless, with no window and no GPU.
 tradingapp_add_test(tst_cockpitmodel tst_cockpitmodel.cpp
     ../src/ui/CockpitModel.cpp ../src/ui/CockpitModel.h)
+
+# Architecture-fitness check (REQ-N-002): scans src/domain/ sources directly, so it
+# needs the repo root at compile time like tst_crowdml/tst_botml above.
+tradingapp_add_test(tst_architecture tst_architecture.cpp)
+target_compile_definitions(tst_architecture PRIVATE
+    TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

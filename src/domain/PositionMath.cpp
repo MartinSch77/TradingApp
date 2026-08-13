@@ -143,4 +143,10 @@ CloseSuppression suppressClosedPositions(const QList<Position> &reported,
     return out;
 }
 
+bool exceedsExposureCap(double committedExposure, double newAmount, double cap) noexcept
+{
+    constexpr double kEpsilon = 1e-6;
+    return (committedExposure + newAmount) > (cap + kEpsilon);
+}
+
 } // namespace trading

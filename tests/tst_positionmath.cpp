@@ -433,6 +433,31 @@ private slots:
         QVERIFY(text.startsWith(QLatin1Char('-')));
         QCOMPARE(text, QLatin1Char('-') + QLocale().toString(8000.0, 'f', 2));
     }
+
+    //! @tstid TS-POS-018 @design DES-DOM-POS
+    // @relation(REQ-F-004, scope=function)
+    //
+    // The exposure-cap guard (REQ-F-004): an order that would push the committed
+    // total past the cap is refused, one that keeps it at or under the cap is not —
+    // pinned exactly on the boundary, not only clearly on one side of it. This is
+    // MainWindow's own "Guard 3" (its two call sites now call this pure function
+    // instead of each carrying an inline copy of the comparison).
+    void TS_POS_018_exposureCapGuard()
+    {
+        // Comfortably under: never refused.
+        QVERIFY(!exceedsExposureCap(/*committed=*/1000.0, /*newAmount=*/500.0, /*cap=*/17000.0));
+
+        // Exactly AT the cap: not refused (a display-rounded amount landing exactly
+        // on the limit must not be blocked for a rounding artefact).
+        QVERIFY(!exceedsExposureCap(/*committed=*/16500.0, /*newAmount=*/500.0, /*cap=*/17000.0));
+
+        // One cent over: refused.
+        QVERIFY(exceedsExposureCap(/*committed=*/16500.0, /*newAmount=*/500.01, /*cap=*/17000.0));
+
+        // Already over the cap on its own (resting orders alone exceed it) — still
+        // refused, even for a zero-size probe.
+        QVERIFY(exceedsExposureCap(/*committed=*/18000.0, /*newAmount=*/0.01, /*cap=*/17000.0));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPositionMath)

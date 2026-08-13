@@ -97,6 +97,14 @@ struct CloseSuppression {
                                                        const QHash<QString, qint64> &closedAtMs,
                                                        qint64 nowMs, qint64 windowMs);
 
+// The exposure-cap guard (REQ-F-004): true when adding `newAmount` to what is already
+// committed (open trades PLUS resting limit orders — one WILL become exposure the
+// moment it triggers, with nobody at the keyboard to be warned then) would push the
+// total past `cap`. A small epsilon absorbs floating-point/display rounding, so an
+// amount that lands EXACTLY on the cap is not refused for a rounding artefact.
+[[nodiscard]] bool exceedsExposureCap(double committedExposure, double newAmount,
+                                      double cap) noexcept;
+
 } // namespace trading
 
 #endif // TRADINGAPP_DOMAIN_POSITIONMATH_H

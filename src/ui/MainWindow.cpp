@@ -484,7 +484,7 @@ void MainWindow::setupRunners()
         connect(m_scriptRunner, &TradeScriptRunner::log, this, &MainWindow::onLog));
     m_scriptRunner->setExposureGate([this](double amount, QString *whyNot) {
         const double committed = m_openTradesTotal + pendingExposureTotal();
-        if ((committed + amount) > (kMaxOpenExposure + 1e-6)) {
+        if (trading::exceedsExposureCap(committed, amount, kMaxOpenExposure)) {
             if (whyNot != nullptr) {
                 *whyNot = QStringLiteral("open trades plus resting orders would reach "
                                          "%1%2, over the %1%3 exposure limit")
@@ -6335,7 +6335,7 @@ void MainWindow::placeOrder(bool isBuy, double triggerRate)
     // Orders already resting at the broker count: each one WILL become exposure when it
     // triggers, and nobody is at the keyboard then to be warned.
     const double committed = m_openTradesTotal + pendingExposureTotal();
-    if ((committed + amount) > (kMaxOpenExposure + 1e-6)) {
+    if (trading::exceedsExposureCap(committed, amount, kMaxOpenExposure)) {
         const QString msg =
             QStringLiteral("%1 blocked — open trades plus resting limit orders would reach "
                            "%2%3, over the %2%4 limit (%2%5 already committed).")

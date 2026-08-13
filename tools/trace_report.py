@@ -52,6 +52,12 @@ TS_RE = re.compile(r"\bTS-[A-Z]+-\d{3}\b")
 
 
 def parse_requirements():
+    """REQ id -> statement text. Verification methods come from
+    parse_requirement_verification() — a SEPARATE table column (cells[3], not
+    cells[2] — a markdown row `| REQ-… | statement | T |` splits on "|" into
+    ['', ' REQ-… ', ' statement ', ' T ', '']), kept apart because this dict's
+    value is also what the HTML matrix renders as the requirement description.
+    """
     text = (ROOT / "docs/requirements.md").read_text(**UTF8)
     reqs = {}
     for line in text.splitlines():
@@ -60,6 +66,25 @@ def parse_requirements():
             cells = [c.strip() for c in line.split("|")]
             reqs[m.group()] = cells[2] if len(cells) > 2 else ""
     return reqs
+
+
+def parse_requirement_verification():
+    """REQ id -> its declared VERIFICATION method(s), e.g. {"T"}, {"A", "I"}.
+
+    docs/requirements.md's table is `| REQ-… | statement | T |` (or "A/T",
+    "A/I", …) — StrictDoc's own T=test/A=analysis/I=inspection convention,
+    stated in the generated file's own preamble. A requirement whose method
+    has no "T" was never meant to have an automated test at all.
+    """
+    text = (ROOT / "docs/requirements.md").read_text(**UTF8)
+    verification = {}
+    for line in text.splitlines():
+        m = REQ_RE.search(line)
+        if m and line.strip().startswith("|"):
+            cells = [c.strip() for c in line.split("|")]
+            raw = cells[3] if len(cells) > 3 else ""
+            verification[m.group()] = {p.strip() for p in raw.split("/") if p.strip()}
+    return verification
 
 
 def parse_design():
@@ -137,6 +162,7 @@ def parse_results():
 
 def main():
     reqs = parse_requirements()
+    req_verification = parse_requirement_verification()
     design = parse_design()
     spec = parse_test_spec()
     impl = parse_test_impl()
@@ -184,7 +210,23 @@ def main():
         if not req_to_des.get(r):
             hard_gaps.append(f"{r}: no design element claims to satisfy it")
         if not req_to_ts.get(r):
-            open_gaps.append(f"{r}: no automated test verifies it (coverage gap)")
+            # A requirement's own VERIFICATION method (T/A/I, e.g. "A/I") says HOW it
+            # is meant to be checked. One with no "T" in that method — REQ-F-021's
+            # tooltip wording, REQ-N-001's "buildable for Android/iOS" — was never
+            # meant to have an automated test at all; flagging it here as a "coverage
+            # gap" was a false positive that pointed at the wrong fix (the honest
+            # discrepancy dashboards, screenshots, a build log are the real
+            # evidence, and a test written just to silence this line would test
+            # nothing). Only requirements whose method actually includes "T" belong
+            # in the open-gaps list.
+            methods = req_verification.get(r, set())
+            if "T" in methods:
+                open_gaps.append(f"{r}: no automated test verifies it (coverage gap)")
+            else:
+                open_gaps.append(
+                    f"{r}: verified by {'/'.join(sorted(methods)) or '?'} only, "
+                    "no automated test needed"
+                )
 
     # ---- HTML matrix -------------------------------------------------------
     def esc(s):
@@ -195,8 +237,12 @@ def main():
     for r in sorted(reqs):
         des_list = ", ".join(sorted(req_to_des.get(r, []))) or "—"
         ts_cells = []
-        verdict = "NO TEST"
-        css = "gap"
+        # Same distinction as the open-gaps list above: a requirement whose own
+        # VERIFICATION method has no "T" was never meant to have one.
+        if "T" in req_verification.get(r, set()):
+            verdict, css = "NO TEST", "gap"
+        else:
+            verdict, css = "NOT TEST-VERIFIED (by design)", "warn"
         statuses = []
         for ts in sorted(req_to_ts.get(r, [])):
             func = impl[ts]["function"]

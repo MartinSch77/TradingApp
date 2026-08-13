@@ -4721,6 +4721,12 @@ void MainWindow::connectInstrumentFeeds()
                               &MainWindow::onReferenceSeries));
     static_cast<void>(connect(m_feeds, &MarketFeeds::referenceVolumeSeries, this,
                               &MainWindow::onReferenceVolumeSeries));
+    static_cast<void>(connect(m_feeds, &MarketFeeds::dailyBarsReady, this,
+                              [this](const QString &symbol, const QList<trading::DailyBar> &bars) {
+                                  if (m_botRunner != nullptr) {
+                                      m_botRunner->setDailyBars(symbol, bars);
+                                  }
+                              }));
 }
 
 // The per-instrument source table of the decision window: eight rows now (the six
@@ -5193,6 +5199,24 @@ void MainWindow::startDecisionScan()
     // …and the reference series that say what the indices are doing: expected
     // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-035).
     m_feeds->fetchReferenceSeries();
+    // The swing strategy's own daily bars (REQ-F-031's redesign, item 5's live wiring):
+    // at most once per calendar date, since the underlying daily-interval feed does not
+    // change intraday — refetching it every ~5-minute scan would be pure waste (and risk
+    // Yahoo rate-limiting a feed that never has anything new to say before the close).
+    // Hooked here rather than the recommendations scan above: this is the scan whose
+    // completion feeds BotSimRunner::onDecisions, where the swing entries are evaluated.
+    if ((m_botRunner != nullptr) && m_botRunner->book().config().useSwingStrategy) {
+        const QDate today = QDate::currentDate();
+        if (m_lastDailyBarsFetchDate != today) {
+            m_lastDailyBarsFetchDate = today;
+            for (const QString &symbol : m_botRunner->book().config().swingStrategySymbols) {
+                if (const trading::InstrumentSpec *spec = trading::instrumentSpec(symbol);
+                    (spec != nullptr) && !spec->yahooTicker.isEmpty()) {
+                    m_feeds->fetchDailyBars(symbol, spec->yahooTicker);
+                }
+            }
+        }
+    }
 }
 
 void MainWindow::openDecision()

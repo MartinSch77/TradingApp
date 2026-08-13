@@ -7,8 +7,10 @@
 #include "services/EtoroClient.h"
 #include "domain/Forecasting.h"
 #include "domain/IndexConfluence.h"
+#include "domain/Indicators.h"
 #include "domain/InstrumentCatalog.h"
 #include "domain/LeadSignal.h"
+#include "domain/SwingPullbackStrategy.h"
 #include "services/OllamaAdvisor.h"
 
 #include <QCoreApplication>
@@ -70,6 +72,25 @@ constexpr qint64 kRetrainEvery = 25;
 // instrument it never saw cannot have one — and bounded, because a small model
 // answers a long prompt worse than a short one (REQ-F-034).
 constexpr qsizetype kAskedCandidates = 14;
+
+// The swing strategy's own config, shared between the entry path
+// (considerSwingEntries) and the exit path (applySwingExit) — one instance, so the
+// two can never disagree about, say, which EMA period counts as "the slow one".
+// Function-local static variables, not namespace-scope ones: cert-err58-cpp is enabled
+// in this project's .clang-tidy specifically because a namespace-scope global's
+// construction can throw before main() with nothing able to catch it — a function-local
+// variable's first call happens inside ordinary control flow instead.
+const trading::SwingPullbackConfig &swingConfig()
+{
+    static const trading::SwingPullbackConfig config;
+    return config;
+}
+
+const trading::SwingPullbackStrategyV1 &swingStrategy()
+{
+    static const trading::SwingPullbackStrategyV1 strategy(swingConfig());
+    return strategy;
+}
 
 qsizetype indexOfTrade(const QList<PaperTrade> &trades, qint64 id)
 {
@@ -410,6 +431,16 @@ void BotSimRunner::markAndExit()
         }
         m_book.accrueRollover(id, fees, m_eurPerUsd, now);
 
+        // A position the swing strategy opened is managed ENTIRELY by its own exit path
+        // (REQ-F-031's redesign, item 6) — never by paperCloseDecision below, whose
+        // SignalFade/GiveBack are tuned for the composite's own conviction signal, which
+        // this strategy was never scored against.
+        if (!trade.strategyVersion.isEmpty()) {
+            static_cast<void>(applySwingExit(trade, mark.rate, now));
+            moved = true;   // the rollover accrual above already changed the book
+            continue;
+        }
+
         // The exit rules read only fields the accrual above cannot change (side,
         // stop/target, open time), so the copy is as current as the book.
         trading::ExitContext ctx;
@@ -563,6 +594,13 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
 
     m_pendingRows = rows;
     m_pendingScan = snap.screenerRows;
+    // The swing strategy's own entry path (2026-08-12 redesign, item 5's live wiring) —
+    // independent of the composite/AI gate below, and of `m_armed`'s AI-proposal
+    // machinery: it has no proposal to wait for, so it runs whether or not a local
+    // model is configured. Still gated on the SAME arming switch as every other entry.
+    if (m_armed) {
+        considerSwingEntries(QDateTime::currentDateTime());
+    }
     if (!m_armed) {
         emit changed();
         return;
@@ -1091,6 +1129,186 @@ trading::AiSource BotSimRunner::aiSourceState() const
     source.maxAgeMs = kProposalMaxAgeMs;
     source.leadFallback = m_book.config().aiLeadFallbackToComposite;
     return source;
+}
+
+// The swing strategy's own entry path (2026-08-12 redesign, item 5's live wiring):
+// evaluated per scan, entirely separate from the composite/AI gate in tryOpen below.
+// Kept separate rather than folded into considerEntries/tryOpen because the two paths
+// disagree about almost everything that matters: this one is daily-bar-based (not the
+// hourly closes DecisionRow carries), sizes by the EXPLICIT risk-per-trade model rather
+// than paperEntryVerdict's stakeFraction target, and skips the AI gate entirely — the
+// swing strategy IS the decision, not a candidate for the model to confirm or override.
+// It still shares the SAME book, so it caps its own stake against paperStakeCeiling —
+// the exact function paperStakeRoom itself is built from — rather than a second copy of
+// the portfolio/margin/correlation arithmetic that could drift from it.
+// One symbol's own swing-entry attempt, split out of considerSwingEntries purely to
+// keep that a loop (and both stay inside the complexity budget) — mirroring tryOpen's
+// own split out of considerEntries above.
+void BotSimRunner::trySwingOpen(const QString &symbol, const QDateTime &now)
+{
+    const trading::BotConfig &cfg = m_book.config();
+    QString preWhy;
+    if (!preTradeRefusal(symbol, &preWhy).isEmpty()) {
+        return;   // the SAME focus/market obstacles the composite path refuses on
+    }
+    if (m_book.exposureFor(symbol).count > 0) {
+        return;   // one swing position per symbol at a time, matching the backtester
+    }
+    const QList<trading::DailyBar> bars = m_dailyBars.value(symbol);
+    if (bars.size() < swingConfig().slowEmaPeriod) {
+        return;   // not enough history for the longest EMA the strategy uses
+    }
+    trading::StrategySnapshot snap;
+    snap.symbol = symbol;
+    snap.bars = bars;
+    snap.eventRiskImminent = m_eventRisk;
+    snap.termStructure = trading::termStructure(m_referenceSeries);
+    const trading::StrategyDecision decision = swingStrategy().evaluate(snap);
+    if (!decision.enter) {
+        return;
+    }
+    const double fillPrice = bars.constLast().close;
+    if ((fillPrice <= 0.0) || (decision.stopFraction <= 0.0)) {
+        return;
+    }
+    const double stopPrice = decision.isBuy ? (fillPrice * (1.0 - decision.stopFraction))
+                                             : (fillPrice * (1.0 + decision.stopFraction));
+    const double riskPerTrade = trading::riskPerTradeFor(cfg, symbol);
+    const trading::ExplicitRiskSizing sizing = trading::sizeByExplicitRisk(
+        m_book.state().equity, riskPerTrade, decision.stopFraction, cfg.swingLeverage);
+    if (!sizing.valid) {
+        return;
+    }
+    const double riskPerStake = (sizing.margin > 0.0) ? (sizing.riskAmount / sizing.margin) : 0.0;
+    const trading::StakeRoom ceiling =
+        trading::paperStakeCeiling(m_book.state(), cfg, riskPerStake, symbol);
+    const double margin = std::min(sizing.margin, ceiling.stake);
+    if (margin < cfg.minStake) {
+        emit entryDecision(symbol, false,
+                           ceiling.limit.isEmpty() ? QStringLiteral("sizing-refused")
+                                                   : ceiling.limit,
+                           QStringLiteral("swing entry sized below the minimum stake"));
+        return;
+    }
+    const qint64 instrumentId = m_client->instrumentIdFor(symbol);
+    trading::EntrySignal sig;
+    sig.valid = true;
+    sig.symbol = symbol;
+    sig.instrumentId = instrumentId;
+    sig.isBuy = decision.isBuy;
+    sig.fillRate = fillPrice;
+    sig.spreadPct = effectiveSpreadPct(symbol);
+    sig.leverage = cfg.swingLeverage;
+    sig.slRate = stopPrice;
+    sig.basis = QStringLiteral("swing %1: %2").arg(swingStrategy().version(), decision.why);
+    const qint64 openedId = (instrumentId == 0) ? 0 : m_book.open(sig, margin, now);
+    if (openedId == 0) {
+        emit entryDecision(symbol, false, QStringLiteral("instrument-unresolved"), decision.why);
+        return;
+    }
+    m_book.setStrategyVersion(openedId, swingStrategy().version());
+    m_book.setSwingInitialStop(openedId, stopPrice);
+    m_book.setSwingState(openedId, stopPrice, false, 0);
+    m_swingLastEvalDate.insert(openedId, now.date());
+    emit tradeOpened(symbol);
+    emit entryDecision(symbol, true, QStringLiteral("opened"), decision.why);
+    emit log(QStringLiteral("SWING OPEN %1 %2 %3 @ %4 x%5 — SL %6 — %7")
+                 .arg(symbol, decision.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
+                      botPlain(margin), botRate(fillPrice))
+                 .arg(cfg.swingLeverage)
+                 .arg(botRate(stopPrice))
+                 .arg(decision.why),
+             false);
+}
+
+void BotSimRunner::considerSwingEntries(const QDateTime &now)
+{
+    const trading::BotConfig &cfg = m_book.config();
+    if (!cfg.useSwingStrategy || (m_client == nullptr)) {
+        return;
+    }
+    for (const QString &symbol : cfg.swingStrategySymbols) {
+        trySwingOpen(symbol, now);
+    }
+}
+
+// The swing strategy's own exit path for ONE position it manages (2026-08-12 redesign,
+// item 6). The stop-barrier check runs every mark tick, exactly like every other open
+// trade's — barrierHit is the SAME function paperCloseDecision itself calls, shared
+// rather than duplicated. The day-granular rules (time-stop, the 2R partial, the
+// trailing stop) run at most once per calendar day, matching swingExitDecision's own
+// day-by-day state; a 5-second mark tick must not race ahead of the bar the strategy
+// is actually reasoning over. NEVER routed through paperCloseDecision itself: that
+// bundle's SignalFade/GiveBack are tuned for the composite's own conviction signal,
+// which this strategy was never scored against, and folding them in would contaminate
+// a winning trade riding to 2R with an exit rule that was never meant to judge it.
+bool BotSimRunner::applySwingExit(const trading::PaperTrade &trade, double markRate,
+                                  const QDateTime &now)
+{
+    if (markRate > 0.0) {
+        if (const CloseReason hit = trading::barrierHit(trade, markRate); hit != CloseReason::None) {
+            closeTrade(trade, hit);
+            return true;
+        }
+    }
+    const QDate todayDate = now.date();
+    if (!todayDate.isValid() || (m_swingLastEvalDate.value(trade.id) == todayDate)) {
+        return false;   // already ran today's day-granular rules for this position
+    }
+    const QList<trading::DailyBar> &bars = m_dailyBars.value(trade.symbol);
+    if (bars.size() < 6) {
+        return false;   // not enough bars yet for the 5-day-low/EMA10 inputs
+    }
+    m_swingLastEvalDate.insert(trade.id, todayDate);
+
+    trading::SwingPositionState state;
+    state.partialTaken = trade.swingPartialTaken;
+    state.stopPrice = trade.slRate;
+    state.sessionsHeld = trade.swingSessionsHeld;
+
+    QList<double> closes;
+    closes.reserve(bars.size());
+    for (const trading::DailyBar &bar : bars) {
+        closes.append(bar.close);
+    }
+    const qsizetype lowStart = std::max<qsizetype>(0, bars.size() - 5);
+    double fiveDayLow = bars.at(lowStart).low;
+    for (qsizetype i = lowStart; i < bars.size(); ++i) {
+        fiveDayLow = std::min(fiveDayLow, bars.at(i).low);
+    }
+    const QList<double> ema10Series = trading::emaSeries(closes, 10);
+
+    trading::SwingExitInputs in;
+    in.entryPrice = trade.openRate;
+    in.initialStopPrice = trade.swingInitialStopRate;
+    in.todayClose = bars.constLast().close;
+    in.fiveDayLow = fiveDayLow;
+    in.ema10 = ema10Series.isEmpty() ? 0.0 : ema10Series.constLast();
+
+    const trading::SwingExitAction action = trading::swingExitDecision(state, in, swingConfig());
+    if (action.fullClose) {
+        // Same convention StrategyBacktest uses for this exact rule, so a live run and a
+        // backtest over the same bars attribute the close to the same reason.
+        closeTrade(trade, CloseReason::AiExit);
+        return true;
+    }
+    if (action.partialClose) {
+        const double exitRate = (markRate > 0.0) ? markRate : bars.constLast().close;
+        const trading::PaperBook::ExitPricing pricing{exitRate, effectiveSpreadPct(trade.symbol),
+                                                       CloseReason::TakeProfit, now};
+        static_cast<void>(m_book.partialClose(trade.id, action.partialFraction, pricing));
+        m_book.setSwingState(trade.id, action.nextState.stopPrice, action.nextState.partialTaken,
+                            action.nextState.sessionsHeld);
+        emit log(QStringLiteral("SWING PARTIAL %1: closed %2% — %3")
+                     .arg(trade.symbol)
+                     .arg(action.partialFraction * 100.0, 0, 'f', 0)
+                     .arg(action.why),
+                 false);
+        return false;   // the remainder stays open under the same id
+    }
+    m_book.setSwingState(trade.id, action.nextState.stopPrice, action.nextState.partialTaken,
+                        action.nextState.sessionsHeld);
+    return false;
 }
 
 void BotSimRunner::considerEntries(const QList<trading::DecisionRow> &rows,

@@ -502,6 +502,44 @@ void MarketFeeds::fetchIntradayRange(const QString &symbol, const QString &ticke
     });
 }
 
+void MarketFeeds::fetchDailyBars(const QString &symbol, const QString &ticker)
+{
+    if (ticker.isEmpty()) {
+        return;
+    }
+    // A year of daily bars is comfortably past SwingPullbackConfig's default 200-session
+    // slow EMA (EMA200 needs 200 CLOSES behind it to be meaningful at all, and a year of
+    // trading days is ~252).
+    QNetworkRequest req(QUrl(feedUrl(
+        QStringLiteral("https://query1.finance.yahoo.com"),
+        QStringLiteral("/v8/finance/chart/%1?interval=1d&range=1y")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
+    JsonHttp::setBrowserHeaders(req);
+    QNetworkReply *reply = m_nam->get(req);
+    m_http->handleReply(reply, [this, symbol](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                              const QByteArray & /*raw*/, const QString &netError) {
+        if (!ok || !doc.isObject()) {
+            reportFeedError(QStringLiteral("Daily bars"), netError);
+            emit dailyBarsReady(symbol, {});
+            return;
+        }
+        const trading::CandleColumns ohlc = yahooOhlc(yahooChartResult(doc));
+        const QList<trading::Candle> candles =
+            trading::candlesFrom(ohlc.opens, ohlc.highs, ohlc.lows, ohlc.closes);
+        QList<trading::DailyBar> bars;
+        bars.reserve(candles.size());
+        for (const trading::Candle &c : candles) {
+            trading::DailyBar bar;
+            bar.open = c.open;
+            bar.high = c.high;
+            bar.low = c.low;
+            bar.close = c.close;
+            bars.append(bar);
+        }
+        emit dailyBarsReady(symbol, bars);
+    });
+}
+
 void MarketFeeds::fetchReferenceSeries()
 {
     // The same chart endpoint the instrument sweep uses, over tickers that are not

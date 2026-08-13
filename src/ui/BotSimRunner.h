@@ -10,6 +10,7 @@
 #include "domain/PaperTrader.h"
 #include "domain/DecisionLog.h"
 #include "domain/PredictionLedger.h"
+#include "domain/TradingStrategy.h"
 
 #include <QHash>
 #include <QList>
@@ -98,6 +99,15 @@ public:
     // The daily target / loss limit from configuration (REQ-F-031). Logged, because
     // changing what a day must earn changes what the record means.
     void applyDailyRules(double target, double lossLimit);
+    // The daily bars SwingPullbackStrategyV1 reasons over (2026-08-12 redesign, item 5's
+    // live wiring), fed by whoever fetches them (a daily-interval Yahoo series is enough —
+    // this needs no live quote). `symbol` must be one of BotConfig::swingStrategySymbols
+    // for the bars to be used; harmless otherwise. Replaces, never appends: the caller
+    // owns re-fetching, this class owns none of that plumbing.
+    void setDailyBars(const QString &symbol, const QList<trading::DailyBar> &bars)
+    {
+        m_dailyBars.insert(symbol, bars);
+    }
     [[nodiscard]] trading::BotAiMode aiMode() const { return m_book.config().aiMode; }
     // The picks of the last answer, best first, for the window's AI line (empty =
     // none yet). The model may name as many instruments as it thinks worthwhile —
@@ -257,6 +267,21 @@ private:
                  const QDateTime &now, QString *skipCode);
     // One candidate's direction under the current AI mode, refusal reason included.
     [[nodiscard]] trading::AiGate gateFor(const trading::DecisionRow &row) const;
+    // The swing strategy's own entry path (2026-08-12 redesign, item 5's live wiring):
+    // evaluated per scan, independent of the composite/AI gate above — see BotConfig::
+    // useSwingStrategy's own comment for why this is a SEPARATE path rather than a slot
+    // in tryOpen. One call per configured symbol; each names its own refusal.
+    void considerSwingEntries(const QDateTime &now);
+    // One symbol's own attempt, split out so considerSwingEntries stays a loop —
+    // mirrors tryOpen's own split out of considerEntries.
+    void trySwingOpen(const QString &symbol, const QDateTime &now);
+    // The swing strategy's own exit path for ONE open position it manages (identified by
+    // PaperTrade::strategyVersion being non-empty): the shared stop-barrier check first
+    // (barrierHit, the same one every other exit path uses), then — at most once per
+    // calendar day, since swingExitDecision's own state is day-granular — the strategy's
+    // time-stop/partial/trailing rules. Returns true when the position closed outright
+    // (a partial leaves it open, at the reduced stake, under the same id).
+    bool applySwingExit(const trading::PaperTrade &trade, double markRate, const QDateTime &now);
     // Keep the client quoting exactly the instruments the bot simulates.
     void syncQuoteInterest();
     // `trade` MUST be a caller-owned copy, never a reference into
@@ -299,6 +324,16 @@ private:
     // by Yahoo ticker, and the per-instrument series keyed by APP symbol.
     QHash<QString, trading::VolumeSeries> m_referenceVolumes;
     QHash<QString, QList<double>> m_symbolSeries;
+    // The swing strategy's own daily bars (2026-08-12 redesign, item 5's live wiring),
+    // keyed by APP symbol like every other per-instrument series here — set via
+    // setDailyBars, read by considerSwingEntries/applySwingExit only.
+    QHash<QString, QList<trading::DailyBar>> m_dailyBars;
+    // The last calendar date swingExitDecision's day-granular rules ran for a given open
+    // trade id, so a 5-second mark tick does not increment sessionsHeld/re-run the
+    // time-stop/partial/trailing checks dozens of times before the day's bar even closes.
+    // Not persisted: at most one extra day-count tick is lost across a restart, which is
+    // a smaller error than the state it is protecting.
+    QHash<qint64, QDate> m_swingLastEvalDate;
     // The combined indication's strength per instrument from the last evaluation, so the
     // forecast line quotes the SAME number the ledger recorded rather than recomputing it.
     QHash<QString, double> m_lastLeadStrength;

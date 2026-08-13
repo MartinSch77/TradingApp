@@ -1363,12 +1363,15 @@ BindingLimit bindingLimit(const RoomCandidates &c)
 
 } // namespace
 
-StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double riskPerStake,
-                         const QString &symbol)
+// The ceiling alone (no "wanted" target folded in) — extracted so a caller sizing by
+// a DIFFERENT model than stakeFraction (the explicit-risk-first swing strategy,
+// 2026-08-12 redesign item 5) can cap its own proposed stake against the SAME
+// shared budget arithmetic instead of duplicating it, which would drift the two
+// models' idea of "how much room is left" apart over time. paperStakeRoom below is
+// now a thin wrapper: `min(wanted, ceiling)`.
+StakeRoom paperStakeCeiling(const BookState &book, const BotConfig &cfg, double riskPerStake,
+                            const QString &symbol)
 {
-    // A fraction of CURRENT equity, so the bot compounds its wins and shrinks its
-    // size after losses without any extra rule.
-    const double wanted = std::max(cfg.minStake, book.equity * cfg.stakeFraction);
     const double marginRoom = (book.equity * cfg.maxExposureFraction) - book.invested;
     // The ABSOLUTE euro ceiling on what may be committed, separate from the fractional one
     // because a fraction of current equity is not a fixed amount of money (see
@@ -1407,13 +1410,24 @@ StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double ris
                                                              stakeBySymbol, marginRoom,
                                                              investedRoom, cashRoom});
     StakeRoom out;
-    // const since the fold above replaced the if-chain that used to reassign this.
-    const double room = binding.room;
+    out.stake = binding.room;
     out.limit = binding.label;
-    if (room < cfg.minStake) {
+    return out;
+}
+
+StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double riskPerStake,
+                         const QString &symbol)
+{
+    const StakeRoom ceiling = paperStakeCeiling(book, cfg, riskPerStake, symbol);
+    // A fraction of CURRENT equity, so the bot compounds its wins and shrinks its
+    // size after losses without any extra rule.
+    const double wanted = std::max(cfg.minStake, book.equity * cfg.stakeFraction);
+    StakeRoom out;
+    out.limit = ceiling.limit;
+    if (ceiling.stake < cfg.minStake) {
         return out;  // stake stays 0: no room left for a trade worth its costs
     }
-    out.stake = std::min(wanted, room);
+    out.stake = std::min(wanted, ceiling.stake);
     if (out.stake >= wanted) {
         out.limit.clear();  // the target stake fit; no limit was reached
     }
@@ -1517,8 +1531,6 @@ EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
 // Exit evaluation
 // ---------------------------------------------------------------------------
 
-namespace {
-
 // Stop/target test for one side, at the rate the position closes at. The stop is
 // checked FIRST by the caller: when a single mark jumps past both legs (a gap, or
 // a slow poll), assuming the loss is the honest reading of an unknown path.
@@ -1541,8 +1553,6 @@ CloseReason barrierHit(const PaperTrade &trade, double closeRate)
     }
     return CloseReason::None;
 }
-
-} // namespace
 
 double paperRemainingUpside(const PaperTrade &trade, double markRate)
 {
@@ -2042,6 +2052,36 @@ void PaperBook::setFeatures(qint64 id, const EntryFeatures &features)
     }
 }
 
+void PaperBook::setStrategyVersion(qint64 id, const QString &version)
+{
+    const qsizetype idx = indexOf(id);
+    if (idx >= 0) {
+        m_open[idx].strategyVersion = version;
+    }
+}
+
+void PaperBook::setSwingInitialStop(qint64 id, double initialStopRate)
+{
+    const qsizetype idx = indexOf(id);
+    if (idx >= 0) {
+        m_open[idx].swingInitialStopRate = initialStopRate;
+    }
+}
+
+void PaperBook::setSwingState(qint64 id, double stopRate, bool partialTaken, qint32 sessionsHeld)
+{
+    const qsizetype idx = indexOf(id);
+    if (idx >= 0) {
+        // Tightening slRate here, rather than a second field, is what keeps
+        // riskAtStop()'s portfolio-risk accounting correct as the trailing stop moves.
+        if (stopRate > 0.0) {
+            m_open[idx].slRate = stopRate;
+        }
+        m_open[idx].swingPartialTaken = partialTaken;
+        m_open[idx].swingSessionsHeld = sessionsHeld;
+    }
+}
+
 void PaperBook::setEntryCompositeConf(qint64 id, double confidence)
 {
     const qsizetype idx = indexOf(id);
@@ -2116,6 +2156,7 @@ PaperClosedTrade PaperBook::close(qint64 id, double closeRate, double spreadPct,
     done.netPnl = gross - done.totalCost();
     done.reason = reason;
     done.features = t.features;   // the record keeps WHY it was opened, not just how it ended
+    done.strategyVersion = t.strategyVersion;
 
     // The stake comes back with the gross result; the exit spread is paid now
     // (the rollover already left cash as it accrued).
@@ -2174,6 +2215,7 @@ PaperClosedTrade PaperBook::partialClose(qint64 id, double fraction, const ExitP
     done.reason = pricing.reason;
     done.features = t.features;
     done.partial = true;
+    done.strategyVersion = t.strategyVersion;
 
     // The stake comes back with the gross result, exactly like close() — just
     // scaled to the portion closed.
@@ -2233,6 +2275,10 @@ QJsonObject PaperBook::toJson() const
         o.insert(QStringLiteral("entryCompositeConf"), t.entryCompositeConf);
         o.insert(QStringLiteral("entryBasis"), t.entryBasis);
         o.insert(QStringLiteral("features"), featuresToJson(t.features));
+        o.insert(QStringLiteral("strategyVersion"), t.strategyVersion);
+        o.insert(QStringLiteral("swingPartialTaken"), t.swingPartialTaken);
+        o.insert(QStringLiteral("swingSessionsHeld"), t.swingSessionsHeld);
+        o.insert(QStringLiteral("swingInitialStopRate"), t.swingInitialStopRate);
         openArr.append(o);
     }
     root.insert(QStringLiteral("open"), openArr);
@@ -2267,6 +2313,7 @@ QJsonObject PaperBook::toJson() const
         o.insert(QStringLiteral("netPnl"), c.netPnl);
         o.insert(QStringLiteral("reason"), static_cast<int>(c.reason));
         o.insert(QStringLiteral("partial"), c.partial);
+        o.insert(QStringLiteral("strategyVersion"), c.strategyVersion);
         closedArr.append(o);
     }
     root.insert(QStringLiteral("closed"), closedArr);
@@ -2303,6 +2350,12 @@ bool PaperBook::fromJson(const QJsonObject &obj)
         t.entryCompositeConf = jsonNum(o, "entryCompositeConf");
         t.entryBasis = jsonStr(o, "entryBasis");
         t.features = featuresFromJson(o.value(QStringLiteral("features")).toObject());
+        // Absent on a book saved before the swing strategy existed: an empty
+        // strategyVersion is exactly the pre-existing meaning ("the composite/AI bot").
+        t.strategyVersion = jsonStr(o, "strategyVersion");
+        t.swingPartialTaken = o.value(QStringLiteral("swingPartialTaken")).toBool();
+        t.swingSessionsHeld = static_cast<qint32>(jsonNum(o, "swingSessionsHeld"));
+        t.swingInitialStopRate = jsonNum(o, "swingInitialStopRate");
         restoredOpen.append(t);
     }
     QList<PaperClosedTrade> restoredClosed;
@@ -2329,6 +2382,7 @@ bool PaperBook::fromJson(const QJsonObject &obj)
         // key already yields false, which is exactly the pre-partial-close meaning
         // ("an ordinary close") — no special casing needed to read an older book.
         c.partial = o.value(QStringLiteral("partial")).toBool();
+        c.strategyVersion = jsonStr(o, "strategyVersion");
         restoredClosed.append(c);
     }
 

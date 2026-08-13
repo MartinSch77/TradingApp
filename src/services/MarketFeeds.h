@@ -7,6 +7,7 @@
 #include "domain/Candles.h"
 #include "domain/IndexConfluence.h"
 #include "domain/Models.h"
+#include "domain/TradingStrategy.h"
 
 #include <QHash>
 #include <QList>
@@ -66,6 +67,14 @@ public:
     // share eight megacaps, so the union is 15 tickers, and each index's read picks its
     // own ten. Results arrive per ticker via referenceSeries.
     void fetchReferenceSeries();
+    // Daily-interval OHLC bars for ONE symbol, ~a year back — the timeframe a swing
+    // strategy reasons over (REQ-F-031's redesign, item 5), distinct from every other
+    // fetch here which is intraday. `ticker` is the caller's own lookup (`yahooTicker`
+    // is file-local to the .cpp), so this stays usable for a symbol not in the tradable
+    // set the other fetches iterate. Volume is left at DailyBar's own default (0 =
+    // unknown): the strategy does not use it, and Yahoo's daily volume is a separate
+    // parse this call does not need. Result via dailyBarsReady.
+    void fetchDailyBars(const QString &symbol, const QString &ticker);
 
 signals:
     // CBOE VIX ("fear index") level and its change vs. its multi-month average, in percent.
@@ -100,6 +109,10 @@ signals:
     // The same bars as OHLC candles, for the cockpit's price chart (REQ-F-038). Already
     // filtered by domain/Candles: a bar that could not be drawn honestly is not here.
     void intradayCandles(const QString &symbol, const QList<trading::Candle> &candles);
+    // Daily bars for one symbol (fetchDailyBars). Empty on a parse/network failure —
+    // the caller (BotSimRunner::setDailyBars) simply keeps whatever it had, exactly
+    // like every other feed here on an error.
+    void dailyBarsReady(const QString &symbol, const QList<trading::DailyBar> &bars);
     // Fetch failures, throttled to one line per feed per 10 minutes: these are
     // public web feeds that hiccup routinely (the panels keep their last
     // reading), but a feed that is DOWN must not fail silently — the user

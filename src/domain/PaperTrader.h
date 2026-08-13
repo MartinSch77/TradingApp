@@ -293,6 +293,18 @@ struct BotConfig {
     // such distinction, Gold.24-7/Colombia/Canada60/Cybersecurity/GoldMiners/DJ30 took 8 of 19
     // closed trades for -256 EUR net — 81% of the book's -316 EUR loss — at ZERO extra scrutiny.
     QStringList coreFocusSymbols;
+    // Runs SwingPullbackStrategyV1 alongside the composite/AI bot (2026-08-12 redesign, item
+    // 5's live wiring) — additive and OFF by default, so a book already running is unaffected
+    // until this is turned on deliberately. SPX500-only at first (see the strategy's own
+    // class comment): `defaultFocusSymbols()` is deliberately NOT narrowed for this, so the
+    // set here is the swing strategy's OWN scope, independent of the general-purpose
+    // `focusSymbols`. A symbol trades under the swing strategy only while it is in BOTH sets
+    // (this one and `focusSymbols`) — the shared focus gate still applies (REQ-F-034).
+    bool useSwingStrategy = false;
+    QStringList swingStrategySymbols{QStringLiteral("SPX500")};
+    // "x1 at first" — StrategyBacktest's own starting point, kept identical here so a live
+    // run and a backtest over the same bars are sizing the same way.
+    qint32 swingLeverage = 1;
     // When the local model LEADS but abstains on a focus instrument (no answer, or it named
     // the other focus name), fall back to the COMPOSITE direction — confluence, momentum,
     // the volatility and yield reads, session phase: every signal the app computes without
@@ -615,6 +627,24 @@ struct PaperTrade {
     QString entryBasis;
     // What the entry looked like, kept for the experience log (REQ-F-033).
     EntryFeatures features;         // the entry's own numbers, for the experience log
+    // Empty = the general-purpose composite/AI bot opened this (ITradingStrategy::version()
+    // otherwise). Which strategy manages a position decides which exit rules apply to it:
+    // a swing-strategy trade is managed by swingExitDecision, NEVER by paperCloseDecision's
+    // SignalFade/GiveBack (tuned for the composite's own conviction signal, which the swing
+    // strategy was never scored against) — see BotSimRunner's exit dispatch.
+    QString strategyVersion;
+    // SwingPositionState's own day-by-day fields, inlined here rather than nested: this is
+    // the ONLY strategy that needs per-trade state beyond what a trade already carries, and
+    // its own id is the natural key — no second store to keep in sync with the book across a
+    // restart. The trailing stop itself is `slRate` (below) — tightening it there, rather
+    // than in a second field, keeps riskAtStop()'s portfolio-risk accounting correct
+    // automatically as the trailing stop moves; swingExitDecision only ever tightens it.
+    bool swingPartialTaken = false;
+    qint32 swingSessionsHeld = 0;
+    // The entry's ORIGINAL stop, fixed forever (never trails) — R = openRate minus this,
+    // and swingExitDecision's time-stop needs R untouched by how far the trailing stop
+    // (slRate, above) has since moved. 0 = not a swing trade / not yet seeded.
+    double swingInitialStopRate = 0.0;
 
     // Notional the position controls (EUR): stake × leverage.
     [[nodiscard]] double notional() const;
@@ -658,6 +688,9 @@ struct PaperClosedTrade {
     // the position it belonged to may still be open, at a reduced stake, under the
     // SAME id — a reader must not assume a partial record means the position ended.
     bool partial = false;
+    // Carried from the PaperTrade it closed (empty = the general-purpose composite/AI bot),
+    // so performance can be attributed per strategy rather than averaged into one number.
+    QString strategyVersion;
 
     [[nodiscard]] double totalCost() const;
     // Holding time in hours (0 when either stamp is invalid).
@@ -889,6 +922,14 @@ struct StakeRoom {
 [[nodiscard]] StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg,
                                        double riskPerStake, const QString &symbol = QString());
 
+// The ceiling alone, with no "wanted" target folded in (StakeRoom::stake is the room
+// itself, not min(wanted, room)): what a caller sizing by a DIFFERENT model than
+// stakeFraction — the explicit-risk-first swing strategy — caps its own proposed
+// stake against, so the two entry paths share ONE definition of "how much room is
+// left" rather than two that can drift apart.
+[[nodiscard]] StakeRoom paperStakeCeiling(const BookState &book, const BotConfig &cfg,
+                                          double riskPerStake, const QString &symbol = QString());
+
 // Loss-at-stop per euro of stake implied by a sized entry: leverage × the stop's
 // distance from the fill, as a fraction. The risk a trade contributes per euro
 // committed, which is what the portfolio budget above is measured in.
@@ -957,6 +998,14 @@ struct ExitContext {
 // What is still to be won if the take-profit is reached, in EUR: notional × the
 // remaining distance to the target as a fraction of the open rate. 0 when there is
 // no target, or when the mark is already past it (the barrier rule owns that case).
+// Has a live rate crossed this trade's own stop or target (0 = disabled, either
+// side)? Exported so a strategy managed OUTSIDE paperCloseDecision's own bundle of
+// rules (the swing strategy, whose SignalFade/GiveBack/MaxHold do not apply — see
+// PaperTrade::strategyVersion) can still share the ONE barrier-crossing check every
+// other exit path uses, rather than a second copy that could disagree with it about
+// which side of a stop counts as "hit" for a short.
+[[nodiscard]] CloseReason barrierHit(const PaperTrade &trade, double closeRate);
+
 [[nodiscard]] double paperRemainingUpside(const PaperTrade &trade, double markRate);
 
 // What holding this position until `until` will cost in EUR: the rollover nights in
@@ -1104,6 +1153,18 @@ public:
     // The composite's conviction at entry — separate from the number that decided
     // the trade, which in lead mode is the model's own.
     void setEntryCompositeConf(qint64 id, double confidence);
+    // Which ITradingStrategy opened this position (empty = the general-purpose
+    // composite/AI bot). Separate from open() for the same reason setFeatures is:
+    // most callers need nothing here, and a build with no second strategy records
+    // nothing.
+    void setStrategyVersion(qint64 id, const QString &version);
+    // Seeds the fixed R basis ONCE, at entry — swingExitDecision's R-multiple math needs
+    // the ORIGINAL stop, never the trailing one.
+    void setSwingInitialStop(qint64 id, double initialStopRate);
+    // The swing strategy's own per-trade state (2026-08-12 redesign, item 6): stopRate
+    // <= 0.0 leaves slRate untouched (swingExitDecision only ever tightens it, and a
+    // caller with nothing new to report should not accidentally widen it back to 0).
+    void setSwingState(qint64 id, double stopRate, bool partialTaken, qint32 sessionsHeld);
 
     // Re-mark one position from its instrument's current close rate (bid for a
     // long, ask for a short). Unknown ids are ignored.

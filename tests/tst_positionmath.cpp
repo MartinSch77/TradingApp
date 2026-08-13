@@ -343,7 +343,7 @@ private slots:
     // treat 0.0 as a valid, if extreme, price.
     void TS_POS_014_pnlRefusesAtExactlyZero()
     {
-        Position p = makePosition();
+        const Position p = makePosition();
         // Both sides zero: closeRate's own bid<=0-falls-back-to-ask logic (Models.cpp)
         // means a single zeroed side is not enough to reach "close == 0" here.
         QCOMPARE(positionPnl(p, Quote{}), 0.0);
@@ -445,18 +445,18 @@ private slots:
     void TS_POS_018_exposureCapGuard()
     {
         // Comfortably under: never refused.
-        QVERIFY(!exceedsExposureCap(/*committed=*/1000.0, /*newAmount=*/500.0, /*cap=*/17000.0));
+        QVERIFY(!exceedsExposureCap(/*committedExposure=*/1000.0, /*newAmount=*/500.0, /*cap=*/17000.0));
 
         // Exactly AT the cap: not refused (a display-rounded amount landing exactly
         // on the limit must not be blocked for a rounding artefact).
-        QVERIFY(!exceedsExposureCap(/*committed=*/16500.0, /*newAmount=*/500.0, /*cap=*/17000.0));
+        QVERIFY(!exceedsExposureCap(/*committedExposure=*/16500.0, /*newAmount=*/500.0, /*cap=*/17000.0));
 
         // One cent over: refused.
-        QVERIFY(exceedsExposureCap(/*committed=*/16500.0, /*newAmount=*/500.01, /*cap=*/17000.0));
+        QVERIFY(exceedsExposureCap(/*committedExposure=*/16500.0, /*newAmount=*/500.01, /*cap=*/17000.0));
 
         // Already over the cap on its own (resting orders alone exceed it) — still
         // refused, even for a zero-size probe.
-        QVERIFY(exceedsExposureCap(/*committed=*/18000.0, /*newAmount=*/0.01, /*cap=*/17000.0));
+        QVERIFY(exceedsExposureCap(/*committedExposure=*/18000.0, /*newAmount=*/0.01, /*cap=*/17000.0));
     }
 };
 

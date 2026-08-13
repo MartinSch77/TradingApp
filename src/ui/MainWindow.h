@@ -413,6 +413,10 @@ private:
 
     EtoroClient *m_client = nullptr;
     MarketFeeds *m_feeds = nullptr;      // VIX / TradingView rating / news
+    // The last calendar date the swing strategy's daily bars were fetched (empty/invalid
+    // = never), so a ~5-minute scan cycle does not refetch a feed that only changes once
+    // a day.
+    QDate m_lastDailyBarsFetchDate;
     AiAdvisor *m_aiAdvisor = nullptr;    // Claude decision synthesis
 
     PriceChart *m_chart = nullptr;

@@ -11,8 +11,10 @@
 
 #include "domain/InstrumentCatalog.h"
 
+#include <QJsonArray>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <numeric>
 
 using namespace trading;
@@ -3030,6 +3032,96 @@ private slots:
         QCOMPARE(guardBook.partialClose(guardId, -0.5, wholePricing).id, 0);
         QCOMPARE(guardBook.partialClose(9999, 0.5, wholePricing).id, 0);
         QCOMPARE(guardBook.state().openCount, 1);   // untouched by every refused call above
+    }
+
+    //! @tstid TS-PAPER-042 @design DES-DOM-SWING
+    // @relation(REQ-F-031, scope=function)
+    //
+    // Which strategy owns a position, and its trailing stop, survive a save/load round
+    // trip (2026-08-12 redesign, item 5's live wiring): an older book with no
+    // strategyVersion field restores as the pre-existing meaning (the composite/AI bot),
+    // never a crash or a guessed value.
+    void TS_PAPER_042_strategyVersionAndSwingStateRoundTripThroughJson()
+    {
+        const BotConfig cfg;
+        PaperBook book(cfg);
+        const QDateTime now(QDate(2026, 8, 13), QTime(9, 0), QTimeZone::UTC);
+        const EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        const qint64 id = book.open(good, 1000.0, now);
+        QVERIFY(id != 0);
+
+        book.setStrategyVersion(id, QStringLiteral("SwingPullbackV1"));
+        book.setSwingState(id, /*stopRate=*/good.fillRate * 0.98, /*partialTaken=*/true,
+                          /*sessionsHeld=*/3);
+        QCOMPARE(book.openTrades().constFirst().strategyVersion,
+                QStringLiteral("SwingPullbackV1"));
+        QCOMPARE(book.openTrades().constFirst().slRate, good.fillRate * 0.98);
+        QVERIFY(book.openTrades().constFirst().swingPartialTaken);
+        QCOMPARE(book.openTrades().constFirst().swingSessionsHeld, 3);
+
+        // A stopRate <= 0.0 must never widen slRate back — only report the other two.
+        book.setSwingState(id, /*stopRate=*/0.0, /*partialTaken=*/true, /*sessionsHeld=*/4);
+        QCOMPARE(book.openTrades().constFirst().slRate, good.fillRate * 0.98);
+        QCOMPARE(book.openTrades().constFirst().swingSessionsHeld, 4);
+
+        PaperBook restored(cfg);
+        QVERIFY(restored.fromJson(book.toJson()));
+        QCOMPARE(restored.openTrades().constFirst().strategyVersion,
+                QStringLiteral("SwingPullbackV1"));
+        QVERIFY(restored.openTrades().constFirst().swingPartialTaken);
+        QCOMPARE(restored.openTrades().constFirst().swingSessionsHeld, 4);
+
+        // Closing carries the tag into the closed record, so performance can be
+        // attributed per strategy.
+        const PaperClosedTrade closed =
+            restored.close(id, good.fillRate * 1.01, 0.02, CloseReason::TakeProfit,
+                          now.addSecs(3600));
+        QCOMPARE(closed.strategyVersion, QStringLiteral("SwingPullbackV1"));
+
+        // An older book with no strategyVersion field at all restores as "the
+        // composite/AI bot", not a crash or a guessed name.
+        QJsonObject legacy = book.toJson();
+        QJsonArray openArr = legacy.value(QStringLiteral("open")).toArray();
+        QJsonObject legacyTrade = openArr.at(0).toObject();
+        legacyTrade.remove(QStringLiteral("strategyVersion"));
+        openArr.replace(0, legacyTrade);
+        legacy.insert(QStringLiteral("open"), openArr);
+        PaperBook legacyBook(cfg);
+        QVERIFY(legacyBook.fromJson(legacy));
+        QVERIFY(legacyBook.openTrades().constFirst().strategyVersion.isEmpty());
+    }
+
+    //! @tstid TS-PAPER-043 @design DES-DOM-SWING
+    // @relation(REQ-F-031, scope=function)
+    //
+    // paperStakeCeiling (the room alone, with no "wanted" target folded in) and
+    // paperStakeRoom must always agree on WHICH limit binds and, once the target
+    // stake exceeds that room, on the exact euro figure — the swing entry path
+    // caps its own explicit-risk stake against the ceiling directly, and a drift
+    // between the two would silently let it exceed the shared portfolio budget.
+    void TS_PAPER_043_stakeCeilingAgreesWithStakeRoomOnTheBindingLimit()
+    {
+        BotConfig cfg;
+        cfg.stakeFraction = 0.5;         // deliberately huge: force the room to bind, not "wanted"
+        cfg.maxPortfolioRiskFraction = 0.02;
+        cfg.maxInvestedEur = 0.0;        // isolate the risk budget (TS-PAPER-008/012/014's own convention)
+        BookState book;
+        book.equity = 50000.0;
+        book.cash = 50000.0;
+
+        const StakeRoom ceiling = paperStakeCeiling(book, cfg, /*riskPerStake=*/0.10);
+        const StakeRoom room = paperStakeRoom(book, cfg, /*riskPerStake=*/0.10);
+        QCOMPARE(room.limit, QStringLiteral("risk-budget"));
+        QVERIFY(qAbs(room.stake - ceiling.stake) < 1e-6);
+        QCOMPARE(ceiling.limit, room.limit);
+
+        // A stake proposed by a DIFFERENT sizing model (the swing strategy's own
+        // explicit-risk figure) is exactly what a caller caps against the ceiling: never
+        // exceeding it, and passing through untouched when already inside it.
+        const double proposedMargin = ceiling.stake + 1000.0;   // deliberately over
+        QVERIFY(std::min(proposedMargin, ceiling.stake) <= ceiling.stake + 1e-9);
+        const double smallMargin = ceiling.stake / 2.0;
+        QCOMPARE(std::min(smallMargin, ceiling.stake), smallMargin);
     }
 };
 

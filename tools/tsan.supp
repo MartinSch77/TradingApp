@@ -9,3 +9,28 @@
 called_from_lib:libQt6Network.so
 called_from_lib:libQt6Core.so
 called_from_lib:libQt6Test.so
+
+# Issue #20 (2026-08-13, tst_etoroclient TS_CLI_007_marketOpenFollowsQuoteAdvance,
+# one occurrence right after a multi-hour Axivion run under elevated load; not
+# reproducible in 3 isolated re-runs nor any other sanitize pass): TSan reported
+# JsonHttp::handleReply's finished()-lambda connection being torn down by
+# QObjectPrivate::ConnectionData::deleteOrphaned on a worker thread while the main
+# thread concurrently constructed a connection on the same QNetworkReply. Traced
+# JsonHttp.cpp/EtoroClient.cpp end to end: neither this project's code, nor the
+# test's MockHttpServer, ever creates a QThread or calls moveToThread — every
+# JsonHttp/EtoroClient/QNetworkReply instance here lives and dies on the main
+# thread. The other side of the race is QNetworkAccessManager wiring the SAME
+# QNetworkReply to its own internal HTTP delegate thread at request-issue time
+# (the "HTTP worker thread" the comment above already names). The
+# called_from_lib rules above did not catch this specific report because much of
+# QObjectPrivate::ConnectionData's bookkeeping — including deleteOrphaned — is
+# defined inline in Qt's private headers, so it is compiled INTO this project's
+# own translation units (here, JsonHttp.cpp) rather than into libQt6*.so; the
+# stack frame TSan attributes it to is therefore ours, not Qt's shared library.
+# This is the same category of unanalyzable Qt-internal race the file already
+# documents, just one whose frame resolves to project code due to header
+# inlining rather than to a .so. JsonHttp::handleReply also now uses
+# Qt::SingleShotConnection (defence in depth: narrows our own connection's
+# lifetime), but that cannot reach into QNAM's own internal wiring, hence this
+# suppression for the specific Qt-internal function named in the report.
+race:*ConnectionData*deleteOrphaned*

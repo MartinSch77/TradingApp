@@ -598,6 +598,16 @@ publish_release; refuses to publish on a red pipeline).
 
 - TSan vs non-TSan Qt: `ignore_noninstrumented_modules=1` is load-bearing
   (otherwise false "unlock of unlocked mutex" + watchdog DEADLOCK).
+- TSan can still report a Qt-internal race that `ignore_noninstrumented_modules`
+  and the `called_from_lib` rules in `tools/tsan.supp` miss (issue #20,
+  `ConnectionData::deleteOrphaned` racing a `QNetworkReply` connect from
+  `JsonHttp::handleReply`): `QObjectPrivate::ConnectionData` is defined inline in
+  Qt's PRIVATE headers, so its code compiles into OUR translation unit, not into
+  libQt6*.so — the stack frame TSan blames is ours even though the actual
+  synchronization gap is QNetworkAccessManager's own internal HTTP worker
+  thread. A one-off, unreproducible report in this shape is not an application
+  bug to chase; add a targeted `race:` function-pattern suppression instead of a
+  `called_from_lib` one.
 - clang-tidy `--fix` breaks Qt: never let it remove the `private:` after
   `private slots:` nor rewrite guarded QEvent static_casts (both disabled).
 - valgrind: QtTest watchdog TLS "possibly lost" is suppressed in

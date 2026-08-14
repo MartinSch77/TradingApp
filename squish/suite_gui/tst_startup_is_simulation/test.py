@@ -46,3 +46,5 @@ def main():
     # 4. The bot simulation is simulated money by construction; its window is up.
     bot = waitForObject(names.botSimDialog)
     test.verify(bot is not None, "the bot window opened")
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

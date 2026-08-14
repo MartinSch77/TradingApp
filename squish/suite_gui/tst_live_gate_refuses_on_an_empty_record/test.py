@@ -68,3 +68,5 @@ def main():
     test.verify("arm" in str(arm.text).lower(),
                 "the arm button still offers to ARM, so the bot is idle: %s"
                 % str(arm.text))
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

@@ -61,3 +61,5 @@ def main():
     clickButton(waitForObject(names.signalsToggle))
     test.verify(waitForObject(names.sigConfluence) is not None,
                 "the signals window comes back after being toggled off and on")
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

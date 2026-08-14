@@ -561,7 +561,7 @@ private slots:
     }
 
     //! @tstid TS-COCKPIT-013 @design DES-UI-COCKPIT
-    // @relation(REQ-F-038, REQ-F-034, scope=function)
+    // @relation(REQ-F-038, scope=function)
     //
     // The economic calendar shows what is AHEAD, soonest first, with impact as text and a
     // high-impact flag as a second channel — these are the releases the bot sits out.

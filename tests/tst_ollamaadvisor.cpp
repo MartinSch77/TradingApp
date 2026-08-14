@@ -372,7 +372,7 @@ private slots:
         // A runaway generation cannot flood the books: the answer is capped. The cap
         // is 16 because the bot now shows the model 14 instruments and asks for a
         // verdict on each — an instrument left out of the answer is one nobody can
-        // read an opinion from (REQ-F-034).
+        // read an opinion from (REQ-F-057).
         QString flood = QStringLiteral(R"json({"picks":[)json");
         for (int i = 0; i < 25; ++i) {
             flood += QStringLiteral(R"json({"symbol":"SYM%1","action":"BUY","confidence":50},)json")

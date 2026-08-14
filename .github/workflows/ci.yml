@@ -539,19 +539,19 @@ jobs:
         run: python3 -m pip install --upgrade reportlab
 
       # test-results/ + docs/traceability.html (the artifact keeps that structure).
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: test-results
           path: .
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: analysis-results
           path: analysis-results
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: sanitizer-logs

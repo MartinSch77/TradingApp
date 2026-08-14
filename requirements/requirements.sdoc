@@ -341,11 +341,146 @@ The local model's read shall be shown as a SOURCE wherever the app presents its 
 Leverage shall never be a value the instrument does not offer: every ceiling — the account cap, the bucket cap, the instrument's own maximum — shall be applied BEFORE folding to the offered ladder, since clamping an already-folded value to a cap lands on a step nobody sells (an x8 ceiling on an instrument offering 1/2/5/20 must fold to x5).
 <<<
 SOURCE: Measured from the paper-trading ledger (six closes/hour, 5.2 min median hold, 1.64 EUR gross against 19.38 EUR of costs) plus subsequent live measurements cited inline (the dollar-index and oil-concentration cases).
-RATIONALE: Bundles roughly a dozen independently verifiable obligations (churn control, reversal conviction/economics gates, session-phase sit-outs, reluctant-symbol handling, exit-reason reporting, correlation-bucket leverage cap, session-structure reads, model-as-source display, leverage-ladder folding order) under one requirement id. Flagged for atomic decomposition (process/requirements-schema-upgrade.md tracks the plan); kept as one STATEMENT for now rather than split with a rushed, unverified re-mapping of the ~15 tests and design elements that already cite it — see the linked issue for the scoped, reviewed split.
+RATIONALE: Bundled roughly a dozen independently verifiable obligations (churn control, reversal conviction/economics gates, session-phase sit-outs, reluctant-symbol handling, exit-reason reporting, correlation-bucket leverage cap, session-structure reads, model-as-source display, leverage-ladder folding order) under one requirement id. Split into REQ-F-049 through REQ-F-058 (GitHub issue #14, first atomization pass; REQ-F-035 is deferred to a follow-up). Two obligations the split plan flagged as "likely duplicates" of REQ-F-031 and REQ-F-022 were checked against those requirements' own STATEMENTs and found NOT to be duplicates — see REQ-F-055's and REQ-F-056's own RATIONALE for the comparison. This STATEMENT is kept verbatim as the historical record of the bundle; it is no longer the current source of truth for any of its obligations.
 PRIORITY: must
-STATUS: proposed
-ACCEPTANCE_CRITERIA: Superseded by N atomic REQ-F-034-x requirements, each independently traced to its own design element and test, with 0 new hard gaps after the split.
-ISSUE: See process/requirements-schema-upgrade.md and the tracking GitHub issue it references.
+STATUS: superseded
+ACCEPTANCE_CRITERIA: Superseded by REQ-F-049 (churn control), REQ-F-050 (reversal conviction gate), REQ-F-051 (reversal economics gate), REQ-F-052 (session-phase sit-out windows), REQ-F-053 (reluctant-symbol handling), REQ-F-054 (exit-reason-by-rule reporting), REQ-F-055 (correlation-bucket leverage cap), REQ-F-056 (session-structure reads), REQ-F-057 (local-model-as-source display), REQ-F-058 (leverage-ladder folding order) — each independently traced to its own design element and test, with 0 new hard gaps after the split.
+ISSUE: GitHub issue #14 (first pass, REQ-F-034 only); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-049
+VERIFICATION: T
+TITLE: Churn control — cooldown, pace limit and minimum hold
+STATEMENT: >>>
+Trading frequency shall be governed, because every round trip pays two half-spreads and, held overnight, rent: a measured hour of the simulation produced six closes with a median holding time of 5.2 minutes, 1.64 EUR of gross profit and 19.38 EUR of costs — the strategy did not lose that money, the churn did. Three rules shall follow. An instrument whose position has just closed shall not be re-entered for a configured cooldown; the book as a whole shall open no more than a configured number of positions per hour; and no position shall be closed by OPINION — a model changing its mind, a faded signal, a surrendered gain — before it has had a configured minimum time to work. A stop-loss, a take-profit and the carry rules shall remain immediate, because those are prices and economics rather than opinions. Each of these rules shall be independently switchable to zero, disabling it without disabling the others, so an experiment can isolate one rule's own contribution to the record.
+<<<
+SOURCE: Measured from the paper-trading ledger (six closes/hour, 5.2 min median hold, 1.64 EUR gross against 19.38 EUR of costs).
+RATIONALE: Split from REQ-F-034 (GitHub issue #14): the churn-control obligation alone — cooldown, pace limit and minimum hold — independent of the reversal conviction/economics gates (REQ-F-050/051) that also police discretionary exits once the minimum hold has elapsed.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and to TS-PAPER-025, TS-PAPER-026 and TS-PT-035, all passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-034 atomic decomposition, first pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-050
+VERIFICATION: T
+TITLE: Reversal conviction gate, compared on the same scale
+STATEMENT: >>>
+A model's reversal shall have to be CONVINCED before it is acted on: below a configured confidence it shall be reported but not acted on, since a small local model is not consistent between two calls minutes apart and acting on its hesitation costs two half-spreads. Where an opinion exists but may not yet be acted on, the window shall still show it — the minimum holding time is a fact about the trade, not a reason to hide what the model thinks. A refused exit shall be reported with its own countable code, distinct from the minimum-holding-time refusal, so the two reasons are never conflated in the log. Conviction shall only ever be compared with conviction from the SAME source: the composite's confidence at entry shall be recorded separately from whichever number decided the trade, because a model-led entry carries the model's own scale and comparing the two made every such trade appear to have faded the moment it opened.
+<<<
+SOURCE: Measured live: in lead mode `entryConfidence` (the model's own scale, ~95) compared directly against the composite's own confidence (~20) closed every AI-led trade on its first mark.
+RATIONALE: Split from REQ-F-034 (issue #14): the reversal-conviction gate and the same-source conviction rule are one obligation — the second exists specifically to keep the first from mis-firing when the entry was model-led.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-025, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-051
+VERIFICATION: T
+TITLE: Reversal economics gate — the exit must save more than it costs
+STATEMENT: >>>
+A model's reversal shall additionally have to SAVE something: it shall be acted on only when the position's loss already exceeds a configured multiple of the exit's own cost — the same economics the fade rule applies — because the measured book showed every model exit at the minimum holding time paying a full round-trip spread to abandon a gross-positive position. A refused exit shall be reported with its own countable code; an unknown spread shall keep the guard silent, and stops, targets and the carry rules — prices, not opinions — shall never be affected by it.
+<<<
+SOURCE: Measured 2026-08-09: eight crypto closes, gross +149.33 EUR against 478.82 EUR of spread — every "AI says exit" at the 30-minute floor paid a ~60 EUR round trip to abandon a gross-positive position.
+RATIONALE: Split from REQ-F-034 (issue #14): distinct from the conviction gate (REQ-F-050) — a confident reversal can still be economically not worth acting on.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-038, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-052
+VERIFICATION: T
+TITLE: Session-phase sit-out and size-down windows
+STATEMENT: >>>
+The trading day's loud windows shall be treated as both opportunity and hazard rather than ignored, each measured on the clock it belongs to — the local exchange for the session edges, New York for the American releases and the central bank — so that the weeks in which Europe and the United States change their clocks on different days need no maintenance and cannot be got wrong by a fixed offset. The windows shall be: the first QUARTER HOUR after an open, which is fast, wide-spread and reverses often enough that it shall be sat out rather than merely sized down (it is also what forms the range whose break is the actual signal); the rest of that first hour, where the opening move becomes readable; the scheduled macro slots (08:30 and 10:00 New York, i.e. 14:30 and 16:00 in Berlin for most of the year); the central-bank window, the statement and the press conference that follows it, which shall likewise be sat out because its first move regularly reverses in full; the last hour before the American close and the final half hour within it. A scheduled release shall take precedence over the "rest of the opening hour" classification, being the more specific fact about that moment. Windows that are not sat out shall require more conviction to enter and shall be traded in smaller size, and both sit-out rules shall be switchable without removing the elevated bar.
+<<<
+RATIONALE: Split from REQ-F-034 (issue #14): the session-phase classification, sit-out and size-down obligation alone.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-024, TS-PAPER-026 and TS-PAPER-027, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-053
+VERIFICATION: T
+TITLE: Reluctant-symbol handling — a floor on the move and a floor on conviction
+STATEMENT: >>>
+Named instruments may be treated with RELUCTANCE: the bot shall be allowed to trade them only when the move it expects is both large and fast enough to outrun their costs — the expected move per hour at the chosen leverage, as a percentage of the stake, above a configured floor AND a multiplied conviction floor. The list and both floors shall be configuration, and emptying the list shall remove the reluctance entirely. There are two measured cases, and they fail for OPPOSITE reasons, which is why one mechanism has to cover both. The first is the dollar index: three trades for a net loss, because it moves hundredths of a percent an hour while the spread is indifferent to that — the hourly-move floor is what answers it. The second is CONCENTRATION, and the hourly-move floor cannot see it at all: over one 286-decision run in lead mode the bot opened three positions, two of them the same oil instrument, and that instrument accounted for 179.04 of the 197.05 EUR lost — 91% of the damage from one name that moves perfectly well. The multiplied conviction floor shall therefore apply to such an instrument even when its expected move clears the hourly bar, so that repeating a favourite costs more conviction each time rather than being waved through on volatility alone. Reluctance shall never become a ban: the instrument stays tradable when the evidence is genuinely strong, because a list of forbidden symbols would encode today's model's habits as tomorrow's permanent rule. The same reluctance bar shall additionally apply to any instrument outside a configured CORE focus set, refused as peripheral rather than individually named, so that widening the traded universe cannot let peripheral names dominate the book the way six of them once took 81% of a measured loss.
+<<<
+SOURCE: Measured: 3 USDOLLAR trades for -19.22 EUR; a 286-decision lead-mode run in which OIL.24-7 alone carried -179.04 of -197.05 EUR net; 2026-08-11, six peripheral names took 8 of 19 closed trades for -256 EUR of a -316 EUR book (81%).
+RATIONALE: Split from REQ-F-034 (issue #14). The peripheral-symbol variant (`coreFocusSymbols`) postdates the original STATEMENT but is the SAME mechanism applied to a second trigger (outside-core rather than individually named) — verified by TS-PAPER-039 alongside TS-PAPER-029/030, so it is folded into this same obligation rather than split out.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-029, TS-PAPER-030 and TS-PAPER-039, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-054
+VERIFICATION: T
+TITLE: Exit record decomposed by rule, and a floor on discretionary exits
+STATEMENT: >>>
+The record shall be decomposed BY EXIT RULE — net and count per reason — and presented worst-first, because a total cannot say which rule is losing the money while another is making it; on the first measured 18 closes that decomposition read "signal faded" -97.12 over 7 trades against "banked before giving it back" +99.10 over 2, on a book whose GROSS was positive. A discretionary exit shall additionally have to be worth its own cost: closing a position that is down less than the round trip pays the spread to save nothing, so a discretionary rule such as the fade exit shall act only once the loss exceeds a configured multiple of the exit's own cost.
+<<<
+SOURCE: Measured: first 18 real closes, "signal faded" -97.12 EUR over 7 trades vs "banked before giving it back" +99.10 EUR over 2 trades, on a book whose gross was +119.35 against 148.77 EUR of costs.
+RATIONALE: Split from REQ-F-034 (issue #14): the reporting decomposition and the discretionary-exit cost floor are one paragraph's obligation in the original bundled STATEMENT and stay together here.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-028, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-055
+VERIFICATION: T
+TITLE: Leverage bounded per correlation bucket, foreign exchange tightest
+STATEMENT: >>>
+Leverage shall be bounded per correlation bucket on top of every other cap, with foreign exchange bounded tightest: a few tenths of a percent is a currency pair's whole day, so leverage that merely fits the risk budget can still place the stop inside the noise. Every recognised bucket, and any symbol the catalogue does not recognise, shall have a reachable ceiling of its own.
+<<<
+RATIONALE: Split from REQ-F-034 (issue #14). The split plan flagged this as "likely a duplicate" of REQ-F-031's own correlation-bucket rule; checked directly against REQ-F-031's STATEMENT and found NOT to be a duplicate. REQ-F-031 bounds the SUMMED loss-at-stop per bucket (`maxGroupRiskFraction`, an aggregate risk cap) — its STATEMENT never mentions leverage. This requirement bounds the LEVERAGE offered per bucket (`groupLeverageCap`) — a different ceiling that happens to share the same `correlationGroup` taxonomy as REQ-F-031's risk cap, and is enforced in the same source file (`PaperTrader.cpp`) but by a separate function.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-025 and TS-PAPER-027, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-056
+VERIFICATION: T
+TITLE: Session-structure reads — opening range and relative strength
+STATEMENT: >>>
+The session's own STRUCTURE shall be read and reported, because it is what a professional looks at before any oscillator and it costs no new data source: where the price sits against the first half hour's range (inside it, or broken up or down, with the excursion measured against the range's own width) and the relative strength of the technology future against the broad-market future — the cheapest available stand-in for market breadth, which would otherwise need per-constituent data this app does not fetch. Both reads shall be put in front of the model as evidence, and the bot shall refuse to open a position INTO a fresh opposite break of that range; where a series is too short for a read, the answer shall be "no read" rather than a fabricated one.
+<<<
+RATIONALE: Split from REQ-F-034 (issue #14). The split plan flagged this as "likely a duplicate" of REQ-F-022; checked directly against REQ-F-022's STATEMENT and found NOT to be a duplicate. REQ-F-022 blends a session-momentum TILT derived from the Yahoo intraday series into the weighted composite call. This requirement is a SEPARATE evidence read (opening-range position, futures relative strength) shown to the model on its own and additionally enforced as a hard entry refusal (`against-range-break`) — a different mechanism, built on the same 1-minute series REQ-F-022 also uses, but not the same obligation.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-026, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-057
+VERIFICATION: T/A
+TITLE: The local model's read shown as a source, on the real open-trades table
+STATEMENT: >>>
+The local model's read shall be shown as a SOURCE wherever the app presents its evidence — in the per-instrument signals panel, in the decision window's source list, and as a hold/close column on the REAL open-trades table, where it is ADVICE: nothing there closes a real position, which stays a human action under REQ-N-005. Its side, its confidence and its own words shall be shown, and three states shall be told apart rather than conflated: "not configured", "shown this instrument and did not pick it", and "not among the instruments it was shown" — the last because the model can only speak about the candidates the prompt listed, and a reader who expects an opinion on every instrument is owed the reason there is none. The number of candidates put in front of the model shall therefore be a parameter of the prompt, and the consumer that reports a per-instrument read shall show it enough instruments to make that read meaningful.
+<<<
+RATIONALE: Split from REQ-F-034 (issue #14). Checked against REQ-F-030 and found NOT to be a duplicate: REQ-F-030 governs OBTAINING a proposal for the SIMULATOR; this governs DISPLAYING the model's read as advice on the REAL (not simulated) open-trades table — already reflected independently in DES-UI-POSMODEL's own `satisfies` column (`PositionsModel::setAiOpinions`/`ColAi`). No test currently carries an `@relation(REQ-F-034, …)` tag for this obligation specifically — it remains an open (non-hard) coverage gap, tracked for a follow-up rather than mistagged onto a test that does not exercise it.
+PRIORITY: must
+STATUS: implemented
+ACCEPTANCE_CRITERIA: Traced to DES-UI-POSMODEL, with 0 hard gaps; closing this requirement's own verification gap (adding a dedicated `@relation(REQ-F-057, …)` test) is tracked as follow-up work rather than claimed here.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-058
+VERIFICATION: T
+TITLE: Leverage caps apply before folding to the offered ladder
+STATEMENT: >>>
+Leverage shall never be a value the instrument does not offer: every ceiling — the account cap, the bucket cap, the instrument's own maximum — shall be applied BEFORE folding to the offered ladder, since clamping an already-folded value to a cap lands on a step nobody sells (an x8 ceiling on an instrument offering 1/2/5/20 must fold to x5).
+<<<
+RATIONALE: Split from REQ-F-034 (issue #14): the fold-order obligation alone, independent of which cap (account, bucket or instrument) turns out to be tightest.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-WHEN and TS-PAPER-025 and TS-PAPER-027, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
 
 [REQUIREMENT]
 UID: REQ-F-035

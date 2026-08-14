@@ -52,3 +52,5 @@ def main():
     test.verify(closedTable.columnCount > 0, "the closed book has columns")
     test.log("bot tables: %d open columns, %d closed columns"
              % (openTable.columnCount, closedTable.columnCount))
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

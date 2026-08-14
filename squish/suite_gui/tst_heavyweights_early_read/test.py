@@ -48,3 +48,5 @@ def main():
                 "the window names itself a stand-in for breadth")
     test.verify("unknown" in caveat,
                 "the window states that an unread price is shown as unknown")
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

@@ -17,6 +17,8 @@
 # found", because the app calls it `modeLabel`. An object map is only worth having
 # when it addresses what actually exists.
 
+import time
+
 mainWindow = {"type": "MainWindow", "unnamed": 1, "visible": 1}
 
 # --- the mode label, which is what every safety assertion reads ---------------
@@ -109,3 +111,40 @@ heavyCaveat = {"type": "QLabel", "objectName": "heavyCaveat", "visible": 1}
 # field, the session phase and the regime, scored together.
 nasdaqLeadSignal = {"type": "QLabel", "objectName": "nasdaqLeadSignal", "visible": 1}
 spLeadSignal = {"type": "QLabel", "objectName": "spLeadSignal", "visible": 1}
+
+
+def closeAppGracefully(win):
+    """Every test.py's LAST call, so the AUT exits main() normally instead of
+    being torn down by squishrunner between test cases.
+
+    Takes the ALREADY-RESOLVED mainWindow object (waitForObject(names.mainWindow)
+    in the caller) rather than resolving it here: waitForObject/snooze are names
+    squishrunner injects into the TEST SCRIPT's own global namespace, not into a
+    module it imports — calling waitForObject from inside this file itself failed
+    with "NameError: name 'waitForObject' is not defined" the first time this was
+    tried, which is how that distinction was found.
+
+    WHY THIS EXISTS (GitHub issue #15 / RISK-001): squishrunner's test-case
+    teardown TERMINATES an AUT started via startApplication() rather than asking
+    it to quit gracefully. tools/squish_run.sh's own investigation record shows a
+    manual `kill -TERM` sent to a live Coco-instrumented AUT mid-suite neither
+    dumped a coverage report NOR terminated the process — something in Squish's
+    hooked Qt runtime intercepts/swallows SIGTERM before it reaches Coco's or the
+    default handler. Coco's CoverageScanner runtime writes its execution report
+    from an atexit handler by default (Coco manual, "Control of execution report
+    generation"), which fires only on a NORMAL end of the process — never on a
+    forced kill.
+    MainWindow::closeEvent (src/ui/MainWindow.cpp) closes the chart and signals
+    windows too, so this one call unwinds every top-level window; with Qt's
+    default quitOnLastWindowClosed that lets QApplication::exec() return, main()
+    return, and the C++ runtime run its NORMAL exit() sequence — the one Coco's
+    atexit hook is registered against. By the time squishrunner's own teardown
+    looks for the AUT to stop, it has already exited on its own, and any .csexe
+    an instrumented build wrote by then is real, not inferred.
+    """
+    win.close()
+    # time.sleep, not snooze(): same reason as above — this module has no
+    # squish-injected globals. Lets the event loop unwind (all top-level windows
+    # close -> exec() returns -> main() returns -> exit()) rather than have
+    # squishrunner's teardown catch the process mid-shutdown.
+    time.sleep(2)

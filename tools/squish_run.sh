@@ -177,23 +177,62 @@ echo "mode:     FORCED SIMULATION (TRADINGAPP_FORCE_SIMULATION=1, isolated XDG_C
 #     was never, the blocker — the earlier investigation's own "TRADINGAPP_FORCE_
 #     SIMULATION arrives" signal was a true confirmation of THIS mechanism working;
 #     it was only invalid as a proxy for validating the OTHER three mechanisms tried.
-#   * Root cause instead: Coco's CoverageScanner runtime writes its execution report
-#     at exit() by default (Coco manual, "Control of execution report generation") —
-#     but Squish does not let a GUI AUT exit() on its own; it terminates it. A GUI app
-#     under Squish is exactly the "daemon which never terminates" case that manual
-#     page names as needing --cs-dump-on-signal=<sig>. TESTED: instrumented with
-#     --cs-dump-on-signal=SIGTERM and even sent a MANUAL `kill -TERM` to the live AUT
-#     mid-suite — no .csexe, and the process did not even terminate, so something in
-#     Squish's hooked/instrumented runtime is intercepting or swallowing SIGTERM
-#     before Coco's own handler (or the default disposition) can act on it. SIGUSR1
-#     (the Coco manual's own example) was not yet tried — the likelier candidate,
-#     since nothing in Qt or Squish has an a priori reason to special-case it the way
-#     SIGTERM plausibly is (a "clean shutdown" signal many frameworks intercept).
-# Next step for whoever picks this up: rebuild build-cov-coco-gui with
-# --cs-dump-on-signal=SIGUSR1 instead, repeat the manual `kill -SIGUSR1 <aut-pid>`
-# test above, and if that ALSO does not dump, the question moves to Squish/froglogic
-# support (does squishserver's teardown SIGKILL rather than SIGTERM the AUT, with no
-# grace period at all) rather than anything further guessable from this side.
+#   * Root cause, FIRST hypothesis (2026-08-13): Coco's CoverageScanner runtime writes
+#     its execution report at exit() by default (Coco manual, "Control of execution
+#     report generation") — but Squish does not let a GUI AUT exit() on its own; it
+#     terminates it. TESTED: --cs-dump-on-signal=SIGTERM plus a MANUAL `kill -TERM` to
+#     the live AUT mid-suite — no .csexe, and the process did not even terminate.
+#
+#   * CORRECTED AGAIN, 2026-08-14 (this session), after that hypothesis was tested
+#     directly rather than left as a plausible next step: every squish/suite_gui
+#     test.py now ends by calling names.closeAppGracefully(win) (shared/scripts/
+#     names.py), which does win.close() — MainWindow::closeEvent (src/ui/
+#     MainWindow.cpp) closes the chart and signals windows too — relying on Qt's
+#     default quitOnLastWindowClosed to return from QApplication::exec(), return
+#     from main(), and run the NORMAL C++ runtime exit() sequence, exactly the path
+#     the manual says triggers the atexit report writer. Watched the AUT's own PID
+#     with `pgrep -af build-cov-coco-gui/TradingApp` polled every 2 s DURING the run:
+#     the process disappeared ~8 s after the test script called close() — WELL BEFORE
+#     squishrunner's own END_TEST_CASE teardown fires (measured ~20 s later). So the
+#     AUT provably exited ON ITS OWN, not via a Squish-initiated kill, for this run.
+#     RESULT: still zero .csexe, anywhere on the filesystem. This DISPROVES the
+#     "Squish forcibly kills the AUT instead of letting it exit" hypothesis outright —
+#     a confirmed voluntary, self-initiated clean exit is not sufficient either.
+#
+#   * The SAME instrumented build-cov-coco-gui/TradingApp binary, run DIRECTLY with no
+#     Squish involved at all (`TRADINGAPP_SHOT=/tmp/x.png QT_QPA_PLATFORM=offscreen
+#     ./TradingApp`, which takes a screenshot and calls a normal quit), reliably WROTE
+#     TradingApp.csexe in its CWD on both a run with COVERAGESCANNER_ARGS set and one
+#     without it (the --cs-exec path was actually ignored in favour of the CWD default
+#     in this measurement — a second, smaller anomaly worth someone's attention, but
+#     not the blocker here). So the atexit writer in THIS binary works fine in
+#     general; the difference is specifically being launched BY squishserver.
+#
+#   * MOST LIKELY EXPLANATION, from Coco's own manual (Advanced Setup > Controlling
+#     the instrumentation from the source code > __coveragescanner_register_squish):
+#     "Try to register the instrumented application with Squish. This makes most of
+#     the Coco library functions accessible to Squish, so that IT can control the
+#     writing of the coverage measurements. It is rarely necessary to use this
+#     function explicitly since it is AUTOMATICALLY CALLED AT START of the
+#     application... If the application was not started by Squish, the function has
+#     no effect." In other words: once an instrumented AUT is launched under Squish,
+#     Coco itself hands control of report-writing OVER to Squish's own runtime hook —
+#     the normal atexit path is no longer the one deciding whether/when a report gets
+#     written. This Squish for Qt 9.2.2 installation's documentation (checked in full:
+#     environment-variables.html, cli-squishserver.html, cli-squishrunner.html, every
+#     squishserver --config action) names NO test-script function, --config action or
+#     environment variable that hands that control back to the test side. Genuinely
+#     needs Squish/froglogic support to confirm whether such a hook exists undocumented
+#     in this edition, or whether the write-back needs a specific bundled "Squish Coco"
+#     product this installation is not.
+#
+# Next step for whoever picks this up: ask froglogic support directly whether Squish
+# for Qt 9.2.2 (as opposed to a combined "Squish Coco" product) implements the
+# write-back __coveragescanner_register_squish() describes, and if so what triggers
+# it — this needs vendor-side confirmation the tools installed here cannot provide.
+# The graceful-close teardown above is kept regardless of the coverage outcome: it is
+# a real hygiene improvement (every AUT now shuts down cleanly between test cases
+# instead of being killed), independently useful and low-risk.
 EXTRA_ENVVARS=""
 if [ -n "${COVERAGESCANNER_ARGS:-}" ]; then
     EXTRA_ENVVARS="$SUITE/envvars"

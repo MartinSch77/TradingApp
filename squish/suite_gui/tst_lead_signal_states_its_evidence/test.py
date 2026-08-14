@@ -118,3 +118,5 @@ def main():
     caveat = str(waitForObject(names.heavyCaveat).text)
     test.verify("STAND-IN" in caveat.upper(),
                 "the window still names itself a stand-in for breadth")
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

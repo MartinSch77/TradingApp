@@ -74,7 +74,17 @@ void JsonHttp::setBrowserHeaders(QNetworkRequest &req)
 
 void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
 {
-    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, cb = std::move(cb), retriesLeft]() {
+    // Qt::SingleShotConnection (Qt 6): finished() fires at most once per reply, so
+    // let Qt disconnect this lambda from `reply` synchronously as part of that one
+    // activate() call, rather than leaving the connection "fired but still attached"
+    // until reply->deleteLater() below tears it down on a later event-loop turn.
+    // Narrows the window in which this connection sits in reply's connection list
+    // overlapping with QNetworkAccessManager wiring the SAME reply to its own
+    // internal HTTP worker thread — see tools/tsan.supp (issue #20) for the actual
+    // race that motivated this; this alone is defence in depth, not a proven fix
+    // for a race that lives inside Qt's own (non-instrumented-in-spirit) plumbing.
+    static_cast<void>(connect(reply, &QNetworkReply::finished, this,
+                               [this, reply, cb = std::move(cb), retriesLeft]() {
         const qint32 status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
@@ -111,5 +121,5 @@ void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
                         && (status < 300);
         cb(ok, status, doc, raw, netError);
         reply->deleteLater();
-    }));
+    }, Qt::SingleShotConnection));
 }

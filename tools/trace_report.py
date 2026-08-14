@@ -12,7 +12,8 @@ Joins the four legs of the traceability chain and reports completeness:
   test impl     tests/tst_*.cpp        functions tagged @tstid/@design plus
                                        @relation(REQ-…, scope=function) —
                                        the StrictDoc source-coverage marker
-  test results  test-results/*.xml     JUnit per-function pass/fail
+  test results  test-results/**/*.xml  JUnit per-function pass/fail, including the
+                                       Squish GUI suite's test-results/squish/*.xml
 
 Outputs docs/traceability.html (self-contained, shipped into the Doxygen HTML
 via the Doxyfile's HTML_EXTRA_FILES) and prints a gap summary.
@@ -142,7 +143,9 @@ def parse_test_impl():
 def parse_results():
     """test function name -> (status, suite) from the JUnit XMLs."""
     results = {}
-    for path in sorted(glob.glob(str(ROOT / "test-results" / "*.xml"))):
+    # Recursive for the same reason make_report.py's collect_tests() is: the Squish GUI
+    # suite's JUnit XML lives one level down, in test-results/squish/.
+    for path in sorted(glob.glob(str(ROOT / "test-results" / "**" / "*.xml"), recursive=True)):
         try:
             root = ET.parse(path).getroot()
         except ET.ParseError:

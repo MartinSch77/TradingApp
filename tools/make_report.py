@@ -7,7 +7,8 @@
 Collects what the other stages already produced and renders it:
 
   build/toolchain    git revision, Qt kit, compilers, host                (build tree)
-  tests              test-results/*.xml (JUnit)   — per suite AND per test function
+  tests              test-results/**/*.xml (JUnit) — per suite AND per test function,
+                     including the Squish GUI suite's own test-results/squish/*.xml
   traceability       requirements <-> design <-> test spec <-> result
                      (imported from tools/trace_report.py, so the numbers here
                      can never disagree with docs/traceability.html)
@@ -136,7 +137,11 @@ def toolchain_info(build_dir):
 def collect_tests():
     """[{suite, total, passed, failed, skipped, seconds, cases:[(name,status,secs)]}]"""
     suites = []
-    for path in sorted(glob.glob(str(ROOT / "test-results" / "*.xml"))):
+    # Recursive: squish_run.sh writes the GUI suite's JUnit XML one level down, in
+    # test-results/squish/ (kept apart from the unit/integration XMLs at the top level so
+    # a glob meant for one cannot accidentally sweep up the other). A flat *.xml here would
+    # silently drop the GUI suite from every count and table this report builds.
+    for path in sorted(glob.glob(str(ROOT / "test-results" / "**" / "*.xml"), recursive=True)):
         try:
             root = ET.parse(path).getroot()
         except ET.ParseError:

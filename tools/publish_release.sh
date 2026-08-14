@@ -116,15 +116,20 @@ newer_than_sources() { # $1 = path
 }
 
 # 3. Tests: present, no failures, newer than the sources.
-XML_COUNT=$(find test-results -name '*.xml' -type f 2>/dev/null | wc -l)
+# ONE file list, reused for the count AND the content scan below — test-results/squish/
+# (the Squish GUI suite's own JUnit XML, one level down from the unit/integration suites)
+# was previously counted by `find` but missed by a `test-results/*.xml` shell glob, so a
+# real failure inside it could pass this gate silently while looking like "0 failures".
+mapfile -t XML_FILES < <(find test-results -name '*.xml' -type f 2>/dev/null)
+XML_COUNT=${#XML_FILES[@]}
 if [ "$XML_COUNT" -eq 0 ]; then
     bad "no JUnit results in test-results/ — run ./build_all.sh test"
 else
-    TEST_FAILS=$(grep -ho 'failures="[0-9]*"' test-results/*.xml 2>/dev/null |
+    TEST_FAILS=$(grep -ho 'failures="[0-9]*"' "${XML_FILES[@]}" 2>/dev/null |
         grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
-    TEST_ERRS=$(grep -ho 'errors="[0-9]*"' test-results/*.xml 2>/dev/null |
+    TEST_ERRS=$(grep -ho 'errors="[0-9]*"' "${XML_FILES[@]}" 2>/dev/null |
         grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
-    TEST_CASES=$(grep -ho '<testcase ' test-results/*.xml 2>/dev/null | wc -l)
+    TEST_CASES=$(grep -ho '<testcase ' "${XML_FILES[@]}" 2>/dev/null | wc -l)
     if [ "$TEST_FAILS" -ne 0 ] || [ "$TEST_ERRS" -ne 0 ]; then
         bad "$XML_COUNT suites: $TEST_FAILS failure(s), $TEST_ERRS error(s)"
     elif newer_than_sources "$(find test-results -name '*.xml' -type f -printf '%T@ %p\n' |

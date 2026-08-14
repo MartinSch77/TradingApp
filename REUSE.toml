@@ -36,7 +36,15 @@ SPDX-FileCopyrightText = "2026 Martin Schuler"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
 [[annotations]]
-path = ["CLAUDE.md", "CONTRIBUTING.md", "README.md", "SECURITY.md", "THIRD_PARTY_LICENSES.md"]
+path = ["CHANGELOG.md", "CLAUDE.md", "CONTRIBUTING.md", "README.md", "SECURITY.md", "THIRD_PARTY_LICENSES.md"]
+SPDX-FileCopyrightText = "2026 Martin Schuler"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+# The ASPICE-mapped process framework (process-v0.1.0, added 2026-08-13): all prose
+# work products, no natural comment syntax risk worth taking on a document tree this
+# wide, so bulk-annotated like the other doc trees above rather than header-by-header.
+path = "process/**"
 SPDX-FileCopyrightText = "2026 Martin Schuler"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 

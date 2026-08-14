@@ -269,7 +269,12 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 60 stopped being enough: two consecutive runs on 2026-08-13/14 hit the wall
+    # inside clazy specifically (every earlier stage — cppcheck/clang-tidy/CSA/
+    # g++ -fanalyzer/lizard/PMD CPD/objectName/codespell — finished with numbers
+    # identical to a passing run); main's own run was already at 56m21s. Growing
+    # codebase size, not this PR's content.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 

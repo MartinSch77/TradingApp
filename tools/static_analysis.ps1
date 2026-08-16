@@ -205,6 +205,12 @@ $lizardN = Get-LineCount $lizardLog
 # PMD CPD (copy-paste detection)
 # ---------------------------------------------------------------------------
 Write-Stage 'PMD CPD (copy-paste detection)'
+# Self-heal like make_docs.ps1 does for plantuml.jar: tools\third-party\ is
+# deliberately removable (clean_all.ps1 -Deep), and PMD is the one tool under
+# it that clean_all's own comment claims is "lazily re-fetched" but wasn't —
+# cpd_scan.py just skipped silently instead, so a -Deep clean followed by a
+# build silently dropped the project's only clone gate for that whole run.
+if (-not (Get-PmdLauncher)) { & (Join-Path $Root 'tools\fetch_pmd.ps1') }
 $cpdLog = Join-Path $Out 'pmd-cpd.txt'
 $global:LASTEXITCODE = 0
 $cpdRan = Invoke-Python -Arguments @((Join-Path $Root 'tools\cpd_scan.py'), $Root, $cpdLog)

@@ -31,6 +31,10 @@ tools/reuse_lint.sh            # REUSE/SPDX license-compliance lint (pure Python
 tools/python_tests.sh          # pytest + branch coverage for tools/*.py and tools/ml/*.py —
                                # the C++ MC/DC gate never reaches Python; `pytools` extra
                                # build_all stage, informational (no baseline yet), see docs/tools.md
+tools/ica_report.py            # ICA (~/ica, separate distribution — NOT installed by setup.sh):
+                               # a second, independent clang-based analyzer over src/, run BESIDE
+                               # Axivion; PDF + JSON evidence, `ica` extra build_all stage,
+                               # informational, Linux-only; see docs/tools.md
 tools/cbmc_check.sh            # CBMC bounded-model-checking proof (./setup.sh cbmc);
                                # ONE Qt-free function (cbmc/priceDecimals_proof.cpp);
                                # Ubuntu only, informational, not a gate; see docs/tools.md

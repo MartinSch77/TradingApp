@@ -117,6 +117,19 @@ run_valgrind() {
     # Disabled for every test here rather than only the one that surfaced it: any
     # future regex-heavy test would hit the identical false positive.
     export QT_ENABLE_REGEXP_JIT=0
+    # QtTest's own watchdog kills a test function after 5 minutes (300000 ms)
+    # by default, timing it from WALL CLOCK — which does not know or care that
+    # valgrind's memcheck instrumentation is running underneath it. Measured
+    # 2026-08-16: TS_INV_005 (a Monte-Carlo property test, tests/tst_invariants.cpp,
+    # kIterations calls into buildTradePlan's own inner Monte-Carlo simulation)
+    # passes in well under a second uninstrumented, and under 300s of valgrind's
+    # ~20-50x slowdown here — a false QFATAL "Test function timed out", not a
+    # hung test or a real invariant violation (the same category of environment
+    # artifact QT_ENABLE_REGEXP_JIT=0 above already exists to rule out). Raised
+    # generously (30 min) rather than tuned to this one test, since any other
+    # compute-heavy test would hit the identical wall-clock-vs-instrumentation
+    # mismatch under valgrind.
+    export QTEST_FUNCTION_TIMEOUT=1800000
     : > "$OUT/sanitize-valgrind.raw.txt"
     local name out
     for exe in "$BUILD"/tests/tst_*; do

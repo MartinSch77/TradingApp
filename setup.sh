@@ -69,7 +69,7 @@ SUDO=""
 APT_PKGS=(
     build-essential ninja-build git gh curl ca-certificates
     clang-18 llvm-18 clang-tidy clang-tools-18
-    cppcheck clazy valgrind lcov
+    cppcheck clazy valgrind lcov cloc
     doxygen graphviz default-jre-headless
     python3 python3-venv python3-pip pipx
     python3-reportlab  # PDF quality report (tools/make_report.py); apt, not pipx:
@@ -87,7 +87,7 @@ APT_PKGS=(
 # version across Linux, Windows and macOS, and a formatting check that answers
 # differently on two machines is worse than no check (.clang-format explains the
 # hunk-scoped CI check it feeds).
-PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard clang-format reuse)
+PIPX_PKGS=(cmake strictdoc doorstop aqtinstall codespell sphinx gcovr lizard clang-format reuse pytest)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -426,7 +426,7 @@ status() {
     # Keep this list in step with Show-Status in setup.ps1 so both platforms
     # report the same set of tools.
     for t in g++ cmake ninja git gh clang-18 clang-tidy cppcheck clazy-standalone \
-        valgrind lcov gcovr doxygen dot java python3 pipx \
+        valgrind lcov cloc gcovr doxygen dot java python3 pipx pytest \
         strictdoc doorstop codespell sphinx-build aqt lizard clang-format syft grype trivy; do
         if have "$t"; then
             report "$t" "ok" "$(version_of "$t")"
@@ -464,6 +464,11 @@ status() {
         report "reportlab" "ok" "$(python3 -c 'import reportlab; print(reportlab.Version)' 2>/dev/null)"
     else
         report "reportlab" "MISSING" "PDF report stage skips (apt python3-reportlab)"
+    fi
+    if have pytest && pipx runpip pytest show pytest-cov >/dev/null 2>&1; then
+        report "pytest-cov" "ok" "$(pipx runpip pytest show pytest-cov 2>/dev/null | sed -n 's/^Version: //p')"
+    else
+        report "pytest-cov" "missing" "tools/python_tests.sh branch-coverage report skips; ./setup.sh install fetches it"
     fi
     # Any kit for THIS architecture will do; the build scripts take the newest.
     # Without one they fall back to a distribution Qt 6, so report that instead of
@@ -606,6 +611,9 @@ supply_chain_install() {
     have trivy || curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$dst"
     # sphinx needs the MyST markdown parser inside its pipx venv
     pipx runpip sphinx show myst-parser >/dev/null 2>&1 || pipx inject sphinx myst-parser || true
+    # pytest needs pytest-cov (branch coverage — the Python analogue of the C++ MC/DC
+    # gate, which clang-18/Coco never reach) inside its own pipx venv.
+    pipx runpip pytest show pytest-cov >/dev/null 2>&1 || pipx inject pytest pytest-cov || true
 }
 
 qt_install() {

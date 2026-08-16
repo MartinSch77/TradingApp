@@ -46,6 +46,9 @@ build-cov-coco/
 build-cov-coco-gui/
 coverage/
 test-results/
+# pytest-cov's own state file (tools/python_tests.sh); the XML/JUnit reports it
+# writes land in analysis-results/, already ignored above.
+.coverage
 docs/html/
 docs/traceability.html
 docs/strictdoc/

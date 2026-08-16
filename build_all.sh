@@ -59,7 +59,7 @@ ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
 # the GUI suite, Test Center stores every result. Each exits 3 ("skipped") without
 # its licence, so naming them on a machine that has none reports skipped rather than
 # failing — the quality PDF then lists which licence was missing.
-EXTRA_STAGES=(app release android gui testcenter qa) # selectable by name, not part of the default run
+EXTRA_STAGES=(app release android gui testcenter qa pytools) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
 # with and refuses to be reused if either changed. This repository invites that
@@ -156,6 +156,14 @@ stage_qa() {
     python3 "$ROOT/tools/check_process_docs.py" &&
         python3 "$ROOT/tools/qa_report.py"
 }
+
+# Extra stage (named only): unit tests + branch coverage for tools/*.py and
+# tools/ml/*.py — the Python analogue of the C++ MC/DC gate, which the
+# `coverage`/`sanitize` stages never reach since they only ever see src/ and
+# tests/. Not part of the default run yet: the suite is new (2026-08-16) and
+# needs a baseline pass before it can gate anything the way lizard's ratchet
+# does. Exits 3 ("skipped") only when pytest itself is missing.
+stage_pytools() { "$ROOT/tools/python_tests.sh"; }
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

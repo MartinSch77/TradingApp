@@ -369,6 +369,42 @@ own parser already treats as ignorable); everything else — JSON configs, CI/
 editor/IDE metadata, most of `docs/`, one binary PNG — is annotated in bulk via
 `REUSE.toml`, exactly the case that mechanism exists for.
 
+## Python tool tests: the MC/DC gate's blind spot (tools/python_tests.{sh,ps1})
+
+The MC/DC coverage gate (`tools/coverage.sh mcdc`, clang-18/Coco) only ever
+instruments `src/` and `tests/` — the ~5,700 lines of Python under `tools/`
+(quality-gate scripts like `gates_to_junit.py`/`lizard_metrics.py`, the
+traceability/report generators, and the offline ML pipeline under `tools/ml/`)
+get none of that scrutiny, and until 2026-08-16 had no unit tests at all. This
+suite closes that gap, `--cov-branch` being the load-bearing flag: line
+coverage alone would call an `if` covered by hitting either arm once — exactly
+what MC/DC exists to catch on the C++ side.
+
+Two halves, two interpreters, because `tools/ml/*.py` needs
+numpy/sklearn/xgboost/onnxruntime and everything else is stdlib-only on
+purpose (`tools/ml/crowd_dataset.py`'s own docstring states this):
+
+* `tools/tests/*.py` — one test module per `tools/*.py` script, run through the
+  `pytest` + `pytest-cov` pipx venv (`./setup.sh` / `setup.ps1` install both).
+* `tools/tests/ml/*.py` — one test module per `tools/ml/*.py` script, run
+  through the **ML venv's own** pytest (`tools/ml/requirements.txt`,
+  `./setup.sh ml` / `.\setup.ps1 ml`) — deliberately not the pipx one, so the
+  ML modules are exercised for real rather than mocked out.
+
+Every tool file is a flat script (no `__init__.py`, guarded by `if __name__ ==
+"__main__":`), so each half gets its own `conftest.py` that puts the relevant
+directory on `sys.path` and imports the module by name — the same convention
+`tools/ml/bot_dataset.py`'s own `import crowd_dataset` already relies on.
+
+Not part of the default `build_all` run yet, and not a hard gate: unlike
+`tools/lizard_metrics.py`'s ratchet, this suite has no baseline run to compare
+against yet. Run it explicitly as the `pytools` extra stage
+(`./build_all.sh pytools` / `.\build_all.ps1 pytools`) or directly via
+`tools/python_tests.sh` / `tools/python_tests.ps1`. Exits 3 ("skipped") only
+when `pytest` itself is missing; the ML half prints its own skip note (and
+does not fail the run) when the ML venv is absent, since that venv is already
+optional everywhere else in this project.
+
 ## Reproducibility check for the Linux AppImage (tooling backlog item 5)
 
 `tools/check_reproducibility.sh` builds the AppImage **twice, independently**

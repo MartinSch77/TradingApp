@@ -105,12 +105,26 @@ def _rows(csv_text: str, root: Path) -> tuple[list[str], int]:
 
 
 def main() -> int:
-    arguments = [a for a in sys.argv[1:] if not a.startswith("--")]
+    # Consume --min-tokens' OWN value here, not just the flag: filtering only
+    # tokens starting with "--" left the value ("50") counted as a third
+    # positional, so `cpd_scan.py <root> <out> --min-tokens 50` — the exact
+    # form this module's own usage string documents — rejected itself as
+    # wrong-arity. Found by tools/tests/test_cpd_scan.py.
+    min_tokens = MIN_TOKENS
+    arguments = []
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--min-tokens":
+            i += 1
+            if i < len(argv):
+                min_tokens = int(argv[i])
+            i += 1
+            continue
+        arguments.append(argv[i])
+        i += 1
     if len(arguments) != 2:
         sys.exit(__doc__)
-    min_tokens = MIN_TOKENS
-    if "--min-tokens" in sys.argv:
-        min_tokens = int(sys.argv[sys.argv.index("--min-tokens") + 1])
     root, out_path = Path(arguments[0]).resolve(), Path(arguments[1])
 
     pmd = _pmd_executable(root)

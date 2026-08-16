@@ -28,6 +28,9 @@ tools/fuzz.sh [seconds-per-target]   # libFuzzer over fuzz/*.cpp harnesses (Trad
 tools/reuse_lint.sh            # REUSE/SPDX license-compliance lint (pure Python,
                                # both platforms); a REAL CI GATE (.github/workflows/
                                # ci.yml `reuse` job, fsfe/reuse-action) — see REUSE.toml
+tools/python_tests.sh          # pytest + branch coverage for tools/*.py and tools/ml/*.py —
+                               # the C++ MC/DC gate never reaches Python; `pytools` extra
+                               # build_all stage, informational (no baseline yet), see docs/tools.md
 tools/cbmc_check.sh            # CBMC bounded-model-checking proof (./setup.sh cbmc);
                                # ONE Qt-free function (cbmc/priceDecimals_proof.cpp);
                                # Ubuntu only, informational, not a gate; see docs/tools.md
@@ -115,6 +118,15 @@ publish_release; refuses to publish on a red pipeline).
   `// @relation(REQ-…, scope=function)` (plain `//` — StrictDoc ignores `//!`).
   Test classes write `Q_OBJECT;` (semicolon = tree-sitter parse anchor).
 - Keep every boolean decision ≤ 6 conditions (clang-18 MC/DC limit).
+- ANY non-C/C++ code (currently Python only — `tools/*.py` + `tools/ml/*.py`; no
+  Rust exists yet, see the Rust section below) needs its OWN unit tests, because
+  the C++ MC/DC gate (`tools/coverage.sh mcdc`) only instruments `src/`/`tests/`
+  and never sees it. `tools/python_tests.{sh,ps1}` (`pytools` extra `build_all`
+  stage) runs `tools/tests/*.py` against `tools/*.py` and `tools/tests/ml/*.py`
+  against `tools/ml/*.py` with `--cov-branch` — branch, not just line, coverage
+  being the deliberate Python analogue of MC/DC. A new Python file with real
+  logic (not a thin CLI wrapper) needs a test module alongside it; see
+  docs/tools.md for the two-interpreter split and why it exists.
 - Analyzer configs are strict by construction: every disabled check in
   `.clang-tidy` / `tools/cppcheck-suppressions.txt` carries a written reason AND
   the measured hit count that justifies it. Do not silence a check without both.
@@ -269,24 +281,40 @@ publish_release; refuses to publish on a red pipeline).
   the notional follows from the stop's own distance, and leverage only decides how much of
   that notional is committed as margin — it no longer decides how much is risked. `Prediction`
   (REQ-F-037) also gained a `strategyVersion` field so multiple strategies' calls in one
-  ledger can be scored separately rather than averaged together. NOT yet landed, in the
-  stated priority order: a `SwingPullbackStrategyV1` behind a new `ITradingStrategy`
-  interface (SPX500 only at first — trend filter EMA20>EMA50>EMA200, a controlled 2-5
-  session pullback, ATR-based stop, partial exit near +2R, trailing stop, time/session
-  caps); a swing-mode daily-target-off + partial-exit path (needs `PaperBook` multi-leg
-  support it does not have yet); a Market Replay engine reusing the SAME strategy/risk/
-  booking domain classes as the live paper bot (never a separate backtest implementation
-  that could drift); labelling EVERY recorded decision — including `NO_TRADE` — with a
-  path-dependent R-outcome, not just executed trades (avoids the selection bias of learning
-  only from what the current gate already chose); a purged walk-forward pipeline (logistic
-  regression baseline, then XGBoost via ONNX Runtime, reusing the crowd-ML pipeline's
-  time-based split/embargo/baseline-comparison machinery) to eventually complement/replace
-  `BotNet`'s simple train/holdout split; and NSDQ100 as its own separate model only after
-  SPX500 validates. `defaultFocusSymbols()` is DELIBERATELY left returning SPX500 + NSDQ100 +
-  every catalog crypto (below) rather than narrowed to SPX500 alone — that function is also
-  what makes crypto trading work at all (`TS-PAPER-037`), so the new strategy's SPX500-only
-  scope belongs to ITS OWN config once it exists, not to the shared general-purpose default.
-  Real-money execution stays excluded throughout every one of these steps.
+  ledger can be scored separately rather than averaged together. ALL NINE ITEMS ARE NOW
+  LANDED (2026-08-12, commits `3019aba`..`03a7990`): `domain/TradingStrategy.h`'s
+  `ITradingStrategy` interface plus `SwingPullbackStrategyV1` (trend filter
+  EMA20>EMA50>EMA200, a controlled 2-5 session pullback, ATR-based stop, partial exit near
+  +2R, trailing stop, time/session caps — item 5); `PaperBook::partialClose` (proportional
+  cost/fee proration, same id, does not count toward the day's closed-trade count) plus
+  `swingExitDecision`'s four ordered exit rules (item 6); `domain/StrategyBacktest.h`'s
+  backtester — named that rather than "Market Replay" because docs/roadmap.md already uses
+  that name for an unrelated live-session viewer — reusing the SAME `PaperBook`/`BotConfig`
+  booking and risk logic the live bot uses, never a parallel implementation that could
+  drift (item 7); `domain/PathOutcome.h`'s `resolvePathLabel`, labelling EVERY recorded
+  decision — including `NO_TRADE` — by walking a hypothetical long AND short from the entry
+  price to whichever's own target/stop resolves first, closing the selection-bias gap of
+  learning only from what the gate already chose (item 8); and `tools/ml/bot_dataset.py` +
+  `train_bot_model.py`, reusing `crowd_dataset.walk_forward_splits` VERBATIM for the
+  time-based split/purge/embargo (the same function decides both models' folds, not a
+  second copy that could drift) with TRAIN-median imputation and ONNX export verified
+  against onnxruntime before either file reaches disk (item 9). `BotSimRunner` wires
+  `SwingPullbackStrategyV1` into the live paper bot behind `BotConfig::useSwingStrategy`
+  (additive, OFF by default — the composite/AI bot's own measured behaviour is unchanged
+  until deliberately turned on): entries size via `sizeByExplicitRisk` against the SAME
+  shared portfolio/margin/correlation/cash budget the composite bot's entries respect
+  (`paperStakeCeiling`/`paperStakeRoom`), and a swing position (tagged via
+  `PaperTrade::strategyVersion`) is managed entirely outside `paperCloseDecision` — its
+  own stop/time-stop/2R-partial/trailing rules, never the composite's SignalFade/GiveBack,
+  which were tuned for a signal this strategy is never scored against. The swing-mode
+  daily-target-off path needs no new code, just a preset (`BotConfig::dailyProfitTarget =
+  0`) once a dedicated swing book exists. NSDQ100 as its own separate model, still pending,
+  waits on SPX500 validating first. `defaultFocusSymbols()` is DELIBERATELY left returning
+  SPX500 + NSDQ100 + every catalog crypto (below) rather than narrowed to SPX500 alone —
+  that function is also what makes crypto trading work at all (`TS-PAPER-037`), so the
+  swing strategy's SPX500-only scope belongs to ITS OWN config, not to the shared
+  general-purpose default. Real-money execution stays excluded throughout every one of
+  these items.
 - Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
   `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
   1/5/15-minute push (ONE read, because three horizons off one series are one piece of

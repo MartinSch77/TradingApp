@@ -9,3 +9,8 @@ onnx>=1.16
 onnxruntime>=1.18
 skl2onnx>=1.17
 onnxmltools>=1.12
+# tools/python_tests.sh's ML half runs its tests through THIS venv's pytest, so the
+# ML-dependent modules (crowd_dataset/bot_dataset/train_*_model) can be imported for
+# real rather than mocked out.
+pytest>=8.0
+pytest-cov>=5.0

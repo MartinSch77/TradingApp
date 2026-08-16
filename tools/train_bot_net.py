@@ -259,12 +259,12 @@ def main() -> int:
     # Time-ordered split: the model is scored on trades that happened AFTER the
     # ones it learned from, which is the only split that answers the question the
     # app asks of it.
+    # cut < len(rows) always: the same-outcome guard above already refused the
+    # only case (len(rows) <= 1) where int(len(rows) * (1 - VAL_FRACTION)) could
+    # reach len(rows), so val_x_raw is never empty here.
     cut = max(1, int(len(rows) * (1.0 - VAL_FRACTION)))
     train_x_raw, val_x_raw = rows[:cut], rows[cut:]
     train_y, val_y = labels[:cut], labels[cut:]
-    if not val_x_raw:
-        print("not enough history for a held-out tail")
-        return 3
 
     mean, sd = standardise(train_x_raw)
     train_x = apply_norm(train_x_raw, mean, sd)

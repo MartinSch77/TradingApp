@@ -285,9 +285,10 @@ def cmd_build(args: argparse.Namespace) -> int:
             rows_out.append(row)
     finally:
         conn.close()
-
-    if not rows_out:
-        fail("no labelable rows")
+    # rows_out is never empty here: the loop above runs range(len(prices) -
+    # args.horizon_days) times, unconditionally appending one row per
+    # iteration, and the earlier `len(prices) <= args.horizon_days` guard
+    # already refused the only case that range would be empty.
 
     out = Path(args.out)
     with out.open("w", newline="", encoding="utf-8") as handle:

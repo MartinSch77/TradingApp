@@ -81,6 +81,7 @@ $WingetPkgs = [ordered]@{
     'GitHub.cli'                      = 'gh'
     'LLVM.LLVM'                       = 'clang-cl'          # clang-cl, clang-tidy, llvm-cov, llvm-profdata
     'Cppcheck.Cppcheck'               = 'cppcheck'
+    'AlDanial.Cloc'                   = 'cloc'
     'DimitriVanHeesch.Doxygen'        = 'doxygen'
     'Graphviz.Graphviz'               = 'dot'
     'OpenCppCoverage.OpenCppCoverage' = 'OpenCppCoverage'    # the gcov/lcov substitute
@@ -113,6 +114,9 @@ $PipPkgs = [ordered]@{
     'reportlab'   = ''          # library only, imported by tools\make_report.py
     'reuse'       = 'reuse'     # REUSE/SPDX license-compliance lint (tools/reuse_lint.sh
                                 # counterpart is tools/reuse_lint.ps1)
+    'pytest'      = 'pytest'    # tools/python_tests.sh's counterpart, tools/python_tests.ps1
+    'pytest-cov'  = ''          # library only: gives pytest --cov-branch (the Python
+                                # analogue of the C++ MC/DC gate)
     # From pip rather than the LLVM installer: the wheel pins ONE clang-format
     # version on every platform, and a formatting check that answers differently on
     # two machines is worse than no check (.clang-format explains the CI check).
@@ -281,9 +285,9 @@ function Show-Status {
 
     Write-Host "== toolchain status ==" -ForegroundColor Cyan
     foreach ($t in @('cl', 'cmake', 'ninja', 'git', 'gh', 'clang-cl', 'clang-tidy',
-            'llvm-cov', 'cppcheck', 'doxygen', 'dot', 'java', 'python',
+            'llvm-cov', 'cppcheck', 'cloc', 'doxygen', 'dot', 'java', 'python',
             'strictdoc', 'doorstop', 'codespell', 'sphinx-build', 'gcovr', 'aqt',
-            'lizard')) {
+            'lizard', 'pytest')) {
         if ($t -eq 'cl') {
             if (Test-Path env:VSINSTALLDIR) { Report 'cl (MSVC)' 'ok' (Get-ToolVersion 'cl') }
             else { Report 'cl (MSVC)' 'MISSING' 'install the VS 2022 C++ workload' }

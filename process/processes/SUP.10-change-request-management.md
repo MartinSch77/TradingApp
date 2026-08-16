@@ -18,18 +18,27 @@ silent edit to something already published.
   change, the PR additionally updates `process/CHANGELOG.md` with the
   rationale. `work-products/change-request.md` states the required content
   (what changed, why, impact assessed, approver).
+- The process change enters the formal lifecycle in
+  `processes/PIM.4-process-change-lifecycle.md`, including the current state
+  and the transition criteria it satisfies.
 
 ## Tasks
 
 1. **Submit.** A change request states what baseline it targets and why the
    change cannot wait for the next unbaselined cycle of normal work.
+   The change request must state the lifecycle state at submission
+   (`Draft` or `Proposed`) and the next required transition.
 2. **Assess impact.** For a code change: which requirements/design/tests are
    touched (`tools/trace_report.py` re-run confirms nothing silently
    orphaned). For a process change: which processes/work-products cite the
    changed file (`tools/check_process_docs.py`'s traceability check).
 3. **Approve/reject.** Change Control Board decision, recorded in the PR.
+   Approval moves the item to `Approved`; rejection returns it to `Draft` or
+   `Proposed` with explicit rationale.
 4. **Implement and re-baseline.** Per `SUP.8`, a new baseline (tag) is cut
-   once the change lands — never a mutation of the old tag.
+   once the change lands — never a mutation of the old tag. When released,
+   the item moves to `Released`, and any older version it supersedes becomes
+   `Superseded` or `Retired` with a reason recorded.
 
 ## Roles
 

@@ -203,7 +203,127 @@ the kind ISO 26262 (functional safety), ISO/SAE 21434 (automotive
 cybersecurity) or the EU Cyber Resilience Act (CRA) eventually demand.
 Section 10 states the honest scope limit on that claim.
 
-## 8. Process selection, tailoring, and authority
+### Continuous improvement and process erosion
+
+This process framework is an **initial release baseline**, not an end state.
+The process is deliberately designed to be continuously improved, with new
+rules, evidence, or tailoring introduced under the same discipline the
+project applies to code: explicit review, traceability, and risk-based
+acceptance.
+
+A process is considered to be eroding when any of the following occur:
+
+- process steps are followed by habit rather than by written requirement
+- evidence is missing or stale even though the process still says it is required
+- roles drift without a formal change request
+- review checklists are bypassed under time pressure
+- quality gates become informal and no longer enforced by automation or review
+- the process becomes harder to understand than the work it is meant to govern
+
+Process erosion is treated as a **project risk**, not as a harmless local
+variation. `processes/MAN.5-risk-management.md` and the QA workflow in
+`processes/SUP.1-quality-assurance.md` are the formal escalation path for this
+risk. Any future process change must document why the change is required,
+what evidence motivated it, and how the change will be monitored for drift.
+
+This is a standing condition for further development: the process is expected
+and required to evolve, but it must evolve with evidence, traceability, and a
+maintainability discipline equal to that of the software it governs.
+
+## 8. Lifecycle for process changes
+
+The process itself is treated as a living work product and therefore has its
+own explicit lifecycle. A process change is not an informal local edit; it is a
+controlled state transition subject to the same traceability and review
+expectations as any other product baseline.
+
+The lifecycle states are:
+
+- **Draft** — the proposed change is being written and scoped.
+- **Proposed** — a change request exists with rationale, impact analysis, and
+  affected process or work-product references.
+- **Under Review** — the change is being assessed by the designated reviewers,
+  including impact on traceability, auditability, and maintainability.
+- **Approved** — all blocking issues are resolved, the change has a clear
+  owner, and the review decision is recorded.
+- **Released** — the approved change is merged into the current baseline and
+  versioned in `process/CHANGELOG.md` and `process/VERSION`.
+- **Superseded** — the process version is replaced by a newer one, but the old
+  version remains archived for auditability and historical traceability.
+- **Retired** — the process or rule is no longer used and has a documented
+  reason for removal or exclusion.
+
+The transition criteria are:
+
+1. **Draft → Proposed**
+   - A change-request record exists.
+   - The reason for the change is stated in terms of risk, defect, or
+     process erosion.
+   - Affected files are named and traceability impact is estimated.
+2. **Proposed → Under Review**
+   - The change request is assigned to a reviewer or board.
+   - Impact on related processes, work products, and templates is documented.
+   - The change does not bypass the normal QA or risk-review path.
+3. **Under Review → Approved**
+   - No blocking review comments remain unresolved.
+   - Traceability checks pass (`tools/check_process_docs.py`).
+   - Process ownership and release responsibility are clear.
+4. **Approved → Released**
+   - The change is merged to the active baseline.
+   - The release record is updated in `process/CHANGELOG.md` and the process
+     version is incremented in `process/VERSION`.
+   - The updated baseline is validated against the repository's process checks.
+5. **Released → Superseded / Retired**
+   - A replacement or cancellation is documented in the changelog.
+   - Historical evidence remains accessible for audit and traceability.
+
+This is the formal control mechanism behind the project's statement that the
+process may evolve continuously, but only with evidence, review, and explicit
+release discipline. The lifecycle rules are implemented in
+`processes/PIM.3-process-improvement.md`,
+`processes/SUP.10-change-request-management.md`, and
+`processes/PIM.4-process-change-lifecycle.md`.
+
+## 9. Cross-project reference process: reusable standard for every project
+
+This repository is the **reference process implementation** for a cross-project
+software development and assurance model. The project intentionally keeps a
+shared standard that downstream repositories can inherit via GitHub templates,
+submodules, or repository scaffolding.
+
+The reference model is intentionally simple but strict:
+
+1. **Feature backlog**: every new story or idea is captured as a feature item.
+2. **Requirement decomposition**: every feature is broken down into one or more
+   requirements.
+3. **Design allocation**: each requirement is linked to one or more design
+   elements or components.
+4. **Implementation mapping**: each design element points to the implementing
+   code or work product.
+5. **Verification evidence**: every requirement has a named verification method
+   and evidence reference.
+6. **Release approval**: the final release decision remains a human decision, not
+   an AI decision.
+7. **Independent QA**: quality assurance checks conformance to the process, not
+   just the correctness of the engineering output.
+
+The minimum valid chain is therefore:
+
+Feature → Requirement → Design Element → Implementation → Verification → Evidence → Human approval
+
+This is the standard that all projects must follow to be eligible for release
+or assessment. Any project that cannot show this chain does not have a
+complete traceability story.
+
+For safety-relevant work, the default rule is stricter:
+
+- human review is mandatory
+- independent QA confirmation is mandatory
+- a qualified person must confirm the safety-relevant conclusion or approval
+- AI-generated content is treated as assistive only and must be reviewed before
+  use as evidence
+
+## 9. Process selection, tailoring, and authority
 
 Per ASPICE's own MAN.3 practice, **Project Management selects and tails the
 process** for the project's actual context — not Quality Assurance (which

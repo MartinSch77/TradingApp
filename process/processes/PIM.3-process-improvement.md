@@ -13,6 +13,8 @@ closes the loop QA itself is deliberately barred from closing (independence,
   conformance findings and its effectiveness indicators), the risk register
   (`MAN.5`), closed problem trends (`SUP.9`).
 - Cadence and trigger thresholds: `strategies/process-improvement-strategy.md`.
+- The formal process-change lifecycle defined in
+  `processes/PIM.4-process-change-lifecycle.md`.
 
 ## Outputs / Work Products
 
@@ -33,7 +35,8 @@ closes the loop QA itself is deliberately barred from closing (independence,
 3. Propose a process change through `SUP.10-change-request-management.md`;
    PIM.3 never edits `processes/*.md` directly on its own authority (that
    would collapse the Process Architect/Process Owner separation,
-   `process-model.md` §8).
+   `process-model.md` §8). Each proposal must enter the lifecycle defined in
+   `PIM.4-process-change-lifecycle.md` and record its current state.
 4. Track whether an implemented change actually improved the indicator it
    targeted, at the next cycle.
 

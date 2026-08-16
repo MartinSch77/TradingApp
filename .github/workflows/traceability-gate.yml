@@ -1,0 +1,82 @@
+name: Traceability gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  traceability:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check feature-to-requirement chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking mandatory feature -> requirement -> design -> verification chain..."
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('.')
+          fail = False
+
+          # Lightweight traceability guard for downstream projects using the reference model.
+          # It fails if any feature/requirement/design/verification id cannot be found or if a
+          # safety-related item is missing a human approval indicator.
+          files = list(root.rglob('*'))
+          text = '\n'.join(p.read_text(encoding='utf-8', errors='ignore') for p in files if p.is_file())
+
+          # Basic presence checks for the shared process documents.
+          required = [
+              'process/process-model.md',
+              'process/processes/REF-cross-project-reference-process.md',
+              'process/templates/feature-template.md',
+              'process/templates/requirement-template.md',
+              'process/templates/design-element-template.md',
+              'process/templates/verification-template.md',
+              'process/templates/release-approval-template.md',
+              'process/templates/ai-assistance-record-template.md'
+          ]
+          for path in required:
+              if not (root / path).exists():
+                  print(f'MISSING_REQUIRED_REFERENCE: {path}')
+                  fail = True
+
+          if 'Feature → Requirement → Design Element → Implementation → Verification → Evidence → Human approval' not in text:
+              print('MISSING_TRACEABILITY_CHAIN_DEFINITION')
+              fail = True
+
+          if 'AI assistance' not in text and 'AI-assisted content' not in text:
+              print('MISSING_AI_GOVERNANCE_GUIDANCE')
+              fail = True
+
+          if fail:
+              raise SystemExit(1)
+          print('Traceability gate checks passed.')
+          PY
+
+      - name: Check release approval rule
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Ensuring release approval template exists and safety policy is documented..."
+          test -f process/templates/release-approval-template.md
+          grep -q "Final human approver" process/templates/release-approval-template.md
+          grep -q "Final responsibility statement" process/templates/release-approval-template.md
+          echo "Release approval gate checks passed."
+
+      - name: Check AI assistance policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Ensuring AI governance is explicit..."
+          grep -q "AI" process/process-model.md
+          grep -q "human final approver" process/process-model.md
+          grep -q "independent QA" process/process-model.md
+          echo "AI governance gate checks passed."

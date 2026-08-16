@@ -1,0 +1,2 @@
+feature_id,feature_title,requirement_id,requirement_title,design_id,design_title,implementation_ref,verification_id,verification_type,evidence_ref,owner,approver,status
+FEAT-001,Example Feature,REQ-001,Example Requirement,DE-001,Example Design Element,src/example.cpp,V-001,Unit Test,docs/example-verification.md,owner@example.com,approver@example.com,approved

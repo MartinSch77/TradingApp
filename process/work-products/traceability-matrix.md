@@ -17,11 +17,24 @@ hand-maintained here because it changes rarely (only when a process or work
 product spec is added/removed) and is itself checked by
 `tools/check_process_docs.py`.
 
+The cross-project reference model requires the following forward traceability
+chain for every feature and every requirement:
+
+Feature → Requirement → Design Element → Implementation → Verification → Evidence → Human approval
+
+This is a hard requirement for release readiness and is the minimum evidence
+chain a downstream project must maintain in the same repository pattern.
+
 ## Quality criteria
 
 0 hard gaps (every REQ with `VERIFICATION` including `T` has an executed
 test) at release time; every work product named in a `processes/*.md` file
 resolves to a real file in `work-products/`.
+
+For the reference process itself, the chain is checked in the same way as the
+product traceability: no feature may be declared complete without a linked
+requirement, no requirement without a design element or verification case, and
+no safety-relevant item without human final approval.
 
 ## Review requirement
 

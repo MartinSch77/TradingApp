@@ -40,13 +40,36 @@ process/
   CHANGELOG.md, VERSION      This framework's own release history
 ```
 
+## Cross-project reference process
+
+This project is intentionally the **reference implementation** for the shared
+process model every other project in the organization is expected to inherit.
+This is the **initial release baseline** of that standard: it is intentionally
+versioned, documented, and maintainable so it can evolve continuously without
+turning into undocumented drift. The process is not "finished" in the sense of
+"no further change"; its design explicitly expects ongoing improvement and
+requires process-erosion checks as a condition for later development.
+The reference pattern is:
+
+- feature backlog items are decomposed into requirements
+- each requirement is linked to a design element and a verification case
+- each requirement and design element has a responsible role and an evidence record
+- safety-related items require a human final approver
+- AI assistance is recorded and reviewed, but never allowed to be the final
+  authorization step
+
+This is the standard the project keeps for all of its own work, and the same
+structure is what a downstream project copies or reuses via GitHub templates,
+submodules or repository scaffolding.
+
 ## How the pieces connect
 
 ```
 process-model.md ─┬─> processes/*.md      (WHAT gets done, by WHOM, per ASPICE base practice)
                    ├─> strategies/*.md     (HOW a class of task is carried out project-wide)
                    ├─> work-products/*.md  (WHAT "done" looks like for one artefact type)
-                   └─> templates/*.md      (the checklist a reviewer — human or AI — runs)
+                   ├─> templates/*.md      (the checklist a reviewer — human or AI — runs)
+                   └─> cross-project reference model (feature -> requirement -> design -> verification -> approval)
 
 processes/*.md  --produces/consumes-->  work-products/*.md   (machine-checked: see below)
 roles.md        --assigns responsibility for-->  processes/*.md tasks

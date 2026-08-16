@@ -1,0 +1,9 @@
+# Shared governance for the reference process repository.
+# Review and approval rules are enforced in GitHub branch protection.
+
+* @MartinSch77
+
+process/ @MartinSch77
+.github/ @MartinSch77
+requirements/ @MartinSch77
+src/ @MartinSch77

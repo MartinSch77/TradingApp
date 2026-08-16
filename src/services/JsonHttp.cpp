@@ -74,42 +74,53 @@ void JsonHttp::setBrowserHeaders(QNetworkRequest &req)
 
 void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
 {
-    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, cb = std::move(cb), retriesLeft]() {
-        const qint32 status =
-            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    // Qt::SingleShotConnection (Qt 6): finished() fires at most once per reply, so
+    // let Qt disconnect this lambda from `reply` synchronously as part of that one
+    // activate() call, rather than leaving the connection "fired but still attached"
+    // until reply->deleteLater() below tears it down on a later event-loop turn.
+    // Narrows the window in which this connection sits in reply's connection list
+    // overlapping with QNetworkAccessManager wiring the SAME reply to its own
+    // internal HTTP worker thread — see tools/tsan.supp (issue #20) for the actual
+    // race that motivated this; this alone is defence in depth, not a proven fix
+    // for a race that lives inside Qt's own (non-instrumented-in-spirit) plumbing.
+    static_cast<void>(connect(
+        reply, &QNetworkReply::finished, this,
+        [this, reply, cb = std::move(cb), retriesLeft]() {
+            const qint32 status =
+                reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-        // Transient failure on an idempotent GET (retries left): wait briefly and
-        // re-issue rather than surfacing it (see isRetryable above). Non-GET
-        // requests are never auto-retried.
-        const bool isGet = reply->operation() == QNetworkAccessManager::GetOperation;
-        if (isRetryable(reply, status) && (retriesLeft > 0) && isGet) {
-            const qint32 waitSecs = retryDelaySecs(reply, status);
-            // Re-issue the same GET with a fresh x-request-id after the delay.
-            QNetworkRequest req = reply->request();
-            const QByteArray requestId =
-                QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8();
-            req.setRawHeader("x-request-id", requestId);
+            // Transient failure on an idempotent GET (retries left): wait briefly and
+            // re-issue rather than surfacing it (see isRetryable above). Non-GET
+            // requests are never auto-retried.
+            const bool isGet = reply->operation() == QNetworkAccessManager::GetOperation;
+            if (isRetryable(reply, status) && (retriesLeft > 0) && isGet) {
+                const qint32 waitSecs = retryDelaySecs(reply, status);
+                // Re-issue the same GET with a fresh x-request-id after the delay.
+                QNetworkRequest req = reply->request();
+                const QByteArray requestId =
+                    QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8();
+                req.setRawHeader("x-request-id", requestId);
+                reply->deleteLater();
+                QTimer::singleShot((waitSecs * 1000) + 250, this, [this, req, cb, retriesLeft] {
+                    QNetworkReply *retryReply = m_nam->get(req);
+                    handleReply(retryReply, cb, retriesLeft - 1);
+                });
+                return;
+            }
+
+            // Only read when the device is open: a transport-level failure (the 30s
+            // transferTimeout abort above, host-not-found, connection refused, TLS error)
+            // leaves the reply's QIODevice unopened, and readAll() on it logs
+            // "QIODevice::read (QNetworkReplyHttpImpl): device not open" to the console.
+            // HTTP error responses (4xx/5xx) still carry an open, readable body.
+            const QByteArray raw = reply->isOpen() ? reply->readAll() : QByteArray();
+            const QString netError =
+                (reply->error() == QNetworkReply::NoError) ? QString() : reply->errorString();
+            const QJsonDocument doc = QJsonDocument::fromJson(raw);
+            const bool ok =
+                (reply->error() == QNetworkReply::NoError) && (status >= 200) && (status < 300);
+            cb(ok, status, doc, raw, netError);
             reply->deleteLater();
-            QTimer::singleShot((waitSecs * 1000) + 250, this, [this, req, cb, retriesLeft] {
-                QNetworkReply *retryReply = m_nam->get(req);
-                handleReply(retryReply, cb, retriesLeft - 1);
-            });
-            return;
-        }
-
-        // Only read when the device is open: a transport-level failure (the 30s
-        // transferTimeout abort above, host-not-found, connection refused, TLS error)
-        // leaves the reply's QIODevice unopened, and readAll() on it logs
-        // "QIODevice::read (QNetworkReplyHttpImpl): device not open" to the console.
-        // HTTP error responses (4xx/5xx) still carry an open, readable body.
-        const QByteArray raw = reply->isOpen() ? reply->readAll() : QByteArray();
-        const QString netError = (reply->error() == QNetworkReply::NoError)
-                                     ? QString()
-                                     : reply->errorString();
-        const QJsonDocument doc = QJsonDocument::fromJson(raw);
-        const bool ok = (reply->error() == QNetworkReply::NoError) && (status >= 200)
-                        && (status < 300);
-        cb(ok, status, doc, raw, netError);
-        reply->deleteLater();
-    }));
+        },
+        Qt::SingleShotConnection));
 }

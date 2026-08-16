@@ -32,8 +32,9 @@ CandidateInput goodCandidate()
     in.dir = 1;
     in.confidence = 40.0;
     // A deliberately QUIET moment: 13:00 Berlin / 07:00 New York on a Tuesday is
-    // not an open, a close or a macro-data slot, so the session rules of REQ-F-034
-    // leave the geometry and the size alone unless a test asks for otherwise.
+    // not an open, a close or a macro-data slot, so the session-phase sit-out
+    // rules of REQ-F-052 leave the geometry and the size alone unless a test
+    // asks for otherwise.
     in.now = QDateTime(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
     in.bid = 5000.0;
     in.ask = 5001.0;
@@ -1201,7 +1202,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-038 @design DES-DOM-PAPER
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-051, scope=function)
     void TS_PAPER_038_theModelsExitMustSaveMoreThanItCosts()
     {
         // Measured 2026-08-09: eight crypto closes, gross +149.33 against 478.82 of spread —
@@ -1255,7 +1256,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-025 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-049, REQ-F-050, REQ-F-055, REQ-F-058, scope=function)
     void TS_PAPER_025_churnIsWhatLosesTheMoneyAndTheRulesSayNo()
     {
         // Measured, not imagined: six closes in one hour, median holding time 5.2
@@ -1375,7 +1376,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-024 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-052, scope=function)
     void TS_PAPER_024_whenItTradesMattersAsMuchAsWhat()
     {
         // The loud windows of the trading day, on the instrument's OWN clock. August
@@ -1438,7 +1439,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-029 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-053, scope=function)
     void TS_PAPER_029_someInstrumentsHaveToEarnTheAttempt()
     {
         // Measured: USDOLLAR took 3 trades for −19.22 EUR. The dollar index moves a few
@@ -1492,7 +1493,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-039 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-053, scope=function)
     //
     // Measured 2026-08-11: once the GUI widened focusSymbols to the whole non-crypto
     // catalogue, six peripheral names (Gold.24-7, Colombia, Canada60, Cybersecurity,
@@ -1615,7 +1616,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-030 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-053, scope=function)
     void TS_PAPER_030_aFavouriteOfTheModelStillHasToConvince()
     {
         // The OTHER way reluctance is earned, and the one the hourly-move floor cannot
@@ -1666,7 +1667,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-028 @design DES-DOM-DAY
-    // @relation(REQ-F-031, REQ-F-034, scope=function)
+    // @relation(REQ-F-031, REQ-F-054, scope=function)
     void TS_PAPER_028_theRecordSaysWhichRuleMadeOrLostTheMoney()
     {
         // The most diagnostic number the record holds, and the one that answered "why
@@ -1730,7 +1731,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-027 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, REQ-F-035, scope=function)
+    // @relation(REQ-F-052, REQ-F-055, REQ-F-058, REQ-F-035, scope=function)
     void TS_PAPER_027_everyWordAndEveryClockFamilyIsReachable()
     {
         // The wording tables and the two clock families the phase classifier supports
@@ -1834,7 +1835,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-026 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, REQ-F-035, scope=function)
+    // @relation(REQ-F-049, REQ-F-052, REQ-F-056, REQ-F-035, scope=function)
     void TS_PAPER_026_loudWindowsChurnAndConfluenceAllGateTheEntry()
     {
         const auto berlin = [](int hour, int minute) {
@@ -2729,7 +2730,7 @@ private slots:
         QVERIFY(groupLeverageCap(QStringLiteral("something-else")) > 0);
     }
     //! @tstid TS-PT-035 @design DES-DOM-WHEN
-    // @relation(REQ-F-034, scope=function)
+    // @relation(REQ-F-049, REQ-F-031, scope=function)
     void TS_PT_035_everyRuleCanBeSwitchedOffAndSaysNothingWhenItIs()
     {
         // Each of the bot's brakes is a NUMBER, and every one of them can be set to

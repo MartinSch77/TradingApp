@@ -52,3 +52,5 @@ def main():
     test.verify(positions.model().rowCount() >= rowsBefore,
                 "the confirmed press is what opens the position")
     test.log("open positions after the confirmed press: %d" % positions.model().rowCount())
+
+    names.closeAppGracefully(waitForObject(names.mainWindow))

@@ -269,7 +269,12 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 60 stopped being enough: two consecutive runs on 2026-08-13/14 hit the wall
+    # inside clazy specifically (every earlier stage — cppcheck/clang-tidy/CSA/
+    # g++ -fanalyzer/lizard/PMD CPD/objectName/codespell — finished with numbers
+    # identical to a passing run); main's own run was already at 56m21s. Growing
+    # codebase size, not this PR's content.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
@@ -539,19 +544,19 @@ jobs:
         run: python3 -m pip install --upgrade reportlab
 
       # test-results/ + docs/traceability.html (the artifact keeps that structure).
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: test-results
           path: .
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: analysis-results
           path: analysis-results
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: sanitizer-logs

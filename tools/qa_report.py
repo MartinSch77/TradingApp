@@ -86,7 +86,9 @@ def check_swe2_swe3() -> Verdict:
 
 def check_swe4_5_6() -> Verdict:
     """Also the ONE hard-fail case: missing/stale test evidence."""
-    results = sorted(glob.glob(str(ROOT / "test-results" / "*.xml")))
+    # Recursive: the Squish GUI suite's JUnit XML lives one level down, in
+    # test-results/squish/ — see make_report.py's collect_tests() for the same fix.
+    results = sorted(glob.glob(str(ROOT / "test-results" / "**" / "*.xml"), recursive=True))
     if not results:
         return Verdict("SWE.4/5/6 Verification & Qualification", "NOT FOUND",
                         ["test-results/*.xml: no files — run tools/run_tests.sh"])

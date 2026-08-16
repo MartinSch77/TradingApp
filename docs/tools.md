@@ -405,6 +405,59 @@ when `pytest` itself is missing; the ML half prints its own skip note (and
 does not fail the run) when the ML venv is absent, since that venv is already
 optional everywhere else in this project.
 
+## ICA: a second, independent clang-based analyzer, run beside Axivion
+
+`tools/ica_report.py` runs ICA (IntelligentCodeAnalyzer — distributed
+separately under `~/ica`, not part of this repo or setup.sh; see below)
+over TradingApp's own `src/` tree using the SAME `compile_commands.json`
+`build_all.sh build` already produces, then renders a PDF
+(`downloads/TradingApp-ica-report.pdf`) plus machine-readable evidence
+(`analysis-results/ica/ica.json`, `ica_metrics.json`). Run it directly or via
+the `ica` extra `build_all` stage (`./build_all.sh ica` / `.\build_all.ps1
+ica` — the latter reports "skipped": ICA ships only as a Linux-x86_64 binary
+release, no Windows package).
+
+**This is informational, never a gate**, run BESIDE Axivion, not instead of
+it: Axivion's MISRA C++ 2023 + CERT/CWE + architecture analysis
+(`axivion/start_analysis.sh`) remains the project's actual static-analysis
+gate. ICA's own `docs/ROADMAP.md` calls it "an early foundation, not a
+finished product" — this report exists to show what a second, independently
+implemented clang-based analyzer finds on the same code, which is valuable
+QA/certification evidence (an independent second opinion, cross-checking
+Axivion's own findings) precisely because the two tools are unrelated
+implementations, not a claim that ICA is production-grade on its own.
+
+**Installation is NOT part of `setup.sh`/`setup.ps1`**, unlike the seven
+bundled analyzers: ICA is a separate project distributed under `~/ica`
+(`ICA_DIR` env var overrides), with its own build/release process. `tools/
+ica_report.py` checks for `~/ica/bin/ica-cc` + `bin/ica-cxx` first and exits
+3 ("skipped") if absent — it never fabricates a report or fails a build over
+a tool this project doesn't own.
+
+Scope, stated rather than left implicit: `src/` only (86 TUs measured
+2026-08-16) — `tests/` is excluded, the same "product code under scrutiny"
+convention the MISRA-style analyzers already use elsewhere. Generated code
+(moc/ui) is skipped by ICA's own default. Whole-program checks
+(One-Definition-Rule violations, cross-TU clone detection) are enabled and
+folded into the same findings set; whole-program dead-function detection is
+NOT run, because it needs `tools/ica_dead_code_report.py`, which the
+binary-only ICA release package installed here does not include.
+
+The PDF frames every finding by BOTH ICA's own `Category` and the ISO/IEC
+25010 quality characteristic it threatens (a fixed table reproduced from
+ICA's own `docs/ISO25010_MAPPING.md`, since that document is prose, not a
+machine-readable mapping file) — Safety→Reliability, Security→Security,
+Maintainability→Maintainability, Portability→Portability, deliberately the
+framing a QA/certification reviewer looks for, on top of the usual
+by-rule/by-severity/by-file breakdowns and a code-metrics summary (cyclomatic
+complexity, LOC) alongside the finding counts.
+
+`tools/ica_report.py` recompiles every analyzed TU through `ica-cxx`
+(ICA's compiler wrapper does a real compile as half of what it does) into a
+SCRATCH object directory (`analysis-results/ica/objects/`), never the
+release build's own `build/` object files — this report must never race or
+silently rewrite the evidence an in-progress `build_all.sh` run still needs.
+
 ## Reproducibility check for the Linux AppImage (tooling backlog item 5)
 
 `tools/check_reproducibility.sh` builds the AppImage **twice, independently**

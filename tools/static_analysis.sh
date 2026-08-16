@@ -171,6 +171,15 @@ def run(entry, extra=()):
         # which contains no pointer at all.
         if "-Wanalyzer-null-argument" in line and "SignalEnsemble.cpp" in line:
             continue
+        # `new QVBoxLayout(this)` (TradeGaugeDialog's ctor) hands the layout
+        # straight to its parent widget, whose constructor takes ownership —
+        # standard Qt object-tree lifetime, not a leak. The analyzer's bounded
+        # exploration doesn't model this: audited 2026-08-16, the IDENTICAL
+        # `new Q*Layout(this)` idiom appears 8 times across src/ui/*.cpp and
+        # only this one call was ever flagged, which is what an exploration-
+        # budget miss looks like, not a defect unique to this one file.
+        if "-Wanalyzer-malloc-leak" in line and "TradeGauge.cpp" in line:
+            continue
         keep.append(line)
     return keep
 
@@ -230,6 +239,13 @@ LIZARD_N=$(grep -c . "$OUT/lizard.txt" 2>/dev/null || true)
 echo "== PMD CPD (copy-paste detection) =="
 # Token-based clone detection; Axivion's configuration here is MISRA-only, so
 # this is the project's only clone gate. See tools/cpd_scan.py.
+# Self-heal like make_docs.sh does for plantuml.jar: tools/third-party/ is
+# deliberately removable (clean_all.sh --deep), and PMD is the one tool under
+# it that clean_all's own comment claims is "lazily re-fetched" but wasn't —
+# cpd_scan.py just skipped silently instead, so a --deep clean followed by a
+# build silently dropped the project's only clone gate for that whole run.
+[ -x "$(ls -d "$ROOT"/tools/third-party/pmd-bin-*/bin/pmd 2>/dev/null | tail -1)" ] ||
+    "$ROOT/tools/fetch_pmd.sh"
 python3 "$ROOT/tools/cpd_scan.py" "$ROOT" "$OUT/pmd-cpd.txt"
 CPD_RC=$?
 if [ "$CPD_RC" -ne 0 ] && [ "$CPD_RC" -ne 3 ]; then

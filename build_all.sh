@@ -59,7 +59,7 @@ ALL_STAGES=(build test trace docs coverage analysis sanitize axivion report)
 # the GUI suite, Test Center stores every result. Each exits 3 ("skipped") without
 # its licence, so naming them on a machine that has none reports skipped rather than
 # failing — the quality PDF then lists which licence was missing.
-EXTRA_STAGES=(app release android gui testcenter qa pytools) # selectable by name, not part of the default run
+EXTRA_STAGES=(app release android gui testcenter qa pytools ica) # selectable by name, not part of the default run
 
 # A CMake build tree records the absolute source/binary paths it was generated
 # with and refuses to be reused if either changed. This repository invites that
@@ -164,6 +164,13 @@ stage_qa() {
 # needs a baseline pass before it can gate anything the way lizard's ratchet
 # does. Exits 3 ("skipped") only when pytest itself is missing.
 stage_pytools() { "$ROOT/tools/python_tests.sh"; }
+
+# Extra stage (named only): ICA, a second/independent clang-based static
+# analyzer distributed separately under ~/ica (ICA_DIR overrides), run BESIDE
+# Axivion — informational, never a gate; see tools/ica_report.py and
+# docs/tools.md. Exits 3 ("skipped") when ICA is not installed, or when the
+# `build` stage hasn't produced a compile database yet.
+stage_ica() { python3 "$ROOT/tools/ica_report.py"; }
 
 usage() {
     echo "usage: $0 [stage ...] [--skip stage ...]   stages: ${ALL_STAGES[*]}   (default: all)"

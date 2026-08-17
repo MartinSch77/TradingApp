@@ -344,7 +344,13 @@ jobs:
   release-gate:
     name: Release gate (tests + traceability + analysis must pass)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 90, not 60: measured 2026-08-17 hitting the 60-minute ceiling exactly
+    # (60m17s) on `build test trace analysis` alone -- the test suite has grown
+    # since this was set (REQ-F-034's ten-way atomization, PR #21), and a public
+    # GitHub-hosted runner has far fewer cores than the machine this was
+    # originally timed on. Matches the quality-report job's own 90-minute budget,
+    # which runs the same stages plus PDF rendering.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 

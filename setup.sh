@@ -16,7 +16,7 @@
 #   pipx   cmake (>= 4.2 — distro cmake is usually too old), strictdoc,
 #          doorstop, aqtinstall, codespell, sphinx (+ myst-parser), gcovr,
 #          clang-format (pinned by wheel: one version on every platform)
-#   aqt    Qt ${QT_VERSION} (+ qtcharts, qtgraphs) into ~/Qt — the layout the build
+#   aqt    Qt ${QT_VERSION} (+ qtcharts, qtgraphs, qtquick3d) into ~/Qt — the layout the build
 #          scripts expect (override with QT_PREFIX at build time). The kit
 #          follows the host: gcc_64 on x86-64, gcc_arm64 on ARM64 (Raspberry
 #          Pi 4/5 with a 64-bit OS — Qt ships official Linux ARM64 binaries
@@ -173,7 +173,7 @@ android_install() {
             continue
         fi
         have aqt || { echo "aqt missing — run ./setup.sh install first" >&2; return 1; }
-        aqt install-qt all_os android "$want" "$abi" -m qtcharts qtgraphs -O "$HOME/Qt" ||
+        aqt install-qt all_os android "$want" "$abi" -m qtcharts qtgraphs qtquick3d qtshadertools -O "$HOME/Qt" ||
             echo "aqt could not install $abi for $want" >&2
     done
 
@@ -644,8 +644,19 @@ qt_install() {
     # so the two backends can sit side by side behind one interface rather than the newer
     # one arriving as a rewrite. Note qtgraphs is GPLv3-or-commercial like qtcharts, which
     # is consistent with this project's GPL-3.0-or-later licence.
+    # qtquick3d + qtshadertools too: Qt6Graphs' own CMake package
+    # (Qt6GraphsDependencies.cmake) depends on Qt6Quick3D/Qt6Quick3DRuntimeRender,
+    # and Qt6Quick3DRuntimeRender in turn depends on Qt6ShaderTools — even though
+    # nothing here uses either API directly. Miss either one and find_package(Qt6
+    # QUIET COMPONENTS Graphs) silently reports NOT FOUND (QUIET, no console
+    # message) rather than a clear error. Found 2026-08-17: this machine's own Qt
+    # install already had both (leftovers from an unrelated, later-removed
+    # 3D-graphs experiment), which is exactly why neither CI nor this script ever
+    # installing them went unnoticed — verified by a from-scratch aqt install with
+    # ONLY qtcharts+qtgraphs+qtquick3d (still failed, missing qtshadertools) and
+    # then with all four (TradingCockpit built clean).
     aqt install-qt "$(qt_aqt_host)" desktop "$QT_VERSION" "$(qt_aqt_arch)" \
-        -m qtcharts qtgraphs -O "$QT_DIR"
+        -m qtcharts qtgraphs qtquick3d qtshadertools -O "$QT_DIR"
 }
 
 # Adding ONE module to a kit that is already installed: aqt has no "add module"

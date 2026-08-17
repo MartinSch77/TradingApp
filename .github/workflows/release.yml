@@ -54,7 +54,21 @@ jobs:
           # qtgraphs, not just qtcharts: TradingCockpit (the Qt Quick front end,
           # REQ-F-038) needs it, and TRADINGAPP_REQUIRE_QT_GRAPHS=1 below makes its
           # absence a hard failure rather than a release that silently ships without it.
-          modules: qtcharts qtgraphs
+          # qtquick3d + qtshadertools too: Qt6Graphs' OWN CMake package
+          # (Qt6GraphsDependencies.cmake) target_deps lists Qt6Quick3D and
+          # Qt6Quick3DRuntimeRender alongside Qt6Core/Gui/Quick — Qt Graphs is built
+          # on Quick3D's renderer even though nothing here uses the Quick3D API
+          # directly. Quick3DRuntimeRender in turn depends on Qt6ShaderTools. Missing
+          # either makes find_package(Qt6 QUIET COMPONENTS Graphs) silently report
+          # NOT FOUND (no console message, since it's QUIET) and the
+          # TRADINGAPP_REQUIRE_QT_GRAPHS check then fails at configure time. Found
+          # 2026-08-17: v1.1.0 and the first v1.1.1 attempt both failed here on EVERY
+          # platform; it only ever "worked" on the maintainer's own dev machine
+          # because Quick3D/ShaderTools happened to already be installed there from
+          # an unrelated, later-removed 3D-graphs experiment. Verified by a
+          # from-scratch aqt install: qtcharts+qtgraphs+qtquick3d alone still failed
+          # (missing qtshadertools); all four together built TradingCockpit clean.
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install build + AppImage dependencies
@@ -156,9 +170,10 @@ jobs:
           # managed (PEP 668), unlike the 22.04 one the x86-64 job runs on.
           python3 -m pip install --break-system-packages --upgrade aqtinstall
           # qtgraphs alongside qtcharts: see the x86-64 job's comment — same reason,
-          # same TRADINGAPP_REQUIRE_QT_GRAPHS=1 below.
+          # same TRADINGAPP_REQUIRE_QT_GRAPHS=1 below. qtquick3d too: Qt Graphs'
+          # own CMake package depends on it (same comment, same root cause).
           python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
-            -m qtcharts qtgraphs -O "$HOME/Qt"
+            -m qtcharts qtgraphs qtquick3d qtshadertools -O "$HOME/Qt"
 
       - name: Install build + AppImage dependencies
         run: |
@@ -240,7 +255,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION_WINDOWS }}
           arch: win64_msvc2022_64
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install CMake + Ninja
@@ -338,7 +353,7 @@ jobs:
         with:
           version: "6.11.1"
           arch: linux_gcc_64
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install analyzers
@@ -373,7 +388,7 @@ jobs:
         with:
           version: "6.11.1"
           arch: linux_gcc_64
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install the tools the report summarises

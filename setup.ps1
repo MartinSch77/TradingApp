@@ -22,7 +22,7 @@
               clang-format (pinned by wheel: one version on every platform),
               reportlab (PDF quality report),
               aqtinstall  (user scope — no admin needed)
-      aqt     Qt $QtVersion (win64_msvc2022_64 + qtcharts, qtgraphs) into C:\Qt — the
+      aqt     Qt $QtVersion (win64_msvc2022_64 + qtcharts, qtgraphs, qtquick3d) into C:\Qt — the
               layout the build scripts expect (override with QT_PREFIX)
       web     PlantUML jar (pinned in tools/fetch_plantuml.ps1)
 
@@ -258,7 +258,7 @@ function Install-Android {
         $kit = Join-Path $env:USERPROFILE "Qt\$QtVersion\$abi"
         if (Test-Path $kit) { Write-Host "$abi already installed ($QtVersion)"; continue }
         if (-not (Test-Tool 'aqt')) { Write-Warning 'aqt missing - run .\setup.ps1 install first'; return }
-        & aqt install-qt all_os android $QtVersion $abi -m qtcharts qtgraphs -O (Join-Path $env:USERPROFILE 'Qt')
+        & aqt install-qt all_os android $QtVersion $abi -m qtcharts qtgraphs qtquick3d qtshadertools -O (Join-Path $env:USERPROFILE 'Qt')
         if ($LASTEXITCODE -ne 0) { Write-Warning "aqt could not install $abi for $QtVersion" }
     }
 
@@ -322,7 +322,7 @@ function Show-Status {
     }
 
     $qt = Resolve-QtPrefix -Quiet
-    if ($qt) { Report 'Qt' 'ok' $qt } else { Report 'Qt' 'MISSING' "expected $QtDir\$QtVersion\msvc2022_64 (with qtcharts + qtgraphs)" }
+    if ($qt) { Report 'Qt' 'ok' $qt } else { Report 'Qt' 'MISSING' "expected $QtDir\$QtVersion\msvc2022_64 (with qtcharts + qtgraphs + qtquick3d + qtshadertools)" }
 
     if (Test-Path (Join-Path $Root 'tools\third-party\plantuml.jar')) {
         Report 'plantuml' 'ok' (Get-ToolVersion 'plantuml')
@@ -445,8 +445,13 @@ function Install-Qt {
     if ($existing) { Write-Host "  usable kit already present: $existing" -ForegroundColor DarkGray; return }
     Add-PythonScriptsToPath
     if (-not (Test-Tool 'aqt')) { Write-Warning "  aqt missing — the pip step must run first"; return }
-    Write-Host "  aqt install-qt windows desktop $QtVersion win64_msvc2022_64 -m qtcharts qtgraphs -O $QtDir" -ForegroundColor Gray
-    & aqt install-qt windows desktop $QtVersion win64_msvc2022_64 -m qtcharts qtgraphs -O $QtDir
+    # qtquick3d: Qt6Graphs' own CMake package depends on Qt6Quick3D/
+    # Qt6Quick3DRuntimeRender even though nothing here uses the Quick3D API
+    # directly — without it, find_package(Qt6 QUIET COMPONENTS Graphs) silently
+    # reports NOT FOUND. Found 2026-08-17 diagnosing why the release workflow
+    # failed on every platform.
+    Write-Host "  aqt install-qt windows desktop $QtVersion win64_msvc2022_64 -m qtcharts qtgraphs qtquick3d qtshadertools -O $QtDir" -ForegroundColor Gray
+    & aqt install-qt windows desktop $QtVersion win64_msvc2022_64 -m qtcharts qtgraphs qtquick3d qtshadertools -O $QtDir
     if ($LASTEXITCODE -ne 0) { Write-Warning "  aqt exited $LASTEXITCODE" }
 }
 

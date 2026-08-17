@@ -92,7 +92,14 @@ jobs:
           # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
           # here, so a PR breaking it would go undetected by every ordinary CI run —
           # the release workflow's own gate would be the ONLY thing to catch it.
-          modules: qtcharts qtgraphs
+          # qtquick3d too: Qt6Graphs' own CMake package (Qt6GraphsDependencies.cmake)
+          # depends on Qt6Quick3D/Qt6Quick3DRuntimeRender even though nothing here
+          # uses the Quick3D API directly — without it, Qt6Graphs_FOUND is silently
+          # FALSE (find_package is QUIET, no console message), which is exactly the
+          # degradation this comment warns about, and it was happening on every CI
+          # run. Found 2026-08-17 while diagnosing why v1.1.0/v1.1.1's release
+          # workflow failed on every platform.
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install CMake >= 4.2 and Ninja
@@ -170,9 +177,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m aqt install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 \
-            -m qtcharts qtgraphs -O "$HOME/Qt"
+            -m qtcharts qtgraphs qtquick3d qtshadertools -O "$HOME/Qt"
           test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Charts"
           test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Graphs"
+          test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6Quick3D"
+          test -d "$HOME/Qt/$QT_VERSION/gcc_arm64/lib/cmake/Qt6ShaderTools"
 
       - name: Toolchain status (host detection)
         run: ./setup.sh status
@@ -251,7 +260,14 @@ jobs:
           # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
           # here, so a PR breaking it would go undetected by every ordinary CI run —
           # the release workflow's own gate would be the ONLY thing to catch it.
-          modules: qtcharts qtgraphs
+          # qtquick3d too: Qt6Graphs' own CMake package (Qt6GraphsDependencies.cmake)
+          # depends on Qt6Quick3D/Qt6Quick3DRuntimeRender even though nothing here
+          # uses the Quick3D API directly — without it, Qt6Graphs_FOUND is silently
+          # FALSE (find_package is QUIET, no console message), which is exactly the
+          # degradation this comment warns about, and it was happening on every CI
+          # run. Found 2026-08-17 while diagnosing why v1.1.0/v1.1.1's release
+          # workflow failed on every platform.
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install CMake >= 4.2 and Ninja
@@ -304,7 +320,7 @@ jobs:
           # TradingCockpit (the Qt Quick front end, REQ-F-038) is never even built
           # here, so a PR breaking it would go undetected by every ordinary CI run —
           # the release workflow's own gate would be the ONLY thing to catch it.
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
 
       - name: Install analyzers and CMake
@@ -402,7 +418,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION_WINDOWS }}
           arch: win64_msvc2022_64
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
       - name: Install CMake >= 4.2 and Ninja
         run: python -m pip install --upgrade cmake ninja
@@ -457,7 +473,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: clang_64
-          modules: qtcharts qtgraphs
+          modules: qtcharts qtgraphs qtquick3d qtshadertools
           cache: true
       - name: Install CMake >= 4.2 and Ninja
         run: python3 -m pip install --break-system-packages --upgrade cmake ninja

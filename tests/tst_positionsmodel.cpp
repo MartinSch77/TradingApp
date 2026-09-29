@@ -289,8 +289,8 @@ private slots:
         // what the column is — including that it closes nothing (REQ-N-005).
         QCOMPARE(cell(0, Qt::DisplayRole).toString(), QStringLiteral("—"));
         QVERIFY(!cell(0, Qt::ForegroundRole).isValid());
-        QVERIFY(cell(0, Qt::ToolTipRole).toString().contains(QStringLiteral("nothing here "
-                                                                           "closes it")));
+        const QString explained = cell(0, Qt::ToolTipRole).toString();
+        QVERIFY(explained.contains(QStringLiteral("nothing here closes it")));
 
         const QSignalSpy resets(&model, &QAbstractItemModel::modelAboutToBeReset);
         const QSignalSpy edits(&model, &PositionsModel::slTpEdited);

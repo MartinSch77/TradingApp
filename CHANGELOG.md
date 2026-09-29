@@ -10,8 +10,34 @@ absent) — `docs/roadmap.md` remains the forward-looking plan; this file is
 the realized-history counterpart `process/strategies/project-management-
 strategy.md`'s planning-artefact composition names.
 
-## Unreleased (since v1.0.6)
+## v1.1.2
 
+The first release since v1.0.6. `v1.1.0` and `v1.1.1` were tagged but never
+published: v1.1.0's packaging died because Qt Graphs' CMake package needs
+`qtquick3d` + `qtshadertools`, which no install step requested (fixed in
+`f81d17d`), and v1.1.1's release gate then stopped on one cppcheck finding
+that only an ONNX-Runtime-less build — the CI configuration — produces.
+Everything below the first four bullets landed in those unpublished tags.
+
+- Release gate: `FinBertSentiment`'s stub `scoreText` no longer trips
+  cppcheck's `functionStatic` on builds without ONNX Runtime.
+- Traceability: a `STATUS: superseded` requirement is traced THROUGH its
+  successors (`tools/trace_report.py`, `tools/sdoc_to_md.py`) instead of
+  being reported as untested; REQ-F-057 gained its dedicated test
+  (TS-PM-006); the traceability-gate workflow, red on `main` since it was
+  added, passes (the process model now names the human final approver).
+- Issue #15 (Coco GUI coverage under Squish) re-scored as an accepted,
+  monitored low risk — `process/risk-register.md` RISK-001 is the live
+  record.
+- CI actions: `actions/checkout` 7, `actions/setup-java` 6.0.0,
+  `fsfe/reuse-action` 6 (Dependabot #25/#26/#27).
+- Qt Graphs resolves in every CI and release job (qtquick3d/qtshadertools);
+  the release gate's timeout is 90 minutes.
+- ICA added as a second, independent clang-based analyzer beside Axivion
+  (informational); Python unit tests with branch coverage for
+  `tools/*.py` and `tools/ml/*.py`.
+- Issue #20 (JsonHttp TSan race) fixed with `Qt::SingleShotConnection`;
+  every `test-results/*.xml` consumer now reads the nested Squish results.
 - Bot strategy redesign (7/N): `SwingPullbackStrategyV1` wired into
   `BotSimRunner` live — additive, off by default (`BotConfig::
   useSwingStrategy`); new `PaperTrader::paperStakeCeiling` extracted so the

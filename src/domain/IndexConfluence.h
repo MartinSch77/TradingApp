@@ -187,6 +187,12 @@ struct HeavyweightPulse {
     [[nodiscard]] QString leadIndicator() const;
 };
 
+// The label every display of the cap-weighted lead carries (REQ-F-075): the weights are
+// the static heavyweightWeight table, not live index weightings, and saying so on screen
+// is the same honesty rule as the breadth stand-in. One definition, so the console, the
+// headline and the Heavyweights window cannot word it differently.
+[[nodiscard]] QString capWeightsNote();
+
 // The pulse of the index `symbol` belongs to, from the reference series already
 // fetched for the confluence reads — no additional feed.
 [[nodiscard]] HeavyweightPulse heavyweightPulse(const QString &symbol,

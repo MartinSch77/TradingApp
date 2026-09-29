@@ -194,11 +194,11 @@ Read participationRead(const QString &symbol, const QHash<QString, QList<double>
     // Scale-free thresholds: roughly two thirds up is broad participation, roughly two
     // thirds down is broad distribution, anything between is a split field.
     out.dir = (share >= 0.625) ? 1 : ((share <= 0.375) ? -1 : 0);
-    out.detail = QStringLiteral("%1 of %2 %3 heavyweights up")
-                     .arg(up.first)
-                     .arg(up.second)
-                     .arg(isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100")
-                                                 : QStringLiteral("S&P 500"));
+    out.detail =
+        QStringLiteral("%1 of %2 %3 heavyweights up (stand-in for breadth)")
+            .arg(up.first)
+            .arg(up.second)
+            .arg(isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100") : QStringLiteral("S&P 500"));
     return out;
 }
 
@@ -541,17 +541,23 @@ QString signedPct(double value)
 }
 } // namespace
 
+QString capWeightsNote()
+{
+    return QStringLiteral("approx. static weights");
+}
+
 QString HeavyweightPulse::headline() const
 {
     if (isEmpty()) {
         return QStringLiteral("%1: no constituent prices yet").arg(indexName);
     }
-    return QStringLiteral("%1: %2 of %3 up · average %4 · cap-wt %5 · leader %6 %7 · laggard %8 %9")
+    return QStringLiteral("%1: %2 of %3 up · average %4 · cap-wt %5 (%6) · leader %7 %8 · "
+                          "laggard %9 %10")
         .arg(indexName)
         .arg(up)
         .arg(measured)
         .arg(signedPct(averageChangePct))
-        .arg(signedPct(capWeightedChangePct))
+        .arg(signedPct(capWeightedChangePct), capWeightsNote())
         .arg(leader, signedPct(leaderChangePct))
         .arg(laggard, signedPct(laggardChangePct));
 }

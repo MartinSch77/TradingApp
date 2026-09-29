@@ -123,7 +123,11 @@ stay at `STATUS: approved` with the unmet clause named in their RATIONALE:
 REQ-F-064's stand-in label is missing from the participation read's own
 detail text (which reaches the model's evidence and the cockpit meter), and
 REQ-F-075's "approximate static weights" label is not shown anywhere the
-cap-weighted lead is.
+cap-weighted lead is. Both were closed the same day: the participation
+detail now ends "(stand-in for breadth)" (TS-CONF-002), and one domain label,
+`capWeightsNote()` ("approx. static weights"), is shown in the pulse headline,
+on the console's Top-10 lead line and in the Heavyweights gauge heading
+(TS-CONF-007, TS-CON-006) — both requirements are `verified`.
 
 ## Acceptance for closing the tracked issue — met
 

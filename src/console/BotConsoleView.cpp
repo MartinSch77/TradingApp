@@ -3,6 +3,8 @@
 
 #include "console/BotConsoleView.h"
 
+#include "domain/IndexConfluence.h"
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -126,9 +128,10 @@ QString consoleConstituentLead(const QString &leftIndicator, const QString &righ
     // the ▲/▼ arrows, each a single BMP cell. Pad the left side to a fixed column so the right
     // one does not shift as the numbers change width. leftJustified only pads, never truncates,
     // so a longer-than-expected left string pushes the right out rather than losing characters.
-    return QStringLiteral("  Top-10 lead   %1%2")
+    // The static-weights label rides at the END so the two indicators keep their columns.
+    return QStringLiteral("  Top-10 lead   %1%2   (%3)")
         .arg(leftIndicator.leftJustified(leftWidth, u' '))
-        .arg(rightIndicator);
+        .arg(rightIndicator, trading::capWeightsNote());
 }
 
 QStringList consoleOpenTrades(const QList<PaperTrade> &open)

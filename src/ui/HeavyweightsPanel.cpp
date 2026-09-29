@@ -171,7 +171,9 @@ void HeavyweightsPanel::buildUi()
     // strongly, are the top names pulling the index" reads at a glance — the visual companion
     // to the console's Top-10 lead line and the summary text above.
     auto *gaugeHeading = new QLabel(
-        QStringLiteral("Top-10 cap-weighted lead — each name weighted by its share of the index"),
+        QStringLiteral("Top-10 cap-weighted lead — each name weighted by its share of the "
+                       "index (%1)")
+            .arg(trading::capWeightsNote()),
         this);
     gaugeHeading->setObjectName(QStringLiteral("leadGaugeHeading"));
     outer->addWidget(gaugeHeading);

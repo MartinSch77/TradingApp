@@ -232,6 +232,8 @@ private slots:
 
         // One line, labelled, with the left indicator before the right.
         QVERIFY(line.contains(QStringLiteral("Top-10 lead")));
+        // The weights are a static snapshot, and the line says so after both indicators.
+        QVERIFY(line.endsWith(QStringLiteral("(approx. static weights)")));
         QVERIFY(line.contains(left));
         QVERIFY(line.contains(right));
         QVERIFY(line.indexOf(left) < line.indexOf(right));

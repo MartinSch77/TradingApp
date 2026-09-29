@@ -29,9 +29,10 @@ Everything below the first five bullets landed in those unpublished tags.
 - GitHub issue #14 closed: after REQ-F-034 (PR #21, REQ-F-049..058),
   REQ-F-035 is split too — REQ-F-059..075, nine independent reads, the
   agreement gate, five cross-cutting rules and two displays, every test
-  re-tagged after reading it. Two successors (REQ-F-064, REQ-F-075) stay
-  `approved` rather than `implemented`: the split showed their on-screen
-  labelling clauses are not met yet.
+  re-tagged after reading it. The split showed two on-screen labelling
+  clauses unmet, now fixed: the participation read calls itself a stand-in
+  for breadth (REQ-F-064), and every display of the cap-weighted lead says
+  its weights are "approx. static weights" (REQ-F-075).
 - Issue #15 (Coco GUI coverage under Squish) re-scored as an accepted,
   monitored low risk — `process/risk-register.md` RISK-001 is the live
   record.

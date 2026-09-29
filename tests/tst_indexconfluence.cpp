@@ -181,6 +181,9 @@ private slots:
         QCOMPARE(reads.participation.dir, 1);
         QVERIFY(reads.participation.detail.contains(QStringLiteral("10 of 10")));
         QVERIFY(reads.participation.detail.contains(QStringLiteral("Nasdaq-100")));
+        // It names itself a STAND-IN wherever it appears: this detail text is what the
+        // model's evidence and the cockpit meter show, not only the window's caveat.
+        QVERIFY(reads.participation.detail.contains(QStringLiteral("stand-in for breadth")));
         QVERIFY(indexReads(QStringLiteral("SPX500"),
                            inputsFor(QStringLiteral("SPX500"), refs, sessionWith(0.8)))
                     .participation.detail.contains(QStringLiteral("S&P 500")));
@@ -372,6 +375,10 @@ private slots:
         // The headline carries both numbers, and the compact indicator carries the direction as
         // an arrow (▲ for the positive cap-weighted move) plus the index and the breadth count.
         QVERIFY(pulse.headline().contains(QStringLiteral("cap-wt")));
+        // …and says its weights are the static table, not live index weightings.
+        QCOMPARE(capWeightsNote(), QStringLiteral("approx. static weights"));
+        QVERIFY(pulse.headline().contains(QStringLiteral("cap-wt +")));
+        QVERIFY(pulse.headline().contains(QStringLiteral("(approx. static weights)")));
         const QString indicator = pulse.leadIndicator();
         QVERIFY(indicator.contains(QStringLiteral("Nasdaq-100")));
         QVERIFY(indicator.contains(QString(QChar(0x25B2))));   // ▲ up

@@ -41,6 +41,15 @@ if [ "$FIX" -eq 1 ]; then
     echo "auto-fixes applied — rebuild and rerun the tests"
 fi
 
+# A count alone makes a red run unactionable wherever the artefact cannot be
+# fetched: v1.1.1's CI release gate printed "cppcheck findings: 1" and
+# "clang-tidy findings: 1" and nothing else (2026-08-17), and the finding had to
+# be reconstructed elsewhere. The first few lines of a non-empty report go to the
+# console too; the file stays the full record.
+show_first() { # <report> <count>
+    if [ "${2:-0}" -gt 0 ]; then head -n 10 "$1" | sed 's/^/    /'; fi
+}
+
 echo "== cppcheck ($(cppcheck --version)) =="
 # Core flags: --project (compile database, so Qt include paths and defines match
 # the real build), --enable=all (every check class, i.e. style and information
@@ -88,6 +97,7 @@ if [ ! -f "$OUT/cppcheck.txt" ]; then
 fi
 CPPCHECK_N=$(grep -c . "$OUT/cppcheck.txt" || true)
 echo "cppcheck findings: $CPPCHECK_N (analysis-results/cppcheck.txt)"
+show_first "$OUT/cppcheck.txt" "$CPPCHECK_N"
 
 echo "== clang-tidy ($(clang-tidy --version | head -1)) =="
 # One process per source file, in parallel; per-file temp logs keep the
@@ -104,6 +114,7 @@ cat "$TIDY_TMP"/*.log | sort -u > "$OUT/clang-tidy.txt"
 rm -rf "$TIDY_TMP"
 TIDY_N=$(grep -c . "$OUT/clang-tidy.txt" || true)
 echo "clang-tidy findings: $TIDY_N (analysis-results/clang-tidy.txt)"
+show_first "$OUT/clang-tidy.txt" "$TIDY_N"
 
 echo "== g++ -fanalyzer ($(g++ -dumpfullversion)) =="
 # GCC's symbolic-execution analyzer over every project TU, flags taken from

@@ -289,7 +289,16 @@ ollama_install() {
     echo "ollama: $("$OLLAMA_DIR/bin/ollama" --version 2>&1 | head -1)"
 
     mode="$(ollama_gpu_mode)"
-    if [ "$mode" = cpu ] && [ "$OLLAMA_GPU" = auto ] && ! have vulkaninfo; then
+    # WSL2 exposes the GPU only as /dev/dxg (D3D12) — no /dev/dri, so Vulkan sees nothing but
+    # the llvmpipe software renderer and Ollama none of its backends. Measured on an Iris Xe
+    # laptop: identical CPU speed with and without OLLAMA_VULKAN=1. The GPU is reachable
+    # from WINDOWS, and WSL2 forwards localhost, so the app here can use that daemon.
+    if [ "$mode" = cpu ] && grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+        echo "-- WSL2: the GPU is not reachable from Linux here (no /dev/dri). For GPU inference"
+        echo "   install Ollama on Windows (winget install Ollama.Ollama; OLLAMA_VULKAN=1 as a"
+        echo "   user environment variable for an Intel iGPU), stop this daemon, and the app"
+        echo "   reaches the Windows one at localhost:11434 unchanged."
+    elif [ "$mode" = cpu ] && [ "$OLLAMA_GPU" = auto ] && ! have vulkaninfo; then
         echo "-- no vulkaninfo: cannot see an iGPU. For an Intel iGPU install the Mesa Vulkan"
         echo "   driver (sudo apt-get install mesa-vulkan-drivers vulkan-tools) and re-run."
     fi

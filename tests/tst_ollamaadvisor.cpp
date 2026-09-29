@@ -37,6 +37,9 @@ QByteArray generateBody(const QString &responseText)
                              {QStringLiteral("done"), true},
                              {QStringLiteral("done_reason"), QStringLiteral("stop")},
                              {QStringLiteral("total_duration"), 6611000000LL},
+                             // The daemon's own token counters, as a real answer carries them.
+                             {QStringLiteral("prompt_eval_count"), 2100},
+                             {QStringLiteral("eval_count"), 180},
                          })
         .toJson(QJsonDocument::Compact);
 }
@@ -150,6 +153,7 @@ private slots:
 
         OllamaAdvisor advisor(QStringLiteral("http://localhost:1"), QStringLiteral("qwen2.5:1.5b"));
         advisor.setEndpointBaseForTesting(server.baseUrl());
+        const QSignalSpy usage(&advisor, &OllamaAdvisor::generationUsage);
         const Answer a = answerFor(advisor, QStringLiteral("EVIDENCE-MARKER"));
         QCOMPARE(a.picks.size(), 1);
         const AiDecision d = a.first();
@@ -167,12 +171,43 @@ private slots:
         // A trading call should not be a dice roll.
         QVERIFY(sent.value(QStringLiteral("options")).toObject()
                     .value(QStringLiteral("temperature")).toDouble() <= 0.3);
+        // The context window is ASKED for: Ollama's default 4096 silently truncates a long
+        // evidence prompt, and the answer budget has to fit beside it.
+        const QJsonObject options = sent.value(QStringLiteral("options")).toObject();
+        QCOMPARE(options.value(QStringLiteral("num_ctx")).toInt(), 8192);
+        QCOMPARE(options.value(QStringLiteral("num_predict")).toInt(),
+                 OllamaAdvisor::kDecisionAnswerTokens);
+
+        // What the answer cost is reported from the daemon's own counters: 2100 prompt +
+        // 180 answer tokens in 6.6 s, and 2100 + 1500 still fits 8192 — not near the limit.
+        QCOMPARE(usage.count(), 1);
+        QCOMPARE(usage.at(0).at(0).toInt(), 2100);
+        QCOMPARE(usage.at(0).at(1).toInt(), 180);
+        QVERIFY(qAbs(usage.at(0).at(2).toDouble() - 6.611) < 1e-6);
+        QCOMPARE(usage.at(0).at(3).toBool(), false);
 
         QCOMPARE(d.symbol, QStringLiteral("SPX500"));
         QCOMPARE(d.action, QStringLiteral("BUY"));
         QCOMPARE(d.confidence, 61.0);
         QCOMPARE(d.leverage, 5);
         QCOMPARE(d.rationale, QStringLiteral("trend and rating agree"));
+
+        // A prompt whose tokens plus the answer budget no longer fit the context is flagged:
+        // 7000 + 1500 > 8192, so the next slightly longer prompt would be cut.
+        MockHttpServer full(generateMock(
+            QJsonDocument(
+                QJsonObject{{QStringLiteral("response"), QStringLiteral("{\"picks\":[]}")},
+                            {QStringLiteral("prompt_eval_count"), 7000},
+                            {QStringLiteral("eval_count"), 12},
+                            {QStringLiteral("total_duration"), 1.0e9}})
+                .toJson(QJsonDocument::Compact)));
+        QVERIFY(full.listen(QHostAddress::LocalHost));
+        OllamaAdvisor near(QStringLiteral("http://localhost:1"), QStringLiteral("qwen2.5:7b"));
+        near.setEndpointBaseForTesting(full.baseUrl());
+        const QSignalSpy nearUsage(&near, &OllamaAdvisor::generationUsage);
+        static_cast<void>(answerFor(near, QStringLiteral("evidence")));
+        QCOMPARE(nearUsage.count(), 1);
+        QCOMPARE(nearUsage.at(0).at(3).toBool(), true);
     }
 
     //! @tstid TS-OLLAMA-003 @design DES-SVC-OLLAMA

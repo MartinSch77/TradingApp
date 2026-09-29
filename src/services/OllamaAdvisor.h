@@ -43,6 +43,14 @@ public:
 
     // False when no model name is configured: requestDecision then reports
     // decisionReady(ok=false) instead of calling out, exactly like AiAdvisor.
+    // The context window every request asks for. Ollama's own default is 4096 tokens and it
+    // TRUNCATES a longer prompt silently — the model then answers about evidence it never
+    // saw. 8192 fits the bot's evidence prompt plus the answer budget with room to spare on
+    // a 7B model, and the usage signal below says when a prompt comes close.
+    static constexpr qint32 kContextTokens = 8192;
+    // The decision answer's own budget (a LIST of picks with rationales).
+    static constexpr qint32 kDecisionAnswerTokens = 1500;
+
     [[nodiscard]] bool isConfigured() const { return !m_model.isEmpty(); }
     [[nodiscard]] QString model() const { return m_model; }
     [[nodiscard]] QString host() const { return m_host; }
@@ -85,6 +93,13 @@ signals:
     // `detail` is a one-line, user-facing diagnosis either way; `models` lists
     // what the daemon actually serves (empty when it could not be asked).
     void availability(bool ok, const QString &detail, const QStringList &models);
+    // What one answered decision request cost, from the daemon's own counters: prompt and
+    // answer tokens and the wall time. `nearContextLimit` = the prompt plus the answer
+    // budget no longer fits kContextTokens, i.e. the next, slightly longer prompt would be
+    // cut. (A prompt prefix the daemon still had cached is not re-counted, so a repeat
+    // request can read lower than the prompt really is.)
+    void generationUsage(qint32 promptTokens, qint32 answerTokens, double seconds,
+                         bool nearContextLimit);
 
 private:
     [[nodiscard]] QString endpointBase() const;

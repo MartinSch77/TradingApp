@@ -173,7 +173,14 @@ it, and the script then loads the model once and reports where it actually runs,
 from the daemon's `/api/ps` — a rejected driver falls back to the CPU silently, and
 only that report says so. `./setup.sh status` prints the mode and the placement.
 On Windows, set `OLLAMA_VULKAN=1` as a user environment variable, restart Ollama and
-`ollama pull qwen2.5:7b`; `ollama ps` shows GPU or CPU.
+`ollama pull qwen2.5:7b`; `ollama ps` shows GPU or CPU. **Under WSL2 no GPU is reachable
+from Linux** (only `/dev/dxg`, no `/dev/dri`; Vulkan sees `llvmpipe`) — measured on an
+Iris Xe laptop, `OLLAMA_VULKAN=1` changed nothing. Run Ollama on the Windows side
+instead; WSL2 forwards `localhost:11434`, so the app inside WSL uses it unchanged. On
+that CPU `qwen2.5:7b` measured 27.5 prompt / 6.9 answer tokens per second (1.5B: 155 /
+31). Every request asks for `num_ctx` 8192 (`OllamaAdvisor::kContextTokens`), because
+Ollama's default of 4096 silently truncates a long evidence prompt, and the bot logs
+each answer's time and token counts, flagging a prompt that comes close to the limit.
 
 ## Windows-only tools
 

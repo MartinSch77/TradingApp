@@ -194,11 +194,11 @@ Read participationRead(const QString &symbol, const QHash<QString, QList<double>
     // Scale-free thresholds: roughly two thirds up is broad participation, roughly two
     // thirds down is broad distribution, anything between is a split field.
     out.dir = (share >= 0.625) ? 1 : ((share <= 0.375) ? -1 : 0);
-    out.detail = QStringLiteral("%1 of %2 %3 heavyweights up")
-                     .arg(up.first)
-                     .arg(up.second)
-                     .arg(isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100")
-                                                 : QStringLiteral("S&P 500"));
+    out.detail =
+        QStringLiteral("%1 of %2 %3 heavyweights up (stand-in for breadth)")
+            .arg(up.first)
+            .arg(up.second)
+            .arg(isNasdaqSymbol(symbol) ? QStringLiteral("Nasdaq-100") : QStringLiteral("S&P 500"));
     return out;
 }
 
@@ -248,7 +248,7 @@ Read curveRead(const QHash<QString, QList<double>> &series)
 //
 // Deliberately ONE read rather than three. A 1-minute return, a 5-minute return and a
 // 15-minute return computed from the same series are one piece of evidence wearing
-// three hats — exactly what REQ-F-035 exists to refuse — so what counts here is
+// three hats — exactly what REQ-F-060 exists to refuse — so what counts here is
 // whether they AGREE. Three horizons pointing the same way is a push with staying
 // power; a 1-minute pop against a 15-minute slide is noise, and is reported as the
 // neutral it is.
@@ -480,7 +480,7 @@ TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries
 QStringList referenceTickers()
 {
     QStringList out{QStringLiteral("^VIX"), QStringLiteral("^VXN"), QStringLiteral("^TNX"),
-                    // The volatility term structure (REQ-F-035): the near leg and the
+                    // The volatility term structure (REQ-F-073): the near leg and the
                     // far leg, so an inverted curve can be SEEN rather than inferred
                     // from the level of one number.
                     QStringLiteral("^VIX9D"), QStringLiteral("^VIX3M"),
@@ -541,17 +541,23 @@ QString signedPct(double value)
 }
 } // namespace
 
+QString capWeightsNote()
+{
+    return QStringLiteral("approx. static weights");
+}
+
 QString HeavyweightPulse::headline() const
 {
     if (isEmpty()) {
         return QStringLiteral("%1: no constituent prices yet").arg(indexName);
     }
-    return QStringLiteral("%1: %2 of %3 up · average %4 · cap-wt %5 · leader %6 %7 · laggard %8 %9")
+    return QStringLiteral("%1: %2 of %3 up · average %4 · cap-wt %5 (%6) · leader %7 %8 · "
+                          "laggard %9 %10")
         .arg(indexName)
         .arg(up)
         .arg(measured)
         .arg(signedPct(averageChangePct))
-        .arg(signedPct(capWeightedChangePct))
+        .arg(signedPct(capWeightedChangePct), capWeightsNote())
         .arg(leader, signedPct(leaderChangePct))
         .arg(laggard, signedPct(laggardChangePct));
 }

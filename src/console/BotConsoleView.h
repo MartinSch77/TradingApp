@@ -40,7 +40,7 @@ struct HeavyMove {
 // what deuteranopia cannot separate, so the console must read correctly in a monochrome
 // terminal too. `width` is the number of cells the bar may fill on each side of centre.
 //
-// The point of the chart (REQ-F-035): the biggest constituents lead the index, so watching
+// The point of the chart (REQ-F-074): the biggest constituents lead the index, so watching
 // the 10-plus megacaps move is a stand-in for a breadth read the app cannot fetch per
 // constituent. An absent name is drawn as a dashed placeholder and labelled `—`.
 [[nodiscard]] QStringList consoleHeavyBars(const QString &indexLabel,

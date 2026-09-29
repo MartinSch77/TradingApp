@@ -101,7 +101,7 @@ class TestIndexConfluence : public QObject
 
 private slots:
     //! @tstid TS-CONF-001 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-061, REQ-F-062, REQ-F-063, REQ-F-071, REQ-F-073, scope=function)
     void TS_CONF_001_theReferenceListIsWhatItClaimsToCover()
     {
         // The list IS the documentation of what the participation read covers, so it
@@ -141,7 +141,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-002 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-059, REQ-F-061, REQ-F-062, REQ-F-064, REQ-F-067, REQ-F-071, scope=function)
     void TS_CONF_002_eachReadSaysWhatItMeasuredOrThatItCouldNot()
     {
         const QHash<QString, QList<double>> refs = bullishReferences();
@@ -181,6 +181,9 @@ private slots:
         QCOMPARE(reads.participation.dir, 1);
         QVERIFY(reads.participation.detail.contains(QStringLiteral("10 of 10")));
         QVERIFY(reads.participation.detail.contains(QStringLiteral("Nasdaq-100")));
+        // It names itself a STAND-IN wherever it appears: this detail text is what the
+        // model's evidence and the cockpit meter show, not only the window's caveat.
+        QVERIFY(reads.participation.detail.contains(QStringLiteral("stand-in for breadth")));
         QVERIFY(indexReads(QStringLiteral("SPX500"),
                            inputsFor(QStringLiteral("SPX500"), refs, sessionWith(0.8)))
                     .participation.detail.contains(QStringLiteral("S&P 500")));
@@ -235,7 +238,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-003 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, REQ-F-069, scope=function)
     void TS_CONF_003_unknownNeverCountsAsAgreement()
     {
         // The whole point of the score: "four of five agree" has to mean four MEASURED
@@ -278,7 +281,7 @@ private slots:
         QVERIFY(noSide.reasons.isEmpty());
     }
     //! @tstid TS-CONF-004 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-071, REQ-F-074, scope=function)
     void TS_CONF_004_theHeavyweightPulseSummarisesWhatWasActuallyRead()
     {
         // The early-warning view (the "Heavyweights" window) is built from this, and
@@ -347,7 +350,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-007 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-075, scope=function)
     //
     // The CAP-WEIGHTED constituent lead: the summarised up/down indicator the user asked for,
     // weighting each name by its share of the index. Its whole reason to exist is that it can
@@ -372,6 +375,10 @@ private slots:
         // The headline carries both numbers, and the compact indicator carries the direction as
         // an arrow (▲ for the positive cap-weighted move) plus the index and the breadth count.
         QVERIFY(pulse.headline().contains(QStringLiteral("cap-wt")));
+        // …and says its weights are the static table, not live index weightings.
+        QCOMPARE(capWeightsNote(), QStringLiteral("approx. static weights"));
+        QVERIFY(pulse.headline().contains(QStringLiteral("cap-wt +")));
+        QVERIFY(pulse.headline().contains(QStringLiteral("(approx. static weights)")));
         const QString indicator = pulse.leadIndicator();
         QVERIFY(indicator.contains(QStringLiteral("Nasdaq-100")));
         QVERIFY(indicator.contains(QString(QChar(0x25B2))));   // ▲ up
@@ -391,7 +398,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-005 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-065, REQ-F-066, REQ-F-072, scope=function)
     void TS_CONF_005_theVolumeReadsAnswerWhereTheBuyingHappened()
     {
         // Volume is what separates "the names are up" from "the names are being bought",
@@ -455,7 +462,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-006 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-059, REQ-F-060, REQ-F-063, REQ-F-070, REQ-F-073, scope=function)
     void TS_CONF_006_theFuturesReadsComeFromTheSymbolBookNotTheTickerBook()
     {
         // A REGRESSION test, and the reason this one exists is worth stating: the futures

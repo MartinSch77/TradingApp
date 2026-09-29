@@ -272,11 +272,15 @@ bool FinBertSentiment::load(const QString &directory)
     return false;
 }
 
+// The same wording as the runtime build's no-model branch, read from m_status (which the
+// constructor and load() set to missingRuntimeStatus()). Reading the member is not cosmetic:
+// a stub that ignored `this` made cppcheck's functionStatic fire on every ONNX-less build —
+// the CI release gate's configuration — while the runtime build stayed silent.
 HeadlineSentiment FinBertSentiment::scoreText(const QString &text)
 {
     Q_UNUSED(text);
     HeadlineSentiment out;
-    out.error = missingRuntimeStatus();
+    out.error = QStringLiteral("no model loaded (%1)").arg(m_status);
     return out;
 }
 

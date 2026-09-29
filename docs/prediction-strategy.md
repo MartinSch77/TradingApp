@@ -31,7 +31,7 @@ unreachable with the data this application can obtain**.
 
 | Signal | Where |
 |---|---|
-| Futures leadership (NQ vs ES) | `futuresLeadRead`, REQ-F-035 |
+| Futures leadership (NQ vs ES) | `futuresLeadRead`, REQ-F-059 |
 | The leading future's push over 1/5/15 min | one read, since three horizons off one series are one piece of evidence |
 | Volatility **direction** (^VXN / ^VIX) | `volatilityRead` |
 | Volatility **term structure** (^VIX9D vs ^VIX3M) | a regime damper, never a direction |

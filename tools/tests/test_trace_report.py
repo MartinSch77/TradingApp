@@ -385,3 +385,100 @@ def test_main_partial_result_when_some_have_no_result(tmp_path, monkeypatch):
     trace_report.main()
     html = (tmp_path / "docs/traceability.html").read_text(encoding="utf-8")
     assert "PARTIAL RESULT" in html
+
+
+# ---------------------------------------------------------------------------
+# superseded requirements (the marker tools/sdoc_to_md.py writes)
+# ---------------------------------------------------------------------------
+
+
+def test_superseded_by_reads_successors_and_ignores_plain_statements():
+    reqs = {
+        "REQ-F-034": "**Superseded** by REQ-F-049, REQ-F-050.<br><br>The old bundle",
+        "REQ-F-035": "**Superseded**.<br><br>Split, but nobody was named",
+        "REQ-F-049": "Churn shall be governed (unlike REQ-F-034 said)",
+    }
+    assert trace_report.superseded_by(reqs) == {
+        "REQ-F-034": {"REQ-F-049", "REQ-F-050"},
+        "REQ-F-035": set(),
+    }
+
+
+def test_superseded_by_never_names_itself():
+    reqs = {"REQ-F-034": "**Superseded** by REQ-F-034, REQ-F-049.<br><br>x"}
+    assert trace_report.superseded_by(reqs) == {"REQ-F-034": {"REQ-F-049"}}
+
+
+def test_main_superseded_requirement_is_traced_through_its_successors(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(trace_report, "ROOT", tmp_path)
+    _base_tree(tmp_path)
+    # REQ-F-034 has no design and no test of its own — and must be neither a hard nor an
+    # open gap, because its successor carries the obligation.
+    write(
+        tmp_path / "docs/requirements.md",
+        "| REQ-F-034 | **Superseded** by REQ-F-049.<br><br>The old bundle | T/A |\n"
+        "| REQ-F-049 | Churn shall be governed | T |\n",
+    )
+    write(tmp_path / "docs/design.md", "| DES-FOO-A1 | REQ-F-049 |\n")
+    write(tmp_path / "docs/test_spec.md", "| TS-FOO-001 | spec text |\n")
+    write(
+        tmp_path / "tests/tst_sample.cpp",
+        "//! @tstid TS-FOO-001 @design DES-FOO-A1\n"
+        "// @relation(REQ-F-049, scope=function)\n"
+        "void TS_FOO_001_something()\n"
+        "{\n"
+        "}\n",
+    )
+    write(
+        tmp_path / "test-results/results.xml",
+        '<testsuite name="tst_sample"><testcase name="TS_FOO_001_something"/></testsuite>',
+    )
+
+    rc = trace_report.main()
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "REQ-F-034" not in out.split("\n", 1)[1]  # no gap line names it
+    summary = out.splitlines()[0]
+    assert "2 requirements (1 superseded)" in summary
+    assert "1/1 requirements fully traced" in summary
+    assert "0 hard gaps, 0 open coverage gaps" in summary
+    html = (tmp_path / "docs/traceability.html").read_text(encoding="utf-8")
+    assert "<tr class='sup'><td>REQ-F-034</td>" in html
+    assert "SUPERSEDED → REQ-F-049" in html
+
+
+def test_main_superseded_marker_must_name_real_successors(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(trace_report, "ROOT", tmp_path)
+    _base_tree(tmp_path)
+    write(
+        tmp_path / "docs/requirements.md",
+        "| REQ-F-034 | **Superseded** by REQ-F-777.<br><br>Split into a ghost | T |\n"
+        "| REQ-F-035 | **Superseded**.<br><br>Split into nothing | T |\n"
+        "| REQ-F-049 | Live requirement | T |\n",
+    )
+    write(tmp_path / "docs/design.md", "| DES-FOO-A1 | REQ-F-049 |\n")
+    write(tmp_path / "docs/test_spec.md", "| TS-FOO-001 | spec text |\n")
+    # A test that still cites the retired id instead of its successor.
+    write(
+        tmp_path / "tests/tst_sample.cpp",
+        "//! @tstid TS-FOO-001 @design DES-FOO-A1\n"
+        "// @relation(REQ-F-034, scope=function)\n"
+        "// @relation(REQ-F-049, scope=function)\n"
+        "void TS_FOO_001_something()\n"
+        "{\n"
+        "}\n",
+    )
+
+    rc = trace_report.main()
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "HARD GAP: REQ-F-034: superseded by unknown REQ-F-777" in out
+    assert "HARD GAP: REQ-F-035: marked superseded but names no successor" in out
+    assert "HARD GAP: TS-FOO-001: @relation references superseded REQ-F-034" in out
+    assert "SUPERSEDED → ?" in (tmp_path / "docs/traceability.html").read_text(
+        encoding="utf-8"
+    )

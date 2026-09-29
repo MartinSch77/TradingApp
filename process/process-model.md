@@ -197,6 +197,14 @@ auditor) can perform both roles independently** —
   goal: *"I might ask ChatGPT to perform an ASPICE assessment on this
   project."*
 
+Neither role ever carries the decision. Every release, and every
+safety-relevant conclusion, has a named **human final approver**
+(`templates/release-approval-template.md`, "Final human approver") who signs
+after reading the evidence; AI-produced findings, reports and assessments are
+inputs to that person and to independent QA (Section 3), never approvals in
+their own right. `.github/workflows/traceability-gate.yml` checks that this
+sentence of policy is present.
+
 This dual design is also this project's answer to a broader question: **can
 AI-assisted development work inside a regulated-style environment at all** —
 the kind ISO 26262 (functional safety), ISO/SAE 21434 (automotive

@@ -5,7 +5,7 @@
 # The combined indication (REQ-F-036) must state WHAT IT WAS BUILT FROM, on screen.
 #
 # What this checks that a unit test cannot: the label a person actually reads is
-# consistent with the evidence behind it. The invariant of REQ-F-035 is that an
+# consistent with the evidence behind it. The invariant of REQ-F-068 is that an
 # unmeasurable read counts as nothing and is SAID to be unmeasurable — a "4 of 5"
 # assembled from absent feeds is a lie. A unit test can prove leadSignal() honours
 # that; only a GUI test can prove the window does not quietly render an ellipsis, a
@@ -17,7 +17,7 @@
 # exceeds it. A test that needed live data would be a test that fails on a train.
 #
 # @relation(REQ-F-036, scope=file)
-# @relation(REQ-F-035, scope=file)
+# @relation(REQ-F-068, scope=file)
 #
 # The markers are for Test Center's repository mapping (`testcentercmd integration map
 # --prefix='@relation('`), which scans test files for requirement ids. GUI tests

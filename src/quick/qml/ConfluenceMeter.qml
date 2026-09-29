@@ -7,7 +7,8 @@ import QtQuick
 import QtQuick.Controls
 import TradingApp.Cockpit
 
-// The confluence meter: nine discrete ticks, one per independent read (REQ-F-038, REQ-F-035).
+// The confluence meter: nine discrete ticks, one per independent read (REQ-F-038, REQ-F-068,
+// REQ-F-069).
 //
 // NOT a gauge arc showing "6/8". Two reasons, and both are correctness rather than taste:
 //

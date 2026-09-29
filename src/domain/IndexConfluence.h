@@ -12,7 +12,7 @@
 #include <optional>
 
 // What the index instruments are really doing, from the reference series the app can
-// actually fetch (REQ-F-035).
+// actually fetch (REQ-F-059..-075).
 //
 // The premise, which is worth stating because it contradicts how most indicator
 // panels are built: RSI, MACD, stochastic and a stack of moving averages are all
@@ -137,7 +137,7 @@ struct TermStructure {
 };
 [[nodiscard]] TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries);
 
-// One heavyweight constituent, as the early-warning view shows it (REQ-F-035): the
+// One heavyweight constituent, as the early-warning view shows it (REQ-F-074): the
 // name, how far it has moved on the session, and whether that was measurable at all.
 // A name whose series is missing is UNKNOWN — the same rule the reads follow, because
 // "flat" and "not fetched" are different facts and only one of them is evidence.
@@ -186,6 +186,12 @@ struct HeavyweightPulse {
     // a monochrome capture and for a colour-blind trader, like the rest of the app's meters.
     [[nodiscard]] QString leadIndicator() const;
 };
+
+// The label every display of the cap-weighted lead carries (REQ-F-075): the weights are
+// the static heavyweightWeight table, not live index weightings, and saying so on screen
+// is the same honesty rule as the breadth stand-in. One definition, so the console, the
+// headline and the Heavyweights window cannot word it differently.
+[[nodiscard]] QString capWeightsNote();
 
 // The pulse of the index `symbol` belongs to, from the reference series already
 // fetched for the confluence reads — no additional feed.

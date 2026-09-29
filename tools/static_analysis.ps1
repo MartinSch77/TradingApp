@@ -57,6 +57,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 . "$PSScriptRoot\common.ps1"
+
+# A count alone makes a red run unactionable wherever the artefact cannot be
+# fetched: v1.1.1's CI release gate printed "cppcheck findings: 1" and
+# "clang-tidy findings: 1" and nothing else (2026-08-17). The first few lines of a
+# non-empty report go to the console too; the file stays the full record.
+# Mirrors show_first in static_analysis.sh.
+function Show-First([string]$Report, [int]$Count) {
+    if (($Count -gt 0) -and (Test-Path $Report)) {
+        Get-Content $Report -TotalCount 10 | ForEach-Object { Write-Host "    $_" }
+    }
+}
+
 $Root = Get-RepoRoot
 $Out = Join-Path $Root 'analysis-results'
 if (-not (Test-Path $Out)) { New-Item -ItemType Directory -Force -Path $Out | Out-Null }
@@ -130,6 +142,7 @@ if (Test-Tool 'cppcheck') {
     }
     $cppcheckN = Get-LineCount $cppcheckLog
     Write-Host "cppcheck findings: $cppcheckN (analysis-results\cppcheck.txt)"
+    Show-First $cppcheckLog $cppcheckN
 } else {
     Write-Stage 'cppcheck'
     Write-Skip "cppcheck not installed (winget install Cppcheck.Cppcheck)"
@@ -159,6 +172,7 @@ if (Test-Tool 'clang-tidy') {
     Write-TextFile $tidyLog (($lines | Sort-Object -Unique) -join "`n")
     $tidyN = Get-LineCount $tidyLog
     Write-Host "clang-tidy findings: $tidyN (analysis-results\clang-tidy.txt)"
+    Show-First $tidyLog $tidyN
 } else {
     Write-Stage 'clang-tidy'
     Write-Skip "clang-tidy not installed (winget install LLVM.LLVM, or pip install clang-tidy)"

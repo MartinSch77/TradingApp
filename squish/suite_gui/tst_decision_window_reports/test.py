@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # -*- coding: utf-8 -*-
-# The decision window (REQ-F-008, REQ-F-035) shows its SOURCES, not just a verdict.
+# The decision window (REQ-F-008, REQ-F-069) shows its SOURCES, not just a verdict.
 #
 # The rule being checked is the one the requirements insist on: every source is
 # named, and a source that could not be measured says so rather than being left out.
@@ -40,7 +40,7 @@ def main():
     test.verify(waitForObject(names.decisionSources).rowCount > 0,
                 "the sources are still listed after a refresh")
 
-    # 4. The signals panel carries the independent reads (REQ-F-035): the confluence
+    # 4. The signals panel carries the independent reads (REQ-F-069): the confluence
     #    line must exist, whatever it currently says — including "no reference reads
     #    yet", which is the honest answer before the feeds have arrived.
     #

@@ -47,7 +47,7 @@ private slots:
     }
 
     //! @tstid TS-CON-002 @design DES-CON-BOT
-    // @relation(REQ-F-029, REQ-F-035, scope=function)
+    // @relation(REQ-F-029, REQ-F-074, scope=function)
     //
     // The heavyweight chart encodes direction by BAR SIDE and a signed number, never colour,
     // and an ABSENT constituent is dashed rather than drawn flat — a flat bar would read as
@@ -218,7 +218,7 @@ private slots:
     }
 
     //! @tstid TS-CON-006 @design DES-CON-BOT
-    // @relation(REQ-F-029, REQ-F-035, scope=function)
+    // @relation(REQ-F-029, REQ-F-075, scope=function)
     //
     // The summarised constituent-lead line lays the two indices' indicators out on ONE row,
     // labelled, with the left padded to a fixed column so the right does not shift. The wording
@@ -232,6 +232,8 @@ private slots:
 
         // One line, labelled, with the left indicator before the right.
         QVERIFY(line.contains(QStringLiteral("Top-10 lead")));
+        // The weights are a static snapshot, and the line says so after both indicators.
+        QVERIFY(line.endsWith(QStringLiteral("(approx. static weights)")));
         QVERIFY(line.contains(left));
         QVERIFY(line.contains(right));
         QVERIFY(line.indexOf(left) < line.indexOf(right));

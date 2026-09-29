@@ -107,7 +107,7 @@ QString cockpitAgreementText(const QList<ReadTick> &ticks)
     QString text = QStringLiteral("%1 of %2 agree").arg(agreeing).arg(total);
     if (unmeasurable > 0) {
         // Always appended when nonzero. "6 of 9" and "6 of 9 with 3 unmeasurable" are
-        // different facts and REQ-F-035 forbids collapsing them.
+        // different facts and REQ-F-068 forbids collapsing them.
         text += QStringLiteral(" · %1 unmeasurable").arg(unmeasurable);
     }
     return text;

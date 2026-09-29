@@ -3,8 +3,9 @@
 
 // Headless unit tests over the open-trades table model (DES-UI-POSMODEL):
 // the in-place refresh path (REQ-N-006) and the SL/TP edit guard that keeps
-// polls from overwriting a cell while its editor is open (REQ-F-012). The
-// model is pure QAbstractTableModel — no view or widget is instantiated.
+// polls from overwriting a cell while its editor is open (REQ-F-012), and the
+// local model's read-only hold/close advice column (REQ-F-057). The model is
+// pure QAbstractTableModel — no view or widget is instantiated.
 
 #include "ui/PositionsModel.h"
 
@@ -265,6 +266,79 @@ private slots:
         QVERIFY(tip(PositionsModel::ColSl).contains(QStringLiteral("Trailing")));
         QVERIFY(tip(PositionsModel::ColTp).startsWith(QStringLiteral("No take-profit on this "
                                                                     "trade")));
+    }
+
+    //! @tstid TS-PM-006 @design DES-UI-POSMODEL
+    // @relation(REQ-F-057, scope=function)
+    void TS_PM_006_aiColumnIsAdviceThatNeverClosesARealPosition()
+    {
+        PositionsModel model;
+        Position gold = makePosition(QStringLiteral("2"), 0.0, 0.0);
+        gold.symbol = QStringLiteral("GOLD");
+        model.setPositions({makePosition(QStringLiteral("1"), 1.13, 1.15), gold});
+        QVERIFY(model.setData(model.index(0, PositionsModel::ColMark), Qt::Checked,
+                              Qt::CheckStateRole));
+
+        const auto cell = [&model](qint32 row, qint32 role) {
+            return model.data(model.index(row, PositionsModel::ColAi), role);
+        };
+        QCOMPARE(model.headerData(PositionsModel::ColAi, Qt::Horizontal).toString(),
+                 QStringLiteral("AI"));
+
+        // Before the model has said anything: "—", no colour, and a tooltip that says
+        // what the column is — including that it closes nothing (REQ-N-005).
+        QCOMPARE(cell(0, Qt::DisplayRole).toString(), QStringLiteral("—"));
+        QVERIFY(!cell(0, Qt::ForegroundRole).isValid());
+        const QString explained = cell(0, Qt::ToolTipRole).toString();
+        QVERIFY(explained.contains(QStringLiteral("nothing here closes it")));
+
+        const QSignalSpy resets(&model, &QAbstractItemModel::modelAboutToBeReset);
+        const QSignalSpy edits(&model, &PositionsModel::slTpEdited);
+        const QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+
+        // A HOLD on EURUSD in the model's own words, and a CLOSE on GOLD it may not act
+        // on yet (too young): the second is still SHOWN — the minimum holding time is a
+        // fact about the trade, not a reason to hide the opinion.
+        trading::HoldVerdict keep;
+        keep.opinion = trading::HoldOpinion::Hold;
+        keep.why = QStringLiteral("trend intact, keep it");
+        trading::HoldVerdict reverse;
+        reverse.opinion = trading::HoldOpinion::Close;
+        reverse.close = false;
+        reverse.code = QStringLiteral("ai-too-soon");
+        reverse.why = QStringLiteral("momentum faded");
+        model.setAiOpinions({{QStringLiteral("EURUSD"), keep}, {QStringLiteral("GOLD"), reverse}});
+
+        QCOMPARE(cell(0, Qt::DisplayRole).toString(), QStringLiteral("hold"));
+        QCOMPARE(cell(0, Qt::ForegroundRole).value<QColor>(), trading::ui::kGreen);
+        QCOMPARE(cell(0, Qt::ToolTipRole).toString(), QStringLiteral("trend intact, keep it"));
+        QCOMPARE(cell(1, Qt::DisplayRole).toString(), QStringLiteral("close"));
+        QCOMPARE(cell(1, Qt::ForegroundRole).value<QColor>(), trading::ui::kRed);
+        QCOMPARE(cell(1, Qt::ToolTipRole).toString(), QStringLiteral("momentum faded"));
+
+        // One dataChanged over the AI column alone — no reset, so the mark survives —
+        // and no path from an opinion to closing anything: both rows are still there.
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(cellTouched(changed, 0, PositionsModel::ColAi));
+        QVERIFY(cellTouched(changed, 1, PositionsModel::ColAi));
+        QVERIFY(!cellTouched(changed, 0, PositionsModel::ColPl));
+        QCOMPARE(resets.count(), 0);
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(model.markedIds(), QStringList{QStringLiteral("1")});
+
+        // The cell is read-only advice: not editable, and writing to it is refused
+        // without emitting anything a window could turn into an order.
+        QCOMPARE(model.flags(model.index(1, PositionsModel::ColAi)),
+                 Qt::ItemFlags(Qt::ItemIsEnabled));
+        QVERIFY(!model.setData(model.index(1, PositionsModel::ColAi), QStringLiteral("close")));
+        QCOMPARE(edits.count(), 0);
+        QCOMPARE(model.rowCount(), 2);
+
+        // An instrument the model stopped mentioning falls back to "—": silence is not
+        // an opinion, and it is never a close.
+        model.setAiOpinions({{QStringLiteral("EURUSD"), keep}});
+        QCOMPARE(cell(1, Qt::DisplayRole).toString(), QStringLiteral("—"));
+        QVERIFY(!cell(1, Qt::ForegroundRole).isValid());
     }
 };
 

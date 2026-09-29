@@ -410,7 +410,7 @@ private slots:
         QCOMPARE(logCount(logs, vixLine), 1);
     }
     //! @tstid TS-FEED-010 @design DES-SVC-FEEDS
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, scope=function)
     void TS_FEED_010_theReferenceSweepFetchesEveryTickerOnce()
     {
         // The sweep behind the independent reads: fifteen tickers, each fetched once,
@@ -632,7 +632,7 @@ private slots:
     }
 
     //! @tstid TS-FEED-014 @design DES-SVC-FEEDS
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-064, REQ-F-068, scope=function)
     void TS_FEED_014_aBarlessEquityResponseStillYieldsItsSessionChange()
     {
         // The regression for a SILENT, TOTAL loss of the heavyweight reads. Measured

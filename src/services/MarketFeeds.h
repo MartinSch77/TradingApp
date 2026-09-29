@@ -61,11 +61,12 @@ public:
     // arrive per instrument via intradayCloses. Feeds the decision composite.
     void fetchIntradaySeries();
     // The REFERENCE series that are not tradable instruments but say what the index
-    // instruments are doing: the two volatility indices (^VIX, ^VXN), the US 10-year
-    // yield (^TNX) and the top-ten constituents of BOTH indices, whose participation is
-    // the closest stand-in for breadth this app can fetch (REQ-F-035). The two lists
-    // share eight megacaps, so the union is 15 tickers, and each index's read picks its
-    // own ten. Results arrive per ticker via referenceSeries.
+    // instruments are doing: the two volatility indices (^VIX, ^VXN) and their term
+    // structure (^VIX9D, ^VIX3M), the US 10-year yield (^TNX) and the curve's front end
+    // (2YY=F, ^IRX), and the top-ten constituents of BOTH indices, whose participation is
+    // the closest stand-in for breadth this app can fetch (REQ-F-059..-075). The two
+    // lists share eight megacaps, so the whole sweep is 19 tickers, and each index's read
+    // picks its own ten (REQ-F-071). Results arrive per ticker via referenceSeries.
     void fetchReferenceSeries();
     // Daily-interval OHLC bars for ONE symbol, ~a year back — the timeframe a swing
     // strategy reasons over (REQ-F-031's redesign, item 5), distinct from every other
@@ -92,7 +93,7 @@ signals:
     // ("^VXN", "^TNX", "MSFT", …) rather than by an app instrument.
     void referenceSeries(const QString &ticker, const QList<double> &closes);
     // The same tickers' bars WITH volume, closes and volumes aligned bar for bar — what
-    // a session VWAP and an up/down-volume split need (REQ-F-035). Emitted only for
+    // a session VWAP and an up/down-volume split need (REQ-F-072). Emitted only for
     // tickers whose feed actually carries volume: the volatility and yield indices do
     // not, and their absence is what keeps those reads honestly UNKNOWN.
     void referenceVolumeSeries(const QString &ticker, const trading::VolumeSeries &bars);

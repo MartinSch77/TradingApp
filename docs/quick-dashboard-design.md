@@ -86,7 +86,7 @@ red-green-colourblind trader. It cannot ship that way.
 
 Nine ticks, not a continuous sweep, because there are nine discrete reads. The label
 states agreement **and** unmeasurability, since "6 of 9" and "6 of 9 with 3
-unmeasurable" are different facts and REQ-F-035 forbids collapsing them. Each read is
+unmeasurable" are different facts and REQ-F-068 forbids collapsing them. Each read is
 named in a list beneath with its glyph, its direction and its number — identity never
 rests on colour.
 

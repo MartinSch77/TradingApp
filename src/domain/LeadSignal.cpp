@@ -28,7 +28,7 @@ struct Contribution {
     QString reason;
 };
 
-// The nine independent reads (REQ-F-035), each already carrying whether it could be
+// The nine independent reads (REQ-F-059..-067), each already carrying whether it could be
 // measured. Their weights are equal on purpose: this app has no evidence that one of
 // them predicts better than another, and inventing a ranking would be a story rather
 // than a measurement.

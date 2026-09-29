@@ -34,7 +34,7 @@ struct MarketSnapshot {
     QHash<QString, QList<double>> intradayBySymbol;
     // The reference series that are not instruments: the volatility, term-structure and
     // yield tickers plus the top-ten constituents of the Nasdaq-100 and the S&P 500
-    // (REQ-F-035), keyed by Yahoo ticker.
+    // (REQ-F-061..-064, REQ-F-073), keyed by Yahoo ticker (REQ-F-070).
     QHash<QString, QList<double>> referenceSeries;
     // The same tickers WITH volume, closes and volumes aligned bar for bar — what the
     // session-VWAP and up/down-volume reads need. Absent for every ticker whose feed

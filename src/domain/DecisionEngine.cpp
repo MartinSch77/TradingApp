@@ -288,7 +288,7 @@ QString candidateLine(const DecisionRow &d, const MarketSnapshot &m)
     return out;
 }
 
-// The independent reads for the leading candidate's side (REQ-F-035): agreement
+// The independent reads for the leading candidate's side (REQ-F-069): agreement
 // between unlike things is the evidence, and the model is given it in those words.
 // Empty when there is nothing measured to report.
 QString confluenceLine(const QList<DecisionRow> &rows, const MarketSnapshot &m)

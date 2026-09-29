@@ -463,10 +463,10 @@ TITLE: The local model's read shown as a source, on the real open-trades table
 STATEMENT: >>>
 The local model's read shall be shown as a SOURCE wherever the app presents its evidence — in the per-instrument signals panel, in the decision window's source list, and as a hold/close column on the REAL open-trades table, where it is ADVICE: nothing there closes a real position, which stays a human action under REQ-N-005. Its side, its confidence and its own words shall be shown, and three states shall be told apart rather than conflated: "not configured", "shown this instrument and did not pick it", and "not among the instruments it was shown" — the last because the model can only speak about the candidates the prompt listed, and a reader who expects an opinion on every instrument is owed the reason there is none. The number of candidates put in front of the model shall therefore be a parameter of the prompt, and the consumer that reports a per-instrument read shall show it enough instruments to make that read meaningful.
 <<<
-RATIONALE: Split from REQ-F-034 (issue #14). Checked against REQ-F-030 and found NOT to be a duplicate: REQ-F-030 governs OBTAINING a proposal for the SIMULATOR; this governs DISPLAYING the model's read as advice on the REAL (not simulated) open-trades table — already reflected independently in DES-UI-POSMODEL's own `satisfies` column (`PositionsModel::setAiOpinions`/`ColAi`). No test currently carries an `@relation(REQ-F-034, …)` tag for this obligation specifically — it remains an open (non-hard) coverage gap, tracked for a follow-up rather than mistagged onto a test that does not exercise it.
+RATIONALE: Split from REQ-F-034 (issue #14). Checked against REQ-F-030 and found NOT to be a duplicate: REQ-F-030 governs OBTAINING a proposal for the SIMULATOR; this governs DISPLAYING the model's read as advice on the REAL (not simulated) open-trades table — already reflected independently in DES-UI-POSMODEL's own `satisfies` column (`PositionsModel::setAiOpinions`/`ColAi`). At the split no test carried a tag for this obligation specifically, and it was left as an open (non-hard) coverage gap rather than mistagged onto a test that does not exercise it; TS-PM-006 (added 2026-09-29) is that dedicated test.
 PRIORITY: must
-STATUS: implemented
-ACCEPTANCE_CRITERIA: Traced to DES-UI-POSMODEL, with 0 hard gaps; closing this requirement's own verification gap (adding a dedicated `@relation(REQ-F-057, …)` test) is tracked as follow-up work rather than claimed here.
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-UI-POSMODEL and TS-PM-006, passing, with 0 hard gaps: the open-trades table's AI column shows hold/close/"—" with the model's own words, still shows a close it may not act on yet, refreshes one column without a reset, and is read-only — no edit, no signal and no row removal can come from it.
 ISSUE: GitHub issue #14; see process/requirements-schema-upgrade.md.
 
 [REQUIREMENT]
@@ -504,11 +504,249 @@ Beside the equal-weight average, the app shall report a single SUMMARISED direct
 The count of agreeing reads shall be shown per instrument alongside the app's other signals, shall be given to the model as evidence in those words, and shall gate the bot: an index position shall not be opened while fewer than a configured number of the MEASURED reads agree with its side. That threshold shall be configurable, shall be satisfiable (never more than the number of reads actually available), and shall be able to be switched off — with the reads still shown and still given to the model, because a read nobody acts on is still information a reader is owed.
 <<<
 SOURCE: Design decision (REQ-F-035 predates this schema); the majority-agreement floor is additionally grounded in the measured regression TS-PAPER-025 documents (an absolute floor of 3 silently weakened as reads were added).
-RATIONALE: Bundles the nine independent reads, their measurability/keying/agreement rules, and two DISPLAY-only work products (the constituent own-view panel, the cap-weighted lead indicator) under one requirement id. Flagged for atomic decomposition alongside REQ-F-034 — see process/requirements-schema-upgrade.md.
+RATIONALE: Bundled the nine independent reads, the rules they are measured, keyed and counted under, the volatility term structure, the agreement gate and two DISPLAY-only work products (the constituent own-view, the cap-weighted lead indicator) under one requirement id. Split into REQ-F-059 through REQ-F-075 (GitHub issue #14, second and final atomization pass): one requirement per read (REQ-F-059 to REQ-F-067), one for the agreement count and gate (REQ-F-069), one per display (REQ-F-074, REQ-F-075), and — decided obligation by obligation and recorded in each successor's own RATIONALE — five cross-cutting obligations given ids of their own because each constrains several reads, or a layer below them, rather than one read: measurability (REQ-F-068), book keying (REQ-F-070), the per-index constituent list (REQ-F-071), aligned volume bars (REQ-F-072) and the volatility term structure (REQ-F-073). The heavyweight-participation STAND-IN rule stays with the participation read (REQ-F-064), and the "one read, not three" horizon rule with the futures-push read (REQ-F-060). Suspected duplicates were checked against the other requirements' own STATEMENTs rather than assumed: the opening-range read is NOT a duplicate of REQ-F-022 and only PARTLY one of REQ-F-056 (see REQ-F-067), the futures-leadership read shares its measurement with REQ-F-056 but not its obligation (REQ-F-059), and neither display duplicates REQ-F-036 or REQ-F-038 (REQ-F-074, REQ-F-075). This STATEMENT is kept verbatim as the historical record of the bundle; it is no longer the current source of truth for any of its obligations.
 PRIORITY: must
-STATUS: proposed
-ACCEPTANCE_CRITERIA: Superseded by one atomic requirement per read plus one for the agreement gate, each independently traced to DES-DOM-CONFLUENCE (or the specific display DES for the two UI-only obligations) and its own test(s), with 0 new hard gaps after the split.
-ISSUE: See process/requirements-schema-upgrade.md and the tracking GitHub issue it references.
+STATUS: superseded
+ACCEPTANCE_CRITERIA: Superseded by REQ-F-059 (futures-leadership read), REQ-F-060 (futures-push read), REQ-F-061 (volatility-direction read), REQ-F-062 (10-year yield read), REQ-F-063 (curve-shape read), REQ-F-064 (heavyweight-participation read), REQ-F-065 (above-own-VWAP read), REQ-F-066 (up/down-volume read), REQ-F-067 (opening-range position read), REQ-F-068 (measurability — UNKNOWN never counts as agreement), REQ-F-069 (agreement count and gate), REQ-F-070 (read inputs keyed as their sources are keyed), REQ-F-071 (per-index constituent list), REQ-F-072 (aligned volume bars), REQ-F-073 (volatility term structure), REQ-F-074 (constituent own view), REQ-F-075 (cap-weighted constituent lead) — each independently traced to its own design element and test, with 0 new hard gaps after the split.
+ISSUE: GitHub issue #14 (second pass, REQ-F-035); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-059
+VERIFICATION: T
+TITLE: Futures-leadership read — the Nasdaq future against the S&P future
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report the futures that lead the cash market: the Nasdaq future against the S&P future, i.e. whether technology is carrying the move or lagging it. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (GitHub issue #14, second pass): the first of the nine independent reads. Checked against REQ-F-056, whose STATEMENT also reads "the relative strength of the technology future against the broad-market future" and which is computed by the SAME `relativeStrength` function over the same two futures series: the MEASUREMENT is shared, so it is not re-specified here, but the requirement is NOT a duplicate — REQ-F-056 obliges that reading to be put in front of the model as evidence, while this one obliges it to be one of the COUNTED independent reads (a vote in `confluenceFor`, under REQ-F-068's UNKNOWN rule and read from the symbol book REQ-F-070 requires). Removing either would lose an obligation the other does not carry.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-002, TS-CONF-006 and TS-DEC-010, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-060
+VERIFICATION: T
+TITLE: Futures-push read — several horizons, counted as ONE read
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report the leading future's own push, read over SEVERAL horizons at once — one read, not three: a 1-, 5- and 15-minute return computed from one series are one piece of evidence wearing three hats, so what counts is whether they AGREE, and horizons that disagree shall be reported as the neutral they describe. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Kept apart from the futures-leadership read (REQ-F-059) although both read the futures: leadership compares two futures with each other, the push reads one future against its own recent past, and the two can disagree. The "one read, not three" rule stays HERE rather than in the agreement count (REQ-F-069), because it is this read's own definition that stops three horizons of one series from being counted as three votes.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-006, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-061
+VERIFICATION: T
+TITLE: Volatility-direction read — the index's own volatility index, by direction
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report expected volatility read by its DIRECTION rather than its level — the Nasdaq-specific volatility index for a Nasdaq instrument, the broad one otherwise. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Distinct from the volatility TERM STRUCTURE (REQ-F-073), which REQ-F-035 reports beside it but never counts as a direction, and from REQ-F-036's regime input, where the LEVEL of expected volatility may only reduce the combined indication — this read counts the DIRECTION as a vote.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-001 and TS-CONF-002, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-062
+VERIFICATION: T
+TITLE: US 10-year yield read
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report the US 10-year yield, whose rises press on growth shares. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass): the LEVEL-of-long-rates read, kept apart from the curve-shape read (REQ-F-063) because REQ-F-035 itself says the two regularly disagree — which is what makes both worth counting.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-001 and TS-CONF-002, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-063
+VERIFICATION: T
+TITLE: Curve-shape read — short end against long end, naming its front-end source
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report the SHAPE of the yield curve as the short end against the long end — the policy read, which regularly disagrees with the level of long rates and matters most to a technology index. The read shall name which front-end instrument it actually obtained. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). The "name which front-end instrument it obtained" clause belongs to this read alone: it is the only read with a fallback source (the 2-year yield future, else the 13-week bill), and a read whose source is ambiguous cannot be audited.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-001 and TS-CONF-006, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-064
+VERIFICATION: T
+TITLE: Heavyweight-participation read, named as a stand-in for breadth
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report how many of the index's heavyweight constituents (REQ-F-071) are actually participating. Heavyweight participation shall be named as a STAND-IN for market breadth wherever it appears, because true breadth (the advance/decline line, up-volume, the share of constituents above their session average) needs per-constituent data this app does not fetch, and a stand-in presented as the real thing is worse than an honest gap. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field); the constituent feed's measured regression of 2026-08-07 (a barless Yahoo equity response left every constituent unread, the read dark and nothing saying so) is pinned by TS-FEED-014.
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). The STAND-IN naming rule is kept HERE rather than made a requirement of its own because REQ-F-035 states it of this read specifically; the constituent view carries its own on-screen stand-in clause (REQ-F-074). At the split (2026-09-29) STATUS was `approved`, not `implemented`: the read itself was implemented and verified (TS-CONF-002: support for a broadly-up field, measured-neutral for a split one, UNKNOWN for a field too thin to read, the index's own list named; TS-FEED-014: a constituent's session change stays measurable from a barless response), but the read's own detail text — what reaches the model's evidence (`confluenceLine`) and the cockpit meter's tick detail — carried no stand-in label. It now reads "8 of 10 Nasdaq-100 heavyweights up (stand-in for breadth)", the same wording the above-VWAP read already used, and TS-CONF-002 pins it.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-002 and TS-FEED-014, passing, with 0 hard gaps: the participation read's own detail text names it a stand-in for breadth (TS-CONF-002), as do the signals-panel tooltip and the Heavyweights window.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-065
+VERIFICATION: T
+TITLE: Heavyweights above their own session VWAP
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report how many of the index's heavyweight constituents (REQ-F-071) trade above their OWN session VWAP. It is one of the two volume reads and rests on the aligned volume bars of REQ-F-072, being UNKNOWN rather than zero where a feed carries no volume. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass): the split plan's "breadth-by-VWAP" read. Its data prerequisite — closes and volumes aligned bar for bar, UNKNOWN without volume — is shared with the up/down-volume read and is therefore its own requirement (REQ-F-072) rather than restated in both.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-005, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-066
+VERIFICATION: T
+TITLE: Up/down-volume read — is the volume behind the rising names or the falling ones
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall fetch and report whether the session's VOLUME sits behind the rising heavyweight names or the falling ones, over the index's own constituents (REQ-F-071). It is one of the two volume reads and rests on the aligned volume bars of REQ-F-072, being UNKNOWN rather than zero where a feed carries no volume. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). The split plan's working name for this read, "volume-delta", is deliberately NOT used: volume delta proper (buy- minus sell-initiated volume, cumulative delta, bid/ask imbalance) is order flow, which needs level-2 data this app does not have. What REQ-F-035 actually states is the up/down split of session volume across the heavyweights, and naming it after the real measure would be exactly the stand-in-presented-as-the-real-thing REQ-F-064 forbids.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-005, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-067
+VERIFICATION: T
+TITLE: Opening-range position as a counted read
+STATEMENT: >>>
+As one of the independent reads of REQ-F-069, the app shall report where price sits against its own opening range. Like every read, it shall report the direction it supports, the number behind it and whether it could be measured at all (REQ-F-068).
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Both suspected duplicates were checked against their actual STATEMENTs. REQ-F-022: NOT a duplicate — it blends a session-momentum TILT from the intraday series into the weighted composite and says nothing about an opening range. REQ-F-056: PARTLY a duplicate — it already obliges reading and reporting where price sits against the first half hour's range (inside it or broken up/down, the excursion against the range's own width, "no read" when the series is too short), and both are computed by the same `openingRange` function, so that reading is NOT re-specified here. What REQ-F-056 does not oblige, and this requirement alone does, is that the reading is one of the independent reads COUNTED for agreement — a vote in `confluenceFor`, UNKNOWN when unmeasurable and then never agreement — whereas REQ-F-056's consumers are the model's evidence and the `against-range-break` refusal. The obligation therefore stays, narrowed to that role.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-002, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-068
+VERIFICATION: T
+TITLE: Every read states whether it was measured — UNKNOWN never counts as agreement
+STATEMENT: >>>
+For each independent read the app shall report the direction it supports, the number behind it, and — decisively — whether it could be MEASURED AT ALL. A read whose series is missing shall be UNKNOWN and shall never count as agreement: a confluence of "four conditions met" must mean four measured conditions rather than four absent feeds.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). One of REQ-F-035's two cross-cutting invariants, given its own requirement rather than restated in each of the nine reads (REQ-F-059 to REQ-F-067 cite it) or folded into the agreement count (REQ-F-069): it constrains every read's own report as much as the count, it has to hold at every layer a reading passes through and is tested at each — the feed leaves a failed ticker ABSENT (TS-FEED-010, TS-FEED-014), the parse yields nothing rather than a zero (TS-YAHOO-001, TS-YAHOO-002), every read reports UNKNOWN and the count ignores it (TS-CONF-003, TS-INV-007), the model's evidence omits a "0 of 0" (TS-DEC-010) and the cockpit states them (TS-COCKPIT-001) — and REQ-F-038's absent-is-not-zero display rule cites exactly this obligation. TS-CONF-002 asserts the same per read but deliberately does NOT carry this id: StrictDoc honours only ONE `@relation` marker per test function (measured with 0.30.1 — a second marker silently drops the first) and that one line is already at the 100-column limit with the six ids it verifies more uniquely; TS-CONF-003's all-UNKNOWN case states the same fact through the count.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE, DES-DOM-YAHOOPARSE and DES-UI-COCKPIT and TS-CONF-003, TS-INV-007, TS-COCKPIT-001, TS-DEC-010, TS-FEED-010, TS-FEED-014, TS-YAHOO-001 and TS-YAHOO-002, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-069
+VERIFICATION: T
+TITLE: The agreement count — shown, given to the model, and gating the bot
+STATEMENT: >>>
+Prediction shall rest on AGREEMENT BETWEEN INDEPENDENT reads rather than on a stack of indicators derived from the same closes: an oscillator, a moving-average cross and a momentum study computed from one price series are one piece of evidence wearing three hats. The app shall therefore fetch and report reads that are independent of its own price history, each from a source it can actually obtain (REQ-F-059 to REQ-F-067). The count of agreeing reads shall be shown per instrument alongside the app's other signals, shall be given to the model as evidence in those words, and shall gate the bot: an index position shall not be opened while fewer than a configured number of the MEASURED reads agree with its side. That threshold shall be configurable, shall be satisfiable (never more than the number of reads actually available), and shall be able to be switched off — with the reads still shown and still given to the model, because a read nobody acts on is still information a reader is owed.
+<<<
+SOURCE: Design decision carried over from REQ-F-035. The implemented bar — a MAJORITY of the measured reads, floored at the configured number and clamped to what was measured — answers a measured regression: a fixed floor of 3 was a majority of five reads and a minority of nine, so every read added silently weakened the gate. REQ-F-035's SOURCE credits TS-PAPER-025 with documenting it; checked on 2026-09-29, the assertions that pin it (four of nine refused as needing five, five of nine taken) are in TS-PAPER-027.
+RATIONALE: Split from REQ-F-035 (issue #14, second pass): the split plan's "majority-agreement gate". The display, model-evidence and gate halves stay in ONE requirement because REQ-F-035 states them as three uses of one number and requires the first two to survive the third being switched off. The STATEMENT keeps REQ-F-035's own words — "fewer than a configured number of the MEASURED reads" — and does NOT promote the implemented majority rule (`confluenceVerdict`: the larger of `minAgreeingReads` and a majority of the measured count, clamped to that count, 0 = off) to a stated obligation, because a split must not add obligations; the majority rule satisfies this requirement and is recorded in SOURCE, and making it normative is a separate change. Not a duplicate of REQ-F-036, whose majority-of-measured "agreement bar" grades the combined indication, not the bot's `no-confluence` refusal.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and DES-UI-COCKPIT and TS-PAPER-027 (the `no-confluence` refusal names its numbers, a threshold above the measured count is clamped, four of nine agreeing is refused and five taken, 0 switches the gate off), TS-CONF-003 (the count per side), TS-DEC-010 (the count reaches the model's evidence in words) and TS-COCKPIT-001 (the count is shown beside what could not be measured), passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-070
+VERIFICATION: T
+TITLE: Read inputs keyed the way their sources are keyed
+STATEMENT: >>>
+The reads shall be supplied from books that are keyed the way their sources are keyed, and a read shall never search the wrong one: the reference tickers are keyed by TICKER and the futures proxies by the app's own INSTRUMENT SYMBOL, and mixing them silently disables a read while leaving every test that mixes them in the same way green.
+<<<
+SOURCE: Measured defect: the futures-lead read looked for the futures proxy in the ticker book, was therefore permanently UNKNOWN in the running app, and its unit test passed because the test filed the futures in the same wrong book (regression TS-CONF-006); the same shape later left the cockpit's SPX500/NSDQ100 reference cards permanently empty in both front ends (regression TS-COCKPIT-011).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Its own requirement rather than folded into the two futures reads, because the rule is about the INPUT BUNDLE every read is computed from (`ReadInputs`/`readInputsFor`), and its consumers include the cockpit's reference cards, not only the read that happened to expose it first.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and DES-UI-COCKPIT and TS-CONF-006 and TS-COCKPIT-011, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-071
+VERIFICATION: T
+TITLE: Each index read from its own constituent list, and the list named
+STATEMENT: >>>
+The constituent list shall be the one belonging to THAT index — up to ten names by weight, the Nasdaq-100's for a Nasdaq instrument and the S&P 500's otherwise — because the two lists agree at the top and differ exactly in the tail that distinguishes the indices, and reading the wrong tail reads a different market. The read shall name which list it counted.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Its own requirement because three reads (REQ-F-064, REQ-F-065, REQ-F-066) and the constituent view (REQ-F-074) all count over this list; restating it in each would be four copies of one rule. "The read shall name which list it counted" is met by the participation read's detail ("… Nasdaq-100 heavyweights up") and by the constituent pulse's index name; the two volume reads, added to REQ-F-035 after that sentence was written, do not name the list in their own detail text — noted here, not claimed.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and TS-CONF-001 (two ten-name lists, differing in the tail, each symbol selecting its own), TS-CONF-002 (one set of series gives each index its own answer, and the participation read names the index) and TS-CONF-004 (the two pulses read different names), passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-072
+VERIFICATION: T
+TITLE: Volume bars aligned bar for bar — no volume means UNKNOWN, never zero
+STATEMENT: >>>
+The two volume reads (REQ-F-065, REQ-F-066) are what separate "the names are up" from "the names are being bought", and they require volume bars whose closes and volumes are ALIGNED bar for bar: a close series and a volume series parsed independently skip different empty minutes, and a VWAP computed across that shift is a number about nothing. Where a feed carries no volume — the volatility and yield indices do not — both reads shall be UNKNOWN rather than zero.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Its own requirement rather than restated in both volume reads, because it is a DATA obligation on the parse (`yahooBars`, `VolumeSeries`) that both reads share, and it is verified at the parser (TS-YAHOO-006, TS-YAHOO-007) as well as at the reads (TS-CONF-005).
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-YAHOOPARSE and DES-DOM-CONFLUENCE and TS-YAHOO-006, TS-YAHOO-007 and TS-CONF-005, passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-073
+VERIFICATION: T
+TITLE: Volatility term structure — reported, a conviction damper, never a direction
+STATEMENT: >>>
+The volatility TERM STRUCTURE (the near leg against the far leg) shall additionally be reported, and shall never be counted as a direction: an inverted curve says the market is paying up for protection right now, which is a statement about how much the next print can overrule and not about which way it goes. It shall therefore only ever REDUCE conviction, exactly as an elevated level does.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass). Its own requirement and NOT one of the nine reads: REQ-F-035 excludes it from the direction count explicitly, so folding it into the volatility-direction read (REQ-F-061) or the agreement count (REQ-F-069) would misfile it. Checked against REQ-F-036, which lets "the market regime (expected volatility and an imminent high-impact release)" only reduce the combined indication: overlapping in effect, NOT a duplicate — REQ-F-036 names the volatility LEVEL, not the term structure, and says nothing about reporting the near and far legs. The "only ever REDUCE" half is exercised by TS-LEAD-003 (an inversion cuts the combined indication, an unmeasurable term structure leaves it alone), which therefore now carries this requirement's tag beside REQ-F-036's.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-CONFLUENCE and DES-DOM-LEAD and TS-CONF-001 (both legs fetched), TS-CONF-006 (reported as inverted or normal and never as a direction, the thirty-day leg standing in for the three-month, UNKNOWN without the near leg) and TS-LEAD-003 (an inversion reduces conviction), passing, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-074
+VERIFICATION: T/I
+TITLE: The index constituents in their own view — a stand-in for breadth, said on screen
+STATEMENT: >>>
+The constituents shall additionally be shown IN THEIR OWN VIEW as an early read on the two indices: the ten names of each index side by side with their session moves, how many of them are up, the average move of the readable ones, and which single name is leading and which is lagging — because an index carried by one name and an index carried by all ten are different situations that the same index price cannot tell apart. That view shall state, on screen rather than in a comment, that it is a STAND-IN for market breadth, and a constituent whose price could not be read shall be shown as UNKNOWN rather than as a zero move.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass): a DISPLAY-only obligation. The split plan suspected both displays were "arguably REQ-F-038 territory"; checked against the STATEMENTs, NOT a duplicate of either candidate. REQ-F-038 governs the declarative second front end (the cockpit) and never mentions the index constituents — its absent-is-not-zero display rule cites the measurability rule (REQ-F-068), not this view. REQ-F-036's last paragraph requires a GRAPH of the heavyweights normalised to their own session open, showing every constituent and refreshed while open; this requires the per-name summary (session moves, count up, readable average, leader and laggard) and the on-screen stand-in caveat. Both live in the same Heavyweights window (DES-UI-HEAVY), which is why that design element satisfies both. The bot console's constituent bar chart (DES-CON-BOT) shows the same names under the same UNKNOWN-not-zero rule (TS-CON-002) but is not "their own view"; the on-screen caveat is the Heavyweights window's, checked from the outside by the Squish case `tst_heavyweights_early_read` (hence T/I: the C++ suite pins the summary, the GUI suite or an inspection the caveat).
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-UI-HEAVY, DES-CON-BOT and DES-DOM-CONFLUENCE and TS-CONF-004 (rows, count up, readable-only average, leader and laggard, unread names UNKNOWN and never flat) and TS-CON-002 (an absent constituent dashed, never drawn as 0.00%), passing, plus the Squish case `tst_heavyweights_early_read` for the on-screen stand-in caveat, with 0 hard gaps.
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
+
+[REQUIREMENT]
+UID: REQ-F-075
+VERIFICATION: T/I
+TITLE: The cap-weighted constituent lead — one summarised direction, its approximate weights labelled
+STATEMENT: >>>
+Beside the equal-weight average, the app shall report a single SUMMARISED direction for the top constituents together — a CAP-WEIGHTED move, each name scaled by its share of the index and renormalised over the readable names — as the "in which direction are the top names pulling the index, up or down" indicator, because the index itself is cap-weighted and a large name moving is not a small name moving, and the top names can carry the index against the majority count (the index lagging its heaviest constituents is exactly the situation this is meant to surface). Direction shall be carried by a sign and a shape, never by colour alone. The weights used shall be an APPROXIMATE STATIC snapshot — this app does not fetch live index weightings — and shall be labelled as such on the same footing as the breadth stand-in caveat — enough to weight the heaviest name above the lightest by roughly the right ratio, never a claim to the index's exact construction.
+<<<
+SOURCE: Design decision carried over from REQ-F-035 (which predates the SOURCE field).
+RATIONALE: Split from REQ-F-035 (issue #14, second pass): a DISPLAY-only obligation — the lead is shown, never fed into the decision math (the combined indication still reads the equal-weight average). NOT a duplicate of REQ-F-036, whose indication is computed from "the index's own constituent field" without any cap weighting, nor of REQ-F-038, which never mentions the constituents. At the split (2026-09-29) STATUS was `approved`, not `implemented`: the cap-weighted computation, its disagreement with the count, the ▲/▼-plus-sign indicator, the console's one-line layout and the gauge's signed, proportional, clamped bar were implemented and tested (TS-CONF-007, TS-CON-006, TS-GAUGE-001), but the weights were labelled as an approximate static snapshot only in source comments. One domain label, `capWeightsNote()` ("approx. static weights"), is now shown wherever the lead is: the pulse headline ("cap-wt +0.42% (approx. static weights)"), the end of the console's Top-10 lead line, and the Heavyweights window's gauge heading.
+PRIORITY: must
+STATUS: verified
+ACCEPTANCE_CRITERIA: Traced to DES-UI-LEADGAUGE, DES-CON-BOT and DES-DOM-CONFLUENCE and TS-CONF-007, TS-CON-006 and TS-GAUGE-001, passing, with 0 hard gaps: the static-weights label is pinned in the headline (TS-CONF-007) and on the console line (TS-CON-006); the gauge heading uses the same `capWeightsNote()` (inspection).
+ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
 
 [REQUIREMENT]
 UID: REQ-N-008
@@ -545,7 +783,7 @@ UID: REQ-F-036
 VERIFICATION: T/A
 TITLE: One combined indication, and the constituent field it is read from
 STATEMENT: >>>
-The reads of REQ-F-035 shall be combined into ONE indication per index instrument, so that the question a leveraged trade actually asks — is there enough agreement right now to justify size — has a single answer rather than nine partial ones a reader has to weigh in their head. That indication shall be computed from the independent reads of REQ-F-035 (nine at the time of writing), the index's own constituent field, the session phase and the market regime (expected volatility and an imminent high-impact release), and shall report a side, a strength, a grade in words, and the leverage the EVIDENCE justifies. The count is deliberately NOT restated as a fixed number in the thresholds: the grade boundaries and the agreement bar are a MAJORITY of whatever was measured, so adding a read raises the bar instead of silently weakening it.
+The independent reads (REQ-F-059 to REQ-F-067) shall be combined into ONE indication per index instrument, so that the question a leveraged trade actually asks — is there enough agreement right now to justify size — has a single answer rather than nine partial ones a reader has to weigh in their head. That indication shall be computed from those independent reads (nine at the time of writing), the index's own constituent field, the session phase and the market regime (expected volatility and an imminent high-impact release), and shall report a side, a strength, a grade in words, and the leverage the EVIDENCE justifies. The count is deliberately NOT restated as a fixed number in the thresholds: the grade boundaries and the agreement bar are a MAJORITY of whatever was measured, so adding a read raises the bar instead of silently weakening it.
 
 Three properties shall hold, and they are what makes the number worth having rather than a comforting aggregate:
 
@@ -589,7 +827,7 @@ Any claim the view makes about its own safety shall be true of the build making 
 
 The data it presents shall be prepared by a SEPARATELY TESTABLE component rather than computed inside the declarative markup. What a view shows is a claim about the system, so it shall be verifiable by an automated test that does not require rendering: a screenshot proves that something was drawn, never that it was right. Every number the view displays shall therefore come from that component, and the component shall be tested directly.
 
-Three display rules follow from requirements already stated elsewhere, and the view shall not be permitted to soften any of them. An input that could not be measured shall be shown AS unmeasurable and shall never be rendered as a zero or a neutral midpoint (REQ-F-035). A strength on the 0..100 evidence scale shall never be presented as a probability, and where a measured probability does not exist the view shall say UNCALIBRATED rather than print a number (REQ-F-037). And every quantity derived from a market feed shall carry its FRESHNESS: a value whose quote is stale shall be visibly distinguished from a live one, and a value that cannot be obtained shall be shown as absent rather than as its last known reading, because a dashboard that renders a stale price in the same style as a live one misleads silently and continuously.
+Three display rules follow from requirements already stated elsewhere, and the view shall not be permitted to soften any of them. An input that could not be measured shall be shown AS unmeasurable and shall never be rendered as a zero or a neutral midpoint (REQ-F-068). A strength on the 0..100 evidence scale shall never be presented as a probability, and where a measured probability does not exist the view shall say UNCALIBRATED rather than print a number (REQ-F-037). And every quantity derived from a market feed shall carry its FRESHNESS: a value whose quote is stale shall be visibly distinguished from a live one, and a value that cannot be obtained shall be shown as absent rather than as its last known reading, because a dashboard that renders a stale price in the same style as a live one misleads silently and continuously.
 
 Identity in that view shall not rest on colour alone. Where a state is encoded by colour it shall also be encoded by shape, glyph or text, so that the view remains readable without colour discrimination — the up/down convention of the domain is precisely the pair that red-green colour blindness cannot separate. That rule shall bind the PRICE CHART too, where the convention is strongest: an up bar and a down bar shall differ in FILL as well as in colour, and the chart shall draw few enough bars for that fill to be visible — a body reduced to the width of its own border carries no fill channel at all, so a chart that shows a whole session at one-minute resolution has silently voided the guarantee while still claiming it. Where the view therefore shows only part of the series it shall SAY which part.
 

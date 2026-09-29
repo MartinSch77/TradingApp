@@ -484,15 +484,28 @@ jobs:
           cp LICENSE "downloads/LICENSE.txt"
           cp THIRD_PARTY_LICENSES.md "downloads/THIRD_PARTY_LICENSES.md"
           ls -l downloads
+          # Notes built from the evidence this run HAS, not --generate-notes' bare PR list
+          # (v1.1.2 was published with only that). The quality-report artifact carries
+          # the JUnit XML; the traceability line is trace_report.py's own summary over
+          # it. tools/publish_release.sh replaces these notes once it attaches the
+          # Axivion-backed qualification bundle — the notes say so rather than implying
+          # that evidence is already there.
+          rm -rf test-results && cp -r downloads/test-results test-results
+          trace="$(python3 tools/trace_report.py 2>/dev/null | head -1 || true)"
+          python3 tools/release_notes.py --version "$version" \
+            --commit "$(git rev-parse --short HEAD)" \
+            --test-results test-results --trace-summary "$trace" --out release-notes.md
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --title "eToro Trader $tag" \
-              --generate-notes \
+              --notes-file release-notes.md \
               --latest
           fi
           # A finished release, explicitly: a pre-release shows as an orange badge and
-          # is not what "latest release" should point at.
-          gh release edit "$tag" --prerelease=false --draft=false --latest
+          # is not what "latest release" should point at. The notes are (re)written here
+          # too, so a release someone created by hand first still gets the evidence.
+          gh release edit "$tag" --notes-file release-notes.md \
+            --prerelease=false --draft=false --latest
           # FILES only, and only at the top level: the quality-report artifact also
           # carries analysis-results/, test-results/ and docs/ as directories (evidence
           # for the PDF), and `gh release upload` fails the whole step on the first

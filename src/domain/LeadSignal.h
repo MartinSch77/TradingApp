@@ -73,10 +73,10 @@ struct LeadSignal {
 
 // Everything the signal is computed from. Anything left at its default is UNKNOWN and
 // is reported as such rather than assumed benign — the distinction this whole module
-// exists to preserve.
+// exists to preserve. (`reads` are REQ-F-059..REQ-F-067, split out of REQ-F-035.)
 struct LeadInputs {
     QString symbol;                 // the index instrument the signal is for
-    IndexReads reads;               // the independent reads, REQ-F-059..-067
+    IndexReads reads;               // REQ-F-035's independent reads
     HeavyweightPulse pulse;         // its own index's constituent field
     QDateTime now;                  // for the session phase; invalid = unknown clock
     // The regime, as the decision engine already measures it.

@@ -17,7 +17,7 @@ published: v1.1.0's packaging died because Qt Graphs' CMake package needs
 `qtquick3d` + `qtshadertools`, which no install step requested (fixed in
 `f81d17d`), and v1.1.1's release gate then stopped on one cppcheck finding
 that only an ONNX-Runtime-less build — the CI configuration — produces.
-Everything below the first four bullets landed in those unpublished tags.
+Everything below the first five bullets landed in those unpublished tags.
 
 - Release gate: `FinBertSentiment`'s stub `scoreText` no longer trips
   cppcheck's `functionStatic` on builds without ONNX Runtime.
@@ -26,6 +26,12 @@ Everything below the first four bullets landed in those unpublished tags.
   being reported as untested; REQ-F-057 gained its dedicated test
   (TS-PM-006); the traceability-gate workflow, red on `main` since it was
   added, passes (the process model now names the human final approver).
+- GitHub issue #14 closed: after REQ-F-034 (PR #21, REQ-F-049..058),
+  REQ-F-035 is split too — REQ-F-059..075, nine independent reads, the
+  agreement gate, five cross-cutting rules and two displays, every test
+  re-tagged after reading it. Two successors (REQ-F-064, REQ-F-075) stay
+  `approved` rather than `implemented`: the split showed their on-screen
+  labelling clauses are not met yet.
 - Issue #15 (Coco GUI coverage under Squish) re-scored as an accepted,
   monitored low risk — `process/risk-register.md` RISK-001 is the live
   record.

@@ -58,7 +58,9 @@ for line in text.splitlines():
         req = {}
         if current is not None:
             current.append(req)
-    elif req is not None and (m := re.match(r"^(UID|VERIFICATION|STATEMENT): (.+)$", line)):
+    elif req is not None and (
+        m := re.match(r"^(UID|VERIFICATION|STATEMENT|STATUS|ACCEPTANCE_CRITERIA): (.+)$", line)
+    ):
         field, value = m.group(1).lower(), m.group(2)
         if value.strip() == ">>>":
             # multi-line field: the value follows, terminated by <<<
@@ -93,10 +95,32 @@ lines = [
     "I = inspection.",
     "",
 ]
+
+
+def statement_cell(r: dict) -> str:
+    """The Requirement cell: the statement, led by a superseded marker when STATUS says so.
+
+    A superseded requirement stays in the table as the historical record of what was split,
+    but it is no longer anyone's source of truth, and tools/trace_report.py must not keep
+    reporting it as an untested requirement (REQ-F-034 read as a permanent "coverage gap"
+    after issue #14 split it into ten atomic successors). The marker names the successors —
+    every REQ id its ACCEPTANCE_CRITERIA cites, in order, other than its own — so the trace
+    can check that each one exists instead of taking the word "superseded" on trust.
+    """
+    if r.get("status", "").strip().lower() != "superseded":
+        return r["statement"]
+    successors = []
+    for rid in re.findall(r"\bREQ-[FN]-\d{3}\b", r.get("acceptance_criteria", "")):
+        if rid != r["uid"] and rid not in successors:
+            successors.append(rid)
+    marker = f"**Superseded** by {', '.join(successors)}." if successors else "**Superseded**."
+    return f"{marker}<br><br>{r['statement']}"
+
+
 for title, reqs in sections:
     lines += [f"## {title}", "", "| ID | Requirement | Verify |", "|----|-------------|--------|"]
     for r in reqs:
-        lines.append(f"| {r['uid']} | {r['statement']} | {r['verification']} |")
+        lines.append(f"| {r['uid']} | {statement_cell(r)} | {r['verification']} |")
     lines.append("")
 
 # newline="\n" keeps the generated page byte-identical between Linux and

@@ -69,6 +69,27 @@ def parse_requirements():
     return reqs
 
 
+# tools/sdoc_to_md.py leads a superseded requirement's statement cell with this marker,
+# naming the successors (REQ-F-034 -> REQ-F-049..058, issue #14).
+SUPERSEDED_RE = re.compile(r"^\*\*Superseded\*\*(?: by ([^.]*))?\.")
+
+
+def superseded_by(reqs):
+    """REQ id -> the set of successor REQ ids, for every requirement marked superseded.
+
+    A superseded requirement is the historical record of what was split, not a source of
+    truth: its obligations are traced through its successors, so it is neither an open
+    coverage gap nor something a test may still cite. An empty set means the marker named
+    no successor at all, which main() reports as a hard gap.
+    """
+    out = {}
+    for r, statement in reqs.items():
+        m = SUPERSEDED_RE.match(statement)
+        if m:
+            out[r] = set(REQ_RE.findall(m.group(1) or "")) - {r}
+    return out
+
+
 def parse_requirement_verification():
     """REQ id -> its declared VERIFICATION method(s), e.g. {"T"}, {"A", "I"}.
 
@@ -170,6 +191,7 @@ def main():
     spec = parse_test_spec()
     impl = parse_test_impl()
     results = parse_results()
+    superseded = superseded_by(reqs)
 
     req_to_des = {r: set() for r in reqs}
     for des, satisfied in design.items():
@@ -200,6 +222,11 @@ def main():
         for r in info["verifies"]:
             if r not in reqs:
                 hard_gaps.append(f"{ts}: @relation references unknown {r}")
+            elif r in superseded:
+                hard_gaps.append(
+                    f"{ts}: @relation references superseded {r} — tag the successor it "
+                    "verifies instead"
+                )
         for d in info["design"]:
             if d not in design:
                 hard_gaps.append(f"{ts}: @design references unknown {d}")
@@ -210,6 +237,14 @@ def main():
             if r not in reqs:
                 hard_gaps.append(f"{des}: satisfies unknown {r}")
     for r in reqs:
+        if r in superseded:
+            # Traced through its successors, which must exist — a marker naming nothing,
+            # or naming an id that was never written, would hide obligations, not move them.
+            if not superseded[r]:
+                hard_gaps.append(f"{r}: marked superseded but names no successor")
+            for successor in sorted(superseded[r] - set(reqs)):
+                hard_gaps.append(f"{r}: superseded by unknown {successor}")
+            continue
         if not req_to_des.get(r):
             hard_gaps.append(f"{r}: no design element claims to satisfy it")
         if not req_to_ts.get(r):
@@ -239,6 +274,13 @@ def main():
     rows = []
     for r in sorted(reqs):
         des_list = ", ".join(sorted(req_to_des.get(r, []))) or "—"
+        if r in superseded:
+            rows.append(
+                f"<tr class='sup'><td>{r}</td><td>{esc(reqs[r][:110])}</td>"
+                f"<td>{esc(des_list)}</td><td>—</td>"
+                f"<td>SUPERSEDED → {esc(', '.join(sorted(superseded[r])) or '?')}</td></tr>"
+            )
+            continue
         ts_cells = []
         # Same distinction as the open-gaps list above: a requirement whose own
         # VERIFICATION method has no "T" was never meant to have one.
@@ -269,11 +311,15 @@ def main():
         f"<li class='warn'>{esc(g)}</li>" for g in open_gaps
     )
     complete = [r for r in reqs if req_to_ts.get(r) and req_to_des.get(r)]
+    # Superseded requirements are counted apart: they are neither "fully traced" nor a gap,
+    # and folding them into either figure would misstate the live requirement set.
+    active = len(reqs) - len(superseded)
+    retired = f" ({len(superseded)} superseded)" if superseded else ""
     summary = (
-        f"{len(reqs)} requirements · {len(design)} design elements · "
+        f"{len(reqs)} requirements{retired} · {len(design)} design elements · "
         f"{len(spec)} specified tests · {len(impl)} implemented tests · "
         f"{len(results)} recorded results — "
-        f"{len(complete)}/{len(reqs)} requirements fully traced to a executed test, "
+        f"{len(complete)}/{active} requirements fully traced to a executed test, "
         f"{len(hard_gaps)} hard gaps, {len(open_gaps)} open coverage gaps"
     )
 
@@ -285,6 +331,7 @@ table{{border-collapse:collapse;width:100%}}
 td,th{{border:1px solid #ccc;padding:4px 8px;font-size:13px;vertical-align:top;text-align:left}}
 tr.ok td{{background:#eafbea}} tr.warn td{{background:#fff8e0}}
 tr.gap td{{background:#f4f4f4}} tr.fail td{{background:#fde8e8}}
+tr.sup td{{background:#eef2fb;color:#555}}
 li.fail{{color:#b00}} li.warn{{color:#a67c00}}
 </style></head><body>
 <h1>Traceability matrix — requirements ↔ design ↔ test spec ↔ test result</h1>

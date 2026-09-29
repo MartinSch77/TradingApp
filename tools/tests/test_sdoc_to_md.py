@@ -110,3 +110,45 @@ def test_section_present_but_empty_still_errors(monkeypatch):
 def test_no_sections_at_all_exits(monkeypatch):
     with pytest.raises(SystemExit):
         run_sdoc_to_md(monkeypatch, "just some prose, not sdoc at all\n")
+
+
+def test_superseded_requirement_leads_with_its_successors(monkeypatch):
+    # The successors come from ACCEPTANCE_CRITERIA (block or single line), in order,
+    # de-duplicated and never including the requirement's own id.
+    sdoc = (
+        "[[SECTION]]\n"
+        "TITLE: Functional Requirements\n"
+        "\n"
+        "[REQUIREMENT]\n"
+        "UID: REQ-F-034\n"
+        "VERIFICATION: T/A\n"
+        "STATEMENT: The old bundle.\n"
+        "STATUS: superseded\n"
+        "ACCEPTANCE_CRITERIA: >>>\n"
+        "Superseded by REQ-F-050 (b) and REQ-F-049 (a); REQ-F-034 itself is history,\n"
+        "and REQ-F-050 is only named once.\n"
+        "<<<\n"
+        "\n"
+        "[REQUIREMENT]\n"
+        "UID: REQ-F-049\n"
+        "VERIFICATION: T\n"
+        "STATEMENT: Churn shall be governed.\n"
+        "STATUS: verified\n"
+        "ACCEPTANCE_CRITERIA: Traced to REQ-F-034's successor tests.\n"
+        "\n"
+        "[REQUIREMENT]\n"
+        "UID: REQ-F-060\n"
+        "VERIFICATION: T\n"
+        "STATEMENT: Split, successor not written yet.\n"
+        "STATUS: Superseded\n"
+    )
+    _, out_text = run_sdoc_to_md(monkeypatch, sdoc)
+
+    assert (
+        "| REQ-F-034 | **Superseded** by REQ-F-050, REQ-F-049.<br><br>The old bundle. | T/A |"
+        in out_text
+    )
+    # Not superseded: the statement is untouched even though its criteria cite an id.
+    assert "| REQ-F-049 | Churn shall be governed. | T |" in out_text
+    # Superseded with nothing named: the bare marker, which trace_report flags.
+    assert "| REQ-F-060 | **Superseded**.<br><br>Split, successor not written yet. | T |" in out_text

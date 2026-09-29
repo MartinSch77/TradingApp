@@ -221,6 +221,23 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     if (m_ai != nullptr) {
         static_cast<void>(
             connect(m_ai, &OllamaAdvisor::proposalsReady, this, &BotSimRunner::onProposals));
+        // How long the model took and how much of its context the prompt used: on a CPU a
+        // 7B model's answer time is what decides whether it stays inside a scan cycle, and a
+        // prompt close to the context window is one evidence line away from being cut.
+        static_cast<void>(connect(
+            m_ai, &OllamaAdvisor::generationUsage, this,
+            [this](qint32 promptTokens, qint32 answerTokens, double seconds, bool nearLimit) {
+                emit log(QStringLiteral("Local model: %1 s, prompt %2 + answer %3 tokens "
+                                        "(context %4)%5")
+                             .arg(seconds, 0, 'f', 1)
+                             .arg(promptTokens)
+                             .arg(answerTokens)
+                             .arg(OllamaAdvisor::kContextTokens)
+                             .arg(nearLimit ? QStringLiteral(" — prompt near the context "
+                                                             "limit, a longer one would be cut")
+                                            : QString()),
+                         nearLimit);
+            }));
         static_cast<void>(connect(m_ai, &OllamaAdvisor::availability, this,
                                   [this](bool ok, const QString &detail, const QStringList &) {
                                       m_aiStatus = detail;

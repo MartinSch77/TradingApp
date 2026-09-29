@@ -159,9 +159,9 @@ void OllamaAdvisor::requestExplanation(const QString &evidence)
         {QStringLiteral("prompt"), evidence},
         {QStringLiteral("stream"), false},
         {QStringLiteral("format"), QStringLiteral("json")},
-        {QStringLiteral("options"),
-         QJsonObject{{QStringLiteral("temperature"), 0.3},
-                     {QStringLiteral("num_predict"), 400}}},
+        {QStringLiteral("options"), QJsonObject{{QStringLiteral("temperature"), 0.3},
+                                                {QStringLiteral("num_predict"), 400},
+                                                {QStringLiteral("num_ctx"), kContextTokens}}},
     };
     QNetworkReply *reply = postGenerate(body);
     m_http->handleReply(reply, [this](bool ok, qint32 status, const QJsonDocument &doc,
@@ -238,7 +238,9 @@ void OllamaAdvisor::requestDecision(const QString &evidencePrompt)
              // on qwen2.5:1.5b (measured: a response cut off at "...low volatilit"), which
              // parsed to nothing and wasted the model's whole turn. 1500 lets it close the
              // structure; repairTruncatedJson salvages the complete picks if it still cuts off.
-             {QStringLiteral("num_predict"), 1500},
+             {QStringLiteral("num_predict"), kDecisionAnswerTokens},
+             // Without it Ollama falls back to 4096 and silently truncates a long prompt.
+             {QStringLiteral("num_ctx"), kContextTokens},
          }},
     };
 
@@ -254,8 +256,15 @@ void OllamaAdvisor::requestDecision(const QString &evidencePrompt)
             return;
         }
         // /api/generate with stream=false answers one object whose "response" holds
-        // the model's text — the JSON we asked for.
-        const QString text = doc.object().value(QStringLiteral("response")).toString();
+        // the model's text — the JSON we asked for — beside the daemon's own counters.
+        const QJsonObject answer = doc.object();
+        const qint32 promptTokens = answer.value(QStringLiteral("prompt_eval_count")).toInt();
+        const qint32 answerTokens = answer.value(QStringLiteral("eval_count")).toInt();
+        const double seconds =
+            answer.value(QStringLiteral("total_duration")).toDouble() / 1.0e9;   // ns
+        emit generationUsage(promptTokens, answerTokens, seconds,
+                             (promptTokens + kDecisionAnswerTokens) > kContextTokens);
+        const QString text = answer.value(QStringLiteral("response")).toString();
         const QList<AiDecision> picks = picksFrom(text);
         if (picks.isEmpty()) {
             // Either no JSON at all, or a well-formed "nothing worth trading". Both

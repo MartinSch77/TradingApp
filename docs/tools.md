@@ -159,6 +159,29 @@ under `~/.local/ollama`; on Windows it is `winget install Ollama.Ollama` followe
 `ollama pull qwen2.5:1.5b`. Without it the bot simply reports the model as not
 configured and keeps trading its own composite.
 
+GPU offload (`OLLAMA_GPU=auto|vulkan|off`, default `auto`). Ollama reaches an NVIDIA or
+AMD card on its own, but an **Intel iGPU** (Iris Xe, Arc) only through its experimental
+Vulkan backend, which it enables solely when the daemon starts with `OLLAMA_VULKAN=1`.
+`auto` chooses Vulkan when `vulkaninfo` lists a real GPU (the `llvmpipe` software
+renderer does not count; Mesa's driver is `sudo apt-get install mesa-vulkan-drivers
+vulkan-tools`). With a GPU the default model becomes `qwen2.5:7b` (~4.7 GB): the 1.5B
+model's measured failures — the wrong instrument, a different verdict two calls
+apart — are failures of size, and the GPU is what keeps the 7B answer inside the bot's
+five-minute proposal window. `OLLAMA_PULL_MODEL` still overrides either choice. The mode
+is written into `~/.local/ollama/start.sh`, so a daemon restarted after a reboot keeps
+it, and the script then loads the model once and reports where it actually runs, read
+from the daemon's `/api/ps` — a rejected driver falls back to the CPU silently, and
+only that report says so. `./setup.sh status` prints the mode and the placement.
+On Windows, set `OLLAMA_VULKAN=1` as a user environment variable, restart Ollama and
+`ollama pull qwen2.5:7b`; `ollama ps` shows GPU or CPU. **Under WSL2 no GPU is reachable
+from Linux** (only `/dev/dxg`, no `/dev/dri`; Vulkan sees `llvmpipe`) — measured on an
+Iris Xe laptop, `OLLAMA_VULKAN=1` changed nothing. Run Ollama on the Windows side
+instead; WSL2 forwards `localhost:11434`, so the app inside WSL uses it unchanged. On
+that CPU `qwen2.5:7b` measured 27.5 prompt / 6.9 answer tokens per second (1.5B: 155 /
+31). Every request asks for `num_ctx` 8192 (`OllamaAdvisor::kContextTokens`), because
+Ollama's default of 4096 silently truncates a long evidence prompt, and the bot logs
+each answer's time and token counts, flagging a prompt that comes close to the limit.
+
 ## Windows-only tools
 
 Versions captured on the Windows reference machine (Windows 11, 2026-07-27).

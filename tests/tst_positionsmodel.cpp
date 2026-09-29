@@ -294,7 +294,7 @@ private slots:
 
         const QSignalSpy resets(&model, &QAbstractItemModel::modelAboutToBeReset);
         const QSignalSpy edits(&model, &PositionsModel::slTpEdited);
-        QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+        const QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
 
         // A HOLD on EURUSD in the model's own words, and a CLOSE on GOLD it may not act
         // on yet (too young): the second is still SHOWN — the minimum holding time is a

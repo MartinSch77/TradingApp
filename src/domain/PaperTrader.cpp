@@ -278,9 +278,9 @@ EntryVerdict windowVerdict(const CandidateInput &in, const BotConfig &cfg, Sessi
 
 // The rules about HOW OFTEN, and the structure rule that goes with them: the
 // per-instrument cooldown, the book-wide pace limit, a fresh opposite range break,
-// and how many independent reads agree (REQ-F-034, REQ-F-035).
+// and how many independent reads agree (REQ-F-049, REQ-F-056, REQ-F-069).
 // How many of the MEASURED independent reads have to agree before an index position may
-// be opened (REQ-F-035). Only measured reads count: a requirement satisfied by absent
+// be opened (REQ-F-069). Only measured reads count: a requirement satisfied by absent
 // feeds would be a requirement in name only.
 //
 // The bar TRACKS THE NUMBER OF READS rather than being a constant calibrated when there

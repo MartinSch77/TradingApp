@@ -101,7 +101,7 @@ class TestIndexConfluence : public QObject
 
 private slots:
     //! @tstid TS-CONF-001 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-061, REQ-F-062, REQ-F-063, REQ-F-071, REQ-F-073, scope=function)
     void TS_CONF_001_theReferenceListIsWhatItClaimsToCover()
     {
         // The list IS the documentation of what the participation read covers, so it
@@ -141,7 +141,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-002 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-059, REQ-F-061, REQ-F-062, REQ-F-064, REQ-F-067, REQ-F-071, scope=function)
     void TS_CONF_002_eachReadSaysWhatItMeasuredOrThatItCouldNot()
     {
         const QHash<QString, QList<double>> refs = bullishReferences();
@@ -235,7 +235,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-003 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, REQ-F-069, scope=function)
     void TS_CONF_003_unknownNeverCountsAsAgreement()
     {
         // The whole point of the score: "four of five agree" has to mean four MEASURED
@@ -278,7 +278,7 @@ private slots:
         QVERIFY(noSide.reasons.isEmpty());
     }
     //! @tstid TS-CONF-004 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-071, REQ-F-074, scope=function)
     void TS_CONF_004_theHeavyweightPulseSummarisesWhatWasActuallyRead()
     {
         // The early-warning view (the "Heavyweights" window) is built from this, and
@@ -347,7 +347,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-007 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-075, scope=function)
     //
     // The CAP-WEIGHTED constituent lead: the summarised up/down indicator the user asked for,
     // weighting each name by its share of the index. Its whole reason to exist is that it can
@@ -391,7 +391,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-005 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-065, REQ-F-066, REQ-F-072, scope=function)
     void TS_CONF_005_theVolumeReadsAnswerWhereTheBuyingHappened()
     {
         // Volume is what separates "the names are up" from "the names are being bought",
@@ -455,7 +455,7 @@ private slots:
     }
 
     //! @tstid TS-CONF-006 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-059, REQ-F-060, REQ-F-063, REQ-F-070, REQ-F-073, scope=function)
     void TS_CONF_006_theFuturesReadsComeFromTheSymbolBookNotTheTickerBook()
     {
         // A REGRESSION test, and the reason this one exists is worth stating: the futures

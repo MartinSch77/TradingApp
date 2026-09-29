@@ -376,7 +376,7 @@ private slots:
         QVERIFY(loud.confidence <= quiet.confidence);
     }
     //! @tstid TS-DEC-010 @design DES-DOM-DEC
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-059, REQ-F-068, REQ-F-069, scope=function)
     void TS_DEC_010_theEvidencePromptSaysWhatIsMissingRatherThanSkippingIt()
     {
         // The prompt is what a model reads before naming a trade, so what it OMITS

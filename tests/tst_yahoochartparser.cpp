@@ -26,7 +26,7 @@ class TestYahooChartParser : public QObject
     Q_OBJECT;  // ";" closes the macro for tree-sitter so StrictDoc sees the first slot's @relation marker
 private slots:
     //! @tstid TS-YAHOO-001 @design DES-DOM-YAHOOPARSE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, scope=function)
     void TS_YAHOO_001_emptyOrMalformedDocumentDegradesToEmptyObject()
     {
         QCOMPARE(resultFrom(QByteArray()), QJsonObject());
@@ -36,7 +36,7 @@ private slots:
     }
 
     //! @tstid TS-YAHOO-002 @design DES-DOM-YAHOOPARSE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, scope=function)
     void TS_YAHOO_002_closesSkipsNullsAndOptionallyNonPositives()
     {
         const QJsonObject result = resultFrom(
@@ -96,7 +96,7 @@ private slots:
     }
 
     //! @tstid TS-YAHOO-006 @design DES-DOM-YAHOOPARSE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-072, scope=function)
     void TS_YAHOO_006_barsAreAlignedByIndexNeverHalfABar()
     {
         // Previously ZERO direct coverage: every existing test reached yahooBars only
@@ -113,7 +113,7 @@ private slots:
     }
 
     //! @tstid TS-YAHOO-007 @design DES-DOM-YAHOOPARSE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-072, scope=function)
     void TS_YAHOO_007_noVolumeAtAllIsHonestlyEmptyNotZero()
     {
         // The volatility/yield indices carry no volume at all — the read must come

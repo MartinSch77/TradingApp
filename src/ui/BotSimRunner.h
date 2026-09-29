@@ -81,7 +81,7 @@ public:
     // Refit the outcome model from the experience log, off the GUI thread. Also runs
     // itself every kRetrainEvery closed trades (REQ-F-033).
     void trainFromExperience();
-    // The reference series the confluence read is computed from (REQ-F-035).
+    // The reference series the confluence read is computed from (REQ-F-059..-067).
     void setReferenceSeries(const QHash<QString, QList<double>> &series)
     {
         m_referenceSeries = series;

@@ -17,7 +17,7 @@ class TestLeadGauge : public QObject
 
 private slots:
     //! @tstid TS-GAUGE-001 @design DES-UI-LEADGAUGE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-075, scope=function)
     void TS_GAUGE_001_barGeometryIsSignedProportionalAndClamped()
     {
         // SIGN: >= 0 extends right (up); < 0 extends left (down). Zero is up, never "down".

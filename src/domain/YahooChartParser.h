@@ -11,7 +11,7 @@
 #include <QJsonObject>
 #include <QList>
 
-// Parsing of the Yahoo Finance v8 "chart" JSON envelope (REQ-F-035/-022) — pulled out
+// Parsing of the Yahoo Finance v8 "chart" JSON envelope (REQ-F-068/-072/-022) — pulled out
 // of services/MarketFeeds into domain (Qt Core only) so it is independently testable
 // and fuzzable without that TU's QNetworkAccessManager/JsonHttp dependency. This is
 // UNTRUSTED external text: an HTTP response body from a third party, parsed with no

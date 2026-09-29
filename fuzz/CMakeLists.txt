@@ -25,7 +25,7 @@ tradingapp_add_fuzzer(fuzz_tradescript tradescript_fuzzer.cpp)
 # dependency (tooling backlog item 7).
 tradingapp_add_fuzzer(fuzz_ollama_response ollama_response_fuzzer.cpp)
 
-# Yahoo's chart JSON envelope (src/domain/YahooChartParser.cpp, REQ-F-035/-022): an
+# Yahoo's chart JSON envelope (src/domain/YahooChartParser.cpp, REQ-F-068/-072/-022): an
 # HTTP response body from a third party, navigated with no schema validation beyond
 # "is this the shape we expect." Extracted from services/MarketFeeds for the same
 # reason as the Ollama parser above (tooling backlog item 7).

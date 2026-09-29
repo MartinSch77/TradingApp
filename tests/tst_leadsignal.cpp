@@ -185,7 +185,7 @@ private slots:
     }
 
     //! @tstid TS-LEAD-003 @design DES-DOM-LEAD
-    // @relation(REQ-F-036, scope=function)
+    // @relation(REQ-F-036, REQ-F-073, scope=function)
     void TS_LEAD_003_theClockAndTheRegimeOnlyEverReduce()
     {
         LeadInputs calm = baseInputs();

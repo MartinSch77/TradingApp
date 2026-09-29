@@ -466,7 +466,7 @@ private:
     QHash<QString, trading::crowd::CrowdPrediction> m_crowdPredictions;
     CrowdDashboardWindow *m_crowdDialog = nullptr;
     QPushButton *m_crowdButton = nullptr;
-    // The index-heavyweight early read (REQ-F-035): a window of its own, fed from
+    // The index-heavyweight early read (REQ-F-074): a window of its own, fed from
     // the reference series the confluence reads already fetch.
     QPushButton *m_heavyButton = nullptr;
     trading::ui::HeavyweightsPanel *m_heavyPanel = nullptr;
@@ -626,7 +626,7 @@ private:
     QHash<QString, qint64> m_closedAtMs;   // Yahoo 1-min session closes
     QHash<QString, QList<double>> m_referenceSeries;    // volatility / term structure / yields / heavyweights
     // The same tickers' bars WITH volume, aligned — the session-VWAP and up/down-volume
-    // reads (REQ-F-035). Absent for every ticker whose feed carries no volume.
+    // reads (REQ-F-065/-066, REQ-F-072). Absent for every ticker whose feed carries no volume.
     QHash<QString, trading::VolumeSeries> m_referenceVolumes;
 
     // Decision window (separate, lazily built like the screener dialog).

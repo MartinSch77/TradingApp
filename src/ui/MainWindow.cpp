@@ -1298,7 +1298,7 @@ QLayout *MainWindow::buildHeaderRow(QWidget *central, const QString &sym)
     return stacked;
 }
 
-// Hand the heavyweight window every book its reads are computed from (REQ-F-035/036).
+// Hand the heavyweight window every book its reads are computed from (REQ-F-070/036).
 // ONE place on purpose: it is fed from two call sites — the button that opens it and the
 // reference sweep that refreshes it — and a book supplied to one but not the other would
 // make the same window show a different signal depending on how it was last updated.
@@ -1503,7 +1503,7 @@ void MainWindow::buildHeaderButtons(QWidget *central)
                                      QStringLiteral("Load, dry-run and arm a trade script (REQ-F-028)."),
                                      &MainWindow::openScript);
 
-    // The index heavyweights (REQ-F-035): the ten biggest constituents of each index,
+    // The index heavyweights (REQ-F-074): the ten biggest constituents of each index,
     // as an EARLY read on where SPX500 and NSDQ100 may go. Its own window, because it
     // is a market view rather than a per-instrument one — and it costs no new feed.
     m_cockpitButton = makeHeaderButton(
@@ -4698,7 +4698,7 @@ void MainWindow::startRecommendationScan()
     m_feeds->fetchInstrumentNews();
     m_feeds->fetchIntradaySeries();
     // …and the reference series that say what the indices are doing: expected
-    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-035).
+    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-061/-062/-064).
     m_feeds->fetchReferenceSeries();
 }
 
@@ -4710,7 +4710,7 @@ void MainWindow::onInstrumentRatings(const QHash<QString, WebRating> &ratingBySy
 }
 
 // The three all-instruments feeds: web ratings, news, and the reference series the
-// index reads are computed from (REQ-F-035).
+// index reads are computed from (REQ-F-059..-067).
 void MainWindow::connectInstrumentFeeds()
 {
     static_cast<void>(connect(m_feeds, &MarketFeeds::instrumentRatingsUpdated, this,
@@ -5197,7 +5197,7 @@ void MainWindow::startDecisionScan()
     m_feeds->fetchInstrumentNews();
     m_feeds->fetchIntradaySeries();
     // …and the reference series that say what the indices are doing: expected
-    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-035).
+    // volatility, the 10-year yield, and the heavyweights' participation (REQ-F-061/-062/-064).
     m_feeds->fetchReferenceSeries();
     // The swing strategy's own daily bars (REQ-F-031's redesign, item 5's live wiring):
     // at most once per calendar date, since the underlying daily-interval feed does not

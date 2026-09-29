@@ -15,7 +15,7 @@
 // question a leveraged trade actually asks: is there enough agreement RIGHT NOW to
 // justify size (REQ-F-036)?
 //
-// The premise is the one REQ-F-035 already states and this makes operational: an
+// The premise is the one REQ-F-069 already states and this makes operational: an
 // index is not a thing that moves on its own, and no single indicator predicts it.
 // What predicts it — as far as anything does — is several INDEPENDENT things saying
 // the same thing at the same time:
@@ -76,7 +76,7 @@ struct LeadSignal {
 // exists to preserve.
 struct LeadInputs {
     QString symbol;                 // the index instrument the signal is for
-    IndexReads reads;               // REQ-F-035's independent reads
+    IndexReads reads;               // the independent reads, REQ-F-059..-067
     HeavyweightPulse pulse;         // its own index's constituent field
     QDateTime now;                  // for the session phase; invalid = unknown clock
     // The regime, as the decision engine already measures it.

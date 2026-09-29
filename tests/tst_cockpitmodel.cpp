@@ -46,7 +46,7 @@ class TestCockpitModel : public QObject
 
 private slots:
     //! @tstid TS-COCKPIT-001 @design DES-UI-COCKPIT
-    // @relation(REQ-F-038, REQ-F-035, scope=function)
+    // @relation(REQ-F-038, REQ-F-068, REQ-F-069, scope=function)
     void TS_COCKPIT_001_anUnmeasurableReadIsNeverCountedAsAgreement()
     {
         // Four measured reads supporting a long, five that could not be taken — and every
@@ -445,7 +445,7 @@ private slots:
     }
 
     //! @tstid TS-COCKPIT-011 @design DES-UI-COCKPIT
-    // @relation(REQ-F-038, REQ-F-035, scope=function)
+    // @relation(REQ-F-038, REQ-F-070, scope=function)
     //
     // THE REGRESSION: a card must read the book it is actually keyed in.
     //

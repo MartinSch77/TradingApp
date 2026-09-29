@@ -95,7 +95,7 @@ botRecordLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "re
 botReasonLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "reasonLabel"}
 botLog = {"container": botSimDialog, "type": "QTextEdit", "objectName": "log"}
 
-# --- the index-heavyweight window (REQ-F-035) --------------------------------
+# --- the index-heavyweight window (REQ-F-074) --------------------------------
 heavyButton = {"container": mainWindow, "type": "QPushButton", "objectName": "heavyButton"}
 # Addressed by TYPE, like botSimDialog: a top-level custom dialog is matched on its
 # class by the Qt wrapper, and an objectName-only lookup for the window itself did

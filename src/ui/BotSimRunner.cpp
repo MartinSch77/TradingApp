@@ -582,7 +582,7 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
         static_cast<void>(m_confBySymbol.insert(row.symbol, row.confidence));
     }
     // The other two books the reads need, taken from the SAME snapshot the ranking was
-    // computed from (REQ-F-035): the volume bars behind the VWAP and up/down-volume
+    // computed from (REQ-F-070): the volume bars behind the VWAP and up/down-volume
     // reads, and the app's own per-symbol series the futures reads live in. Keyed by
     // APP SYMBOL, not by Yahoo ticker — passing the ticker book here is exactly the
     // mistake that left the futures lead permanently unknown.
@@ -690,7 +690,7 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     in.lastClosedAt = lastCloseFor(row.symbol);
     // The session's own structure, from the 1-minute series the scan already carries.
     in.rangeBreakDir = trading::openingRange(closes).breakDir;
-    // How many independent reference reads agree with this side (REQ-F-035). Built once
+    // How many independent reference reads agree with this side (REQ-F-069). Built once
     // and used for both the count and the combined indication below — the two must be
     // computed from identical inputs or the window contradicts itself.
     trading::ReadInputs inputs = trading::readInputsFor(row.symbol, m_referenceSeries,

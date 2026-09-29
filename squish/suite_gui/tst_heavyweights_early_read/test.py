@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # -*- coding: utf-8 -*-
-# The index-heavyweight window (REQ-F-035): ten names per index, side by side, as an
+# The index-heavyweight window (REQ-F-074): ten names per index, side by side, as an
 # early read on where SPX500 and NSDQ100 may go.
 #
 # What this checks that a unit test cannot: the window is reachable from the main

@@ -31,7 +31,7 @@ class QTimer;
 // THREE RULES THIS FILE EXISTS TO ENFORCE, each inherited from a requirement the cockpit is
 // not allowed to soften:
 //
-//  1. An unmeasurable read is UNMEASURABLE (REQ-F-035). Not 0, not neutral. A "6 of 9" that
+//  1. An unmeasurable read is UNMEASURABLE (REQ-F-068). Not 0, not neutral. A "6 of 9" that
 //     silently includes three absent feeds is a lie, so the count of unknowns travels
 //     beside the count of agreements everywhere.
 //  2. A 0..100 strength is EVIDENCE, never a probability (REQ-F-037). Where no measured

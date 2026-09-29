@@ -248,7 +248,7 @@ Read curveRead(const QHash<QString, QList<double>> &series)
 //
 // Deliberately ONE read rather than three. A 1-minute return, a 5-minute return and a
 // 15-minute return computed from the same series are one piece of evidence wearing
-// three hats — exactly what REQ-F-035 exists to refuse — so what counts here is
+// three hats — exactly what REQ-F-060 exists to refuse — so what counts here is
 // whether they AGREE. Three horizons pointing the same way is a push with staying
 // power; a 1-minute pop against a 15-minute slide is noise, and is reported as the
 // neutral it is.
@@ -480,7 +480,7 @@ TermStructure termStructure(const QHash<QString, QList<double>> &referenceSeries
 QStringList referenceTickers()
 {
     QStringList out{QStringLiteral("^VIX"), QStringLiteral("^VXN"), QStringLiteral("^TNX"),
-                    // The volatility term structure (REQ-F-035): the near leg and the
+                    // The volatility term structure (REQ-F-073): the near leg and the
                     // far leg, so an inverted curve can be SEEN rather than inferred
                     // from the level of one number.
                     QStringLiteral("^VIX9D"), QStringLiteral("^VIX3M"),

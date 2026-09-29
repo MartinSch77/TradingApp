@@ -26,7 +26,7 @@ namespace trading::ui {
 class LeadGauge;
 
 // The top-ten constituents of the Nasdaq-100 and the S&P 500, side by side, as an
-// EARLY read on where the two indices may go (REQ-F-035).
+// EARLY read on where the two indices may go (REQ-F-074).
 //
 // The idea is the one a trading desk uses: an index is not a thing that moves on its
 // own, it is the weighted sum of its members, and the biggest members move it. When
@@ -54,7 +54,7 @@ public:
 
     // Fed from the same reference series the confluence reads use, keyed by ticker.
     void setReferenceSeries(const QHash<QString, QList<double>> &series);
-    // The other two books the combined indication needs (REQ-F-035/036): the volume bars
+    // The other two books the combined indication needs (REQ-F-070/036): the volume bars
     // keyed by TICKER, and the app's own per-instrument series keyed by APP SYMBOL. The
     // second is what the futures reads and the opening range are read out of — without
     // it this window scored its indices on the handful of reads that need neither, and

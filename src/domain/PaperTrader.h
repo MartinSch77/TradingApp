@@ -370,9 +370,9 @@ struct BotConfig {
     bool avoidOpeningChaos = true;
     bool avoidPolicyWindow = true;
     // How many INDEPENDENT reads must agree with the side before an index position is
-    // opened (REQ-F-035), counted only over reads that could actually be measured.
+    // opened (REQ-F-069), counted only over reads that could actually be measured.
     // 0 switches the requirement off; the reads are still shown and still given to
-    // the model. Deliberately below the five available: demanding all of them means
+    // the model. Deliberately below the nine available: demanding all of them means
     // never trading, and demanding none means the reads were decoration.
     qint32 minAgreeingReads = 3;
     // How strong the combined indication (REQ-F-036) has to be before it may VETO a
@@ -765,7 +765,7 @@ struct CandidateInput {
     // the classic way to be run over, so the gate refuses it (REQ-F-022).
     qint32 rangeBreakDir = 0;
     // How many independent reference reads agree with this candidate's side, and how
-    // many were measurable at all (REQ-F-035). Both 0 = nothing to judge, which the
+    // many were measurable at all (REQ-F-068/-069). Both 0 = nothing to judge, which the
     // gate treats as "no objection" rather than as disagreement.
     qint32 agreeingReads = 0;
     qint32 measuredReads = 0;

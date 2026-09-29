@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Martin Schuler
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// libFuzzer harness for the Yahoo v8 "chart" JSON parse (REQ-F-035/-022,
+// libFuzzer harness for the Yahoo v8 "chart" JSON parse (REQ-F-068/-072/-022,
 // src/domain/YahooChartParser.cpp) — an HTTP response body from a third party,
 // navigated with no schema validation beyond "is this the shape we expect." Exercises
 // the whole chain a real feed reply goes through: raw bytes -> QJsonDocument ->

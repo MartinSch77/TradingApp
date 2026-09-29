@@ -367,7 +367,7 @@ private slots:
     }
 
     //! @tstid TS-INV-007 @design DES-DOM-CONFLUENCE
-    // @relation(REQ-F-035, scope=function)
+    // @relation(REQ-F-068, scope=function)
     //
     // A read that could not be measured never counts as agreement, and taking
     // evidence AWAY (turning a known read back to unknown) can never INCREASE

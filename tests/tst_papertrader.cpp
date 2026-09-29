@@ -1731,7 +1731,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-027 @design DES-DOM-WHEN
-    // @relation(REQ-F-052, REQ-F-055, REQ-F-058, REQ-F-035, scope=function)
+    // @relation(REQ-F-052, REQ-F-055, REQ-F-058, REQ-F-069, scope=function)
     void TS_PAPER_027_everyWordAndEveryClockFamilyIsReachable()
     {
         // The wording tables and the two clock families the phase classifier supports
@@ -1835,7 +1835,7 @@ private slots:
     }
 
     //! @tstid TS-PAPER-026 @design DES-DOM-WHEN
-    // @relation(REQ-F-049, REQ-F-052, REQ-F-056, REQ-F-035, scope=function)
+    // @relation(REQ-F-049, REQ-F-052, REQ-F-056, scope=function)
     void TS_PAPER_026_loudWindowsChurnAndConfluenceAllGateTheEntry()
     {
         const auto berlin = [](int hour, int minute) {

@@ -1667,7 +1667,12 @@ bool paperWeekendChargeAhead(const QDateTime &now)
 
 double paperWeekendChargeForEntry(const CandidateInput &in, const EntrySignal &sig, double stake)
 {
-    if (!in.feesKnown || (stake <= 0.0) || (sig.fillRate <= 0.0)) {
+    // `valid` is the gate, not `fillRate`: buildEntrySignal prices the mid BEFORE it
+    // finds the history too short to size a stop, so an unsized signal arrives with a
+    // positive fillRate and the default x1 — a "position" that could never have been
+    // opened, and one this must not price (or the Friday scan would count every
+    // short-history row as weekend-carry-ahead instead of no-history).
+    if (!in.feesKnown || !sig.valid || (stake <= 0.0) || (sig.fillRate <= 0.0)) {
         return 0.0;
     }
     // The position PaperBook::open would create from this signal, priced with the

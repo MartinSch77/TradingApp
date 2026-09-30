@@ -3270,7 +3270,21 @@ private slots:
         QVERIFY(!paperWeekendCarryWouldClose(zeroFee, zeroSig));
         QVERIFY(paperEntryVerdict(zeroFee, zeroSig, freshBook(), cfg).take);
         // An unsized signal has no position to close, so it answers false and leaves
-        // the refusal to the gate that names the missing history.
+        // the refusal to the gate that names the missing history. The REAL unsized
+        // shape is what buildEntrySignal returns for a priced candidate whose history is
+        // too short: fillRate already at the mid, leverage at its default x1, valid
+        // false — a bare EntrySignal{} (fillRate 0) would pass this on a version that
+        // gated on the rate instead of on `valid`, which is exactly the version that
+        // counted every short-history Friday row as weekend-carry-ahead.
+        CandidateInput thin = friday;
+        thin.closes = thin.closes.mid(0, 5);
+        const EntrySignal thinSig = buildEntrySignal(thin, cfg);
+        QVERIFY(!thinSig.valid);
+        QVERIFY(thinSig.fillRate > 0.0);
+        QCOMPARE(paperWeekendChargeForEntry(thin, thinSig, stake), 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(thin, thinSig));
+        QCOMPARE(paperEntryVerdict(thin, thinSig, freshBook(), cfg).code,
+                 QStringLiteral("no-history"));
         QVERIFY(!paperWeekendCarryWouldClose(friday, EntrySignal{}));
 
         // A 24/7 instrument: the exit rule applies paperWeekendChargeAhead regardless of

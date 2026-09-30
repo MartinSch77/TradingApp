@@ -1040,8 +1040,11 @@ struct ExitContext {
 // candidate with the signal's geometry would pay on `stake` EUR of margin:
 // paperRolloverCost over the 3 Friday nights with the SAME side/fees/eurPerUsd
 // semantics the WeekendCarry exit reads, so entry and exit can never disagree
-// about the figure. 0 when the fees are unknown, the signal is unsized or the
-// stake is not positive; NEGATIVE for a carry credit, exactly as the exit sees it.
+// about the figure. 0 when the fees are unknown, the signal is unsized (`valid`
+// false — which buildEntrySignal reports WITH a priced fillRate and the default x1
+// when only the history is too short, so `valid` and not the rate is what says
+// there is no position to price) or the stake is not positive; NEGATIVE for a
+// carry credit, exactly as the exit sees it.
 [[nodiscard]] double paperWeekendChargeForEntry(const CandidateInput &in, const EntrySignal &sig,
                                                 double stake);
 

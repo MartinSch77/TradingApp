@@ -144,6 +144,8 @@ qt_add_library(trading_domain STATIC
     src/domain/YahooChartParser.h
     src/domain/OrderRequestValidator.cpp
     src/domain/OrderRequestValidator.h
+    src/domain/LiveMirror.cpp
+    src/domain/LiveMirror.h
     src/domain/InstrumentCatalog.cpp
     src/domain/InstrumentCatalog.h
     src/domain/Indicators.cpp

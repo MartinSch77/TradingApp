@@ -186,6 +186,15 @@ than against the implementation.
 | TS-PAPER-017 | U | Shorts are first-class: a SELL candidate clears the same gates, is sized identically (same stake, leverage, fill and risk per euro), has mirrored stop/target geometry, and earns when the price falls. |
 | TS-PAPER-009 | U | Every close reason has a word for the table, and the trade read-outs (notional, units, effective rate before the first mark, gross/costs/net, holding hours) are consistent. |
 
+## Real-money mirror, the pure half (tests/tst_livemirror.cpp, DES-DOM-LIVEMIRROR, REQ-F-076)
+
+| ID | Type | What it pins |
+|----|------|--------------|
+| TS-LIVE-001 | U | The cap binds and the geometry scales with it: a 3 000 EUR paper stake at x10 against a 250 EUR cap becomes exactly 277.78 USD at 0.9 EUR/USD (rounded once, to the cent), leverage kept, a MARKET order; the stop and target AMOUNTS are the paper loss-at-stop (150) and gain-at-target (225) scaled by the stake ratio — 13.89 and 20.83 USD — which puts the live stop and target at the paper RATES (25 and 37.5 points off the entry); a paper stake below the cap goes out at the paper stake; a short keeps its side and a EUR account needs no rate; a paper trade with no stop gets none live and says so. |
+| TS-LIVE-002 | U | Each refusal by its own code, reached only by its own fault: `live-scope` for BTC and GOLD (naming the scope), `live-position-cap` for a second SPX500 while the grant allows one (and taken when it allows two), `live-unresolved` for a venue id of 0 (a real order is placed by id, unlike the paper open), `live-fx-unknown` with no EUR/USD rate on a USD account, and `live-unsized` for an unset cap, a ZERO cap (0 is "nothing may be sent", never "no cap"), an unset daily-loss cap and a non-positive paper stake; the structural refusals come before the transient one. |
+| TS-LIVE-003 | U | The day-loss ledger: −249.99 is not reached against a 250 cap, −250.00 exactly is, and so is beyond; a win books against the loss; yesterday's ledger does not govern today and the first close of a new date starts over; an unknown (invalid) result books nothing; an invalid cap or a cap in the wrong currency never trips (unordered), a same-currency one does. |
+| TS-LIVE-004 | U | The REQ-N-005 action string names the whole grant — "ARM REAL MONEY: SPX500+NSDQ100, max 250.00 EUR per order, 250.00 EUR daily loss, 480 min" — and a changed cap, duration or scope is a DIFFERENT action the gate will not combine with the old one. |
+
 ## Independent reads and their agreement (tests/tst_indexconfluence.cpp, DES-DOM-CONFLUENCE, REQ-F-059..-075)
 
 | ID | Type | What it pins |

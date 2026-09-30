@@ -94,6 +94,9 @@ tradingapp_add_test(tst_predictionledger tst_predictionledger.cpp)
 tradingapp_add_test(tst_decisionlog tst_decisionlog.cpp)
 tradingapp_add_test(tst_candles tst_candles.cpp)
 tradingapp_add_test(tst_confirmgate tst_confirmgate.cpp)
+# The real-money mirror's pure half (REQ-F-076): what one paper trade becomes as one
+# real order, to the cent, and the day-loss ledger the kill switch trips on.
+tradingapp_add_test(tst_livemirror tst_livemirror.cpp)
 # The bot-console front end's text, compiled directly (the console layer is not a library),
 # with NO terminal dependency — every line it shows is checkable headless.
 tradingapp_add_test(tst_botconsoleview tst_botconsoleview.cpp

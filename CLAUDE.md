@@ -250,6 +250,9 @@ publish_release; refuses to publish on a red pipeline).
   session series, so an open never starts with an hour of the coin's move already booked against
   a 1-minute mark — widened by the effective spread (already the
   1% floor). `candidateFor` also treats a 24/7 instrument as `marketOpen` (`tradesOnWeekend`),
+  and `preTradeRefusal`'s venue-set test exempts it the same way (TS-BOTSIM-011 — the set
+  never lists a coin, so without the exemption every coin was `market-closed` one gate
+  earlier once the first tradeability poll answered),
   since the eToro tradeable set does not cover it — but `sides.ok` still gates, so a crypto with
   no candle is still honestly refused. A candle-derived mark is NOT flagged live (fromCandle).
   Two more facts make it ACTUALLY tradable: the bot's crypto SCAN ROWS come from the Yahoo HOURLY

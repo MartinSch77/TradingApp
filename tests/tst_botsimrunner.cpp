@@ -558,6 +558,40 @@ private slots:
         QVERIFY(rowFor(ledger, unpriced) == nullptr);
     }
 
+    //! @tstid TS-BOTSIM-011 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-031, scope=function)
+    //
+    // The venue's tradeable set never lists a 24/7 instrument, so once the first
+    // tradeability poll has answered, the focus/market gate in front of everything else
+    // read every coin as `market-closed` — before candidateFor's own 24/7 exemption could
+    // run — and no crypto position could open outside the simulation, where that poll
+    // never answers. The set is handed to the runner exactly as the client publishes it
+    // (the signal is the client's public surface): with only SPX500 listed, BTC is not
+    // refused for the market while an index the venue does not list still is.
+    void TS_BOTSIM_011_aTwentyFourSevenInstrumentIsNeverMarketClosedByTheVenueSet()
+    {
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        QVERIFY(decisions.isValid());
+        runner.setArmed(true);
+        emit client.tradeabilityUpdated({QStringLiteral("SPX500")});
+
+        const QString coin = QStringLiteral("BTC");
+        const QString index = QStringLiteral("NSDQ100");
+        MarketSnapshot snap;
+        snap.screenerRows = {scanRow(coin, 60), scanRow(index, 60)};
+        snap.intradayBySymbol.insert(coin, scanRow(coin, 30).closes);
+        snap.intradayBySymbol.insert(index, scanRow(index, 30).closes);
+        runner.onDecisions({buyRow(coin), buyRow(index)}, snap);
+
+        QCOMPARE(decisions.size(), 2);
+        QCOMPARE(decisionCodeFor(decisions, index), QStringLiteral("market-closed"));
+        const QString coinCode = decisionCodeFor(decisions, coin);
+        QVERIFY2(coinCode != QStringLiteral("market-closed"), qPrintable(coinCode));
+        QVERIFY2(coinCode != QStringLiteral("<no decision reported>"), qPrintable(coinCode));
+    }
+
     //! @tstid TS-BOTSIM-002 @design DES-UI-BOTSIM
     // @relation(REQ-F-029, REQ-F-037, scope=function)
     //

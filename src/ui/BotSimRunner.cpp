@@ -1762,7 +1762,12 @@ QString BotSimRunner::preTradeRefusal(const QString &symbol, QString *why) const
         *why = QStringLiteral("outside the bot's focus set (%1)").arg(focus.join(u", "));
         return QStringLiteral("not-focus");
     }
-    if (m_tradeabilityKnown && !m_tradeable.contains(symbol)) {
+    // The venue's tradeable set covers only the instruments it lists with a session — a
+    // 24/7 instrument (crypto) is never in it, so the membership test alone read every
+    // coin as `market-closed` the moment the first tradeability poll answered, one gate
+    // before candidateFor's own 24/7 exemption could ever run. Its market has no
+    // closing hours; whether it can be PRICED is still candidateFor's `sides.ok`.
+    if (m_tradeabilityKnown && !m_tradeable.contains(symbol) && !trading::tradesOnWeekend(symbol)) {
         *why = QStringLiteral("market closed for this instrument — the broker does not list it "
                               "as tradable right now");
         return QStringLiteral("market-closed");

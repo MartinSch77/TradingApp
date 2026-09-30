@@ -96,7 +96,9 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   `std::ranges` algorithms, by-value parameters, functional casts, `std::move`,
   redundant `()` on lambdas, two FinBERT fields unused without ONNX Runtime,
   `MainWindow::eventFilter` back to QObject's public visibility and the class's
-  copy/move explicitly deleted.
+  copy/move explicitly deleted. The ONNX Runtime block of `FinBertSentiment`,
+  which only a machine with the runtime compiles, followed in a second pass
+  (three `std::ranges` conversions).
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

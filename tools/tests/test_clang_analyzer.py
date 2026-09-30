@@ -4,6 +4,7 @@
 """Unit tests for tools/clang_analyzer.py."""
 
 import json
+import os
 import subprocess
 
 import pytest
@@ -34,15 +35,26 @@ def test_find_compiler_msvc_style_prefers_clang_cl(monkeypatch):
     assert ca._find_compiler("cl.exe") == "/usr/bin/clang-cl"
 
 
-def test_find_compiler_non_msvc_prefers_clang18(monkeypatch):
+def test_find_compiler_non_msvc_prefers_the_newest_versioned_clangxx(monkeypatch, tmp_path):
+    # PATH holds clang++-18 and clang++-23 (plus a too-old 16 and a look-alike):
+    # the newest wins, so a compile database from a newer GCC still parses.
+    for name in ("clang++-18", "clang++-23", "clang++-16", "clang++-23.bak", "clang++"):
+        (tmp_path / name).write_text("")
+    monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.delenv("CLANG_ANALYZER_CXX", raising=False)
-    def which(name):
-        return "/usr/bin/clang++-18" if name == "clang++-18" else None
-    monkeypatch.setattr(ca.shutil, "which", which)
-    assert ca._find_compiler("g++") == "/usr/bin/clang++-18"
+    monkeypatch.setattr(ca.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert ca._versioned_clangxx() == ["clang++-23", "clang++-18"]
+    assert ca._find_compiler("g++") == "/usr/bin/clang++-23"
 
 
-def test_find_compiler_falls_back_to_plain_clangxx(monkeypatch):
+def test_versioned_clangxx_ignores_unreadable_path_entries(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", os.pathsep.join([str(tmp_path / "missing"), str(tmp_path)]))
+    (tmp_path / "clang++-19").write_text("")
+    assert ca._versioned_clangxx() == ["clang++-19"]
+
+
+def test_find_compiler_falls_back_to_plain_clangxx(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))   # no versioned clang++ anywhere
     monkeypatch.delenv("CLANG_ANALYZER_CXX", raising=False)
     def which(name):
         return "/usr/bin/clang++" if name == "clang++" else None
@@ -50,7 +62,8 @@ def test_find_compiler_falls_back_to_plain_clangxx(monkeypatch):
     assert ca._find_compiler("g++") == "/usr/bin/clang++"
 
 
-def test_find_compiler_none_found(monkeypatch):
+def test_find_compiler_none_found(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.delenv("CLANG_ANALYZER_CXX", raising=False)
     monkeypatch.setattr(ca.shutil, "which", lambda name: None)
     assert ca._find_compiler("g++") is None

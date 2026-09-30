@@ -85,10 +85,37 @@ LOCATED = re.compile(r"^(?P<file>.+?):(?P<line>\d+):(?P<col>\d+): "
                      r"warning: (?P<msg>.*) \[(?P<checker>[A-Za-z0-9_.]+)\]$")
 
 
+MIN_CLANG_MAJOR = 18
+VERSIONED_CLANGXX = re.compile(r"^clang\+\+-(\d+)(?:\.exe)?$")
+
+
+def _versioned_clangxx() -> list[str]:
+    """Every `clang++-NN` on PATH with NN >= MIN_CLANG_MAJOR, newest first.
+
+    The same rule as tools/common.sh's llvm_suffix(): the NEWEST clang wins, and no
+    version is ever pinned. A pinned clang++-18 broke on a machine whose compile
+    database came from GCC 14 — clang 18 cannot parse libstdc++ 14's headers, so
+    every TU failed to compile and the stage reported one clang-analyzer-failed
+    line per file (136 of them, 2026-09-30) while the clang 23 beside it was fine.
+    """
+    majors: set[int] = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            m = VERSIONED_CLANGXX.match(name)
+            if m and int(m.group(1)) >= MIN_CLANG_MAJOR:
+                majors.add(int(m.group(1)))
+    return [f"clang++-{major}" for major in sorted(majors, reverse=True)]
+
+
 def _find_compiler(db_compiler: str) -> str | None:
     """A clang driver that understands the compile database's flag dialect.
 
-    An MSVC-style database (cl.exe) needs clang-cl, everything else clang++.
+    An MSVC-style database (cl.exe) needs clang-cl, everything else clang++: the
+    newest versioned clang++ on PATH first, then the unversioned one.
     CLANG_ANALYZER_CXX overrides the choice.
     """
     override = os.environ.get("CLANG_ANALYZER_CXX")
@@ -96,7 +123,8 @@ def _find_compiler(db_compiler: str) -> str | None:
         return shutil.which(override) or override
     msvc_style = os.path.basename(db_compiler).lower().startswith(("cl.", "cl-", "cl_")) \
         or os.path.basename(db_compiler).lower() == "cl"
-    candidates = ("clang-cl",) if msvc_style else ("clang++-18", "clang++", "clang-cl")
+    candidates = ("clang-cl",) if msvc_style \
+        else (*_versioned_clangxx(), "clang++", "clang-cl")
     for candidate in candidates:
         found = shutil.which(candidate)
         if found:

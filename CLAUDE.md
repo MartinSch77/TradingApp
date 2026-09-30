@@ -371,12 +371,17 @@ publish_release; refuses to publish on a red pipeline).
   `kMinSamplesPerBucket` the answer is UNCALIBRATED with its sample count and NO number —
   the `paperLiveReadiness` discipline. Every score sits beside baselines on identical
   samples (always-long, prior 5-min move, VWAP side) plus a Brier score against 0.25, and
-  an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten.
+  an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten. Rows carry
+  `strategyVersion` `composite-v2` since the baseline/price switched to the 1-minute series
+  (2026-09-29); earlier rows have an empty version and score as their own group.
 - Session STRUCTURE is read before any oscillator (REQ-F-022, `openingRange` +
   `relativeStrength` in DecisionEngine): both come from the 1-minute series the app
   already fetches for every catalog instrument — including ES=F and NQ=F via
   SP.24-7 / NSDQ100.24-7 — so they cost no new feed. They go into the evidence prompt,
-  and the bot refuses to open INTO a fresh opposite break (`against-range-break`).
+  and the bot refuses to open INTO a fresh opposite break (`against-range-break`) — its
+  gate reads the SAME 1-minute series as the window (`m_symbolSeries`), never the hourly
+  scan closes, which are the volatility source only (a 30-point range over those is a
+  30-HOUR range; TS-BOTSIM-004 pins the ledger side of it).
   True market breadth (advance/decline, up-volume, constituents above VWAP) is NOT
   available here: it needs per-constituent data the app does not fetch, and the
   Nasdaq-vs-S&P read is the honest stand-in — don't let a comment claim otherwise.

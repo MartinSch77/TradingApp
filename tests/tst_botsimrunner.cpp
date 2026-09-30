@@ -87,6 +87,29 @@ ScreenerRow scanRow(const QString &symbol, qsizetype count)
     return row;
 }
 
+// `count` closes moving monotonically by `step` from `start` — a series whose last six
+// points have ONE unambiguous direction, which scanRow's noisy shape does not guarantee.
+QList<double> trend(double start, double step, qsizetype count)
+{
+    QList<double> out;
+    for (qsizetype i = 0; i < count; ++i) {
+        out.append(start + (static_cast<double>(i) * step));
+    }
+    return out;
+}
+
+// A scan row over the given hourly closes.
+ScreenerRow hourlyRow(const QString &symbol, const QList<double> &closes)
+{
+    ScreenerRow row;
+    row.symbol = symbol;
+    row.maxLeverage = 2;
+    row.closes = closes;
+    row.lastPrice = closes.isEmpty() ? 0.0 : closes.constLast();
+    row.ok = !closes.isEmpty();
+    return row;
+}
+
 const Prediction *rowFor(const QList<Prediction> &ledger, const QString &symbol)
 {
     for (const Prediction &p : ledger) {
@@ -289,6 +312,52 @@ private slots:
         // …and the second runner does not retroactively become the owner: the lock is
         // tried once, at construction.
         QVERIFY(!second.ownsBook());
+    }
+
+    //! @tstid TS-BOTSIM-004 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-037, scope=function)
+    //
+    // The ledger row's "previous five minutes" baseline and its price come from the
+    // instrument's 1-MINUTE series (MarketSnapshot::intradayBySymbol — the series the
+    // window's engine reads), not from the eToro scan's HOURLY closes, whose last six
+    // points span five hours. The two series are made to DISAGREE — hourly rising, 1-minute
+    // falling — so a baseline read off the wrong one shows as the wrong sign, not as a
+    // coincidence; the row is written for a refused candidate too, so no trade need open.
+    // A symbol with no 1-minute series has no measurable baseline (0, unknown) and falls
+    // back to the hourly last close as its price; every row carries the composite bot's
+    // strategy version, so rows from before this switch (empty version) score apart.
+    void TS_BOTSIM_004_theLedgerBaselineAndPriceComeFromTheOneMinuteSeries()
+    {
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        runner.setArmed(true);
+        QVERIFY(runner.armed());
+
+        const QString withSession = QStringLiteral("BTC");
+        const QString hourlyOnly = QStringLiteral("ETH");
+        MarketSnapshot snap;
+        // Both hourly series RISE over their last six points.
+        const ScreenerRow btcHourly = hourlyRow(withSession, trend(60000.0, 20.0, 60));
+        const ScreenerRow ethHourly = hourlyRow(hourlyOnly, trend(3000.0, 2.0, 60));
+        snap.screenerRows = {btcHourly, ethHourly};
+        // The 1-minute series falls over its last six points and ends at a price the hourly
+        // series never reaches, so the price's source is unambiguous too.
+        const QList<double> btcSession = trend(62000.0, -5.0, 40);
+        snap.intradayBySymbol.insert(withSession, btcSession);
+        runner.onDecisions({buyRow(withSession), buyRow(hourlyOnly)}, snap);
+
+        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
+        const Prediction *btc = rowFor(ledger, withSession);
+        QVERIFY(btc != nullptr);
+        QCOMPARE(btc->priorMoveDir, -1);   // the 1-minute series fell; the hourly one rose
+        QCOMPARE(btc->price, btcSession.constLast());
+        QCOMPARE(btc->strategyVersion, QStringLiteral("composite-v2"));
+
+        const Prediction *eth = rowFor(ledger, hourlyOnly);
+        QVERIFY(eth != nullptr);
+        QCOMPARE(eth->priorMoveDir, 0);   // no 1-minute series: unmeasured, not the hourly sign
+        QCOMPARE(eth->price, ethHourly.closes.constLast());
+        QCOMPARE(eth->strategyVersion, QStringLiteral("composite-v2"));
     }
 };
 

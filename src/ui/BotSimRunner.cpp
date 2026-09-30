@@ -69,6 +69,13 @@ constexpr qint64 kMarkSaveIntervalSecs = 60;
 constexpr qint64 kProposalMaxAgeMs = qint64{5} * 60 * 1000;
 // Persisted books (REQ-F-029: an experiment spans days, not one session).
 constexpr auto kStoreFile = "botsim.json";
+// The strategy version every ledger row of the composite/AI bot carries
+// (Prediction::strategyVersion). v2 marks the switch of the row's baseline and price to the
+// 1-minute series on 2026-09-29: before it the "previous five minutes" baseline was the
+// last six HOURLY scan closes (five hours) and the price the hourly last close, so those
+// rows measure a different thing. They carry an EMPTY version and score as their own group
+// under the field's contract — never averaged with the rows written since.
+constexpr auto kCompositeStrategyVersion = "composite-v2";
 // The ONE age rule for a per-tick quote in this runner, shared by the entry pricing
 // (sidesFor) and the mark (markFor): a quote whose own stamp is older than this is
 // neither traded off nor reported as a live mark. The bound is deliberately the
@@ -792,16 +799,22 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     // The churn inputs (REQ-F-034): when this instrument last closed a position,
     // and how many the whole book has opened in the past hour.
     in.lastClosedAt = lastCloseFor(row.symbol);
-    // The session's own structure, from the 1-minute series the scan already carries.
-    in.rangeBreakDir = trading::openingRange(closes).breakDir;
+    // The session's own structure, from the SAME 1-minute series the window's decision
+    // engine reads (MarketSnapshot::intradayBySymbol, kept as m_symbolSeries). Never from
+    // `closes`: those are the eToro scan's HOURLY candles, and an "opening range" over
+    // their first thirty points is a thirty-HOUR range — the gate then refused a fresh
+    // opposite break the window never showed. A symbol without a 1-minute series reads
+    // 0 (no read), the honest answer; the hourly closes are the volatility source only.
+    const QList<double> session = m_symbolSeries.value(row.symbol);
+    in.rangeBreakDir = trading::openingRange(session).breakDir;
     // How many independent reference reads agree with this side (REQ-F-069). Built once
     // and used for both the count and the combined indication below — the two must be
-    // computed from identical inputs or the window contradicts itself.
-    trading::ReadInputs inputs = trading::readInputsFor(row.symbol, m_referenceSeries,
-                                                        m_referenceVolumes, m_symbolSeries);
-    // The scan's own series for this instrument, which is fresher than the reference
-    // sweep's copy and is what every other decision in this function already uses.
-    inputs.ownSeries = closes;
+    // computed from identical inputs or the window contradicts itself. readInputsFor
+    // files the instrument's own 1-minute series as `ownSeries` from that same book, so
+    // nothing here overrides it — the hourly scan closes once stood in and turned the
+    // structure read into the thirty-hour range described above.
+    const trading::ReadInputs inputs =
+        trading::readInputsFor(row.symbol, m_referenceSeries, m_referenceVolumes, m_symbolSeries);
     const trading::IndexReads reads = trading::indexReads(row.symbol, inputs);
     const trading::Confluence score = trading::confluenceFor(reads, gate.dir);
     in.agreeingReads = score.met;
@@ -1563,6 +1576,11 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
                                     const QDateTime &now, const trading::CandidateInput &in,
                                     const QString &refusal)
 {
+    // The instrument's own 1-minute series (the Yahoo sweep the window's engine reads);
+    // `closes` are the eToro scan's HOURLY candles, kept for the regime (persistence needs
+    // a session) and as the price of last resort. Looked up here rather than passed, so the
+    // signature stays within the parameter limit.
+    const QList<double> session = m_symbolSeries.value(row.symbol);
     trading::Prediction entry;
     entry.at = now.toUTC();
     entry.symbol = row.symbol;
@@ -1570,7 +1588,15 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
     entry.strength = in.leadStrength;
     entry.measured = in.leadMeasured;
     entry.unknowns = in.leadUnknowns;
-    entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    entry.strategyVersion = QLatin1String(kCompositeStrategyVersion);
+    // The freshest mark the call was made at: the 1-minute series' last close when there is
+    // one, else the hourly last close — an outcome is resolved against a LATER row's price,
+    // so both sides must come from the same series wherever possible.
+    if (!session.isEmpty()) {
+        entry.price = session.constLast();
+    } else {
+        entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    }
     trading::RegimeInputs regime;
     // Persistence needs a session to measure; below that it stays UNKNOWN rather than
     // defaulting to a comfortable "range".
@@ -1587,11 +1613,15 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
     entry.taken = refusal.isEmpty();
     entry.refusal = refusal;
     // The baseline this app CAN measure at decision time: the previous five minutes'
-    // direction. The session-VWAP side stays 0 — unknown — because the instrument's own
-    // candles carry no volume, and an unmeasurable baseline must not be scored.
-    if (closes.size() > 5) {
-        const double then = closes.at(closes.size() - 6);
-        const double last = closes.constLast();
+    // direction — the last six points of the 1-MINUTE series, never of the hourly scan
+    // closes, whose last six points span five hours and are a different rival for the
+    // signal than the one the ledger names. Fewer than six points leave it 0: a baseline
+    // that could not be measured is not scored (the ledger treats 0 as "no side"). The
+    // session-VWAP side stays 0 — unknown — because the instrument's own candles carry no
+    // volume, and an unmeasurable baseline must not be scored.
+    if (session.size() > 5) {
+        const double then = session.at(session.size() - 6);
+        const double last = session.constLast();
         entry.priorMoveDir = (last > then) ? 1 : ((last < then) ? -1 : 0);
     }
     // The file first, the cache only when the file took the row: the in-memory ledger is

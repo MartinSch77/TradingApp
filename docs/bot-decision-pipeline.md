@@ -216,7 +216,10 @@ Checked in this exact order; the first refusal wins and names itself with a stab
    stated gap, not a hidden one.
 3. **Pace/session** (`paceVerdict`) — sit-out session phase (opening chaos, policy window) →
    the **confidence floor** (scaled by the phase's own window factor) → re-entry cooldown →
-   opens-per-hour pace limit → trading into a fresh opposite range break → the **LeadSignal
+   opens-per-hour pace limit → trading into a fresh opposite range break (`against-range-break`;
+   the runner reads `openingRange` off the instrument's 1-MINUTE series, `intradayBySymbol`,
+   the same series §2's engine and the window use — the eToro scan's hourly closes are the
+   volatility source only, and a symbol without a 1-minute series has no read) → the **LeadSignal
    veto** (§4's indication disagreeing at Strong-grade strength refuses as `lead-against`) →
    the **confluence majority** (§3: a majority of *measured* reads must agree, refuses as
    `no-confluence`).
@@ -247,13 +250,17 @@ BotSimRunner::onDecisions
         └─ tryOpen(row):
              1. preTradeRefusal            (focus set, then broker tradability)
              2. gateFor(row) → paperAiGate                       (§6: composite × model)
-             3. candidateFor(row, …) → indexReads/confluenceFor  (§3)
+             3. candidateFor(row, …) → openingRange(1-minute series) → rangeBreakDir
+                                      → indexReads/confluenceFor  (§3, ownSeries = the same series)
                                       → leadSignal                (§4)
              4. buildEntrySignal(candidate, cfg)                  (stop/target geometry, leverage)
              5. paperLeverageWithAi(sized, asked, aiMode)         (§6: leverage cap only)
              6. paperEntryVerdict(candidate, signal, book, cfg)   (§9: the entry gate)
              7. [if taken] applyNetGate → paperNetGate            (§7: BotNet last-chance veto)
              8. PaperBook::open(signal, stake, now)                — or refuse(code, why) and log it
+             9. recordPrediction(row, …)  — taken OR refused: one ledger row, its price and its
+                "prior five minutes" baseline from the 1-minute series (the hourly closes only
+                when there is none), tagged strategyVersion "composite-v2" since 2026-09-29
 ```
 
 Every step that refuses names a stable `code`; every step that could not measure something

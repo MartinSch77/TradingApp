@@ -248,7 +248,11 @@ private:
     // refused, and the refusals are the point (REQ-F-037). A default-constructed `in`
     // means nothing was evaluated yet, so the row carries the refusal and no evidence.
     // An EMPTY refusal means the trade was taken — the two cannot then disagree.
-    // Not const: the row goes to the on-disk ledger AND to the in-memory copy of it.
+    // `closes` are the scan's HOURLY candles (the regime's input and the price of last
+    // resort); the row's price and its five-minute baseline come from the instrument's
+    // 1-minute series in m_symbolSeries, and every row is tagged with the composite bot's
+    // strategy version. Not const: the row goes to the on-disk ledger AND to the
+    // in-memory copy of it.
     void recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
                           const QDateTime &now, const trading::CandidateInput &in,
                           const QString &refusal);   // entries for the stored scan, with m_proposal

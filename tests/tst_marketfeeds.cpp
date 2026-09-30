@@ -390,6 +390,45 @@ private slots:
         QCOMPARE(closes.count(), 0);
     }
 
+    //! @tstid TS-FEED-016 @design DES-SVC-FEEDS
+    // @relation(REQ-F-031, scope=function)
+    void TS_FEED_016_cryptoScanRowsComeFromTheHourlyFallbackFeed()
+    {
+        // The venue scan rows only instruments whose id resolved, and crypto never resolves
+        // one — so the bot had no crypto row at all. The fallback asks Yahoo for the coin's
+        // HOURLY bars and publishes them as a scan row flagged as such; a non-crypto symbol
+        // in the same tradable set is never requested here (the venue rows it).
+        MockHttpServer server([](const QByteArray &, const QString &path) {
+            if (path.contains(QStringLiteral("BTC-USD"))
+                && path.contains(QStringLiteral("interval=1h"))) {
+                return MockHttpServer::Response{
+                    200, yahooChartBody("", "60000.0,null,60100.0"), {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        MarketFeeds feeds;
+        feeds.setEndpointBaseForTesting(server.baseUrl());
+        feeds.setTradableSymbols({QStringLiteral("BTC"), QStringLiteral("SPX500")});
+        const QSignalSpy rows(&feeds, &MarketFeeds::cryptoScreenerRow);
+        QVERIFY(rows.isValid());
+        feeds.fetchCryptoScreenerRows();
+        QTRY_COMPARE_WITH_TIMEOUT(rows.count(), 1, kWaitMs);
+
+        const auto row = rows.at(0).at(0).value<ScreenerRow>();
+        QCOMPARE(row.symbol, QStringLiteral("BTC"));
+        QCOMPARE(row.closes, (QList<double>{60000.0, 60100.0}));   // the empty hour dropped
+        QCOMPARE(row.lastPrice, 60100.0);
+        QCOMPARE(row.maxLeverage, 2);   // the crypto bucket's retail ceiling, not an index cap
+        QVERIFY(row.ok);
+        QVERIFY(row.fromFallbackFeed);
+        // One request, for the coin's hourly chart; SPX500 (Yahoo ^GSPC) was not asked for.
+        QCOMPARE(server.requests().size(), 1);
+        QVERIFY(
+            server.requests().constFirst().path.contains(QStringLiteral("interval=1h&range=14d")));
+        QCOMPARE(requestCount(server, QStringLiteral("GSPC")), 0);
+    }
+
     //! @tstid TS-FEED-009 @design DES-SVC-FEEDS
     // @relation(REQ-F-020, scope=function)
     void TS_FEED_009_feedErrorLogThrottled()

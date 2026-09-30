@@ -60,6 +60,17 @@ public:
     // far) for every tradable instrument with a mapped Yahoo ticker; results
     // arrive per instrument via intradayCloses. Feeds the decision composite.
     void fetchIntradaySeries();
+    // The scan rows the VENUE cannot deliver: every catalogued crypto in the tradable set
+    // that has a Yahoo ticker gets one ScreenerRow from Yahoo's HOURLY bars (14 days, the
+    // same shape the eToro scan's OneHour candles give the other instruments), emitted via
+    // cryptoScreenerRow with fromFallbackFeed set. Exists because the eToro scan queues only
+    // instruments whose id resolved, and crypto never resolves one in this build — so
+    // without this the bot had NO crypto row to decide on at all, whatever the entry rules
+    // said (REQ-F-031). Over the TRADABLE set, not the whole catalogue, on purpose: the
+    // advise console scans one instrument plus the two index futures and must not fan out
+    // to ~28 coins it was not asked about, and a front end whose set holds no crypto (the
+    // desktop GUI) fetches nothing. Once per decision scan, like the intraday sweep.
+    void fetchCryptoScreenerRows();
     // The REFERENCE series that are not tradable instruments but say what the index
     // instruments are doing: the two volatility indices (^VIX, ^VXN) and their term
     // structure (^VIX9D, ^VIX3M), the US 10-year yield (^TNX) and the curve's front end
@@ -107,6 +118,11 @@ signals:
     // Yahoo intraday close series (1-minute bars) for one tradable instrument —
     // the independent session-momentum source of the decision composite.
     void intradayCloses(const QString &symbol, const QList<double> &closes);
+    // One crypto instrument's scan row from the public-feed fallback (fetchCryptoScreenerRows):
+    // hourly closes oldest first with empty hours dropped, the last close as its price, the
+    // crypto bucket's leverage cap, `ok` only when it carries closes, `fromFallbackFeed` set.
+    // Merge it with the venue's rows through trading::mergeScreenerRow, never by appending.
+    void cryptoScreenerRow(const ScreenerRow &row);
     // The same bars as OHLC candles, for the cockpit's price chart (REQ-F-038). Already
     // filtered by domain/Candles: a bar that could not be drawn honestly is not here.
     void intradayCandles(const QString &symbol, const QList<trading::Candle> &candles);

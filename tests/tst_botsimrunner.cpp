@@ -359,6 +359,57 @@ private slots:
         QCOMPARE(eth->price, ethHourly.closes.constLast());
         QCOMPARE(eth->strategyVersion, QStringLiteral("composite-v2"));
     }
+
+    //! @tstid TS-BOTSIM-005 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-031, scope=function)
+    //
+    // Crypto is actually tradable: its venue id never resolves in this build, so its scan
+    // row comes from the public-feed fallback (fromFallbackFeed) and its price from its
+    // candles — and neither of the two blockers that used to stop it there may fire. The
+    // candle fallback prices it (never `no-live-quote`, TS-BOTSIM-001), and an id-less
+    // crypto candidate is no longer refused `instrument-unresolved`: whatever decides it is
+    // one of the strategy's own rules, and when they take it the position is booked with
+    // instrumentId 0, which the mark path (markFor, candle fallback) then handles. Asserted
+    // on the refusal code rather than on an open, because `onDecisions` reads the wall
+    // clock and the day/session rules would make an open calendar-dependent.
+    void TS_BOTSIM_005_anIdLessCryptoCandidateIsNotRefusedForItsMissingVenueId()
+    {
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        QVERIFY(decisions.isValid());
+        runner.setFocusSymbols({QStringLiteral("BTC")});
+        runner.setArmed(true);
+        QVERIFY(runner.armed());
+
+        const QString symbol = QStringLiteral("BTC");
+        QCOMPARE(client.instrumentIdFor(symbol), qint64(0));   // the premise: no venue id
+        MarketSnapshot snap;
+        ScreenerRow row = scanRow(symbol, 60);
+        row.fromFallbackFeed = true;
+        snap.screenerRows = {row};
+        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        runner.onDecisions({buyRow(symbol)}, snap);
+
+        QCOMPARE(decisions.size(), 1);
+        const QString code = decisionCodeFor(decisions, symbol);
+        QVERIFY2(code != QStringLiteral("instrument-unresolved"), qPrintable(code));
+        QVERIFY2(code != QStringLiteral("no-live-quote"), qPrintable(code));
+        QVERIFY2(code != QStringLiteral("not-focus"), qPrintable(code));
+        QVERIFY2(code != QStringLiteral("<no decision reported>"), qPrintable(code));
+        // When the strategy's own rules take it, the book holds it without a venue id.
+        if (code == QStringLiteral("opened")) {
+            QCOMPARE(runner.book().openTrades().size(), 1);
+            QCOMPARE(runner.book().openTrades().constFirst().symbol, symbol);
+            QCOMPARE(runner.book().openTrades().constFirst().instrumentId, qint64(0));
+        } else {
+            QVERIFY(runner.book().openTrades().isEmpty());
+        }
+        // Either way the ledger has its row, carrying the same verdict.
+        const Prediction *btc = rowFor(loadPredictions(BotSimRunner::ledgerPath()), symbol);
+        QVERIFY(btc != nullptr);
+        QCOMPARE(btc->refusal, code == QStringLiteral("opened") ? QString{} : code);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBotSimRunner)

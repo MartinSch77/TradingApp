@@ -219,6 +219,7 @@ void runGather(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
     client.scanInstruments();
     feeds.fetchInstrumentRatings();
     feeds.fetchInstrumentNews();
+    feeds.fetchCryptoScreenerRows();
     feeds.fetchIntradaySeries();
     feeds.fetchReferenceSeries();
     feeds.start(60 * 1000);   // the periodic tick fetches VIX/F&G/quote on its first pass
@@ -445,6 +446,7 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
         client.scanInstruments();
         feeds.fetchInstrumentRatings();
         feeds.fetchInstrumentNews();
+        feeds.fetchCryptoScreenerRows();
         feeds.fetchIntradaySeries();
         feeds.fetchReferenceSeries();
     };
@@ -469,6 +471,7 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
     feeds.start(60 * 1000);
     feeds.fetchInstrumentRatings();
     feeds.fetchInstrumentNews();
+    feeds.fetchCryptoScreenerRows();
     feeds.fetchIntradaySeries();
     feeds.fetchReferenceSeries();
     auto *timer = new QTimer(&client);

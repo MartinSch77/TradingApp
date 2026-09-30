@@ -306,6 +306,11 @@ private:
     // inside the complexity budget).
     bool tryOpen(const trading::DecisionRow &row, const QList<double> &closes,
                  const QDateTime &now, QString *skipCode);
+    // The opened trade's line in the persistent decision log, geometry beside evidence
+    // (see DES-DOM-DECLOG). Split out of tryOpen to keep it inside the metrics ratchet.
+    void appendOpenedNote(const trading::EntrySignal &sig, const trading::CandidateInput &in,
+                          const trading::EntryVerdict &verdict, double compositeConfidence,
+                          const QDateTime &now) const;
     // One candidate's direction under the current AI mode, refusal reason included.
     [[nodiscard]] trading::AiGate gateFor(const trading::DecisionRow &row) const;
     // The swing strategy's own entry path (2026-08-12 redesign, item 5's live wiring):

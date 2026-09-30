@@ -658,12 +658,21 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     double mid = m_client->lastRateFor(instrumentId);
     // CRYPTO (and anything else the eToro id/rate path does not warm here) has no such mid:
     // it never resolves a non-zero instrumentId in this build, so lastRateFor is 0. Fall back
-    // to the scan's own 1-minute candle close — which equals the eToro bid to the cent (see the
-    // candle-vs-rate note) — so a priced-and-tradable instrument is not refused `no-live-quote`
-    // purely for lacking an eToro rate row. Still widened by the effective spread, which for
-    // crypto is already the modelled 1% floor, so the fill is never at the untouched mid.
-    if ((mid <= 0.0) && !closes.isEmpty() && (closes.constLast() > 0.0)) {
-        mid = closes.constLast();
+    // to its candle close — which equals the eToro bid to the cent (see the candle-vs-rate
+    // note) — so a priced-and-tradable instrument is not refused `no-live-quote` purely for
+    // lacking an eToro rate row. The 1-minute series (m_symbolSeries, the Yahoo <TICKER>-USD
+    // sweep) comes FIRST because it is the same book markFor marks the position off: an entry
+    // filled at the scan row's HOURLY close would open with up to an hour of the coin's move
+    // already booked as P/L against a 1-minute mark. The row's own closes stand in only when
+    // there is no session series. Still widened by the effective spread, which for crypto is
+    // already the modelled 1% floor, so the fill is never at the untouched mid.
+    if (mid <= 0.0) {
+        const QList<double> session = m_symbolSeries.value(symbol);
+        if (!session.isEmpty() && (session.constLast() > 0.0)) {
+            mid = session.constLast();
+        } else if (!closes.isEmpty() && (closes.constLast() > 0.0)) {
+            mid = closes.constLast();
+        }
     }
     if ((mid <= 0.0) || (sides.spreadPct <= 0.0)) {
         return sides;
@@ -1745,11 +1754,27 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
         !netGate.allow) {
         return refuse(netGate.code, netGate.why, in);
     }
-    const qint64 openedId = (id == 0) ? 0 : m_book.open(sig, verdict.stake, now);
-    if (openedId == 0) {
+    // An instrument without a venue id cannot be opened — EXCEPT crypto, which is priced and
+    // marked off its candle close by design (sidesFor / markFor), so the simulation's whole
+    // geometry — fill, stop, target, marks, exits — never needs the id; it reached this line
+    // priced, or the gate would have refused it `no-live-quote`. A real order path (which does
+    // not exist here, REQ-N-005) would need the id, and that is where this exemption ends.
+    // Everything else keeps the refusal: the sidesFor/markFor candle fallbacks were written
+    // for crypto precisely because its id never resolves in this build, and refusing it here
+    // only moved the refusal one step along.
+    if ((id == 0) && !trading::isCryptoSymbol(row.symbol)) {
         return refuse(QStringLiteral("instrument-unresolved"),
                       QStringLiteral("the venue's instrument id for %1 is not known, so no "
                                      "order geometry could be attached to it")
+                          .arg(row.symbol),
+                      in);
+    }
+    const qint64 openedId = m_book.open(sig, verdict.stake, now);
+    if (openedId == 0) {
+        // Unreachable after a taken verdict (it guarantees a valid signal and a positive
+        // stake), kept so a book that declines is named rather than reported as opened.
+        return refuse(QStringLiteral("book-refused"),
+                      QStringLiteral("the book declined to open %1: no valid geometry or stake")
                           .arg(row.symbol),
                       in);
     }
@@ -1760,22 +1785,7 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     m_book.setEntryCompositeConf(openedId, row.confidence);
     emit tradeOpened(sig.symbol);
     emit entryDecision(sig.symbol, true, QStringLiteral("opened"), verdict.why);
-    // The same event in the persistent log, with the geometry beside the evidence, so the
-    // file answers "why WAS this traded?" as fully as it answers why the others were not.
-    {
-        trading::DecisionNote note =
-            decisionNoteFor(sig.symbol, sig.isBuy ? 1 : -1, row.confidence, in, now);
-        note.traded = true;
-        note.why = verdict.why;
-        note.stake = verdict.stake;
-        note.leverage = sig.leverage;
-        note.fillRate = sig.fillRate;
-        note.slRate = sig.slRate;
-        note.tpRate = sig.tpRate;
-        note.openCost =
-            trading::paperHalfSpreadCost(verdict.stake, sig.leverage, sig.spreadPct);
-        static_cast<void>(trading::appendDecision(decisionLogPath(), note));
-    }
+    appendOpenedNote(sig, in, verdict, row.confidence, now);
     emit log(QStringLiteral("SIM OPEN %1 %2 %3 @ %4 x%5 — SL %6 / TP %7, spread cost %8 — %9")
                  .arg(sig.symbol)
                  .arg(sig.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
@@ -1789,6 +1799,27 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
                  .arg(verdict.why),
              false);
     return true;
+}
+
+void BotSimRunner::appendOpenedNote(const trading::EntrySignal &sig,
+                                    const trading::CandidateInput &in,
+                                    const trading::EntryVerdict &verdict,
+                                    double compositeConfidence, const QDateTime &now) const
+{
+    // The same event as the SIM OPEN line, in the persistent log with the geometry beside
+    // the evidence, so the file answers "why WAS this traded?" as fully as it answers why
+    // the others were not.
+    trading::DecisionNote note =
+        decisionNoteFor(sig.symbol, sig.isBuy ? 1 : -1, compositeConfidence, in, now);
+    note.traded = true;
+    note.why = verdict.why;
+    note.stake = verdict.stake;
+    note.leverage = sig.leverage;
+    note.fillRate = sig.fillRate;
+    note.slRate = sig.slRate;
+    note.tpRate = sig.tpRate;
+    note.openCost = trading::paperHalfSpreadCost(verdict.stake, sig.leverage, sig.spreadPct);
+    static_cast<void>(trading::appendDecision(decisionLogPath(), note));
 }
 
 void BotSimRunner::syncQuoteInterest()

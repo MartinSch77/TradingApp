@@ -6,6 +6,7 @@
 #include "domain/DecisionEngine.h"
 #include "domain/IndexConfluence.h"
 #include "domain/InstrumentCatalog.h"
+#include "domain/PaperTrader.h"   // groupLeverageCap: the crypto bucket's x2 ceiling
 #include "domain/YahooChartParser.h"
 #include "services/JsonHttp.h"
 
@@ -455,6 +456,43 @@ void MarketFeeds::fetchIntradaySeries()
             continue;
         }
         fetchIntradayRange(symbol, ticker, QStringLiteral("1d"), /*candlesOnly=*/false);
+    }
+}
+
+void MarketFeeds::fetchCryptoScreenerRows()
+{
+    for (const QString &symbol : std::as_const(m_tradableSymbols)) {
+        const QString ticker = yahooTicker(symbol);
+        if (!trading::isCryptoSymbol(symbol) || ticker.isEmpty()) {
+            continue;
+        }
+        // Hourly bars over two weeks: ~336 closes, the order of the 300 OneHour candles the
+        // venue scan fetches, so the entry signal's volatility estimate sees the same span.
+        QNetworkRequest req(
+            QUrl(feedUrl(QStringLiteral("https://query1.finance.yahoo.com"),
+                         QStringLiteral("/v8/finance/chart/%1?interval=1h&range=14d")
+                             .arg(QString::fromLatin1(QUrl::toPercentEncoding(ticker))))));
+        JsonHttp::setBrowserHeaders(req);
+        QNetworkReply *reply = m_nam->get(req);
+        m_http->handleReply(
+            reply, [this, symbol](bool ok, qint32 /*status*/, const QJsonDocument &doc,
+                                  const QByteArray & /*raw*/, const QString &netError) {
+                if (!ok || !doc.isObject()) {
+                    reportFeedError(QStringLiteral("Crypto scan rows"), netError);   // stays absent
+                    return;
+                }
+                ScreenerRow row;
+                row.symbol = symbol;
+                // Positive closes only: this series PRICES the candidate (its last close is the
+                // simulated fill, see BotSimRunner::sidesFor) and sizes its stop, and a 0.0 hour
+                // in a coin's chart is a feed gap, not a price.
+                row.closes = yahooCloses(yahooChartResult(doc), /*positiveOnly=*/true);
+                row.lastPrice = row.closes.isEmpty() ? 0.0 : row.closes.constLast();
+                row.maxLeverage = trading::groupLeverageCap(QStringLiteral("crypto"));
+                row.ok = !row.closes.isEmpty();
+                row.fromFallbackFeed = true;
+                emit cryptoScreenerRow(row);
+            });
     }
 }
 

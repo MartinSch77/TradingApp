@@ -319,6 +319,7 @@ int main(int argc, char *argv[])
     const auto scan = [&client, &feeds, books] {
         books->rows.clear();   // a fresh scan; last cycle's rows must not linger
         client.scanInstruments();
+        feeds.fetchCryptoScreenerRows();   // the crypto rows the venue scan cannot deliver
         feeds.fetchIntradaySeries();
         feeds.fetchReferenceSeries();
     };

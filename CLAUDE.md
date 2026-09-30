@@ -245,11 +245,21 @@ publish_release; refuses to publish on a red pipeline).
   never resolves a non-zero eToro `instrumentId`, so the id/rate quote path leaves `lastRateFor`
   at 0 and every crypto candidate was refused `no-live-quote` even with a composite direction.
   `BotSimRunner::sidesFor` (entry) and `markFor` (marking/exits) therefore FALL BACK to the
-  scan's candle close (the row's own closes for entry, `m_symbolSeries` for the mark — the Yahoo
-  `<TICKER>-USD` sweep, which quotes crypto 24/7), widened by the effective spread (already the
+  candle close — BOTH off `m_symbolSeries` first (the Yahoo `<TICKER>-USD` 1-minute sweep, which
+  quotes crypto 24/7), the entry then off the row's own hourly closes only when there is no
+  session series, so an open never starts with an hour of the coin's move already booked against
+  a 1-minute mark — widened by the effective spread (already the
   1% floor). `candidateFor` also treats a 24/7 instrument as `marketOpen` (`tradesOnWeekend`),
   since the eToro tradeable set does not cover it — but `sides.ok` still gates, so a crypto with
   no candle is still honestly refused. A candle-derived mark is NOT flagged live (fromCandle).
+  Two more facts make it ACTUALLY tradable: the bot's crypto SCAN ROWS come from the Yahoo HOURLY
+  feed (`MarketFeeds::fetchCryptoScreenerRows`, `ScreenerRow::fromFallbackFeed`, merged with the
+  venue's rows through the one `mergeScreenerRow` rule) because the eToro scan queues only
+  resolved ids and so never rowed crypto at all; and an id-less crypto candidate is OPENED with
+  `instrumentId == 0` (`tryOpen` exempts crypto from `instrument-unresolved`) since the simulation's
+  whole geometry runs off its candle close and no order path needs the id. The desktop GUI is
+  crypto-free at the SOURCE (`nonCryptoTradableSymbols()` for client, feeds and its bot's focus),
+  so the fallback feed is wired into the console front ends, which scan the full catalogue.
 - The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default `defaultFocusSymbols()` = SPX500 + NSDQ100 + every catalog crypto):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure

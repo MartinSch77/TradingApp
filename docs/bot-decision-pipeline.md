@@ -15,7 +15,12 @@ into a live decision, that is stated explicitly rather than left to be discovere
 
 Every scan cycle, `BotSimRunner` builds a ranked list of instruments from `DecisionEngine`'s
 composite (itself blended from a technical ensemble, a web rating, a keyword-based news
-score, a crowd tilt and a regime term). For each candidate it separately computes the
+score, a crowd tilt and a regime term). The per-instrument scan rows behind that composite come
+from the venue's screener (`EtoroClient::scanInstruments`, hourly candles for every instrument
+whose eToro id resolved) merged — through the one `mergeScreenerRow` rule — with the public-feed
+fallback rows `MarketFeeds::fetchCryptoScreenerRows` publishes for catalogued crypto, whose id
+never resolves in this build and which the venue scan therefore never rows; a venue row wins over
+a fallback row for the same symbol whenever it is usable. For each candidate it separately computes the
 nine-read confluence and the combined `LeadSignal`, asks the local LLM (if enabled) and
 resolves its answer against the composite, sizes an entry (`buildEntrySignal`), runs it
 through the entry gate (`paperEntryVerdict` — day rules, tradability, pace/session,

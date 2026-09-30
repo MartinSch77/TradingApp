@@ -20,6 +20,7 @@
 #include "MockHttpServer.h"
 #include "domain/DecisionEngine.h"
 #include "domain/Models.h"
+#include "domain/PaperTrader.h"
 #include "domain/PositionMath.h"
 #include "domain/PredictionLedger.h"
 #include "services/Config.h"
@@ -37,6 +38,7 @@
 #include <QStandardPaths>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <memory>
 
 using namespace trading;
@@ -358,6 +360,26 @@ QList<double> trend(double start, double step, qsizetype count)
         out.append(start + (static_cast<double>(i) * step));
     }
     return out;
+}
+
+// `count` hourly closes alternating `swingPct` percent below and above `mid` — a series
+// whose hourly sigma is about `swingPct` × 2, wide enough for the entry's target (1.5 × a
+// 1.5-sigma stop over the 24-hour horizon) to clear the 1% crypto round trip by the 2.5x
+// `minEdgeOverCost` asks for: scanRow's gentle noise gives a sigma near 0.17%/h, which
+// prices a target worth ~1.5x its costs and is refused `cost-vs-edge` before any later
+// rule is reached. Ends on the ABOVE point, so the last close is mid × (1 + swing).
+ScreenerRow swingingRow(const QString &symbol, double mid, double swingPct, qsizetype count)
+{
+    ScreenerRow row;
+    row.symbol = symbol;
+    row.maxLeverage = 2;
+    for (qsizetype i = 0; i < count; ++i) {
+        const double sign = ((count - 1 - i) % 2 == 0) ? 1.0 : -1.0;
+        row.closes.append(mid * (1.0 + (sign * swingPct / 100.0)));
+    }
+    row.lastPrice = row.closes.isEmpty() ? 0.0 : row.closes.constLast();
+    row.ok = !row.closes.isEmpty();
+    return row;
 }
 
 // A scan row over the given hourly closes.
@@ -817,50 +839,98 @@ private slots:
     // row comes from the public-feed fallback (fromFallbackFeed) and its price from its
     // candles — and neither of the two blockers that used to stop it there may fire. The
     // candle fallback prices it (never `no-live-quote`, TS-BOTSIM-001), and an id-less
-    // crypto candidate is no longer refused `instrument-unresolved`: whatever decides it is
-    // one of the strategy's own rules, and when they take it the position is booked with
-    // instrumentId 0, which the mark path (markFor, candle fallback) then handles. Asserted
-    // on the refusal code rather than on an open, because `onDecisions` reads the wall
-    // clock and the day/session rules would make an open calendar-dependent.
-    void TS_BOTSIM_005_anIdLessCryptoCandidateIsNotRefusedForItsMissingVenueId()
+    // crypto candidate is no longer refused `instrument-unresolved`. The candidate is built
+    // to pass every strategy rule (a series wide enough for its target to clear the 1%
+    // crypto round trip — swingingRow — the rest of the chain is silent in simulation: no
+    // fee table, no reads, no history in the book), so the open is asserted OUTRIGHT, with
+    // the position booked on instrumentId 0. The one gate that reads the wall clock for a
+    // 24/7 instrument is the session phase (BTC's calendar is the US one, so the New York
+    // opening chaos and the Fed window are sat out); the test computes that phase itself
+    // and asserts `volatile-window` exactly in those two windows, never a looser set.
+    // Alongside it: the fill is priced off the 1-MINUTE series' last close when there is
+    // one (BTC: its hourly and 1-minute last closes differ, the 1-minute one wins — an open
+    // filled at the hourly close would start with up to an hour of the coin's move already
+    // booked against a 1-minute mark), and off the hourly last close when there is none
+    // (ETH); and an id-less NON-crypto candidate (SP.24-7, given a 1-minute series too) is
+    // never opened — without the venue id its spread is unknown, so it is refused
+    // `no-live-quote` (on Sat/Sun the day gate speaks first: `weekend`); the
+    // `instrument-unresolved` refusal behind that is unreachable through a client that
+    // keys the spread by the same id, verified by inspection.
+    void TS_BOTSIM_005_anIdLessCryptoCandidateOpensOnItsCandleClose()
     {
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
         QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
         QVERIFY(decisions.isValid());
-        runner.setFocusSymbols({QStringLiteral("BTC")});
+        const QString btc = QStringLiteral("BTC");
+        const QString eth = QStringLiteral("ETH");
+        const QString index = QStringLiteral("SP.24-7");
+        runner.setFocusSymbols({btc, eth, index});
         runner.setArmed(true);
         QVERIFY(runner.armed());
+        QCOMPARE(client.instrumentIdFor(btc), qint64(0));   // the premise: no venue id
+        QCOMPARE(client.instrumentIdFor(index), qint64(0));
 
-        const QString symbol = QStringLiteral("BTC");
-        QCOMPARE(client.instrumentIdFor(symbol), qint64(0));   // the premise: no venue id
         MarketSnapshot snap;
-        ScreenerRow row = scanRow(symbol, 60);
-        row.fromFallbackFeed = true;
-        snap.screenerRows = {row};
-        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
-        runner.onDecisions({buyRow(symbol)}, snap);
+        ScreenerRow btcRow = swingingRow(btc, 60000.0, 0.5, 60);
+        btcRow.fromFallbackFeed = true;
+        ScreenerRow ethRow = swingingRow(eth, 3000.0, 0.5, 60);
+        ethRow.fromFallbackFeed = true;
+        snap.screenerRows = {btcRow, ethRow, swingingRow(index, 5800.0, 0.5, 60)};
+        const QList<double> btcSession = trend(59000.0, 1.0, 30);   // ends at 59029
+        snap.intradayBySymbol.insert(btc, btcSession);
+        snap.intradayBySymbol.insert(index, trend(5790.0, 0.1, 30));
+        QVERIFY(!qFuzzyCompare(btcSession.constLast(), btcRow.closes.constLast()));
+        const QDateTime now = QDateTime::currentDateTime();
+        const SessionPhase phase = sessionPhaseFor(btc, now);
+        const bool satOut =
+            (phase == SessionPhase::OpeningChaos) || (phase == SessionPhase::PolicyWindow);
+        runner.onDecisions({buyRow(btc), buyRow(eth), buyRow(index)}, snap);
 
-        QCOMPARE(decisions.size(), 1);
-        const QString code = decisionCodeFor(decisions, symbol);
-        QVERIFY2(code != QStringLiteral("instrument-unresolved"), qPrintable(code));
-        QVERIFY2(code != QStringLiteral("no-live-quote"), qPrintable(code));
-        QVERIFY2(code != QStringLiteral("not-focus"), qPrintable(code));
-        QVERIFY2(code != QStringLiteral("<no decision reported>"), qPrintable(code));
-        // When the strategy's own rules take it, the book holds it without a venue id.
-        if (code == QStringLiteral("opened")) {
-            QCOMPARE(runner.book().openTrades().size(), 1);
-            QCOMPARE(runner.book().openTrades().constFirst().symbol, symbol);
-            QCOMPARE(runner.book().openTrades().constFirst().instrumentId, qint64(0));
-        } else {
+        QCOMPARE(decisions.size(), 3);
+        const auto openTrade = [&runner](const QString &symbol) {
+            const QList<PaperTrade> &open = runner.book().openTrades();
+            return std::find_if(open.cbegin(), open.cend(),
+                                [&symbol](const PaperTrade &t) { return t.symbol == symbol; });
+        };
+        const auto notOpen = [&openTrade, &runner](const QString &symbol) {
+            return openTrade(symbol) == runner.book().openTrades().cend();
+        };
+        // The non-crypto candidate never opens: refused before any geometry, for the spread
+        // the venue never priced (the day gate outranks that on a weekend).
+        const QString indexCode = decisionCodeFor(decisions, index);
+        QCOMPARE(indexCode, (now.date().dayOfWeek() > 5) ? QStringLiteral("weekend")
+                                                         : QStringLiteral("no-live-quote"));
+        QVERIFY(notOpen(index));
+        if (satOut) {
+            QCOMPARE(decisionCodeFor(decisions, btc), QStringLiteral("volatile-window"));
+            QCOMPARE(decisionCodeFor(decisions, eth), QStringLiteral("volatile-window"));
             QVERIFY(runner.book().openTrades().isEmpty());
+            return;
         }
-        // Either way the ledger has its row, carrying the same verdict. (The list is a
-        // named local: rowFor returns a pointer INTO it, which a temporary would free.)
+        QCOMPARE(decisionCodeFor(decisions, btc), QStringLiteral("opened"));
+        QCOMPARE(decisionCodeFor(decisions, eth), QStringLiteral("opened"));
+        QCOMPARE(runner.book().openTrades().size(), 2);
+        QVERIFY(!notOpen(btc));
+        QCOMPARE(openTrade(btc)->instrumentId, qint64(0));
+        QVERIFY(openTrade(btc)->isBuy);
+        // The 1-minute close priced the fill (the mid; the half-spread is a separate line).
+        QCOMPARE(openTrade(btc)->openRate, btcSession.constLast());
+        QVERIFY(!notOpen(eth));
+        QCOMPARE(openTrade(eth)->instrumentId, qint64(0));
+        QCOMPARE(openTrade(eth)->openRate, ethRow.closes.constLast());   // no 1-minute series
+        // The ledger has both rows as TAKEN, priced at the same fill. (The list is a named
+        // local: rowFor returns a pointer INTO it, which a temporary would free.)
         const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
-        const Prediction *btc = rowFor(ledger, symbol);
-        QVERIFY(btc != nullptr);
-        QCOMPARE(btc->refusal, code == QStringLiteral("opened") ? QString{} : code);
+        const Prediction *btcRowInLedger = rowFor(ledger, btc);
+        QVERIFY(btcRowInLedger != nullptr);
+        QVERIFY(btcRowInLedger->taken);
+        QCOMPARE(btcRowInLedger->refusal, QString{});
+        QCOMPARE(btcRowInLedger->price, btcSession.constLast());
+        const Prediction *ethRowInLedger = rowFor(ledger, eth);
+        QVERIFY(ethRowInLedger != nullptr);
+        QVERIFY(ethRowInLedger->taken);
+        QCOMPARE(ethRowInLedger->price, ethRow.closes.constLast());
     }
 
     //! @tstid TS-BOTSIM-006 @design DES-UI-BOTSIM

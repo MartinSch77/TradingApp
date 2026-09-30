@@ -354,6 +354,10 @@ private:
     // The one sentence every refusal of a non-owned book uses, naming the holder
     // (QLockFile::getLockInfo: pid, host, application).
     [[nodiscard]] QString bookHolderLine() const;
+    // The "books restored" line over the loaded book, with `state` saying what became of
+    // the file's armed flag — composed by load() and composed AGAIN by acquireBookLock()
+    // once it is known whether this process runs the book or only looks at it.
+    [[nodiscard]] QString restoreNoteFor(const QString &state) const;
 
     EtoroClient *m_client = nullptr;
     OllamaAdvisor *m_ai = nullptr;          // optional local-model advisor (may be null)
@@ -427,12 +431,18 @@ private:
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QString m_storeFile;   // book file override (empty = botsim.json)
     // One process per book: `storePath() + ".lock"`, held for the runner's lifetime and
-    // released by QLockFile's own destructor. A lock left by a crashed process is stale
-    // by QLockFile's rule and taken over, and the default 30 s stale time is safe for a
-    // book held for WEEKS: measured on the same host (same process and a second one), a
-    // lock whose pid is alive is never treated as stale by age — a 40 s-old file with a
-    // live holder was refused under the default — and a dead pid frees it at once; the
-    // age rule only decides when the pid check cannot (another host, unreadable file).
+    // released by QLockFile's own destructor. Its stale time is set to 0 — the age rule
+    // OFF — because QLockFile's default treats a lock file older than 30 s as stale EVEN
+    // WHEN its holder is alive (isApparentlyStale checks the pid and the boot id, then
+    // falls through to the age; the modification time is never refreshed while held),
+    // and a bot holds its book for weeks. Measured: a lock naming a live pid with the
+    // recorded application name is refused while fresh, and TAKEN OVER once its file is
+    // 45 s old — the earlier "a live holder's lock is never stale by age" claim was
+    // wrong; that measurement was refused by the holder's flock on the file, which only
+    // a local filesystem enforces, not by the pid check. With the age rule off a lock is
+    // stale exactly when its pid is gone or the machine has rebooted (both free it at
+    // once, TS-BOTSIM-009), and a live holder keeps it however old (also on a
+    // filesystem without flock); the native lock is a second guard on top.
     std::unique_ptr<QLockFile> m_bookLock;
     bool m_ownsBook = false;
     QList<trading::DecisionRow> m_pendingRows;
@@ -442,7 +452,8 @@ private:
     QString m_aiStatus;                     // last availability line, for the window
     // What load() found, emitted once the object graph is connected: a signal from
     // the CONSTRUCTOR reaches nobody, and "RESUMED ARMED" is precisely the line a
-    // multi-day experiment must not lose.
+    // multi-day experiment must not lose. A book held by another process never says
+    // "resumed" here (acquireBookLock rewrites it): the experiment continues THERE.
     QString m_restoreNote;
 };
 

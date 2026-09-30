@@ -28,6 +28,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -231,6 +232,29 @@ QJsonObject savedBook()
     }
     return QJsonDocument::fromJson(file.readAll()).object();
 }
+
+// The whole of a file, empty when it cannot be read.
+QByteArray fileBytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// A lock file with the given contents and modification time — a lock as a process that
+// is no longer holding it natively left it (TS-BOTSIM-009). The time is set on the open
+// handle, since a closed file's time cannot be set through QFile.
+bool writeLockFile(const QString &path, const QByteArray &bytes, const QDateTime &modified)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(bytes) != bytes.size()
+        || !file.flush()) {   // a write still buffered at close() would re-stamp the file
+        return false;
+    }
+    return file.setFileTime(modified, QFileDevice::FileModificationTime);
+}
+
+// A pid no process can have: Linux caps pid_max at 2^22, Windows pids are far smaller.
+constexpr qint64 kNoSuchPid = 2000000000;
 
 // A prediction-ledger HISTORY for `symbol`, written to the shared ledger file before a
 // runner reads it: `count` long calls five minutes apart, every one of them right (the
@@ -549,30 +573,65 @@ private slots:
     // One process per book. The GUI and the console share one config dir and one book by
     // design, so a QLockFile beside the store decides who RUNS it: a second runner on the
     // same store still loads and shows the book but reports ownsBook() == false, drops a
-    // restored "armed" flag rather than resuming it, refuses setArmed(true) with a log line
-    // naming the holder, and neither marks nor writes on a scan (no decision reported, no
-    // ledger row — the owner's files stay the owner's). Releasing the first runner lets
-    // the next one own the book, so a clean restart is never locked out.
+    // restored "armed" flag rather than resuming it — and SAYS so: its deferred restore
+    // line never reads "RESUMED ARMED" beside the read-only line naming the holder (the
+    // measured console showed both, one contradicting the other) — refuses setArmed(true)
+    // with a log line naming the holder AND emits `changed` on the refusal (the GUI's
+    // checkable arm button re-reads armed() only on that signal, and stayed pressed), and
+    // neither marks, exits nor writes: a config change and a scan whose candle is below an
+    // OPEN position's stop leave the position open in its book, the owner's store bytes
+    // untouched and the decision, experience and prediction files absent. Every one of
+    // those is what deleting the `!m_ownsBook` guard in save() or onDecisions would
+    // change. Releasing the first runner lets the next one own the book, so a clean
+    // restart is never locked out.
     void TS_BOTSIM_003_aSecondRunnerOnTheSameBookIsReadOnlyAndCannotBeArmed()
     {
+        // The store holds one OPEN BTC position (fill 60 000, stop 50 000) and says ARMED —
+        // the exit path is only reachable over an open position, and a scan below its
+        // stop is exactly what a non-owned runner must NOT act on.
+        const QString symbol = QStringLiteral("BTC");
+        QVERIFY(seedBookHoldingBtc());
         EtoroClient client(Config{});
         auto first =
             std::make_unique<BotSimRunner>(&client, nullptr, nullptr, QLatin1String(kStore));
         QVERIFY(first->ownsBook());
-        first->setArmed(true);
         QVERIFY(first->armed());
-        // A config change saves the book, armed flag included — what a second process
-        // then RESTORES from the file (the focus set itself is not persisted; `armed` is).
-        first->setFocusSymbols({QStringLiteral("BTC")});
+        // A config change saves the book, armed flag and AI mode included — what a second
+        // process then RESTORES from the file (the focus set itself is not persisted).
+        first->setFocusSymbols({symbol});
         QVERIFY(savedBook().value(QStringLiteral("armed")).toBool());
+        QCOMPARE(savedBook().value(QStringLiteral("aiMode")).toInt(),
+                 static_cast<int>(BotAiMode::Off));
+        const QByteArray ownersBytes = fileBytes(runnerFiles().constFirst());
+        QVERIFY(!ownersBytes.isEmpty());
 
         BotSimRunner second(&client, nullptr, nullptr, QLatin1String(kStore));
         QSignalSpy logs(&second, &BotSimRunner::log);
         QSignalSpy decisions(&second, &BotSimRunner::entryDecision);
+        QSignalSpy changes(&second, &BotSimRunner::changed);
         QVERIFY(logs.isValid());
         QVERIFY(decisions.isValid());
+        QVERIFY(changes.isValid());
         QVERIFY(!second.ownsBook());
         QVERIFY(!second.armed());   // the file said armed; the holder runs it, not this one
+        QCOMPARE(second.book().openTrades().size(), 1);   // …but it shows the book
+
+        // The constructor's deferred lines: the restore note and the read-only line,
+        // and the first must not claim what the second denies.
+        QCoreApplication::processEvents();
+        QCOMPARE(logs.size(), 2);
+        const QString restored = logs.at(0).at(0).toString();
+        QVERIFY2(restored.startsWith(QStringLiteral("BOT SIM books restored")),
+                 qPrintable(restored));
+        QVERIFY2(!restored.contains(QStringLiteral("RESUMED")), qPrintable(restored));
+        QVERIFY2(restored.contains(QStringLiteral("ARMED")),
+                 qPrintable(restored));   // the file's fact
+        QVERIFY2(restored.contains(QStringLiteral("holder")), qPrintable(restored));
+        QVERIFY2(logs.at(1).at(0).toString().contains(QStringLiteral("held")),
+                 qPrintable(logs.at(1).at(0).toString()));
+        QCOMPARE(changes.size(), 1);
+        logs.clear();
+        changes.clear();
 
         second.setArmed(true);
         QVERIFY(!second.armed());
@@ -582,16 +641,29 @@ private slots:
         QVERIFY2(refusal.contains(QStringLiteral("pid %1").arg(QCoreApplication::applicationPid())),
                  qPrintable(refusal));
         QVERIFY(logs.constFirst().at(1).toBool());   // reported as an error, not as chatter
+        QCOMPARE(changes.size(), 1);   // the refusal is a state to re-read, not just a line
+
+        // A config change on the viewer stays in the viewer: the console sets the AI
+        // mode at start-up, and save() is the one place that must refuse it.
+        second.setAiMode(BotAiMode::Lead);
+        QCOMPARE(second.book().config().aiMode, BotAiMode::Lead);
+        QCOMPARE(fileBytes(runnerFiles().constFirst()), ownersBytes);
 
         // A scan reaches the read-only views and nothing else: no candidate is evaluated,
-        // no ledger row is written.
-        const QString symbol = QStringLiteral("BTC");
+        // no ledger row is written, and the candle below the stop closes nothing — the
+        // holder marks and exits, and a close booked here would write the owner's
+        // decision and experience logs over its own.
         MarketSnapshot snap;
         snap.screenerRows = {scanRow(symbol, 60)};
-        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        snap.intradayBySymbol.insert(symbol, {49500.0, 49000.0});
         second.onDecisions({buyRow(symbol)}, snap);
         QCOMPARE(decisions.size(), 0);
+        QCOMPARE(second.book().openTrades().size(), 1);
+        QVERIFY(second.book().closedTrades().isEmpty());
         QVERIFY(!QFile::exists(BotSimRunner::ledgerPath()));
+        QVERIFY(!QFile::exists(runnerFiles().at(2)));   // decisions log
+        QVERIFY(!QFile::exists(runnerFiles().at(3)));   // experience log
+        QCOMPARE(fileBytes(runnerFiles().constFirst()), ownersBytes);
 
         // The lock goes with its holder.
         first.reset();
@@ -869,6 +941,61 @@ private slots:
         const QJsonObject saved = savedBook();
         QVERIFY(saved.value(QStringLiteral("open")).toArray().isEmpty());
         QCOMPARE(saved.value(QStringLiteral("closed")).toArray().size(), 1);
+    }
+
+    //! @tstid TS-BOTSIM-009 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, scope=function)
+    //
+    // The book's lock is never judged stale by AGE. QLockFile's default stale time (30 s)
+    // treats a lock file older than that as stale even when the pid it names is alive
+    // and matches the recorded application, and nothing refreshes the file while it is
+    // held — so a bot that has run for an hour would have had its book taken by the next
+    // process to look at it (measured: refused while fresh, taken over at 45 s old). The
+    // runner therefore turns the age rule off, and what decides staleness is the holder:
+    // a lock naming a LIVE pid with this application's name, a minute old and held by no
+    // native lock at all (the file written back after its holder released it — a holder
+    // on a filesystem that does not enforce flock looks exactly like this), is refused,
+    // the runner reports the holder and the file keeps its old modification time; the
+    // same file naming a pid that cannot be running is freed at once and the new runner
+    // owns the book with its own pid in the lock. Both halves fail under the default:
+    // the first is stolen, and the second is what "never stale" must not cost.
+    void TS_BOTSIM_009_anOldLockOfALiveHolderIsRefusedWhileADeadHoldersIsFreed()
+    {
+        const QString lockPath = runnerFiles().at(1);
+        EtoroClient client(Config{});
+        QByteArray lockBytes;
+        {
+            const BotSimRunner holder(&client, nullptr, nullptr, QLatin1String(kStore));
+            QVERIFY(holder.ownsBook());
+            lockBytes = fileBytes(lockPath);   // this process's pid, name, host, boot id
+            QVERIFY(!lockBytes.isEmpty());
+        }
+        QVERIFY(!QFile::exists(lockPath));   // released with its holder
+
+        // The same lock, a minute old, with no process holding it natively.
+        const QDateTime aMinuteAgo = QDateTime::currentDateTimeUtc().addSecs(-60);
+        QVERIFY(writeLockFile(lockPath, lockBytes, aMinuteAgo));
+        {
+            const BotSimRunner viewer(&client, nullptr, nullptr, QLatin1String(kStore));
+            QSignalSpy logs(&viewer, &BotSimRunner::log);
+            QVERIFY(!viewer.ownsBook());
+            QCoreApplication::processEvents();
+            QCOMPARE(logs.size(), 1);
+            const QString line = logs.constFirst().at(0).toString();
+            QVERIFY2(
+                line.contains(QStringLiteral("pid %1").arg(QCoreApplication::applicationPid())),
+                qPrintable(line));
+        }
+        // Refused means untouched: a takeover rewrites the file, which is then fresh.
+        QVERIFY(QFileInfo(lockPath).lastModified() < aMinuteAgo.addSecs(30));
+
+        // The same file naming a pid nothing runs under: stale by the pid rule alone.
+        QByteArray deadBytes = lockBytes;
+        deadBytes.replace(0, deadBytes.indexOf('\n'), QByteArray::number(kNoSuchPid));
+        QVERIFY(writeLockFile(lockPath, deadBytes, aMinuteAgo));
+        const BotSimRunner successor(&client, nullptr, nullptr, QLatin1String(kStore));
+        QVERIFY(successor.ownsBook());
+        QCOMPARE(fileBytes(lockPath), lockBytes);   // rewritten by the new holder: us
     }
 };
 

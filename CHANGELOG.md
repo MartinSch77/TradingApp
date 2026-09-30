@@ -49,7 +49,9 @@ Real-money execution stays excluded throughout (REQ-N-005).
 - One process per book: a `QLockFile` beside the store. The GUI and the console
   share one book by design and could both run the bot on it; the second runner
   now loads and shows the book read-only, refuses to arm naming the holder,
-  and never marks, enters or saves (`ownsBook()`, TS-BOTSIM-003).
+  and never marks, enters or saves (`ownsBook()`, TS-BOTSIM-003). The lock's
+  age rule is off: QLockFile's default took a live holder's lock once its file
+  was 30 s old, and a book is held for weeks (TS-BOTSIM-009).
 - Session structure: the runner computed `openingRange` and the ledger's
   prior-move baseline from the eToro scan's HOURLY closes (a 30-hour "opening
   range"). Both now read the 1-minute series the window shows; the hourly

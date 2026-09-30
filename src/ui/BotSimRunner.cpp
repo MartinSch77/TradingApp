@@ -390,6 +390,10 @@ void BotSimRunner::setArmed(bool armed)
     // the console's launch — and none of them may arm a book another process is running.
     if (armed && !m_ownsBook) {
         emit log(bookHolderLine() + QStringLiteral(" Arming refused."), true);
+        // The GUI's arm button is checkable and only re-reads armed() on `changed`;
+        // without this it stays pressed on a runner that just refused, until the next
+        // scan happens to emit it — an armed-looking control over a disarmed bot.
+        emit changed();
         return;
     }
     if (m_armed == armed) {
@@ -1962,15 +1966,22 @@ void BotSimRunner::load()
         m_book.setConfig(cfg);
     }
     m_armed = root.value(QStringLiteral("armed")).toBool();
-    const PaperStats s = m_book.stats();
+    // Provisional: acquireBookLock() rewrites this when the book turns out to be held
+    // elsewhere, because "resumed" is only true of the process that runs it.
     m_restoreNote =
-        QStringLiteral("BOT SIM books restored: equity %1, %2 open, %3 closed — %4 (AI mode: %5)")
-                 .arg(botPlain(s.equity))
-                 .arg(s.openTrades)
-                 .arg(s.closedTrades)
-            .arg(m_armed ? QStringLiteral("RESUMED ARMED, the experiment continues")
-                         : QStringLiteral("DISARMED — press \"Arm the bot\" to continue"))
-            .arg(trading::botAiModeWord(cfg.aiMode));
+        restoreNoteFor(m_armed ? QStringLiteral("RESUMED ARMED, the experiment continues")
+                               : QStringLiteral("DISARMED — press \"Arm the bot\" to continue"));
+}
+
+QString BotSimRunner::restoreNoteFor(const QString &state) const
+{
+    const PaperStats s = m_book.stats();
+    return QStringLiteral(
+               "BOT SIM books restored: equity %1, %2 open, %3 closed — %4 (AI mode: %5)")
+        .arg(botPlain(s.equity))
+        .arg(s.openTrades)
+        .arg(s.closedTrades)
+        .arg(state, trading::botAiModeWord(m_book.config().aiMode));
 }
 
 void BotSimRunner::acquireBookLock()
@@ -1980,9 +1991,12 @@ void BotSimRunner::acquireBookLock()
     // first run nothing has created the config dir before this point.
     static_cast<void>(QDir().mkpath(QFileInfo(path).absolutePath()));
     m_bookLock = std::make_unique<QLockFile>(path + QStringLiteral(".lock"));
+    // The age rule is OFF (see m_bookLock): a book is held for as long as the bot runs,
+    // and QLockFile's default judges a live holder's lock stale by its 30 s age alone.
+    m_bookLock->setStaleLockTime(std::chrono::milliseconds::zero());
     // One attempt, no waiting: a held book is an answer, not a condition to wait out. A
-    // lock whose process is gone is stale by QLockFile's own rule and is taken over; a
-    // live holder's is not, however old (see m_bookLock).
+    // lock whose process is gone (or that predates a reboot) is stale by QLockFile's
+    // pid/boot-id rule and is taken over; a live holder's is refused, however old.
     m_ownsBook = m_bookLock->tryLock(std::chrono::milliseconds::zero());
     if (m_ownsBook) {
         return;
@@ -1990,6 +2004,14 @@ void BotSimRunner::acquireBookLock()
     // load() may have restored "armed" from a book the OTHER process is running; the
     // experiment continues there, not here, so the flag is dropped rather than resumed
     // (setArmed would refuse it too — this keeps armed() honest from the first call).
+    // The restore note follows the same fact: what it announced before this point was
+    // the FILE's flag, and "resumed, the experiment continues" beside the read-only line
+    // would say the experiment runs in two processes.
+    if (!m_restoreNote.isEmpty()) {
+        m_restoreNote = restoreNoteFor(
+            m_armed ? QStringLiteral("saved ARMED — the holder runs it, not this process")
+                    : QStringLiteral("saved DISARMED — only the holder can arm it"));
+    }
     m_armed = false;
 }
 

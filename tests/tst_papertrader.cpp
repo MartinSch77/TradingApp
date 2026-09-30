@@ -118,6 +118,33 @@ PaperTrade tradeAt(double openRate, bool isBuy, double stake = 3000.0, qint32 le
     return t;
 }
 
+// The position PaperBook::open would create from this candidate's signal on
+// `margin` EUR, seconds old: its half-spread paid, nothing earned yet.
+PaperTrade freshPositionFrom(const CandidateInput &in, const EntrySignal &sig, double margin)
+{
+    PaperTrade t = tradeAt(sig.fillRate, sig.isBuy, margin, sig.leverage);
+    t.symbol = in.symbol;
+    t.slRate = sig.slRate;
+    t.tpRate = sig.tpRate;
+    t.openCost = paperHalfSpreadCost(margin, sig.leverage, sig.spreadPct);
+    t.openTime = in.now;
+    t.feesChargedTo = in.now;
+    t.markTime = in.now.addSecs(5);
+    return t;
+}
+
+// That position's FIRST mark: at its own fill, five seconds later, with the same
+// spread and fee knowledge the candidate carried.
+ExitContext firstMarkFor(const CandidateInput &in, const EntrySignal &sig)
+{
+    ExitContext ctx = exitAt(sig.fillRate, in.dir, in.confidence, in.now.addSecs(5));
+    ctx.spreadPct = in.spreadPct;
+    ctx.fees = in.fees;
+    ctx.feesKnown = in.feesKnown;
+    ctx.eurPerUsd = in.eurPerUsd;
+    return ctx;
+}
+
 } // namespace
 
 class TestPaperTrader : public QObject
@@ -3134,6 +3161,114 @@ private slots:
         QVERIFY(std::min(proposedMargin, ceiling.stake) <= ceiling.stake + 1e-9);
         const double smallMargin = ceiling.stake / 2.0;
         QCOMPARE(std::min(smallMargin, ceiling.stake), smallMargin);
+    }
+
+    //! @tstid TS-PAPER-044 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // The WeekendCarry exit reads paperWeekendChargeAhead, which is true the WHOLE
+    // Friday, and a fresh position starts at net ≤ 0 — so anything opened on a Friday
+    // with a known positive fee table was closed on its first mark, a pure spread round
+    // trip. The entry gate now refuses what that rule would close at once, and it must
+    // be silent exactly when the exit rule is: the two are one rule read from both ends.
+    void TS_PAPER_044_entryRefusesWhatTheWeekendCarryRuleWouldCloseAtOnce()
+    {
+        const BotConfig cfg;
+        CandidateInput friday = goodCandidate();
+        friday.now = QDateTime(QDate(2026, 8, 7), QTime(12, 0), QTimeZone::UTC);   // a Friday
+        QVERIFY(paperWeekendChargeAhead(friday.now));
+        friday.feesKnown = true;
+        friday.fees.buyOvernight = 0.5;   // USD per unit per night: a CHARGE
+        friday.fees.sellOvernight = 0.5;
+        friday.fees.buyWeekend = 1.5;
+        friday.fees.sellWeekend = 1.5;
+        friday.eurPerUsd = 1.0;
+        const EntrySignal fridaySig = buildEntrySignal(friday, cfg);
+        QVERIFY(fridaySig.valid);
+        QVERIFY(paperWeekendCarryWouldClose(friday, fridaySig));
+        const EntryVerdict refused = paperEntryVerdict(friday, fridaySig, freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("weekend-carry-ahead"));
+        // The `why` names the charge in EUR on the stake the sizing would give.
+        const double stake = std::max(
+            paperStakeFor(freshBook(), cfg, paperEntrySignalRisk(fridaySig)), cfg.minStake);
+        const double charge = paperWeekendChargeForEntry(friday, fridaySig, stake);
+        QVERIFY(charge > 0.0);
+        QVERIFY(refused.why.contains(QString::number(charge, 'f', 2) + QStringLiteral(" EUR")));
+
+        // The cross-check that makes this a mirror and not a policy: the position this
+        // candidate would open, marked at its own fill a few seconds later, is exactly
+        // what paperCloseDecision closes as WeekendCarry.
+        const PaperTrade fresh = freshPositionFrom(friday, fridaySig, stake);
+        QVERIFY(fresh.netPnl() <= 0.0);
+        QCOMPARE(paperCloseDecision(fresh, firstMarkFor(friday, fridaySig), cfg),
+                 CloseReason::WeekendCarry);
+
+        // The same candidate on a Wednesday is simply taken: the weekend is not ahead.
+        CandidateInput wednesday = friday;
+        wednesday.now = QDateTime(QDate(2026, 8, 5), QTime(12, 0), QTimeZone::UTC);
+        const EntrySignal wednesdaySig = buildEntrySignal(wednesday, cfg);
+        QVERIFY(!paperWeekendCarryWouldClose(wednesday, wednesdaySig));
+        QVERIFY(paperEntryVerdict(wednesday, wednesdaySig, freshBook(), cfg).take);
+
+        // Silent exactly when the exit rule is silent. Fees unknown: the exit rule
+        // cannot price the weekend, so the entry does not pretend to either…
+        CandidateInput unknownFees = friday;
+        unknownFees.feesKnown = false;
+        const EntrySignal unknownSig = buildEntrySignal(unknownFees, cfg);
+        QVERIFY(!paperWeekendCarryWouldClose(unknownFees, unknownSig));
+        QCOMPARE(paperCloseDecision(freshPositionFrom(unknownFees, unknownSig, stake),
+                                    firstMarkFor(unknownFees, unknownSig), cfg),
+                 CloseReason::None);
+        QVERIFY(paperEntryVerdict(unknownFees, unknownSig, freshBook(), cfg).take);
+        // …a CREDIT is money for holding, never a reason to close or to refuse…
+        CandidateInput credit = friday;
+        credit.fees.buyOvernight = -0.2;
+        const EntrySignal creditSig = buildEntrySignal(credit, cfg);
+        QVERIFY(paperWeekendChargeForEntry(credit, creditSig, stake) < 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(credit, creditSig));
+        QCOMPARE(paperCloseDecision(freshPositionFrom(credit, creditSig, stake),
+                                    firstMarkFor(credit, creditSig), cfg),
+                 CloseReason::None);
+        QVERIFY(paperEntryVerdict(credit, creditSig, freshBook(), cfg).take);
+        // …and a fee table that is all zeros charges nothing, so nothing is refused.
+        CandidateInput zeroFee = friday;
+        zeroFee.fees = InstrumentFees{};
+        const EntrySignal zeroSig = buildEntrySignal(zeroFee, cfg);
+        QCOMPARE(paperWeekendChargeForEntry(zeroFee, zeroSig, stake), 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(zeroFee, zeroSig));
+        QVERIFY(paperEntryVerdict(zeroFee, zeroSig, freshBook(), cfg).take);
+        // An unsized signal has no position to close, so it answers false and leaves
+        // the refusal to the gate that names the missing history.
+        QVERIFY(!paperWeekendCarryWouldClose(friday, EntrySignal{}));
+
+        // A 24/7 instrument: the exit rule applies paperWeekendChargeAhead regardless of
+        // tradesOnWeekend, and the entry refusal must mirror THAT — whichever way it
+        // goes — rather than assert a policy of its own about crypto.
+        CandidateInput btc = friday;
+        btc.symbol = QStringLiteral("BTC");
+        btc.instrumentId = 0;
+        QVERIFY(tradesOnWeekend(btc.symbol));
+        const EntrySignal btcSig = buildEntrySignal(btc, cfg);
+        QVERIFY(btcSig.valid);
+        const bool exitCloses = paperCloseDecision(freshPositionFrom(btc, btcSig, stake),
+                                                   firstMarkFor(btc, btcSig), cfg)
+                                == CloseReason::WeekendCarry;
+        QCOMPARE(paperWeekendCarryWouldClose(btc, btcSig), exitCloses);
+        QCOMPARE(paperEntryVerdict(btc, btcSig, freshBook(), cfg).code
+                     == QStringLiteral("weekend-carry-ahead"),
+                 exitCloses);
+        // …and the mirror holds on the silent side too: with the fee table unknown the
+        // exit rule cannot fire, so the refusal disappears for the 24/7 name as well.
+        CandidateInput btcUnknown = btc;
+        btcUnknown.feesKnown = false;
+        const EntrySignal btcUnknownSig = buildEntrySignal(btcUnknown, cfg);
+        QCOMPARE(paperCloseDecision(freshPositionFrom(btcUnknown, btcUnknownSig, stake),
+                                    firstMarkFor(btcUnknown, btcUnknownSig), cfg),
+                 CloseReason::None);
+        QVERIFY(!paperWeekendCarryWouldClose(btcUnknown, btcUnknownSig));
+        QVERIFY(paperEntryVerdict(btcUnknown, btcUnknownSig, freshBook(), cfg).code
+                != QStringLiteral("weekend-carry-ahead"));
     }
 };
 

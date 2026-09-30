@@ -190,7 +190,11 @@ publish_release; refuses to publish on a red pipeline).
   simulation without costs measures nothing. Those costs also DECIDE exits: close
   when the remaining upside no longer covers rollover-to-horizon + exit spread, and
   before the tripled weekend charge unless the position has earned it (a credit
-  never closes; unknown fees keep both rules silent). An ACTIVE keep from the model
+  never closes; unknown fees keep both rules silent). Entries MIRROR the weekend rule:
+  a Friday open that the weekend-carry rule would close on its first mark (a fresh
+  position is at net ≤ 0, and `paperWeekendChargeAhead` is true the whole Friday) is
+  refused `weekend-carry-ahead` instead of being opened and closed for the spread
+  (`paperWeekendCarryWouldClose`, silent exactly when the exit rule is). An ACTIVE keep from the model
   (`ExitContext::aiBacksHold`, config `aiMayOverrideCarry`, default OFF since 2026-08-12 —
   see the strategic redirection below) waives BOTH carry
   closes so a conviction trade may ride overnight/over the weekend — but ONLY those two: the

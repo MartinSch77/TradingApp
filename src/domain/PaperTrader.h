@@ -851,7 +851,8 @@ struct EntryVerdict {
     QString why;
     // Stable, countable category of the refusal, so one scan can summarise WHY it
     // opened nothing ("market-closed x18, confidence x5") instead of leaving the
-    // window silent — which is indistinguishable from a broken bot.
+    // window silent — which is indistinguishable from a broken bot. The calendar
+    // codes come first: "day-target" | "day-loss" | "weekend" | "weekend-carry-ahead".
     QString code;               // "market-closed" | "no-live-quote" | "no-signal" |
                                 // "confidence" | "already-holding" | "trade-limit" |
                                 // "ruin-guard" | "no-history" | "spread-unknown" |
@@ -1021,6 +1022,30 @@ struct ExitContext {
 // Is the next rollover this position pays the TRIPLED weekend one? True when the
 // next date boundary crossed from `now` starts a Saturday.
 [[nodiscard]] bool paperWeekendChargeAhead(const QDateTime &now);
+
+// The tripled weekend charge, in EUR, that a FRESH position opened from this
+// candidate with the signal's geometry would pay on `stake` EUR of margin:
+// paperRolloverCost over the 3 Friday nights with the SAME side/fees/eurPerUsd
+// semantics the WeekendCarry exit reads, so entry and exit can never disagree
+// about the figure. 0 when the fees are unknown, the signal is unsized or the
+// stake is not positive; NEGATIVE for a carry credit, exactly as the exit sees it.
+[[nodiscard]] double paperWeekendChargeForEntry(const CandidateInput &in, const EntrySignal &sig,
+                                                double stake);
+
+// Would the WeekendCarry exit close a position opened from this candidate NOW, at
+// its FIRST mark? True exactly when that rule's own condition holds for a fresh
+// position: the fee table is known, the next boundary is the Friday night
+// (paperWeekendChargeAhead — which is true the WHOLE Friday) and the 3-night charge
+// is positive. No P/L comparison is needed: a position seconds old has paid its
+// half-spread and earned nothing, so its net is ≤ 0 and below any positive charge.
+// Measured before this gate existed: every Friday open on a non-24/7 instrument
+// with a known fee table was closed WeekendCarry ~5 s later — a pure spread round
+// trip. Silent exactly when the exit rule is (fees unknown, a credit, a zero fee),
+// and an unsized signal answers false (it has no position to close; the
+// `no-history` gate names that). The model's ACTIVE keep (aiMayOverrideCarry) is
+// a per-mark opinion about an OPEN position and cannot be known here, so it is
+// not consulted.
+[[nodiscard]] bool paperWeekendCarryWouldClose(const CandidateInput &in, const EntrySignal &sig);
 
 // Whether this position should close now, and why: its stop-loss or take-profit
 // rate touched, the carry no longer covered by the remaining upside, the tripled

@@ -1459,18 +1459,54 @@ StakeRoom paperStakeRoom(const BookState &book, const BotConfig &cfg, double ris
     return out;
 }
 
-EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
-                                const BookState &book, const BotConfig &cfg)
+namespace {
+
+// The CALENDAR gates — what the clock alone decides, before any signal is heard.
+// 1. The DAY rule: once the day's target or loss limit is booked, the bot is done
+//    for the day — no instrument, no signal and no model changes that. This is the
+//    emotionless part: it does not get to argue with its own limit.
+// 1b. The weekend charge AHEAD: a position opened now would start at net ≤ 0 (it
+//    has paid its half-spread and earned nothing) and the WeekendCarry exit would
+//    close it on its FIRST mark — a pure spread round trip, every Friday, for every
+//    non-24/7 instrument whose fee table is known. Refusing it here is that exit
+//    rule read from the entry side, and it stays silent exactly when the exit rule
+//    does (paperWeekendCarryWouldClose). The `why` names the charge on the stake
+//    the sizing would give (floored at the minimum, so a book with no room still
+//    reads a real figure rather than 0.00).
+EntryVerdict calendarVerdict(const CandidateInput &in, const EntrySignal &sig,
+                             const BookState &book, const BotConfig &cfg)
 {
     EntryVerdict verdict;
-    // The DAY rule comes first: once the day's target or loss limit is booked, the
-    // bot is done for the day — no instrument, no signal and no model changes that.
-    // This is the emotionless part: it does not get to argue with its own limit.
     if (const DayGate day = paperDayGate(book.day, in.now, cfg, tradesOnWeekend(in.symbol));
         day != DayGate::Open) {
         verdict.why = dayGateWord(day);
         verdict.code = dayGateCode(day);
         return verdict;
+    }
+    if (paperWeekendCarryWouldClose(in, sig)) {
+        const double stake =
+            std::max(paperStakeFor(book, cfg, paperEntrySignalRisk(sig)), cfg.minStake);
+        verdict.why = QStringLiteral("the weekend-carry rule would close it at its first mark: "
+                                     "%1 EUR tripled Friday rollover on a %2 EUR stake "
+                                     "that has earned nothing yet")
+                          .arg(paperWeekendChargeForEntry(in, sig, stake), 0, 'f', 2)
+                          .arg(stake, 0, 'f', 0);
+        verdict.code = QStringLiteral("weekend-carry-ahead");
+    }
+    return verdict;
+}
+
+}   // namespace
+
+EntryVerdict paperEntryVerdict(const CandidateInput &in, const EntrySignal &sig,
+                               const BookState &book, const BotConfig &cfg)
+{
+    EntryVerdict verdict;
+    // The calendar first (the day rule, then the weekend charge ahead): what the
+    // clock decides, no signal gets to argue with.
+    if (const EntryVerdict calendar = calendarVerdict(in, sig, book, cfg);
+        !calendar.code.isEmpty()) {
+        return calendar;
     }
     // Then a chain of single-condition gates: each refusal names exactly one
     // reason, which is what the log line has to state (and it keeps every decision
@@ -1612,6 +1648,34 @@ bool paperWeekendChargeAhead(const QDateTime &now)
     // day that begins there is a Saturday — the same Friday-night rule
     // paperRolloverNights bills three times.
     return now.date().addDays(1).dayOfWeek() == kSaturday;
+}
+
+double paperWeekendChargeForEntry(const CandidateInput &in, const EntrySignal &sig, double stake)
+{
+    if (!in.feesKnown || (stake <= 0.0) || (sig.fillRate <= 0.0)) {
+        return 0.0;
+    }
+    // The position PaperBook::open would create from this signal, priced with the
+    // exit rule's own arithmetic (paperRolloverCost over the 3 Friday nights) so the
+    // entry can never disagree with the exit about what the weekend costs.
+    PaperTrade probe;
+    probe.stake = stake;
+    probe.leverage = sig.leverage;
+    probe.openRate = sig.fillRate;
+    probe.isBuy = sig.isBuy;
+    return paperRolloverCost(probe, in.fees, 3, in.eurPerUsd);
+}
+
+bool paperWeekendCarryWouldClose(const CandidateInput &in, const EntrySignal &sig)
+{
+    if (!in.feesKnown || !paperWeekendChargeAhead(in.now)) {
+        return false;   // the exit rule is silent on both counts (see carryExit)
+    }
+    // Only the SIGN of the charge decides (a credit or a zero fee never closes, so
+    // it never refuses either), and the sign is the same on any positive stake —
+    // the fee is per unit, and units scale with the stake. A fresh position's net
+    // is ≤ 0, so a positive charge is always above it.
+    return paperWeekendChargeForEntry(in, sig, 1.0) > 0.0;
 }
 
 namespace {

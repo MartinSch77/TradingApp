@@ -198,7 +198,14 @@ part of what any of items 1-7 above changed.
 
 Checked in this exact order; the first refusal wins and names itself with a stable `code`:
 
-1. **Day gate** (`paperDayGate`) — daily profit target / loss limit already hit today.
+1. **Day gate** (`paperDayGate`) — daily profit target / loss limit already hit today, or
+   the weekend for a non-24/7 instrument (`day-target` / `day-loss` / `weekend`).
+1b. **Weekend charge ahead** (`paperWeekendCarryWouldClose`) — a calendar/economics fact,
+   not a signal one: on a Friday with a known positive fee table, a position opened now
+   would start at net ≤ 0 and the `WeekendCarry` exit would close it on its FIRST mark, a
+   pure spread round trip; refused as `weekend-carry-ahead`, naming the tripled Friday
+   charge in EUR. Silent exactly when that exit rule is (fees unknown, a credit, a zero
+   fee), so the two are one rule read from both ends.
 2. **Tradability** — market open → quote live → a signal (`dir != 0`) exists at all
    (`market-closed` / `no-live-quote` / `no-signal`).
 3. **Pace/session** (`paceVerdict`) — sit-out session phase (opening chaos, policy window) →

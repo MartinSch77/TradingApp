@@ -55,6 +55,11 @@ namespace {
 // produces new decisions; there is nothing to gain from evaluating entries faster
 // than the data behind them changes.
 constexpr int kTickMs = 5000;
+// How long a pure-mark tick may leave the book unsaved. The marks move every tick above,
+// but nothing a mark carries (P/L, peakNet, accrued rollover) is worth a full atomic
+// rewrite of botsim.json twelve times a minute; a minute bounds what a crash can lose to
+// something a restart re-marks within seconds anyway. Shape changes never wait.
+constexpr qint64 kMarkSaveIntervalSecs = 60;
 // How old a local model's proposal may be when it lands and still be acted on.
 // A CPU model legitimately takes tens of seconds, and another scan may well have
 // completed meanwhile — that is fine, because the entry is re-validated against
@@ -436,6 +441,10 @@ void BotSimRunner::markAndExit()
     for (const PaperTrade &t : m_book.openTrades()) {
         ids.append(t.id);
     }
+    // The book's SHAPE before the pass: a close, a partial (one more closed record) or a
+    // harvest changes one of these counts, and that is what must reach the disk at once.
+    const qsizetype openBefore = m_book.openTrades().size();
+    const qsizetype closedBefore = m_book.closedTrades().size();
 
     bool moved = false;
     for (const qint64 id : ids) {
@@ -503,9 +512,29 @@ void BotSimRunner::markAndExit()
         moved = true;
     }
     if (moved) {
-        save();
-        emit changed();
+        saveAfterMarks(now, openBefore, closedBefore);
+        emit changed();   // the window still refreshes every tick; only the DISK waits
     }
+}
+
+void BotSimRunner::saveAfterMarks(const QDateTime &now, qsizetype openBefore,
+                                  qsizetype closedBefore)
+{
+    // A structural change (open, close, partial, harvest, reset, config, arm) is saved
+    // where it happens, exactly as before; this throttle is ONLY for the pass that moved
+    // marks and rollover accrual and nothing else. The swing strategy's day-granular
+    // state (trailing stop, sessions held) rides on the same throttle: it changes at most
+    // once a day per position, so a crash inside the minute after it costs one day's
+    // trailing step, not a position.
+    const bool structural = (m_book.openTrades().size() != openBefore)
+                            || (m_book.closedTrades().size() != closedBefore);
+    const bool due =
+        !m_lastMarkSave.isValid() || (m_lastMarkSave.secsTo(now) >= kMarkSaveIntervalSecs);
+    if (!structural && !due) {
+        return;
+    }
+    save();
+    m_lastMarkSave = now;
 }
 
 bool BotSimRunner::harvestDayTarget(const QDateTime &now)
@@ -1460,9 +1489,8 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
     }
     const trading::DecisionRow &lead = rows.constFirst();
     const QList<double> closes = m_symbolSeries.value(lead.symbol);
-    const QList<trading::Prediction> history = trading::loadPredictions(ledgerPath());
     QList<trading::Prediction> forSymbol;
-    for (const trading::Prediction &row : history) {
+    for (const trading::Prediction &row : ledgerRows()) {
         if (row.symbol == lead.symbol) {
             forSymbol.append(row);
         }
@@ -1489,6 +1517,15 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
              false);
 }
 
+const QList<trading::Prediction> &BotSimRunner::ledgerRows()
+{
+    if (!m_ledgerLoaded) {
+        m_ledger = trading::loadPredictions(ledgerPath());
+        m_ledgerLoaded = true;
+    }
+    return m_ledger;
+}
+
 // One ledger row per evaluated candidate, whatever the outcome (REQ-F-037). The rows
 // that STAY OUT are the reason the ledger is worth keeping: a record of the trades
 // actually taken can only measure the gate in front of it, never the signal — it cannot
@@ -1496,10 +1533,9 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
 //
 // Its own function rather than a lambda inside tryOpen: recording what was decided is a
 // different job from deciding, and folding it in pushed tryOpen past the complexity gate.
-void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
-                                    const QList<double> &closes, const QDateTime &now,
-                                    const trading::CandidateInput &in,
-                                    const QString &refusal) const
+void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
+                                    const QDateTime &now, const trading::CandidateInput &in,
+                                    const QString &refusal)
 {
     trading::Prediction entry;
     entry.at = now.toUTC();
@@ -1532,7 +1568,14 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
         const double last = closes.constLast();
         entry.priorMoveDir = (last > then) ? 1 : ((last < then) ? -1 : 0);
     }
-    static_cast<void>(trading::appendPrediction(ledgerPath(), entry));
+    // The file first, the cache only when the file took the row: the in-memory ledger is
+    // a copy of what is on disk, and a row the disk refused must not be scored as if it
+    // had been recorded. Loaded before the append so the copy never misses what the
+    // file already held.
+    static_cast<void>(ledgerRows());
+    if (trading::appendPrediction(ledgerPath(), entry)) {
+        m_ledger.append(entry);
+    }
 }
 
 // The two obstacles that outrank everything, in order, so a refusal names one a reader can

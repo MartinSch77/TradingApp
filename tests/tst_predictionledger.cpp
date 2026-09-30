@@ -17,6 +17,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+
 using namespace trading;
 
 namespace {
@@ -371,6 +373,89 @@ private slots:
         QVERIFY(fromOlder.has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         QVERIFY(fromOlder->strategyVersion.isEmpty());
+    }
+
+    //! @tstid TS-LEDGER-007 @design DES-DOM-LEDGER
+    // @relation(REQ-F-037, scope=function)
+    //
+    // The bulk scorer sorts the ledger ONCE and walks a bounded span per call, stopping at
+    // the first row of ANY instrument beyond the horizon's limit (the rows are in time
+    // order regardless of symbol, so nothing behind that row can be nearer). That early
+    // exit must change nothing: the samples and hits `scoreHorizon` reports have to equal
+    // a brute force over every other row, per call, through the public per-call resolver
+    // handed the rows UNSORTED — and, for two horizons, equal what a person counts by hand.
+    void TS_LEDGER_007_theSortedFastPathScoresExactlyWhatTheBruteForceDoes()
+    {
+        const auto at = [](qint32 minute, const QString &symbol, qint32 dir, double price) {
+            Prediction p = callAt(minute, dir, price);
+            p.symbol = symbol;
+            return p;
+        };
+        const QString a = QStringLiteral("NSDQ100");
+        const QString b = QStringLiteral("SPX500");
+        // Deliberately NOT in time order, and with the other instrument's far-away rows
+        // listed FIRST: an implementation that broke on "a row beyond the limit" in input
+        // order, rather than in time order, would resolve nothing for NSDQ100 at all.
+        const QList<Prediction> ledger{
+            at(3000, b, 1, 60.0),   // beyond every horizon for SPX500's own calls
+            at(100, b, 1, 50.0),  at(120, b, -1, 49.0), at(40, a, 1, 103.0), at(0, a, 1, 100.0),
+            at(16, a, 1, 101.5),  at(5, a, 1, 101.0),   at(200, a, 1, 99.0), at(15, a, -1, 102.0),
+            at(10, a, 0, 100.5),   // stayed out: never a call, still an honest later price
+            at(30, a, 1, 0.0),   // unpriced: neither a call nor an answer
+        };
+
+        // The brute force: for each valid directional call, the public resolver over every
+        // OTHER row in the ledger's own (unsorted) order — earlier rows, other symbols,
+        // invalid rows and all — counting samples and hits the way the scorer does.
+        const auto bruteForce = [&ledger](Horizon horizon, qint32 *hits) {
+            qint32 samples = 0;
+            *hits = 0;
+            for (qsizetype i = 0; i < ledger.size(); ++i) {
+                const Prediction &call = ledger.at(i);
+                if ((call.dir == 0) || !call.isValid()) {
+                    continue;
+                }
+                QList<Prediction> others = ledger;
+                others.removeAt(i);
+                const std::optional<Outcome> outcome = resolveOutcome(call, horizon, others);
+                if (!outcome.has_value()) {
+                    continue;
+                }
+                ++samples;
+                if (outcome->actualDir == call.dir) {
+                    ++*hits;
+                }
+            }
+            return samples;
+        };
+        for (const Horizon horizon : allHorizons()) {
+            qint32 expectedHits = 0;
+            const qint32 expectedSamples = bruteForce(horizon, &expectedHits);
+            const HorizonScore score = scoreHorizon(ledger, horizon);
+            QCOMPARE(score.samples, expectedSamples);
+            QCOMPARE(score.hits, expectedHits);
+        }
+
+        // By hand, so the brute force is not only compared with itself. 5-minute horizon
+        // (rows 5..7 minutes on): NSDQ100@0 pairs with @5 (101 > 100: hit), @5 pairs with the
+        // stayed-out @10 (100.5 < 101: miss), @15's next priced row is @16 (too early) then
+        // @40 (too late), and SPX500@100's next is 20 minutes on. Two samples, one hit.
+        const HorizonScore five = scoreHorizon(ledger, Horizon::M5);
+        QCOMPARE(five.samples, 2);
+        QCOMPARE(five.hits, 1);
+        // 15-minute horizon (15..22 minutes on): NSDQ100@0 pairs with @15 (102 > 100: hit),
+        // @5 and @15 find @40 too late, and SPX500@100 pairs with @120 (49 < 50: miss).
+        const HorizonScore fifteen = scoreHorizon(ledger, Horizon::M15);
+        QCOMPARE(fifteen.samples, 2);
+        QCOMPARE(fifteen.hits, 1);
+        // Order of the input never matters: the same ledger in time order scores the same.
+        QList<Prediction> ordered = ledger;
+        std::sort(ordered.begin(), ordered.end(),
+                  [](const Prediction &x, const Prediction &y) { return x.at < y.at; });
+        for (const Horizon horizon : allHorizons()) {
+            QCOMPARE(scoreHorizon(ordered, horizon).samples, scoreHorizon(ledger, horizon).samples);
+            QCOMPARE(scoreHorizon(ordered, horizon).hits, scoreHorizon(ledger, horizon).hits);
+        }
     }
 };
 

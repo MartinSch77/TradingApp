@@ -166,6 +166,55 @@ private slots:
         QCOMPARE(btc->refusal, btcCode == QStringLiteral("opened") ? QString{} : btcCode);
         QVERIFY(rowFor(ledger, unpriced) == nullptr);
     }
+
+    //! @tstid TS-BOTSIM-002 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-037, scope=function)
+    //
+    // The runner keeps the prediction ledger in memory — read from disk once, appended in
+    // step with every row it writes — instead of re-reading the whole file every scan.
+    // The observable contract is two-sided: the FILE still receives one row per priced
+    // candidate per scan (the cache is a copy, never the record), and the per-scan FORECAST
+    // line that is computed FROM the cache is still emitted for every scan, so a cache that
+    // was loaded but never appended to, or never loaded at all, would show up as a missing
+    // line or a wrong row count rather than as silence.
+    void TS_BOTSIM_002_theLedgerIsCachedInMemoryAndStaysInStepWithTheFile()
+    {
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy logs(&runner, &BotSimRunner::log);
+        QVERIFY(logs.isValid());
+        runner.setArmed(true);
+
+        const QString symbol = QStringLiteral("BTC");
+        MarketSnapshot snap;
+        snap.screenerRows = {scanRow(symbol, 60)};
+        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        const auto forecastLines = [&logs]() {
+            qsizetype count = 0;
+            for (const QList<QVariant> &args : logs) {
+                if (args.at(0).toString().startsWith(QStringLiteral("FORECAST BTC"))) {
+                    ++count;
+                }
+            }
+            return count;
+        };
+
+        // No ledger file exists yet: the first scan loads an EMPTY ledger and appends to it.
+        QVERIFY(!QFile::exists(BotSimRunner::ledgerPath()));
+        runner.onDecisions({buyRow(symbol)}, snap);
+        QCOMPARE(loadPredictions(BotSimRunner::ledgerPath()).size(), 1);
+        QCOMPARE(forecastLines(), 1);
+
+        // The second scan appends a second row — to the file and to the copy the
+        // forecast reads — and reports again.
+        runner.onDecisions({buyRow(symbol)}, snap);
+        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
+        QCOMPARE(ledger.size(), 2);
+        QCOMPARE(ledger.at(0).symbol, symbol);
+        QCOMPARE(ledger.at(1).symbol, symbol);
+        QVERIFY(ledger.at(0).at <= ledger.at(1).at);
+        QCOMPARE(forecastLines(), 2);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBotSimRunner)

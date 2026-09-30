@@ -238,10 +238,24 @@ private:
     // refused, and the refusals are the point (REQ-F-037). A default-constructed `in`
     // means nothing was evaluated yet, so the row carries the refusal and no evidence.
     // An EMPTY refusal means the trade was taken — the two cannot then disagree.
+    // Not const: the row goes to the on-disk ledger AND to the in-memory copy of it.
     void recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
                           const QDateTime &now, const trading::CandidateInput &in,
-                          const QString &refusal) const;  // entries for the stored scan, with m_proposal
+                          const QString &refusal);   // entries for the stored scan, with m_proposal
+    // The prediction ledger as this process knows it: read from disk ONCE, on first use,
+    // then kept in step with every row recordPrediction appends. Re-reading the file per
+    // scan was O(file) work on a file that grows by a scan's worth of rows every few
+    // minutes — unbounded over the weeks a Pi is left running. The copy is PER PROCESS:
+    // a row another process appends to the shared file (the advise console) is not seen
+    // here until restart, where the per-scan re-read used to pick it up.
+    [[nodiscard]] const QList<trading::Prediction> &ledgerRows();
     void markAndExit();          // one pass over the open simulated positions
+    // The save at the end of a mark pass: immediately when the pass changed the book's
+    // SHAPE (a close, a partial, a harvest — the open/closed counts differ from the ones
+    // taken before the pass), otherwise at most once per kMarkSaveIntervalSecs, because
+    // a pure mark moved every 5-second tick and rewrote the whole book ~17 000 times a
+    // day while one position was open.
+    void saveAfterMarks(const QDateTime &now, qsizetype openBefore, qsizetype closedBefore);
     // The rate a simulated position closes at right now (bid for a long, ask for
     // a short), plus whether that came from a live quote. 0 = unknown.
     struct Mark {
@@ -368,6 +382,14 @@ private:
     // label, which is a smaller error than a second example with the same entry
     // features would be.
     QHash<qint64, double> m_partialNetById;
+    // The in-memory ledger behind ledgerRows(); `m_ledgerLoaded` distinguishes "not read
+    // yet" from "read, and empty" — a fresh install has no file at all.
+    QList<trading::Prediction> m_ledger;
+    bool m_ledgerLoaded = false;
+    // When markAndExit last wrote the book for marks alone (see saveAfterMarks). Not
+    // persisted: a crash loses at most that interval's worth of mark/peakNet/rollover
+    // state, and aboutToQuit still saves on a clean exit.
+    QDateTime m_lastMarkSave;
     QString m_evidence;                     // prompt of the scan being decided
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QString m_storeFile;   // book file override (empty = botsim.json)

@@ -29,6 +29,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHostAddress>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -231,6 +232,64 @@ QJsonObject savedBook()
     return QJsonDocument::fromJson(file.readAll()).object();
 }
 
+// A prediction-ledger HISTORY for `symbol`, written to the shared ledger file before a
+// runner reads it: `count` long calls five minutes apart, every one of them right (the
+// price steps up 0.1% per row), the LAST call `lastCallMinutesAgo` before now — so a row
+// the runner appends at "now" is that call's earliest row at or past the 15-minute
+// horizon and RESOLVES it, moving the record's sample count. Returned as written (oldest
+// first); empty when the file could not be written.
+QList<Prediction> seedLedgerFor(const QString &symbol, qint32 count, qint32 lastCallMinutesAgo)
+{
+    QList<Prediction> rows;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    double price = 60000.0;
+    for (qint32 i = 0; i < count; ++i) {
+        Prediction p;
+        p.at = now.addSecs(-60 * qint64{lastCallMinutesAgo + (5 * (count - 1 - i))});
+        p.symbol = symbol;
+        p.dir = 1;
+        p.strength = 60.0;
+        p.measured = 9;
+        p.price = price;
+        p.regime = Regime::Trend;
+        p.priorMoveDir = 1;
+        if (!appendPrediction(BotSimRunner::ledgerPath(), p)) {
+            return {};
+        }
+        rows.append(p);
+        price *= 1.001;
+    }
+    return rows;
+}
+
+// The FORECAST lines the runner logged for `symbol`, in order.
+QStringList forecastLinesFor(const QSignalSpy &logs, const QString &symbol)
+{
+    QStringList lines;
+    for (const QList<QVariant> &args : logs) {
+        const QString line = args.at(0).toString();
+        if (line.startsWith(QStringLiteral("FORECAST %1:").arg(symbol))) {
+            lines.append(line);
+        }
+    }
+    return lines;
+}
+
+// The record part of a FORECAST line — what scoreHorizon's headline said about the calls
+// the runner's copy of the ledger holds.
+QString recordPartOf(const QString &forecastLine)
+{
+    return forecastLine.section(QStringLiteral(" · record: "), 1);
+}
+
+// The mark the persisted book holds for its first open position (0 when there is none).
+double savedMarkRate()
+{
+    const QJsonArray open = savedBook().value(QStringLiteral("open")).toArray();
+    return open.isEmpty() ? 0.0
+                          : open.first().toObject().value(QStringLiteral("markRate")).toDouble();
+}
+
 // A row the composite calls BUY with conviction, as the scan hands it to the runner.
 DecisionRow buyRow(const QString &symbol)
 {
@@ -426,49 +485,62 @@ private slots:
     // @relation(REQ-F-029, REQ-F-037, scope=function)
     //
     // The runner keeps the prediction ledger in memory — read from disk once, appended in
-    // step with every row it writes — instead of re-reading the whole file every scan.
-    // The observable contract is two-sided: the FILE still receives one row per priced
-    // candidate per scan (the cache is a copy, never the record), and the per-scan FORECAST
-    // line that is computed FROM the cache is still emitted for every scan, so a cache that
-    // was loaded but never appended to, or never loaded at all, would show up as a missing
-    // line or a wrong row count rather than as silence.
+    // step with every row it writes — instead of re-reading the whole file every scan, and
+    // the FORECAST line's record part is what makes each half of that observable, because
+    // it is computed from whatever copy the runner scores. A history seeded on disk BEFORE
+    // the runner reads it is calibrated at 15 minutes (48 calls, five minutes apart, all
+    // right), with its last call placed so that the row the first scan appends at "now"
+    // resolves it: the first scan's line must then carry the record of the file AS IT IS
+    // AFTER that scan — seeded rows plus the runner's own — which proves the load (a
+    // never-loaded copy reports "0 of 40 samples needed") AND the in-step append (a copy
+    // loaded but not appended to reports the seeded count, one sample short). The ledger
+    // file is then DELETED and a second scan run: its line must still carry that same
+    // record — the copy is not re-read from disk, where the history is gone (the pre-cache
+    // code re-read per scan and would report "0 of 40") — while the file now holds exactly
+    // the one new row, because the record is the file, and the copy only follows it.
     void TS_BOTSIM_002_theLedgerIsCachedInMemoryAndStaysInStepWithTheFile()
     {
+        const QString symbol = QStringLiteral("BTC");
+        // 16 minutes ago, not 15: the appended row's elapsed time then reads 16 whole
+        // minutes whatever fraction of a minute the scan itself takes — at the horizon,
+        // inside its 22-minute limit.
+        const QList<Prediction> seeded = seedLedgerFor(symbol, 48, 16);
+        QCOMPARE(seeded.size(), 48);
+        const HorizonScore seededScore = scoreHorizon(seeded, Horizon::M15);
+        QVERIFY(seededScore.trustworthy());   // the record part prints a hit rate, not a wait
+
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
         QSignalSpy logs(&runner, &BotSimRunner::log);
         QVERIFY(logs.isValid());
         runner.setArmed(true);
-
-        const QString symbol = QStringLiteral("BTC");
         MarketSnapshot snap;
         snap.screenerRows = {scanRow(symbol, 60)};
         snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
-        const auto forecastLines = [&logs]() {
-            qsizetype count = 0;
-            for (const QList<QVariant> &args : logs) {
-                if (args.at(0).toString().startsWith(QStringLiteral("FORECAST BTC"))) {
-                    ++count;
-                }
-            }
-            return count;
-        };
 
-        // No ledger file exists yet: the first scan loads an EMPTY ledger and appends to it.
-        QVERIFY(!QFile::exists(BotSimRunner::ledgerPath()));
+        // Scan 1: the file gains the runner's row, and the line reports the record OF THAT
+        // FILE — the seeded history with the new row resolving its last call.
         runner.onDecisions({buyRow(symbol)}, snap);
-        QCOMPARE(loadPredictions(BotSimRunner::ledgerPath()).size(), 1);
-        QCOMPARE(forecastLines(), 1);
+        const QList<Prediction> afterFirst = loadPredictions(BotSimRunner::ledgerPath());
+        QCOMPARE(afterFirst.size(), seeded.size() + 1);
+        QCOMPARE(afterFirst.constLast().symbol, symbol);
+        const HorizonScore firstScore = scoreHorizon(afterFirst, Horizon::M15);
+        QVERIFY(firstScore.samples > seededScore.samples);   // the premise: the row resolved a call
+        QCOMPARE(forecastLinesFor(logs, symbol).size(), 1);
+        const QString firstLine = forecastLinesFor(logs, symbol).constFirst();
+        QCOMPARE(recordPartOf(firstLine), firstScore.headline());
+        QVERIFY(recordPartOf(firstLine) != seededScore.headline());
 
-        // The second scan appends a second row — to the file and to the copy the
-        // forecast reads — and reports again.
+        // Scan 2 with the file GONE: the copy still holds every row it loaded and appended,
+        // so the line does not change — and the file holds only what this scan wrote.
+        QVERIFY(QFile::remove(BotSimRunner::ledgerPath()));
         runner.onDecisions({buyRow(symbol)}, snap);
-        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
-        QCOMPARE(ledger.size(), 2);
-        QCOMPARE(ledger.at(0).symbol, symbol);
-        QCOMPARE(ledger.at(1).symbol, symbol);
-        QVERIFY(ledger.at(0).at <= ledger.at(1).at);
-        QCOMPARE(forecastLines(), 2);
+        QCOMPARE(forecastLinesFor(logs, symbol).size(), 2);
+        QCOMPARE(forecastLinesFor(logs, symbol).at(1), firstLine);
+        const QList<Prediction> afterSecond = loadPredictions(BotSimRunner::ledgerPath());
+        QCOMPARE(afterSecond.size(), 1);
+        QCOMPARE(afterSecond.constFirst().symbol, symbol);
+        QVERIFY(afterSecond.constFirst().at >= afterFirst.constLast().at);
     }
 
     //! @tstid TS-BOTSIM-003 @design DES-UI-BOTSIM
@@ -738,6 +810,65 @@ private slots:
         QVERIFY(label != closed.at(1).netPnl);
         QCOMPARE(records.constFirst().value(QStringLiteral("reason")).toString(),
                  closeReasonWord(CloseReason::StopLoss));
+    }
+
+    //! @tstid TS-BOTSIM-008 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, scope=function)
+    //
+    // What reaches the DISK when. A pure mark used to rewrite the whole book every
+    // 5-second tick while a position was open (~17 000 atomic rewrites a day); now the
+    // mark pass saves at most once a minute, and everything structural saves at once.
+    // Driven through onDecisions with no rows (the mark pass alone, as TS-BOTSIM-007 does)
+    // on a restored book holding one BTC position marked off its 1-minute close: the
+    // first mark pass saves (nothing marked has been saved yet), the next pass seconds
+    // later moves the book but NOT the file (the throttle), and a pass that closes the
+    // position — the candle below the stop — reaches the file immediately although the
+    // minute is not up (a close is a shape change, never throttled). The minute itself is
+    // not waited out here. Arming is structural too, and it is pinned FIRST: the armed
+    // flag is persisted precisely so an unattended bot survives a restart, and before this
+    // it rode on the next mark save — a crash inside the throttle's minute would have
+    // restarted the bot silently disarmed.
+    void TS_BOTSIM_008_marksReachTheDiskOncePerMinuteWhileShapeAndArmChangesReachItAtOnce()
+    {
+        const QString symbol = QStringLiteral("BTC");
+        QVERIFY(seedBookHoldingBtc());   // written ARMED, marked at its 60 000 fill
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QCOMPARE(runner.book().openTrades().size(), 1);
+        QVERIFY(runner.armed());
+        QCOMPARE(savedMarkRate(), 60000.0);
+
+        // Arming and disarming are saved where they happen, with no mark in between.
+        runner.setArmed(false);
+        QVERIFY(!savedBook().value(QStringLiteral("armed")).toBool());
+        runner.setArmed(true);
+        QVERIFY(savedBook().value(QStringLiteral("armed")).toBool());
+        QCOMPARE(savedMarkRate(), 60000.0);   // the arm saved the book as it was: unmarked
+
+        // First mark pass: nothing marked has reached the disk yet, so this one does.
+        MarketSnapshot first;
+        first.intradayBySymbol.insert(symbol, {60500.0, 61000.0});
+        runner.onDecisions({}, first);
+        QCOMPARE(runner.book().openTrades().constFirst().markRate, 61000.0);
+        QCOMPARE(savedMarkRate(), 61000.0);
+
+        // Second pass, seconds later: the BOOK moves, the FILE waits for the minute.
+        MarketSnapshot second;
+        second.intradayBySymbol.insert(symbol, {61500.0, 62000.0});
+        runner.onDecisions({}, second);
+        QCOMPARE(runner.book().openTrades().constFirst().markRate, 62000.0);
+        QCOMPARE(savedMarkRate(), 61000.0);
+
+        // A close inside the pass is a shape change: saved at once, minute or not.
+        MarketSnapshot belowStop;
+        belowStop.intradayBySymbol.insert(symbol, {49500.0, 49000.0});
+        runner.onDecisions({}, belowStop);
+        QVERIFY(runner.book().openTrades().isEmpty());
+        QCOMPARE(runner.book().closedTrades().size(), 1);
+        QCOMPARE(runner.book().closedTrades().constFirst().reason, CloseReason::StopLoss);
+        const QJsonObject saved = savedBook();
+        QVERIFY(saved.value(QStringLiteral("open")).toArray().isEmpty());
+        QCOMPARE(saved.value(QStringLiteral("closed")).toArray().size(), 1);
     }
 };
 

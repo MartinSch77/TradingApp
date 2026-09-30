@@ -321,6 +321,7 @@ void BotSimRunner::applyDailyRules(double target, double lossLimit)
                           ? QStringLiteral(" (a rule set to 0 is switched off)")
                           : QString()),
              false);
+    save();   // a rule change is structural: it must not wait for the next mark save
 }
 
 void BotSimRunner::setAiMode(trading::BotAiMode mode)
@@ -342,6 +343,7 @@ void BotSimRunner::setAiMode(trading::BotAiMode mode)
                                                   "composite agrees")
                                  : QStringLiteral("the model's pick and side are traded"))),
              false);
+    save();   // the mode is persisted (a restart must not change what the experiment measures)
     emit changed();
 }
 
@@ -408,6 +410,11 @@ void BotSimRunner::setArmed(bool armed)
                      .arg(s.openTrades),
                  false);
     }
+    // The armed flag is persisted so an unattended experiment survives a restart — and
+    // it has to reach the disk NOW, not on the next mark save: those are throttled to
+    // once a minute (saveAfterMarks), and a bot armed 50 s before a power loss that
+    // restarts DISARMED is exactly the silent stop the persistence exists to prevent.
+    save();
     emit changed();
 }
 
@@ -545,9 +552,13 @@ void BotSimRunner::markAndExit()
 void BotSimRunner::saveAfterMarks(const QDateTime &now, qsizetype openBefore,
                                   qsizetype closedBefore)
 {
-    // A structural change (open, close, partial, harvest, reset, config, arm) is saved
-    // where it happens, exactly as before; this throttle is ONLY for the pass that moved
-    // marks and rollover accrual and nothing else. The swing strategy's day-granular
+    // A structural change is saved where it happens — the open (considerEntries), the
+    // reset, the focus/AI-mode/daily-rules setters and setArmed each call save() — and a
+    // close, partial or harvest inside THIS pass is caught by the shape check below; the
+    // throttle is ONLY for the pass that moved marks and rollover accrual and nothing
+    // else. (The arm/AI-mode/daily-rules saves are NOT as they were before the throttle:
+    // those changes used to ride on the next 5-second mark save, which the throttle
+    // would have stretched to a minute.) The swing strategy's day-granular
     // state (trailing stop, sessions held) rides on the same throttle: it changes at most
     // once a day per position, so a crash inside the minute after it costs one day's
     // trailing step, not a position.

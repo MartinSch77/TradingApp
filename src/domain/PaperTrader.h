@@ -441,9 +441,12 @@ struct HarvestOption {
 // Picks the SMALLEST sufficient winner: the day gets banked with the least upside
 // given up, and a position that is running well keeps running. Returns 0 when the
 // rule is off, the target is already made (the day gate stops entries then), no
-// single winner is enough, or nothing is in profit.
+// single winner is enough, or nothing is in profit. `day` counts only when it is
+// about `now`'s date — the same rule paperDayGate applies: the ledger rolls over on
+// the first CLOSE of a new date, so before that close it still holds yesterday's
+// realized, and a fresh day has banked nothing, whatever yesterday did.
 [[nodiscard]] qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
-                                      const BotConfig &cfg);
+                                      const QDateTime &now, const BotConfig &cfg);
 
 // ---------------------------------------------------------------------------
 // When it is worth trading at all (REQ-F-034)

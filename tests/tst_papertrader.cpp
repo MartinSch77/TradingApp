@@ -2290,45 +2290,46 @@ private slots:
         cfg.dailyProfitTarget = 350.0;
         BotDay day;
         day.date = QDate(2026, 8, 4);
+        const QDateTime now(day.date, QTime(15, 0), QTimeZone::UTC);   // the ledger's own day
 
         // Nothing yet booked, nothing open: nothing to bank.
-        QCOMPARE(paperHarvestPick({}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({}, day, now, cfg), qint64{0});
 
         // No single position covers the whole 350: the rule waits rather than
         // stacking closes — banking a PART of the day is what the exits already do.
         const QList<HarvestOption> small{{1, 100.0}, {2, 180.0}, {3, -40.0}};
-        QCOMPARE(paperHarvestPick(small, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick(small, day, now, cfg), qint64{0});
 
         // One does: it is closed, and the day is made.
         const QList<HarvestOption> enough{{1, 100.0}, {2, 420.0}, {3, -40.0}};
-        QCOMPARE(paperHarvestPick(enough, day, cfg), qint64{2});
+        QCOMPARE(paperHarvestPick(enough, day, now, cfg), qint64{2});
 
         // Several do: the SMALLEST sufficient one goes, so the best position keeps
         // running and the least upside is given up.
         const QList<HarvestOption> several{{1, 900.0}, {2, 420.0}, {3, 355.0}, {4, 40.0}};
-        QCOMPARE(paperHarvestPick(several, day, cfg), qint64{3});
+        QCOMPARE(paperHarvestPick(several, day, now, cfg), qint64{3});
 
         // What is already booked counts: with 300 banked, 60 completes the day.
         day.realized = 300.0;
-        QCOMPARE(paperHarvestPick({{7, 60.0}, {8, 900.0}}, day, cfg), qint64{7});
-        QCOMPARE(paperHarvestPick({{7, 49.99}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 60.0}, {8, 900.0}}, day, now, cfg), qint64{7});
+        QCOMPARE(paperHarvestPick({{7, 49.99}}, day, now, cfg), qint64{0});
 
         // Target already reached — the day gate stops the bot; this rule stops too
         // instead of closing healthy positions for a number that is already made.
         day.realized = 400.0;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
 
         // A losing day is not banked by this rule either: the loss limit governs.
         day.realized = -500.0;
-        QCOMPARE(paperHarvestPick({{7, 100.0}}, day, cfg), qint64{0});   // 100 < 850 missing
+        QCOMPARE(paperHarvestPick({{7, 100.0}}, day, now, cfg), qint64{0});   // 100 < 850 missing
 
         // Switched off, or no target: never.
         day.realized = 0.0;
         cfg.harvestForDailyTarget = false;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
         cfg.harvestForDailyTarget = true;
         cfg.dailyProfitTarget = 0.0;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
 
         // The reason has a word of its own for the table — the record must show WHY
         // a winner was cut, since that is the cost this rule pays.
@@ -2568,25 +2569,54 @@ private slots:
         cfg.dailyProfitTarget = 100.0;
         cfg.harvestForDailyTarget = true;
         BotDay day;
+        day.date = QDate(2026, 8, 4);
         day.realized = 40.0;   // 60 still missing
+        const QDateTime now(day.date, QTime(15, 0), QTimeZone::UTC);
 
         // Nothing on offer covers the rest of the day: nothing is closed.
-        QCOMPARE(paperHarvestPick({{1, 10.0}, {2, 59.99}}, day, cfg), 0);
+        QCOMPARE(paperHarvestPick({{1, 10.0}, {2, 59.99}}, day, now, cfg), 0);
         // Two that do: the SMALLER is taken, because it gives up the least upside.
-        QCOMPARE(paperHarvestPick({{1, 500.0}, {2, 61.0}, {3, 60.0}}, day, cfg), 3);
+        QCOMPARE(paperHarvestPick({{1, 500.0}, {2, 61.0}, {3, 60.0}}, day, now, cfg), 3);
         // The day is already made — the day gate stops the bot, not the harvest.
         BotDay made;
+        made.date = day.date;
         made.realized = 100.0;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, made, cfg), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, made, now, cfg), 0);
         // The rule can be switched off, and a target of zero disables it too.
         BotConfig off = cfg;
         off.harvestForDailyTarget = false;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, off), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, now, off), 0);
         BotConfig noTarget = cfg;
         noTarget.dailyProfitTarget = 0.0;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, noTarget), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, now, noTarget), 0);
         // No options at all is not a crash.
-        QCOMPARE(paperHarvestPick({}, day, cfg), 0);
+        QCOMPARE(paperHarvestPick({}, day, now, cfg), 0);
+
+        // The ledger rolls over on the first CLOSE of a new date, so before that close
+        // it still says what YESTERDAY banked. 300 of a 350 target booked on the 4th
+        // lets a 60-EUR winner complete the day on the 4th — but on the 5th the full 350
+        // is missing and 60 covers none of it, so the same book closes nothing.
+        BotConfig target350 = cfg;
+        target350.dailyProfitTarget = 350.0;
+        BotDay yesterday;
+        yesterday.date = QDate(2026, 8, 4);
+        yesterday.realized = 300.0;
+        const QList<HarvestOption> winner{{9, 60.0}};
+        QCOMPARE(paperHarvestPick(winner, yesterday,
+                                  QDateTime(QDate(2026, 8, 4), QTime(21, 0), QTimeZone::UTC),
+                                  target350),
+                 9);
+        QCOMPARE(paperHarvestPick(winner, yesterday,
+                                  QDateTime(QDate(2026, 8, 5), QTime(9, 0), QTimeZone::UTC),
+                                  target350),
+                 0);
+        // No clock at all is not "today" either: the same silence paperDayGate keeps.
+        QCOMPARE(paperHarvestPick(winner, yesterday, QDateTime(), target350), 0);
+        // A winner that covers the FULL target is still taken on the new day.
+        QCOMPARE(paperHarvestPick({{9, 60.0}, {10, 350.0}}, yesterday,
+                                  QDateTime(QDate(2026, 8, 5), QTime(9, 0), QTimeZone::UTC),
+                                  target350),
+                 10);
     }
 
     //! @tstid TS-PT-032 @design DES-DOM-LIFECYCLE

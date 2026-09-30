@@ -487,7 +487,7 @@ void BotSimRunner::markAndExit()
             moved = true;
         }
     }
-    if (harvestDayTarget()) {
+    if (harvestDayTarget(now)) {
         moved = true;
     }
     if (moved) {
@@ -496,7 +496,7 @@ void BotSimRunner::markAndExit()
     }
 }
 
-bool BotSimRunner::harvestDayTarget()
+bool BotSimRunner::harvestDayTarget(const QDateTime &now)
 {
     // What each open position would BOOK if it closed right now: its net so far
     // minus the half-spread it still has to cross. A position whose exit cost is
@@ -504,6 +504,13 @@ bool BotSimRunner::harvestDayTarget()
     // and the carry rules apply.
     QList<trading::HarvestOption> options;
     for (const PaperTrade &trade : m_book.openTrades()) {
+        // A swing-strategy position is managed by swingExitDecision ONLY — the same
+        // dispatch markAndExit applies before paperCloseDecision. The daily target is
+        // the composite bot's stopping rule; cutting a multi-session swing trade for
+        // it would apply one strategy's discipline to another's book.
+        if (!trade.strategyVersion.isEmpty()) {
+            continue;
+        }
         const double spreadPct = effectiveSpreadPct(trade.symbol);
         if (spreadPct <= 0.0) {
             continue;
@@ -512,7 +519,7 @@ bool BotSimRunner::harvestDayTarget()
                         trade.netPnl()
                             - trading::paperHalfSpreadCost(trade.stake, trade.leverage, spreadPct)});
     }
-    const qint64 pick = trading::paperHarvestPick(options, m_book.day(), m_book.config());
+    const qint64 pick = trading::paperHarvestPick(options, m_book.day(), now, m_book.config());
     if (pick == 0) {
         return false;
     }

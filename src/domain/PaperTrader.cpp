@@ -738,12 +738,19 @@ HoldVerdict paperAiHold(const PaperTrade &trade, const QList<AiProposal> &propos
 }
 
 qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
-                        const BotConfig &cfg)
+                        const QDateTime &now, const BotConfig &cfg)
 {
     if (!cfg.harvestForDailyTarget || (cfg.dailyProfitTarget <= 0.0)) {
         return 0;
     }
-    const double missing = cfg.dailyProfitTarget - day.realized;
+    // Yesterday's ledger is not today's banked net. The day rolls over on the first
+    // close of a new date, so between midnight and that close `day` still carries
+    // yesterday's realized — read as today's, 300 banked yesterday would let a
+    // 60-EUR winner be cut for a 350 target the new day has not earned a cent of.
+    // Same rule as paperDayGate: a ledger about another date (or no clock) is 0.
+    const bool ledgerIsToday = now.isValid() && (day.date == now.date());
+    const double realizedToday = ledgerIsToday ? day.realized : 0.0;
+    const double missing = cfg.dailyProfitTarget - realizedToday;
     if (missing <= 0.0) {
         return 0;   // already made: the day gate is what stops the bot, not this
     }

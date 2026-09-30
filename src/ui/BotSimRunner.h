@@ -288,8 +288,9 @@ private:
     // PaperBook::openTrades(): closing removes that entry, so such a reference
     // would dangle halfway through this call. Both call sites hold a local copy.
     // Book the day when one open winner already completes the target (REQ-F-031).
-    // True when it closed a position.
-    bool harvestDayTarget();
+    // `now` is the mark clock, so "today" is judged against the same time the
+    // marks were taken at. True when it closed a position.
+    bool harvestDayTarget(const QDateTime &now);
     void closeTrade(const trading::PaperTrade &trade, trading::CloseReason reason);
     void save() const;
     void load();

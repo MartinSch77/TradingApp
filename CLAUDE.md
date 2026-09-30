@@ -384,8 +384,13 @@ publish_release; refuses to publish on a red pipeline).
   the `paperLiveReadiness` discipline. Every score sits beside baselines on identical
   samples (always-long, prior 5-min move, VWAP side) plus a Brier score against 0.25, and
   an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten. Rows carry
-  `strategyVersion` `composite-v2` since the baseline/price switched to the 1-minute series
-  (2026-09-29); earlier rows have an empty version and score as their own group.
+  `strategyVersion` `composite-v2` since 2026-09-29 (the baseline switched to the 1-minute
+  series and the price to the fill's own mid, `sidesFor` — never the 1-minute series
+  directly: for the two indices that is the CASH index, frozen from the New York close while
+  the CFD is called for hours, and rows priced off it paired into "no move" misses); the
+  runner's FORECAST scores rows of that version ONLY, so earlier untagged rows are EXCLUDED
+  from its record rather than averaged in (TS-BOTSIM-010). The field's contract is a filter
+  somebody has to apply — the runner is its one consumer, and it once filtered by symbol alone.
 - Session STRUCTURE is read before any oscillator (REQ-F-022, `openingRange` +
   `relativeStrength` in DecisionEngine): both come from the 1-minute series the app
   already fetches for every catalog instrument — including ES=F and NQ=F via
@@ -393,7 +398,13 @@ publish_release; refuses to publish on a red pipeline).
   and the bot refuses to open INTO a fresh opposite break (`against-range-break`) — its
   gate reads the SAME 1-minute series as the window (`m_symbolSeries`), never the hourly
   scan closes, which are the volatility source only (a 30-point range over those is a
-  30-HOUR range; TS-BOTSIM-004 pins the ledger side of it).
+  30-HOUR range) — and only while that series is LIVE: `MarketSnapshot` carries no stamp
+  and neither producer ever clears an entry, so a failed sweep and a cash index frozen at
+  the New York close both leave a present, dead series; the runner's one test is that the
+  series CHANGED since the previous scan (`liveSessionSeries`; a live 1-minute feed always
+  has new bars between scans, a first sighting is not yet known live), and a series that is
+  not live gives no range read and no five-minute baseline (TS-BOTSIM-004 pins both, the
+  range read in its negative form).
   True market breadth (advance/decline, up-volume, constituents above VWAP) is NOT
   available here: it needs per-constituent data the app does not fetch, and the
   Nasdaq-vs-S&P read is the honest stand-in — don't let a comment claim otherwise.

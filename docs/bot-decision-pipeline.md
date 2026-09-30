@@ -249,7 +249,12 @@ Checked in this exact order; the first refusal wins and names itself with a stab
    opens-per-hour pace limit → trading into a fresh opposite range break (`against-range-break`;
    the runner reads `openingRange` off the instrument's 1-MINUTE series, `intradayBySymbol`,
    the same series §2's engine and the window use — the eToro scan's hourly closes are the
-   volatility source only, and a symbol without a 1-minute series has no read) → the **LeadSignal
+   volatility source only — and only while that series is LIVE, which the runner judges
+   as "changed since the previous scan" (`adoptSymbolSeries`/`liveSessionSeries`: the
+   snapshot carries no stamp, the producers never clear an entry, and the two indices'
+   series are the CASH index Yahoo freezes at the New York close while the CFD is scanned
+   on; a first sighting is not yet known live); a symbol without a live 1-minute series
+   has no read) → the **LeadSignal
    veto** (§4's indication disagreeing at Strong-grade strength refuses as `lead-against`) →
    the **confluence majority** (§3: a majority of *measured* reads must agree, refuses as
    `no-confluence`).
@@ -288,9 +293,13 @@ BotSimRunner::onDecisions
              6. paperEntryVerdict(candidate, signal, book, cfg)   (§9: the entry gate)
              7. [if taken] applyNetGate → paperNetGate            (§7: BotNet last-chance veto)
              8. PaperBook::open(signal, stake, now)                — or refuse(code, why) and log it
-             9. recordPrediction(row, …)  — taken OR refused: one ledger row, its price and its
-                "prior five minutes" baseline from the 1-minute series (the hourly closes only
-                when there is none), tagged strategyVersion "composite-v2" since 2026-09-29
+             9. recordPrediction(row, …)  — taken OR refused: one ledger row, priced by the
+                fill's own rule (sidesFor's mid; the hourly last close only when nothing prices
+                it — never the cash index's frozen 1-minute close), its "prior five minutes"
+                baseline from the LIVE 1-minute series (0 = unmeasured otherwise), tagged
+                strategyVersion "composite-v2" since 2026-09-29. The scan's FORECAST line
+                (reportForecast) scores rows of THAT version only: untagged rows from before
+                the switch stay in the file but never enter the runner's record
 ```
 
 Every step that refuses names a stable `code`; every step that could not measure something

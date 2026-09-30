@@ -256,13 +256,19 @@ bool writeLockFile(const QString &path, const QByteArray &bytes, const QDateTime
 // A pid no process can have: Linux caps pid_max at 2^22, Windows pids are far smaller.
 constexpr qint64 kNoSuchPid = 2000000000;
 
+// The strategy version the composite/AI bot tags its ledger rows with (the runner's
+// kCompositeStrategyVersion); the forecast line scores rows of this version only.
+constexpr auto kCompositeVersion = "composite-v2";
+
 // A prediction-ledger HISTORY for `symbol`, written to the shared ledger file before a
 // runner reads it: `count` long calls five minutes apart, every one of them right (the
 // price steps up 0.1% per row), the LAST call `lastCallMinutesAgo` before now — so a row
 // the runner appends at "now" is that call's earliest row at or past the 15-minute
-// horizon and RESOLVES it, moving the record's sample count. Returned as written (oldest
+// horizon and RESOLVES it, moving the record's sample count. Tagged `strategyVersion`
+// (empty = a row from before the composite carried one). Returned as written (oldest
 // first); empty when the file could not be written.
-QList<Prediction> seedLedgerFor(const QString &symbol, qint32 count, qint32 lastCallMinutesAgo)
+QList<Prediction> seedLedgerFor(const QString &symbol, qint32 count, qint32 lastCallMinutesAgo,
+                                const QString &strategyVersion)
 {
     QList<Prediction> rows;
     const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -277,6 +283,7 @@ QList<Prediction> seedLedgerFor(const QString &symbol, qint32 count, qint32 last
         p.price = price;
         p.regime = Regime::Trend;
         p.priorMoveDir = 1;
+        p.strategyVersion = strategyVersion;
         if (!appendPrediction(BotSimRunner::ledgerPath(), p)) {
             return {};
         }
@@ -373,6 +380,30 @@ const Prediction *rowFor(const QList<Prediction> &ledger, const QString &symbol)
         }
     }
     return nullptr;
+}
+
+// Every ledger row for `symbol`, in the order written — one per scan that evaluated it.
+QList<Prediction> rowsFor(const QList<Prediction> &ledger, const QString &symbol)
+{
+    QList<Prediction> out;
+    for (const Prediction &p : ledger) {
+        if (p.symbol == symbol) {
+            out.append(p);
+        }
+    }
+    return out;
+}
+
+// The ledger's rows carrying the composite's own version — the group the forecast scores.
+QList<Prediction> compositeRows(const QList<Prediction> &ledger)
+{
+    QList<Prediction> out;
+    for (const Prediction &p : ledger) {
+        if (p.strategyVersion == QLatin1String(kCompositeVersion)) {
+            out.append(p);
+        }
+    }
+    return out;
 }
 
 // The refusal code the runner reported for `symbol` (empty when it traded), or a
@@ -521,14 +552,17 @@ private slots:
     // file is then DELETED and a second scan run: its line must still carry that same
     // record — the copy is not re-read from disk, where the history is gone (the pre-cache
     // code re-read per scan and would report "0 of 40") — while the file now holds exactly
-    // the one new row, because the record is the file, and the copy only follows it.
+    // the one new row, because the record is the file, and the copy only follows it. The
+    // seeded rows carry the composite's own version: the forecast scores that group alone
+    // (TS-BOTSIM-010), and this test is about the copy, not the grouping.
     void TS_BOTSIM_002_theLedgerIsCachedInMemoryAndStaysInStepWithTheFile()
     {
         const QString symbol = QStringLiteral("BTC");
         // 16 minutes ago, not 15: the appended row's elapsed time then reads 16 whole
         // minutes whatever fraction of a minute the scan itself takes — at the horizon,
         // inside its 22-minute limit.
-        const QList<Prediction> seeded = seedLedgerFor(symbol, 48, 16);
+        const QList<Prediction> seeded =
+            seedLedgerFor(symbol, 48, 16, QLatin1String(kCompositeVersion));
         QCOMPARE(seeded.size(), 48);
         const HorizonScore seededScore = scoreHorizon(seeded, Horizon::M15);
         QVERIFY(seededScore.trustworthy());   // the record part prints a hit rate, not a wait
@@ -675,49 +709,105 @@ private slots:
     }
 
     //! @tstid TS-BOTSIM-004 @design DES-UI-BOTSIM
-    // @relation(REQ-F-029, REQ-F-037, scope=function)
+    // @relation(REQ-F-029, REQ-F-037, REQ-F-056, scope=function)
     //
-    // The ledger row's "previous five minutes" baseline and its price come from the
-    // instrument's 1-MINUTE series (MarketSnapshot::intradayBySymbol — the series the
-    // window's engine reads), not from the eToro scan's HOURLY closes, whose last six
-    // points span five hours. The two series are made to DISAGREE — hourly rising, 1-minute
-    // falling — so a baseline read off the wrong one shows as the wrong sign, not as a
-    // coincidence; the row is written for a refused candidate too, so no trade need open.
-    // A symbol with no 1-minute series has no measurable baseline (0, unknown) and falls
-    // back to the hourly last close as its price; every row carries the composite bot's
-    // strategy version, so rows from before this switch (empty version) score apart.
+    // The ledger row's "previous five minutes" baseline and the gate's opening-range read
+    // come from the instrument's 1-MINUTE series (MarketSnapshot::intradayBySymbol — the
+    // series the window's engine reads), not from the eToro scan's HOURLY closes, whose
+    // last six points span five hours and whose first thirty are a thirty-hour "range" —
+    // and only while that series is LIVE, which the runner can judge one way only: it
+    // CHANGED since the previous scan (the snapshot carries no stamp, the producers never
+    // clear an entry, and a cash index frozen at the New York close or a sweep that failed
+    // both leave a present, plausible, dead series). Three scans of the same book:
+    //
+    //  1. first sighting — the series is present but not yet known live: the baseline is
+    //     0 (unknown), not the sign of a series nobody has seen move;
+    //  2. the series grew by five bars — live: hourly rising, 1-minute falling, so a
+    //     baseline read off the wrong series shows as the wrong sign, not a coincidence;
+    //  3. the identical snapshot again — frozen: the baseline is 0 although the series
+    //     itself still falls and the hourly still rises.
+    //
+    // The row's PRICE is the mid the fill is priced at (sidesFor — for id-less crypto its
+    // 1-minute close), never the hourly close while something prices it, and every row
+    // carries the composite's version; a symbol with no 1-minute series at all has an
+    // unmeasured baseline and the hourly last close. The structure read is pinned in its
+    // NEGATIVE form, because the ordered gate chain in front of it (calendar, tradability,
+    // the session-phase windows on the exchange clocks) makes a positive
+    // `against-range-break` wall-clock dependent: SOL's HOURLY closes break their first-30
+    // range DOWN, against the buy, while its live 1-minute series breaks UP — a read off
+    // the hourly closes refused it, a read off the 1-minute series never does; and XRP's
+    // 1-minute series breaks DOWN against the buy but is FROZEN on scan 3, so a break that
+    // is not fresh never refuses either. The rows are written for refused candidates too,
+    // so no trade need open.
     void TS_BOTSIM_004_theLedgerBaselineAndPriceComeFromTheOneMinuteSeries()
     {
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        QVERIFY(decisions.isValid());
         runner.setArmed(true);
         QVERIFY(runner.armed());
 
         const QString withSession = QStringLiteral("BTC");
         const QString hourlyOnly = QStringLiteral("ETH");
-        MarketSnapshot snap;
-        // Both hourly series RISE over their last six points.
+        const QString hourlyAgainst = QStringLiteral("SOL");
+        const QString frozenAgainst = QStringLiteral("XRP");
+        const QList<DecisionRow> rows = {buyRow(withSession), buyRow(hourlyOnly),
+                                         buyRow(hourlyAgainst), buyRow(frozenAgainst)};
+        // BTC and ETH hourly RISE over their last six points; SOL's hourly closes break
+        // their first-30 range DOWN (60000..59420, last 58820); XRP's break it UP.
         const ScreenerRow btcHourly = hourlyRow(withSession, trend(60000.0, 20.0, 60));
         const ScreenerRow ethHourly = hourlyRow(hourlyOnly, trend(3000.0, 2.0, 60));
-        snap.screenerRows = {btcHourly, ethHourly};
-        // The 1-minute series falls over its last six points and ends at a price the hourly
-        // series never reaches, so the price's source is unambiguous too.
-        const QList<double> btcSession = trend(62000.0, -5.0, 40);
-        snap.intradayBySymbol.insert(withSession, btcSession);
-        runner.onDecisions({buyRow(withSession), buyRow(hourlyOnly)}, snap);
+        const ScreenerRow solHourly = hourlyRow(hourlyAgainst, trend(60000.0, -20.0, 60));
+        const ScreenerRow xrpHourly = hourlyRow(frozenAgainst, trend(2.0, 0.01, 60));
+        // The 1-minute series, as a function of how many bars the sweep has delivered so
+        // far: BTC falls over its last six points and ends at a price the hourly series
+        // never reaches (so the price's source is unambiguous too), SOL breaks its first-30
+        // range UP (with the buy), XRP breaks its own DOWN (against it).
+        const auto snapshotWith = [&](qsizetype bars) {
+            MarketSnapshot snap;
+            snap.screenerRows = {btcHourly, ethHourly, solHourly, xrpHourly};
+            snap.intradayBySymbol.insert(withSession, trend(62000.0, -5.0, bars));
+            snap.intradayBySymbol.insert(hourlyAgainst, trend(60000.0, 5.0, bars));
+            snap.intradayBySymbol.insert(frozenAgainst, trend(2.0, -0.002, bars));
+            return snap;
+        };
+        const auto ledgerRows = [&](const QString &symbol) {
+            return rowsFor(loadPredictions(BotSimRunner::ledgerPath()), symbol);
+        };
 
-        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
-        const Prediction *btc = rowFor(ledger, withSession);
-        QVERIFY(btc != nullptr);
-        QCOMPARE(btc->priorMoveDir, -1);   // the 1-minute series fell; the hourly one rose
-        QCOMPARE(btc->price, btcSession.constLast());
-        QCOMPARE(btc->strategyVersion, QStringLiteral("composite-v2"));
+        // Scan 1: first sighting — present, not yet known live.
+        runner.onDecisions(rows, snapshotWith(40));
+        QCOMPARE(ledgerRows(withSession).size(), 1);
+        QCOMPARE(ledgerRows(withSession).constFirst().priorMoveDir, 0);
 
-        const Prediction *eth = rowFor(ledger, hourlyOnly);
-        QVERIFY(eth != nullptr);
-        QCOMPARE(eth->priorMoveDir, 0);   // no 1-minute series: unmeasured, not the hourly sign
-        QCOMPARE(eth->price, ethHourly.closes.constLast());
-        QCOMPARE(eth->strategyVersion, QStringLiteral("composite-v2"));
+        // Scan 2: the series grew — live.
+        decisions.clear();
+        const MarketSnapshot live = snapshotWith(45);
+        runner.onDecisions(rows, live);
+        const QList<Prediction> btc = ledgerRows(withSession);
+        QCOMPARE(btc.size(), 2);
+        QCOMPARE(btc.at(1).priorMoveDir, -1);   // the 1-minute series fell; the hourly rose
+        QCOMPARE(btc.at(1).price, live.intradayBySymbol.value(withSession).constLast());
+        QCOMPARE(btc.at(1).strategyVersion, QLatin1String(kCompositeVersion));
+        const QList<Prediction> eth = ledgerRows(hourlyOnly);
+        QCOMPARE(eth.size(), 2);
+        // No 1-minute series at all: unmeasured, not the hourly sign.
+        QCOMPARE(eth.at(1).priorMoveDir, 0);
+        QCOMPARE(eth.at(1).price, ethHourly.closes.constLast());
+        QCOMPARE(eth.at(1).strategyVersion, QLatin1String(kCompositeVersion));
+        // The structure read is off the live 1-minute series, which breaks WITH the buy.
+        QVERIFY2(decisionCodeFor(decisions, hourlyAgainst) != QStringLiteral("against-range-break"),
+                 qPrintable(decisionCodeFor(decisions, hourlyAgainst)));
+
+        // Scan 3: the identical snapshot — frozen, so not live.
+        decisions.clear();
+        runner.onDecisions(rows, live);
+        QCOMPARE(ledgerRows(withSession).size(), 3);
+        QCOMPARE(ledgerRows(withSession).at(2).priorMoveDir, 0);   // a stopped series: no baseline
+        // XRP's frozen series still reads as a break against the buy — not a fresh one.
+        QVERIFY2(decisionCodeFor(decisions, frozenAgainst) != QStringLiteral("against-range-break"),
+                 qPrintable(decisionCodeFor(decisions, frozenAgainst)));
     }
 
     //! @tstid TS-BOTSIM-005 @design DES-UI-BOTSIM
@@ -996,6 +1086,53 @@ private slots:
         const BotSimRunner successor(&client, nullptr, nullptr, QLatin1String(kStore));
         QVERIFY(successor.ownsBook());
         QCOMPARE(fileBytes(lockPath), lockBytes);   // rewritten by the new holder: us
+    }
+
+    //! @tstid TS-BOTSIM-010 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-037, scope=function)
+    //
+    // The forecast line scores ONLY the rows carrying the composite's own strategy version.
+    // Rows from before the version existed (empty) were priced off another series and carry
+    // a five-HOUR baseline; "they score as their own group" was the field's contract, but
+    // the runner was the one consumer and it filtered by symbol alone — so an old row paired
+    // against a new row's price from a different feed, and its baseline was counted in the
+    // five-minute one's hit rate. Seeded: 48 untagged calls five minutes apart, the last
+    // 16 minutes ago, which the row the scan appends at "now" would resolve if it were
+    // scored with them (TS-BOTSIM-002's premise, over tagged rows). The line must then say
+    // what the composite's rows ALONE say — one row, no claim yet — and not what the mixed
+    // file says, which is a calibrated hit rate over 46 samples.
+    void TS_BOTSIM_010_theForecastScoresOnlyTheRowsOfTheCompositesOwnVersion()
+    {
+        const QString symbol = QStringLiteral("BTC");
+        const QList<Prediction> untagged = seedLedgerFor(symbol, 48, 16, QString{});
+        QCOMPARE(untagged.size(), 48);
+
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy logs(&runner, &BotSimRunner::log);
+        QVERIFY(logs.isValid());
+        runner.setArmed(true);
+        MarketSnapshot snap;
+        snap.screenerRows = {scanRow(symbol, 60)};
+        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        runner.onDecisions({buyRow(symbol)}, snap);
+
+        const QList<Prediction> file = loadPredictions(BotSimRunner::ledgerPath());
+        QCOMPARE(file.size(), untagged.size() + 1);
+        const QList<Prediction> composite = compositeRows(file);
+        QCOMPARE(composite.size(), 1);
+        // The premise: mixed, the new row resolves the seeded history's last call and the
+        // record is a calibrated claim; alone, it is one call and no claim at all.
+        const HorizonScore mixed = scoreHorizon(file, Horizon::M15);
+        QVERIFY(mixed.trustworthy());
+        QVERIFY(mixed.samples > scoreHorizon(untagged, Horizon::M15).samples);
+        const HorizonScore own = scoreHorizon(composite, Horizon::M15);
+        QCOMPARE(own.samples, 0);
+
+        QCOMPARE(forecastLinesFor(logs, symbol).size(), 1);
+        const QString record = recordPartOf(forecastLinesFor(logs, symbol).constFirst());
+        QCOMPARE(record, own.headline());
+        QVERIFY(record != mixed.headline());
     }
 };
 

@@ -256,10 +256,11 @@ private:
     // means nothing was evaluated yet, so the row carries the refusal and no evidence.
     // An EMPTY refusal means the trade was taken — the two cannot then disagree.
     // `closes` are the scan's HOURLY candles (the regime's input and the price of last
-    // resort); the row's price and its five-minute baseline come from the instrument's
-    // 1-minute series in m_symbolSeries, and every row is tagged with the composite bot's
-    // strategy version. Not const: the row goes to the on-disk ledger AND to the
-    // in-memory copy of it.
+    // resort); the row's price is the mid the fill would be priced at (sidesFor), its
+    // five-minute baseline comes from the instrument's 1-minute series when that is LIVE
+    // (liveSessionSeries), and every row is tagged with the composite bot's strategy
+    // version. Not const: the row goes to the on-disk ledger AND to the in-memory copy
+    // of it.
     void recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
                           const QDateTime &now, const trading::CandidateInput &in,
                           const QString &refusal);   // entries for the stored scan, with m_proposal
@@ -296,7 +297,9 @@ private:
     // printing and an unstamped mid from the same venue cannot overrule that. The
     // bulk-snapshot mid and the candle-close fallback have NO stamp of their own; they
     // count as live when nothing dated contradicts them — the behaviour they always had,
-    // stated here rather than invented a timestamp for.
+    // stated here rather than invented a timestamp for. The ledger row of a candidate is
+    // priced off the same mid (recordPrediction), so the record and the fill never
+    // disagree about what the instrument cost at the moment of the call.
     struct Sides {
         bool ok = false;
         bool live = false;
@@ -389,6 +392,14 @@ private:
     // by Yahoo ticker, and the per-instrument series keyed by APP symbol.
     QHash<QString, trading::VolumeSeries> m_referenceVolumes;
     QHash<QString, QList<double>> m_symbolSeries;
+    // The symbols whose series in m_symbolSeries CHANGED between the previous scan and this
+    // one — the runner's only test of a live 1-minute feed (see adoptSymbolSeries). The
+    // structure read and the ledger baseline use a series only while it is in here.
+    QSet<QString> m_liveSeries;
+    // Store the scan's per-symbol series and judge which of them are live.
+    void adoptSymbolSeries(const QHash<QString, QList<double>> &series);
+    // The symbol's 1-minute series when it is live, else empty (= no read).
+    [[nodiscard]] QList<double> liveSessionSeries(const QString &symbol) const;
     // The swing strategy's own daily bars (2026-08-12 redesign, item 5's live wiring),
     // keyed by APP symbol like every other per-instrument series here — set via
     // setDailyBars, read by considerSwingEntries/applySwingExit only.

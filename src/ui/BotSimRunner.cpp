@@ -70,11 +70,14 @@ constexpr qint64 kProposalMaxAgeMs = qint64{5} * 60 * 1000;
 // Persisted books (REQ-F-029: an experiment spans days, not one session).
 constexpr auto kStoreFile = "botsim.json";
 // The strategy version every ledger row of the composite/AI bot carries
-// (Prediction::strategyVersion). v2 marks the switch of the row's baseline and price to the
-// 1-minute series on 2026-09-29: before it the "previous five minutes" baseline was the
-// last six HOURLY scan closes (five hours) and the price the hourly last close, so those
-// rows measure a different thing. They carry an EMPTY version and score as their own group
-// under the field's contract — never averaged with the rows written since.
+// (Prediction::strategyVersion). v2 marks the switch of 2026-09-29: the "previous five
+// minutes" baseline comes from the 1-minute series (before it, from the last six HOURLY
+// scan closes — five hours) and the row is priced by the fill's own rule (before it, the
+// hourly last close), so the earlier rows measure a different thing. They carry an EMPTY
+// version, and reportForecast scores ONLY rows of this version: the old ones stay in the
+// file for anyone scoring them on their own, but they never enter the runner's record —
+// filtering is what the field's contract promises, and the filter has to be applied
+// somewhere for it to be true.
 constexpr auto kCompositeStrategyVersion = "composite-v2";
 // The ONE age rule for a per-tick quote in this runner, shared by the entry pricing
 // (sidesFor) and the mark (markFor): a quote whose own stamp is older than this is
@@ -701,6 +704,37 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     return sides;
 }
 
+// Which 1-minute series are LIVE, judged the only way this runner can: MarketSnapshot
+// carries no stamp for them, and neither producer (the window's map, the console's books)
+// ever clears an entry — a sweep that fails, or answers an empty close array (the failure
+// mode MarketFeeds documents for equities), leaves the last GOOD series in place, and the
+// two indices' series are the CASH index, which Yahoo freezes at the New York close while
+// the CFD is scanned for hours more. Both look exactly like a live series to a presence
+// test. What separates them is that a live 1-minute feed ALWAYS has new bars between two
+// scans minutes apart, so a series identical to the previous scan's has stopped, whatever
+// the reason. A series seen for the first time has nothing to be compared with and is not
+// yet known live — unknown, the same answer every other unmeasurable read gives — which
+// costs the structure read and the baseline of one scan after a restart, and saves an
+// evening of a frozen index counted as fresh. Two scans inside one minute (a manual
+// refresh) can judge a live series still, and lose one read; that is the cheap side.
+void BotSimRunner::adoptSymbolSeries(const QHash<QString, QList<double>> &series)
+{
+    m_liveSeries.clear();
+    for (auto it = series.cbegin(); it != series.cend(); ++it) {
+        const auto previous = m_symbolSeries.constFind(it.key());
+        if (!it.value().isEmpty() && (previous != m_symbolSeries.cend())
+            && (previous.value() != it.value())) {
+            m_liveSeries.insert(it.key());
+        }
+    }
+    m_symbolSeries = series;
+}
+
+QList<double> BotSimRunner::liveSessionSeries(const QString &symbol) const
+{
+    return m_liveSeries.contains(symbol) ? m_symbolSeries.value(symbol) : QList<double>{};
+}
+
 void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
                                const trading::MarketSnapshot &snap)
 {
@@ -714,7 +748,7 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
     // APP SYMBOL, not by Yahoo ticker — passing the ticker book here is exactly the
     // mistake that left the futures lead permanently unknown.
     m_referenceVolumes = snap.referenceVolumes;
-    m_symbolSeries = snap.intradayBySymbol;
+    adoptSymbolSeries(snap.intradayBySymbol);
     // The read-only views above are all a non-owned book gets: the process holding the
     // book marks, exits and enters on it, and doing so here as well would rewrite its
     // book and ledgers over its own (the entry paths below are unreachable anyway, since
@@ -827,10 +861,12 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     // engine reads (MarketSnapshot::intradayBySymbol, kept as m_symbolSeries). Never from
     // `closes`: those are the eToro scan's HOURLY candles, and an "opening range" over
     // their first thirty points is a thirty-HOUR range — the gate then refused a fresh
-    // opposite break the window never showed. A symbol without a 1-minute series reads
-    // 0 (no read), the honest answer; the hourly closes are the volatility source only.
-    const QList<double> session = m_symbolSeries.value(row.symbol);
-    in.rangeBreakDir = trading::openingRange(session).breakDir;
+    // opposite break the window never showed. Only a LIVE series (see liveSessionSeries):
+    // the two indices' series are the CASH index, frozen from the New York close while the
+    // CFD is scanned for hours more, and a break that is hours old is not the FRESH one
+    // REQ-F-056 refuses into. A symbol without a live 1-minute series reads 0 (no read),
+    // the honest answer; the hourly closes are the volatility source only.
+    in.rangeBreakDir = trading::openingRange(liveSessionSeries(row.symbol)).breakDir;
     // How many independent reference reads agree with this side (REQ-F-069). Built once
     // and used for both the count and the combined indication below — the two must be
     // computed from identical inputs or the window contradicts itself. readInputsFor
@@ -1591,9 +1627,15 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
     }
     const trading::DecisionRow &lead = rows.constFirst();
     const QList<double> closes = m_symbolSeries.value(lead.symbol);
+    // This instrument's rows of THIS strategy version only (see kCompositeStrategyVersion):
+    // a row from before the switch was priced off another series and carries a five-HOUR
+    // baseline, so scoring it here would pair an old row against a new row's price from a
+    // different feed and count its baseline in the five-minute one's hit rate. The filter
+    // covers both consumers below — the pairing walks only what it is handed.
     QList<trading::Prediction> forSymbol;
     for (const trading::Prediction &row : ledgerRows()) {
-        if (row.symbol == lead.symbol) {
+        if ((row.symbol == lead.symbol)
+            && (row.strategyVersion == QLatin1String(kCompositeStrategyVersion))) {
             forSymbol.append(row);
         }
     }
@@ -1639,11 +1681,11 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
                                     const QDateTime &now, const trading::CandidateInput &in,
                                     const QString &refusal)
 {
-    // The instrument's own 1-minute series (the Yahoo sweep the window's engine reads);
-    // `closes` are the eToro scan's HOURLY candles, kept for the regime (persistence needs
-    // a session) and as the price of last resort. Looked up here rather than passed, so the
-    // signature stays within the parameter limit.
-    const QList<double> session = m_symbolSeries.value(row.symbol);
+    // The instrument's own 1-minute series, when LIVE (liveSessionSeries); `closes` are the
+    // eToro scan's HOURLY candles, kept for the regime (persistence needs a session) and as
+    // the price of last resort. Looked up here rather than passed, so the signature stays
+    // within the parameter limit.
+    const QList<double> session = liveSessionSeries(row.symbol);
     trading::Prediction entry;
     entry.at = now.toUTC();
     entry.symbol = row.symbol;
@@ -1652,11 +1694,19 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
     entry.measured = in.leadMeasured;
     entry.unknowns = in.leadUnknowns;
     entry.strategyVersion = QLatin1String(kCompositeStrategyVersion);
-    // The freshest mark the call was made at: the 1-minute series' last close when there is
-    // one, else the hourly last close — an outcome is resolved against a LATER row's price,
-    // so both sides must come from the same series wherever possible.
-    if (!session.isEmpty()) {
-        entry.price = session.constLast();
+    // The mark the call was made at, by the SAME rule the simulated fill is priced by
+    // (sidesFor: the per-tick quote, else the venue's bulk mid, else — crypto — its 1-minute
+    // close): an outcome is resolved against a LATER row's price, so every row of one
+    // instrument must be priced off one feed, and it must be a feed that MOVES whenever the
+    // instrument is called. The 1-minute series is not that for the two indices — theirs is
+    // the CASH index (^GSPC / ^NDX), which Yahoo freezes at the New York close while the CFD
+    // keeps being scanned for hours; rows priced off it paired into a "no move" outcome and a
+    // miss for every directional call of the evening. The hourly last close stands in only
+    // when nothing prices the candidate (the row is then dropped unless it has a price).
+    const qint64 id = (m_client != nullptr) ? m_client->instrumentIdFor(row.symbol) : 0;
+    const Sides sides = sidesFor(row.symbol, id, closes);
+    if (sides.ok) {
+        entry.price = (sides.bid + sides.ask) / 2.0;
     } else {
         entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
     }
@@ -1678,10 +1728,12 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList
     // The baseline this app CAN measure at decision time: the previous five minutes'
     // direction — the last six points of the 1-MINUTE series, never of the hourly scan
     // closes, whose last six points span five hours and are a different rival for the
-    // signal than the one the ledger names. Fewer than six points leave it 0: a baseline
-    // that could not be measured is not scored (the ledger treats 0 as "no side"). The
-    // session-VWAP side stays 0 — unknown — because the instrument's own candles carry no
-    // volume, and an unmeasurable baseline must not be scored.
+    // signal than the one the ledger names. Fewer than six points, or a series that is not
+    // live (frozen at the cash close, or a sweep that failed and left the last good one in
+    // place — the sign of its last five minutes is then a stale rival, not this call's),
+    // leave it 0: a baseline that could not be measured is not scored (the ledger treats 0
+    // as "no side"). The session-VWAP side stays 0 — unknown — because the instrument's
+    // own candles carry no volume, and an unmeasurable baseline must not be scored.
     if (session.size() > 5) {
         const double then = session.at(session.size() - 6);
         const double last = session.constLast();

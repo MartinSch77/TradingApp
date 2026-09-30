@@ -16,6 +16,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+
 using namespace trading;
 
 namespace {
@@ -628,9 +630,17 @@ private slots:
         QCOMPARE(body.value(QStringLiteral("transaction")).toString(), QStringLiteral("buy"));
         QCOMPARE(body.value(QStringLiteral("amount")).toDouble(), 500.0);
         QCOMPARE(body.value(QStringLiteral("leverage")).toInt(), 5);
-        // The real account segment: no "/demo" in the path.
-        QVERIFY(server.requests().constLast().path.contains(
-            QStringLiteral("/trading/execution/orders")));
+        // The real account segment: no "/demo" in the path. Found by SHAPE, not by
+        // position — the client refreshes the portfolio and the balance right after the
+        // submit, and those GETs can be recorded before the spy wakes.
+        const QList<MockHttpServer::Recorded> sentRequests = server.requests();
+        const bool postedOnRealSegment = std::any_of(
+            sentRequests.cbegin(), sentRequests.cend(), [](const MockHttpServer::Recorded &r) {
+                return (r.method == "POST")
+                       && r.path.contains(QStringLiteral("/trading/execution/orders"))
+                       && !r.path.contains(QStringLiteral("/demo/"));
+            });
+        QVERIFY2(postedOnRealSegment, "no POST to /trading/execution/orders was recorded");
     }
 };
 

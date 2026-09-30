@@ -113,6 +113,13 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   compiler's own `-analyzer-checker-help` listing: clang 23 folded the two
   `valist.*` checkers into `security.VAList`, and naming a checker the compiler
   does not know is a hard error that again failed every translation unit.
+- TS-CLI-041 (the paper-held delayed row repaired off its candle) raced the
+  client's own first tick: the bulk rates request and the candle repair go out
+  together, and when the candle reply lands first the repair knows no spread yet,
+  so the ask reads 61100 for one tick until the row lends it its 10.0 — the
+  slower ASan build hit that window and failed the release's sanitize stage. The
+  test now pins the candle-first order with the mock's `holdUntil` and waits for
+  the converged quote; the client itself is unchanged (it converges within a tick).
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

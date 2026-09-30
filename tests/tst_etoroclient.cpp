@@ -1477,11 +1477,24 @@ private slots:
         EtoroClient client(cfg);
         client.setTradableSymbols({QStringLiteral("SPX500")});
         client.setExtraQuoteInstruments({100000});   // the bot's holding, before the first poll
+        // The first tick issues the bulk rates request AND the candle repair for the
+        // row-less bot instrument concurrently. Stated, not timed: the candle wins —
+        // the rates row waits until the repair has been applied. That is the order the
+        // ASan build produced on its own (its candle reply beat the rates reply, the
+        // repair then knew no spread yet, and the test read an ask of 61100.0 in that
+        // window): the repaired quote is complete only once the ROW has arrived and
+        // lent it its spread, so that is the state the assertions wait for.
+        server.holdUntil(QStringLiteral("/market-data/instruments/rates"),
+                         [&client] { return client.quotes().value(100000).fromCandle; });
         client.start();
 
         // The bot's instrument is re-based on its live candle (close = bid, the row's
-        // 10.0 spread kept) — exactly what a held instrument gets.
-        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(100000).fromCandle, kWaitMs);
+        // 10.0 spread kept) — exactly what a held instrument gets. The candle-first
+        // order makes the ask correct only after the row's spread has been applied,
+        // which the wait covers instead of reading the quote mid-repair.
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(100000).fromCandle
+                                     && qFuzzyCompare(client.quotes().value(100000).ask, 61110.0),
+                                 kWaitMs);
         const Quote repaired = client.quotes().value(100000);
         QCOMPARE(repaired.bid, 61100.0);
         QCOMPARE(repaired.ask, 61110.0);

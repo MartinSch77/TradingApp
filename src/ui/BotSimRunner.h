@@ -210,7 +210,9 @@ private:
     [[nodiscard]] trading::EntryFeatures featuresFor(const trading::CandidateInput &in,
                                                      const trading::EntrySignal &sig, double stake,
                                                      const QDateTime &now);
-    // Append one training example for a trade that just closed.
+    // Append one training example for a trade that just closed. A PARTIAL record
+    // (PaperBook::partialClose) appends nothing: its net is banked in m_partialNetById
+    // and folded into the label of the final close of the same id.
     void recordExperience(const trading::PaperClosedTrade &done);
     void loadModel();
     void onTrainingDone();
@@ -359,6 +361,13 @@ private:
     trading::BotNet m_net;                  // what the record has taught it so far
     trading::BotNetMode m_netMode = trading::BotNetMode::Off;
     qint64 m_experienceCount = 0;           // training examples written this session
+    // Net already booked by PARTIAL closes of a still-open position, per trade id, so the
+    // one example written when the remainder finally closes is labelled with the WHOLE
+    // position's net rather than the remainder's share (REQ-F-033: one setup, one label).
+    // Not persisted: a restart mid-position loses at most the partial's share of that
+    // label, which is a smaller error than a second example with the same entry
+    // features would be.
+    QHash<qint64, double> m_partialNetById;
     QString m_evidence;                     // prompt of the scan being decided
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QString m_storeFile;   // book file override (empty = botsim.json)

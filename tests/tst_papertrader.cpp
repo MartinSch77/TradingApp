@@ -3351,6 +3351,74 @@ private slots:
         in.quoteLive = true;
         QVERIFY(paperEntryVerdict(in, sig, freshBook(), cfg).take);
     }
+
+    //! @tstid TS-PAPER-046 @design DES-DOM-PAPER
+    // @relation(REQ-F-031, REQ-F-033, scope=function)
+    //
+    // The cost-proration identity behind the experience log's ONE label per position:
+    // a partial close followed by the close of the remainder books, over the two records,
+    // exactly what a single close of the whole position would have booked — gross, entry
+    // and exit half-spread, the rollover already accrued, and therefore the net — and
+    // leaves the account (cash, realized, costs paid) in the same place. That is what
+    // lets the runner label the final close's example with "record net + banked partial
+    // net" and call it the trade's net (TS-PAPER-041 pins the proration of ONE partial
+    // record; this pins the sum). Rollover is accrued BEFORE the partial so the feesPaid
+    // proration is exercised, not just the zero case.
+    void TS_PAPER_046_partialThenRemainderSumToOneWholeClose()
+    {
+        const BotConfig cfg;
+        const QDateTime t0(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        const EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        QVERIFY(good.valid);
+        InstrumentFees fees;
+        fees.buyOvernight = 0.5;
+        const double exitRate = good.fillRate * 1.015;
+        const double exitSpreadPct = 0.03;   // wider than the entry's, so the two are told apart
+        const QDateTime tClose = t0.addDays(2).addSecs(3600);
+
+        // The split path: 40% out, then the rest, at the same rate and time.
+        PaperBook split(cfg);
+        const qint64 id = split.open(good, 2000.0, t0);
+        QVERIFY(id != 0);
+        split.accrueRollover(id, fees, 1.0, t0.addDays(2));
+        QVERIFY(split.openTrades().constFirst().feesPaid > 0.0);
+        const PaperBook::ExitPricing pricing{exitRate, exitSpreadPct, CloseReason::TakeProfit,
+                                             tClose};
+        const PaperClosedTrade partial = split.partialClose(id, 0.40, pricing);
+        QVERIFY(partial.partial);
+        const PaperClosedTrade rest =
+            split.close(id, exitRate, exitSpreadPct, CloseReason::StopLoss, tClose);
+        QVERIFY(!rest.partial);
+        QCOMPARE(rest.id, id);
+        QCOMPARE(split.state().openCount, 0);
+
+        // The whole path: the identical position closed in one go.
+        PaperBook whole(cfg);
+        const qint64 wholeId = whole.open(good, 2000.0, t0);
+        whole.accrueRollover(wholeId, fees, 1.0, t0.addDays(2));
+        const PaperClosedTrade one =
+            whole.close(wholeId, exitRate, exitSpreadPct, CloseReason::TakeProfit, tClose);
+        QVERIFY(!one.partial);
+        QVERIFY(one.feesPaid > 0.0);
+
+        // Leg by leg, the two records add up to the one.
+        QVERIFY(qAbs((partial.stake + rest.stake) - one.stake) < 1e-9);
+        QVERIFY(qAbs((partial.grossPnl + rest.grossPnl) - one.grossPnl) < 1e-9);
+        QVERIFY(qAbs((partial.openCost + rest.openCost) - one.openCost) < 1e-9);
+        QVERIFY(qAbs((partial.closeCost + rest.closeCost) - one.closeCost) < 1e-9);
+        QVERIFY(qAbs((partial.feesPaid + rest.feesPaid) - one.feesPaid) < 1e-9);
+        QVERIFY(qAbs((partial.netPnl + rest.netPnl) - one.netPnl) < 1e-9);
+        // …and the remainder's own net is NOT the trade's net: labelling it alone would
+        // understate a winner by exactly the partial's share.
+        QVERIFY(qAbs(rest.netPnl - one.netPnl) > 1.0);
+        QVERIFY(partial.netPnl > 0.0);
+
+        // The account ends in the same place either way.
+        QVERIFY(qAbs(split.state().cash - whole.state().cash) < 1e-9);
+        QVERIFY(qAbs(split.stats().realized - whole.stats().realized) < 1e-9);
+        QVERIFY(qAbs(split.stats().costsPaid - whole.stats().costsPaid) < 1e-9);
+        QVERIFY(qAbs(split.stats().equity - whole.stats().equity) < 1e-9);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestPaperTrader)

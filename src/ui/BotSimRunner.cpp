@@ -870,9 +870,21 @@ trading::EntryFeatures BotSimRunner::featuresFor(const trading::CandidateInput &
 
 void BotSimRunner::recordExperience(const PaperClosedTrade &done)
 {
-    // One JSON line per closed trade, appended and never rewritten: the bot's own
+    // One JSON line per closed POSITION, appended and never rewritten: the bot's own
     // history is the training set, and a file that is only ever appended to cannot
     // lose it to a crash mid-write (REQ-F-033).
+    //
+    // A partial close is not a closed setup. The position it came from is still open
+    // under the SAME id with the SAME entry features, so writing it as an example would
+    // teach one setup twice — and label each copy with a fraction of the result, the
+    // remainder's share being NOT the trade's net (a 2R partial banked in profit followed
+    // by a trailing stop below entry is one winning trade, not one win and one loss).
+    // Bank its net here and label the final close with the whole.
+    if (done.partial) {
+        m_partialNetById[done.id] += done.netPnl;
+        return;
+    }
+    const double label = done.netPnl + m_partialNetById.take(done.id);
     if (!done.features.isValid()) {
         return;   // a trade from before the features existed teaches nothing
     }
@@ -884,7 +896,9 @@ void BotSimRunner::recordExperience(const PaperClosedTrade &done)
     rec.insert(QStringLiteral("symbol"), done.symbol);
     rec.insert(QStringLiteral("closedAt"), done.closeTime.toString(Qt::ISODate));
     rec.insert(QStringLiteral("heldHours"), done.heldHours());
-    rec.insert(QStringLiteral("netPnl"), done.netPnl);
+    // The label is the position's net over every leg; `costs` stays the final
+    // leg's own record (the trainers read netPnl and the features only).
+    rec.insert(QStringLiteral("netPnl"), label);
     rec.insert(QStringLiteral("costs"), done.totalCost());
     rec.insert(QStringLiteral("reason"), trading::closeReasonWord(done.reason));
     QJsonObject features;
@@ -1347,7 +1361,9 @@ bool BotSimRunner::applySwingExit(const trading::PaperTrade &trade, double markR
         const double exitRate = (markRate > 0.0) ? markRate : bars.constLast().close;
         const trading::PaperBook::ExitPricing pricing{exitRate, effectiveSpreadPct(trade.symbol),
                                                        CloseReason::TakeProfit, now};
-        static_cast<void>(m_book.partialClose(trade.id, action.partialFraction, pricing));
+        // The partial's net goes to the experience log's ledger for this id — never
+        // as an example of its own (see recordExperience).
+        recordExperience(m_book.partialClose(trade.id, action.partialFraction, pricing));
         m_book.setSwingState(trade.id, action.nextState.stopPrice, action.nextState.partialTaken,
                             action.nextState.sessionsHeld);
         emit log(QStringLiteral("SWING PARTIAL %1: closed %2% — %3")
@@ -1707,6 +1723,9 @@ void BotSimRunner::resetBooks()
     m_armed = false;
     m_dirBySymbol.clear();
     m_confBySymbol.clear();
+    // The reset closes above wrote no examples; a fresh book reuses ids, so a partial
+    // banked for a discarded position must not label a new one.
+    m_partialNetById.clear();
     syncQuoteInterest();
     save();
     emit log(QStringLiteral("BOT SIM reset — back to %1, no positions, no history.")

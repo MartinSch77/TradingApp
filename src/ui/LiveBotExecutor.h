@@ -47,13 +47,13 @@ struct LiveMirroredPosition {
 // written to the audit record, or refused with the reason. Nothing here is persisted:
 // a restart is disarmed, always.
 //
-// arm() is the ONLY way in and fails closed four times over, in the order a reader
+// arm() is the ONLY way in and fails closed three times over, in the order a reader
 // wants the reason: the kill switch (tripped beats everything, and only clearTrip()
 // releases it), the runner owning its book (a book held by another process is being
-// traded THERE), the client being live (real keys and mode "real"), and the REQ-F-031
-// readiness verdict being met at the moment of arming — the project's own condition for
-// wiring live execution, kept as the precondition here (see REQ-F-076's RATIONALE for
-// the owner request it declines). The "is the client live" question is a predicate
+// traded THERE), and the client being live (real keys and mode "real"). The REQ-F-031
+// readiness verdict is NOT a lock — the owner's decision of 2026-09-30, taken in
+// REQ-F-031 itself — but an arming over an unmet record logs every unmet threshold, so
+// the verdict is faced, never bypassed unseen. The "is the client live" question is a predicate
 // handed in at construction, defaulting to the client's own answer: the headless suite
 // has no real account and must still be able to exercise the armed path, and a test
 // hook on the class itself (a setter, a flag) would be a way to arm in production.

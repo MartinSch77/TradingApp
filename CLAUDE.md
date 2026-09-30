@@ -507,12 +507,13 @@ publish_release; refuses to publish on a red pipeline).
   `bot-live-orders.jsonl`), behind the REQ-N-005 double-pressed ARMING in the bot
   window's "Real money" box (`ui/LiveBotExecutor`, `BotSimDialog::buildLiveBox`; the
   REQ-F-028 arm-instead-of-double-press precedent). `arm()` fails closed on the kill
-  switch, a runner that does not own its book, a client that is not live (real keys +
-  mode real) AND the readiness verdict. The owner asked (2026-09-30) for readiness NOT
-  to be a precondition; that amendment of REQ-F-031 was refused as weakening a
-  committed safety property, is recorded in REQ-F-076's RATIONALE, and lifting it is an
-  owner decision IN REQ-F-031 under the change-management strategy's two approvals —
-  never a silent removal of the safeguard in a code path. Caps come from Config
+  switch, a runner that does not own its book and a client that is not live (real keys +
+  mode real). The readiness verdict is NOT a precondition: the owner decided so on
+  2026-09-30, IN REQ-F-031 itself (amended; RISK-005 raised to 12), after a first
+  implementation had kept the gate — an arming over an unmet record goes through and
+  logs every unmet threshold as an error line, so the verdict is faced, never bypassed
+  unseen. That is the ONE exception to "never a silent removal of the safeguard": it is
+  recorded in the requirement, not hidden in a code path. Caps come from Config
   (`botLiveMaxPerOrderEur`/`botLiveDailyLossEur`, 250/250; a 0 means nothing may be
   sent, never "off"): stake = min(cap, paper stake) at the paper leverage with the
   stop/target amounts scaled to it (`domain/LiveMirror`), one live position per

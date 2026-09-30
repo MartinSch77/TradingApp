@@ -28,9 +28,9 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   leverage with the stop/target amounts scaled to it (`domain/LiveMirror`), one
   live position per instrument, the paper close closes the live position, and a
   realised daily loss at the cap trips the STICKY kill switch. Arming fails closed
-  on the kill switch, a non-owned book, a non-live client and the REQ-F-031
-  readiness verdict — the owner's request to waive readiness is recorded in
-  REQ-F-076's RATIONALE, not implemented. `EtoroClient` prices a market order on
+  on the kill switch, a non-owned book and a non-live client; the REQ-F-031
+  readiness verdict is shown and logged at arming but is NOT a precondition —
+  the owner's decision, taken in REQ-F-031 itself (RISK-005 raised to 12). `EtoroClient` prices a market order on
   an instrument that is not on screen off that instrument's own rate (the old
   "only the instrument currently being traded" refusal is gone) and reports the
   opened position id as a signal. GUI only; the console binaries compose no

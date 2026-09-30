@@ -7,7 +7,7 @@ The bot trades SIMULATED money on LIVE prices, and its runner has no route to an
 endpoint (REQ-F-029). Since 2026-09-30 the Widgets app can additionally MIRROR its
 SPX500/NSDQ100 decisions to real orders from the bot window's "Real money" box
 (REQ-F-076): a double-pressed, capped, time-bounded arming that requires real keys, mode
-`real`, the readiness verdict met and an untripped kill switch — see
+`real` and an untripped kill switch (the readiness verdict is shown and logged, not a lock) — see
 `docs/bot-decision-pipeline.md` §11. What follows is every environment switch, plus the
 QA aids used to capture it. The risk model, the exit rules and the decision log are specified in
 [the requirements](requirements.md) under REQ-F-029 through REQ-F-037.

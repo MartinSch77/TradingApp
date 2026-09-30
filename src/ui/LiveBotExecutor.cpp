@@ -94,11 +94,6 @@ QString LiveBotExecutor::armRefusal() const
         return QStringLiteral("the broker client is not live — real keys and mode \"real\" "
                               "are required");
     }
-    const trading::LiveReadiness readiness = m_runner->liveReadiness();
-    if (!readiness.ready) {
-        return QStringLiteral("the paper record is not ready for real money (REQ-F-031): %1")
-            .arg(readiness.blockers.join(QStringLiteral("; ")));
-    }
     if (!m_cfg.maxPerOrder.isPositive() || !m_cfg.maxDailyLoss.isPositive()) {
         return QStringLiteral("no positive per-order and daily-loss caps are configured — a "
                               "cap of zero sends nothing");
@@ -135,6 +130,17 @@ bool LiveBotExecutor::arm(const QDateTime &now)
         return false;
     }
     m_dayLossCap = inOrderCurrency(m_cfg.maxDailyLoss);
+    // The REQ-F-031 verdict is evidence, not a lock (the owner's decision of 2026-09-30,
+    // recorded in REQ-F-031 and REQ-F-076): an arming over an unmet record goes through,
+    // and the log says exactly what the record has not shown yet, so the person who
+    // armed did it in the face of the figures rather than in ignorance of them.
+    const trading::LiveReadiness readiness = m_runner->liveReadiness();
+    if (!readiness.ready) {
+        emit log(QStringLiteral("LIVE ARMED although the paper record is NOT ready for real "
+                                "money (REQ-F-031): %1")
+                     .arg(readiness.blockers.join(QStringLiteral("; "))),
+                 true);
+    }
     emit log(QStringLiteral("LIVE ARMED for %1 min: %2 — %3 per order (%4 at %5 EUR/USD), "
                             "%6 (%7) realised daily loss trips the kill switch. Audit: %8")
                  .arg(m_cfg.armMinutes)

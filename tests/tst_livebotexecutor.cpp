@@ -490,8 +490,10 @@ private slots:
                                                                "book")));
         }
 
-        // The REQ-F-031 gate: a fresh runner over an EMPTY record is refused with the
-        // blockers named — readiness is a precondition of arming, not decoration.
+        // The REQ-F-031 verdict is NOT a lock (the owner's decision of 2026-09-30, taken in
+        // REQ-F-031 itself): a fresh runner over an EMPTY record ARMS — and the log names
+        // every unmet threshold as an error line, so the arming was made in the face of
+        // the record rather than in ignorance of it, and the mirror then sends.
         removeRunnerFiles();
         EtoroClient client(Config{});
         BotSimRunner fresh(&client, nullptr, nullptr, QLatin1String(kStore));
@@ -500,14 +502,19 @@ private slots:
         LiveBotExecutor exec(&client, &fresh, &fake, setup(/*clientLive=*/true));
         const QSignalSpy logs(&exec, &LiveBotExecutor::log);
         exec.onFx(0.9);
-        QVERIFY(!exec.arm());
-        QVERIFY(!exec.isArmed());
-        QVERIFY(logs.constLast().at(0).toString().contains(
-            QStringLiteral("not ready for real money (REQ-F-031)")));
-        QVERIFY(logs.constLast().at(0).toString().contains(QStringLiteral("closed trades")));
-        // …and an armed-looking paper open still sends nothing.
+        QVERIFY(exec.arm());
+        QVERIFY(exec.isArmed());
+        bool warned = false;
+        for (const QList<QVariant> &line : logs) {
+            const QString text = line.at(0).toString();
+            if (text.contains(QStringLiteral("NOT ready for real money (REQ-F-031)"))
+                && text.contains(QStringLiteral("closed trades")) && line.at(1).toBool()) {
+                warned = true;
+            }
+        }
+        QVERIFY2(warned, "the unmet verdict must be logged, as an error line, at arming");
         exec.onPaperOpened(paperTrade(1, QStringLiteral("SPX500"), 27));
-        QVERIFY(fake.sent().isEmpty());
+        QCOMPARE(fake.sent().size(), 1);
     }
 };
 

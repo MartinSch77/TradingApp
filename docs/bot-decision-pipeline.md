@@ -341,9 +341,8 @@ the duration):
 
 What is NOT mirrored, on purpose: anything outside the two indices; a second position in
 an instrument the mirror already holds; anything while the client is not live (real keys
-and mode `real`), while the runner does not own its book, or while the REQ-F-031 readiness
-verdict is unmet — `arm()` refuses each of those by name. The owner asked for readiness NOT
-to be a precondition; that request is recorded, not implemented (REQ-F-076's RATIONALE):
-lifting it is a decision for REQ-F-031 itself under the change-management strategy's two
-approvals. Nothing about the arming is persisted — a restart is disarmed — and the arming
+and mode `real`), or while the runner does not own its book — `arm()` refuses each of
+those by name. The REQ-F-031 readiness verdict is NOT a precondition (the owner's decision
+of 2026-09-30, taken in REQ-F-031 itself): it is shown beside the control, and an arming
+over an unmet record logs every unmet threshold as an error line and then goes through. Nothing about the arming is persisted — a restart is disarmed — and the arming
 expires on its own after `armMinutes` (480, one trading day).

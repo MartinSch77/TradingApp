@@ -96,7 +96,15 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   `std::ranges` algorithms, by-value parameters, functional casts, `std::move`,
   redundant `()` on lambdas, two FinBERT fields unused without ONNX Runtime,
   `MainWindow::eventFilter` back to QObject's public visibility and the class's
-  copy/move explicitly deleted.
+  copy/move explicitly deleted. The ONNX Runtime block of `FinBertSentiment`,
+  which only a machine with the runtime compiles, followed in a second pass
+  (three `std::ranges` conversions). The same local run showed what CI's
+  `static-analysis` job had been hiding behind `continue-on-error` since PR #32:
+  six cppcheck findings (an unknown `Q_DISABLE_COPY_MOVE` macro in cppcheck 2.13's
+  Qt library, now spelled out; three raw loops now `std::ranges` algorithms; a
+  local `day` shadowing `LiveBotExecutor::day()`) and one PMD CPD clone in
+  tst_botsimrunner (the one-symbol snapshot, now a helper) — all fixed, both
+  tools at 0 again.
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

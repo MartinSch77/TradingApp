@@ -20,11 +20,16 @@
 #include "services/Config.h"
 #include "services/EtoroClient.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 using namespace trading;
 
@@ -38,9 +43,20 @@ QStringList runnerFiles()
 {
     const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
     return {dir.filePath(QLatin1String(kStore)),
+            dir.filePath(QLatin1String(kStore) + QStringLiteral(".lock")),
             dir.filePath(QStringLiteral("tst-botsim-decisions.log")),
             dir.filePath(QStringLiteral("tst-botsim-experience.jsonl")),
             BotSimRunner::ledgerPath()};
+}
+
+// The persisted book as the runner wrote it (empty when there is none yet).
+QJsonObject savedBook()
+{
+    QFile file(runnerFiles().constFirst());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QJsonDocument::fromJson(file.readAll()).object();
 }
 
 // A row the composite calls BUY with conviction, as the scan hands it to the runner.
@@ -214,6 +230,65 @@ private slots:
         QCOMPARE(ledger.at(1).symbol, symbol);
         QVERIFY(ledger.at(0).at <= ledger.at(1).at);
         QCOMPARE(forecastLines(), 2);
+    }
+
+    //! @tstid TS-BOTSIM-003 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, scope=function)
+    //
+    // One process per book. The GUI and the console share one config dir and one book by
+    // design, so a QLockFile beside the store decides who RUNS it: a second runner on the
+    // same store still loads and shows the book but reports ownsBook() == false, drops a
+    // restored "armed" flag rather than resuming it, refuses setArmed(true) with a log line
+    // naming the holder, and neither marks nor writes on a scan (no decision reported, no
+    // ledger row — the owner's files stay the owner's). Releasing the first runner lets
+    // the next one own the book, so a clean restart is never locked out.
+    void TS_BOTSIM_003_aSecondRunnerOnTheSameBookIsReadOnlyAndCannotBeArmed()
+    {
+        EtoroClient client(Config{});
+        auto first =
+            std::make_unique<BotSimRunner>(&client, nullptr, nullptr, QLatin1String(kStore));
+        QVERIFY(first->ownsBook());
+        first->setArmed(true);
+        QVERIFY(first->armed());
+        // A config change saves the book, armed flag included — what a second process
+        // then RESTORES from the file (the focus set itself is not persisted; `armed` is).
+        first->setFocusSymbols({QStringLiteral("BTC")});
+        QVERIFY(savedBook().value(QStringLiteral("armed")).toBool());
+
+        BotSimRunner second(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy logs(&second, &BotSimRunner::log);
+        QSignalSpy decisions(&second, &BotSimRunner::entryDecision);
+        QVERIFY(logs.isValid());
+        QVERIFY(decisions.isValid());
+        QVERIFY(!second.ownsBook());
+        QVERIFY(!second.armed());   // the file said armed; the holder runs it, not this one
+
+        second.setArmed(true);
+        QVERIFY(!second.armed());
+        QCOMPARE(logs.size(), 1);
+        const QString refusal = logs.constFirst().at(0).toString();
+        QVERIFY2(refusal.contains(QStringLiteral("held")), qPrintable(refusal));
+        QVERIFY2(refusal.contains(QStringLiteral("pid %1").arg(QCoreApplication::applicationPid())),
+                 qPrintable(refusal));
+        QVERIFY(logs.constFirst().at(1).toBool());   // reported as an error, not as chatter
+
+        // A scan reaches the read-only views and nothing else: no candidate is evaluated,
+        // no ledger row is written.
+        const QString symbol = QStringLiteral("BTC");
+        MarketSnapshot snap;
+        snap.screenerRows = {scanRow(symbol, 60)};
+        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        second.onDecisions({buyRow(symbol)}, snap);
+        QCOMPARE(decisions.size(), 0);
+        QVERIFY(!QFile::exists(BotSimRunner::ledgerPath()));
+
+        // The lock goes with its holder.
+        first.reset();
+        const BotSimRunner third(&client, nullptr, nullptr, QLatin1String(kStore));
+        QVERIFY(third.ownsBook());
+        // …and the second runner does not retroactively become the owner: the lock is
+        // tried once, at construction.
+        QVERIFY(!second.ownsBook());
     }
 };
 

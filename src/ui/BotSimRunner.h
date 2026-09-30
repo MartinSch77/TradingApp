@@ -15,9 +15,12 @@
 #include <QHash>
 #include <QList>
 #include <QFutureWatcher>
+#include <QLockFile>
 #include <QObject>
 #include <QSet>
 #include <QString>
+
+#include <memory>
 
 class EtoroClient;
 class OllamaAdvisor;
@@ -74,6 +77,13 @@ public:
     // stays absent. Optional: the console front end never calls it and behaves identically.
     void setCrowdEvidence(const QString &instrument, const QString &line);
     [[nodiscard]] bool armed() const { return m_armed; }
+    // Whether THIS process holds the book (a QLockFile beside the store file). The GUI
+    // and the console share one config dir and one book by design, and nothing else
+    // stopped both from running the bot at once — each marking, opening and rewriting
+    // botsim.json and the ledgers over the other. A runner that does not own its book
+    // still loads and shows it (examining is the console's purpose) but cannot be armed,
+    // never marks, trades or saves, and says so in the log; the views may show it.
+    [[nodiscard]] bool ownsBook() const { return m_ownsBook; }
 
     // How the AI proposal is used (REQ-F-030). Changing it is logged: it changes
     // what the running experiment measures.
@@ -321,6 +331,13 @@ private:
     void closeTrade(const trading::PaperTrade &trade, trading::CloseReason reason);
     void save() const;
     void load();
+    // Try the book's lock once, right after load(): sets m_ownsBook, and when the book is
+    // held elsewhere drops a RESTORED armed flag — the process that holds the book is the
+    // one running the experiment, this one only looks at it.
+    void acquireBookLock();
+    // The one sentence every refusal of a non-owned book uses, naming the holder
+    // (QLockFile::getLockInfo: pid, host, application).
+    [[nodiscard]] QString bookHolderLine() const;
 
     EtoroClient *m_client = nullptr;
     OllamaAdvisor *m_ai = nullptr;          // optional local-model advisor (may be null)
@@ -393,6 +410,15 @@ private:
     QString m_evidence;                     // prompt of the scan being decided
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QString m_storeFile;   // book file override (empty = botsim.json)
+    // One process per book: `storePath() + ".lock"`, held for the runner's lifetime and
+    // released by QLockFile's own destructor. A lock left by a crashed process is stale
+    // by QLockFile's rule and taken over, and the default 30 s stale time is safe for a
+    // book held for WEEKS: measured on the same host (same process and a second one), a
+    // lock whose pid is alive is never treated as stale by age — a 40 s-old file with a
+    // live holder was refused under the default — and a dead pid frees it at once; the
+    // age rule only decides when the pid check cannot (another host, unreadable file).
+    std::unique_ptr<QLockFile> m_bookLock;
+    bool m_ownsBook = false;
     QList<trading::DecisionRow> m_pendingRows;
     QList<ScreenerRow> m_pendingScan;
     QDateTime m_askedAt;                    // when the in-flight request went out

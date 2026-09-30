@@ -25,6 +25,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 using trading::CloseReason;
@@ -192,6 +193,7 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
       m_storeFile(std::move(storeFileName))
 {
     load();
+    acquireBookLock();
     loadModel();
     // What the bot has learned so far, and how much say it gets. Off by default:
     // a model that has never been trained must not quietly change what trades.
@@ -205,16 +207,26 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     }
     m_timer->setInterval(kTickMs);
     static_cast<void>(connect(m_timer, &QTimer::timeout, this, &BotSimRunner::tick));
-    m_timer->start();  // marking runs always: the books must stay current even
-                       // while disarmed, or a restart would report stale P/L.
+    if (m_ownsBook) {
+        m_timer->start();   // marking runs always: the books must stay current even
+                            // while disarmed, or a restart would report stale P/L.
+    }
+    // …unless another process holds the book: then IT marks, and the timer never starts
+    // here — the minimal guard, since tick() is the only path that marks and exits
+    // between scans (onDecisions guards itself the same way).
 
     // load() ran before any consumer could connect, so its verdict is reported from
     // the event loop instead of from the constructor — otherwise the one line that
     // says whether a multi-day experiment is still running would be emitted into
-    // the void.
-    if (!m_restoreNote.isEmpty()) {
+    // the void. The same goes for the book being held elsewhere.
+    if (!m_restoreNote.isEmpty() || !m_ownsBook) {
         QTimer::singleShot(0, this, [this]() {
-            emit log(m_restoreNote, false);
+            if (!m_restoreNote.isEmpty()) {
+                emit log(m_restoreNote, false);
+            }
+            if (!m_ownsBook) {
+                emit log(bookHolderLine(), true);
+            }
             emit changed();
         });
     }
@@ -365,6 +377,12 @@ void BotSimRunner::setCoreFocusSymbols(const QStringList &symbols)
 
 void BotSimRunner::setArmed(bool armed)
 {
+    // Every way of arming goes through here — the button, TRADINGAPP_BOT_ARM at start-up,
+    // the console's launch — and none of them may arm a book another process is running.
+    if (armed && !m_ownsBook) {
+        emit log(bookHolderLine() + QStringLiteral(" Arming refused."), true);
+        return;
+    }
     if (m_armed == armed) {
         return;
     }
@@ -666,6 +684,14 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
     // mistake that left the futures lead permanently unknown.
     m_referenceVolumes = snap.referenceVolumes;
     m_symbolSeries = snap.intradayBySymbol;
+    // The read-only views above are all a non-owned book gets: the process holding the
+    // book marks, exits and enters on it, and doing so here as well would rewrite its
+    // book and ledgers over its own (the entry paths below are unreachable anyway, since
+    // such a runner cannot be armed — this stops the exits).
+    if (!m_ownsBook) {
+        emit changed();
+        return;
+    }
     // Exits first: a position the ranking has turned against should go before the
     // capital it frees is committed elsewhere.
     markAndExit();
@@ -1779,6 +1805,13 @@ void BotSimRunner::resetBooks()
 
 void BotSimRunner::save() const
 {
+    // The ONE place the book reaches the disk, so this is where a non-owned book is kept
+    // off it: aboutToQuit's save, a focus/AI-mode/daily-rules change and the mark saves
+    // all end here, and a read-only viewer must leave the owner's file exactly as the
+    // owner wrote it.
+    if (!m_ownsBook) {
+        return;
+    }
     const QString path = storePath();
     static_cast<void>(QDir().mkpath(QFileInfo(path).absolutePath()));
     QSaveFile file(path);  // atomic: a crash mid-write must not truncate the books
@@ -1827,6 +1860,39 @@ void BotSimRunner::load()
             .arg(m_armed ? QStringLiteral("RESUMED ARMED, the experiment continues")
                          : QStringLiteral("DISARMED — press \"Arm the bot\" to continue"))
             .arg(trading::botAiModeWord(cfg.aiMode));
+}
+
+void BotSimRunner::acquireBookLock()
+{
+    const QString path = storePath();
+    // QLockFile cannot create its file in a directory that does not exist yet, and on a
+    // first run nothing has created the config dir before this point.
+    static_cast<void>(QDir().mkpath(QFileInfo(path).absolutePath()));
+    m_bookLock = std::make_unique<QLockFile>(path + QStringLiteral(".lock"));
+    // One attempt, no waiting: a held book is an answer, not a condition to wait out. A
+    // lock whose process is gone is stale by QLockFile's own rule and is taken over; a
+    // live holder's is not, however old (see m_bookLock).
+    m_ownsBook = m_bookLock->tryLock(std::chrono::milliseconds::zero());
+    if (m_ownsBook) {
+        return;
+    }
+    // load() may have restored "armed" from a book the OTHER process is running; the
+    // experiment continues there, not here, so the flag is dropped rather than resumed
+    // (setArmed would refuse it too — this keeps armed() honest from the first call).
+    m_armed = false;
+}
+
+QString BotSimRunner::bookHolderLine() const
+{
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    const bool known = (m_bookLock != nullptr) && m_bookLock->getLockInfo(&pid, &host, &app);
+    return QStringLiteral("BOT SIM read-only: the book %1 is held by %2 — this process shows "
+                          "it but cannot be armed and never marks, trades or saves; one "
+                          "process runs the bot on one book.")
+        .arg(storePath(), known ? QStringLiteral("pid %1 (%2 on %3)").arg(pid).arg(app, host)
+                                : QStringLiteral("another process"));
 }
 
 // ---------------------------------------------------------------------------

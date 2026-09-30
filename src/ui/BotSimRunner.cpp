@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ranges>
 #include <utility>
 
 using trading::CloseReason;
@@ -213,7 +214,7 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     // A machine running this unattended has no one to press the button, so it can
     // be asked to refit once at start-up as well.
     if (qEnvironmentVariableIsSet("TRADINGAPP_BOT_TRAIN")) {
-        QTimer::singleShot(0, this, [this]() { trainFromExperience(); });
+        QTimer::singleShot(0, this, [this] { trainFromExperience(); });
     }
     m_timer->setInterval(kTickMs);
     static_cast<void>(connect(m_timer, &QTimer::timeout, this, &BotSimRunner::tick));
@@ -230,7 +231,7 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     // says whether a multi-day experiment is still running would be emitted into
     // the void. The same goes for the book being held elsewhere.
     if (!m_restoreNote.isEmpty() || !m_ownsBook) {
-        QTimer::singleShot(0, this, [this]() {
+        QTimer::singleShot(0, this, [this] {
             if (!m_restoreNote.isEmpty()) {
                 emit log(m_restoreNote, false);
             }
@@ -244,8 +245,7 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     // Persist on shutdown rather than in a destructor: a long experiment must
     // survive the app being closed mid-session, and aboutToQuit runs while the
     // object graph is still intact.
-    static_cast<void>(connect(qApp, &QCoreApplication::aboutToQuit, this,
-                              [this]() { save(); }));
+    static_cast<void>(connect(qApp, &QCoreApplication::aboutToQuit, this, [this] { save(); }));
 
     if (m_client != nullptr) {
         static_cast<void>(connect(m_client, &EtoroClient::fxRateUpdated, this,
@@ -935,10 +935,9 @@ QDateTime BotSimRunner::lastCloseFor(const QString &symbol) const
 {
     // The record is append-ordered, so the last matching close is the newest one.
     const QList<PaperClosedTrade> &closed = m_book.closedTrades();
-    const auto hit = std::find_if(closed.crbegin(), closed.crend(),
-                                  [&symbol](const PaperClosedTrade &c) {
-                                      return c.symbol == symbol;
-                                  });
+    const auto hit =
+        std::ranges::find_if(std::views::reverse(closed),
+                             [&symbol](const PaperClosedTrade &c) { return c.symbol == symbol; });
     return (hit != closed.crend()) ? hit->closeTime : QDateTime{};
 }
 
@@ -1166,9 +1165,7 @@ void BotSimRunner::trainFromExperience()
     emit log(QStringLiteral("Training the outcome model on %1 recorded trades…")
                  .arg(examples.size()),
              false);
-    m_training.setFuture(QtConcurrent::run([examples]() {
-        return trading::trainBotNet(examples);
-    }));
+    m_training.setFuture(QtConcurrent::run([examples] { return trading::trainBotNet(examples); }));
 }
 
 void BotSimRunner::onTrainingDone()
@@ -1600,9 +1597,7 @@ void BotSimRunner::considerEntries(const QList<trading::DecisionRow> &rows,
     for (auto it = st.riskByGroup.cbegin(); it != st.riskByGroup.cend(); ++it) {
         byRisk.append({it.value(), it.key()});
     }
-    std::sort(byRisk.begin(), byRisk.end(), [](const auto &a, const auto &b) {
-        return a.first > b.first;
-    });
+    std::ranges::sort(byRisk, [](const auto &a, const auto &b) { return a.first > b.first; });
     const double groupCap = st.equity * m_book.config().maxGroupRiskFraction;
     for (const auto &[risk, name] : byRisk) {
         buckets << QStringLiteral("%1 %2/%3").arg(name, botPlain(risk)).arg(groupCap, 0, 'f', 0);

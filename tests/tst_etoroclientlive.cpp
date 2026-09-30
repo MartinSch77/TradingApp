@@ -762,7 +762,7 @@ private slots:
         // age rule) or a later one (the not-advancing rule) — and scanning EVERY emission
         // keeps the deliberately fail-open republisher from racing the assertion.
         client.refreshTradeability();
-        const auto sawClosed = [&tradable]() {
+        const auto sawClosed = [&tradable] {
             for (qsizetype i = 0; i < tradable.count(); ++i) {
                 if (!tradable.at(i).at(0).value<QSet<QString>>().contains(
                         QStringLiteral("SPX500"))) {

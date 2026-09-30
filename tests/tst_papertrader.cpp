@@ -16,6 +16,7 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <cstddef>
 #include <numeric>
 
 using namespace trading;
@@ -3347,7 +3348,7 @@ private slots:
         q.asOf = now.addMSecs(-(maxAge + 1));
         QVERIFY(!quoteIsFresh(q, now, maxAge));
         // The measured lag of eToro's .24-7 feeds (11 minutes) is a stall.
-        q.asOf = now.addSecs(-11 * 60);
+        q.asOf = now.addSecs(qint64{-11} * 60);
         QVERIFY(!quoteIsFresh(q, now, maxAge));
         // A stamp ahead of the local clock is skew, not staleness.
         q.asOf = now.addSecs(5);

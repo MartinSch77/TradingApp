@@ -835,7 +835,7 @@ QString matchProposalSymbol(const QString &proposalSymbol, const QStringList &kn
         return {};
     }
     const auto matches = [&known](const QString &text) {
-        return std::find_if(known.cbegin(), known.cend(), [&text](const QString &symbol) {
+        return std::ranges::find_if(known, [&text](const QString &symbol) {
             return symbol.compare(text, Qt::CaseInsensitive) == 0;
         });
     };
@@ -926,8 +926,6 @@ PickMatch matchPick(const QString &symbol, const QList<AiProposal> &proposals)
     return match;
 }
 
-} // namespace
-
 // Why there is nothing to act on, in the reader's terms. Each answer names a DIFFERENT
 // thing to go and do about it, which is the entire reason this is not one sentence.
 QString noAnswerReason(const AiSource &source, QString *code)
@@ -961,6 +959,7 @@ QString noAnswerReason(const AiSource &source, QString *code)
     *code = QStringLiteral("ai-no-answer");
     return QStringLiteral("the model answered with no picks at all");
 }
+}   // namespace
 
 AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
                    const QList<AiProposal> &proposals, BotAiMode mode, const AiSource &source)
@@ -991,8 +990,7 @@ AiGate paperAiGate(const QString &symbol, qint32 compositeDir,
         }
         return gate;  // the composite decides; a proposal is logged elsewhere
     }
-    const bool anyUsable = std::any_of(proposals.cbegin(), proposals.cend(),
-                                       [](const AiProposal &p) { return p.ok; });
+    const bool anyUsable = std::ranges::any_of(proposals, [](const AiProposal &p) { return p.ok; });
     if (!anyUsable) {
         // NOT one catch-all sentence. The four causes below call for four different actions,
         // and a log line exists so a person can reproduce the decision.
@@ -2500,8 +2498,8 @@ bool PaperBook::fromJson(const QJsonObject &obj)
     m_realized = jsonNum(obj, "realized");
     m_costsPaid = jsonNum(obj, "costsPaid");
     m_nextId = std::max<qint64>(1, static_cast<qint64>(jsonNum(obj, "nextId")));
-    m_open = restoredOpen;
-    m_closed = restoredClosed;
+    m_open = std::move(restoredOpen);
+    m_closed = std::move(restoredClosed);
     const QJsonObject ledger = obj.value(QStringLiteral("day")).toObject();
     m_day = BotDay{};
     m_day.date = QDate::fromString(jsonStr(ledger, "date"), Qt::ISODate);

@@ -172,18 +172,17 @@ private slots:
         QVERIFY(parsed.entries.size() >= 7);
 
         // Every keyword the format has appears in it, or it is not a reference.
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return e.requireSignals; }));
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return e.trailing; }));
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return e.from.isValid(); }));
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return e.to.isValid(); }));
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return !e.isBuy; }));
-        QVERIFY(std::any_of(parsed.entries.cbegin(), parsed.entries.cend(),
-                            [](const ScriptEntry &e) { return e.leverage > 1; }));
+        QVERIFY(std::ranges::any_of(parsed.entries,
+                                    [](const ScriptEntry &e) { return e.requireSignals; }));
+        QVERIFY(
+            std::ranges::any_of(parsed.entries, [](const ScriptEntry &e) { return e.trailing; }));
+        QVERIFY(std::ranges::any_of(parsed.entries,
+                                    [](const ScriptEntry &e) { return e.from.isValid(); }));
+        QVERIFY(std::ranges::any_of(parsed.entries,
+                                    [](const ScriptEntry &e) { return e.to.isValid(); }));
+        QVERIFY(std::ranges::any_of(parsed.entries, [](const ScriptEntry &e) { return !e.isBuy; }));
+        QVERIFY(std::ranges::any_of(parsed.entries,
+                                    [](const ScriptEntry &e) { return e.leverage > 1; }));
 
         // And every line is UNREACHABLE by construction: a buy waits far below any
         // price its instrument has traded at, a sell far above one. Loading — or

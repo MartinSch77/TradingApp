@@ -6,6 +6,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <ranges>
 
 // Out-of-line definitions: header-inline (comdat) methods get compiled into
 // both the test TU and the automoc TU, and the coverage instrumentation can
@@ -24,10 +25,10 @@ QList<MockHttpServer::Recorded> MockHttpServer::requests() const
 
 QByteArray MockHttpServer::lastBodyFor(const QString &pathFragment) const
 {
-    const auto hit = std::find_if(m_requests.crbegin(), m_requests.crend(),
-                                  [&pathFragment](const Recorded &r) {
-                                      return r.path.contains(pathFragment);
-                                  });
+    const auto hit =
+        std::ranges::find_if(std::views::reverse(m_requests), [&pathFragment](const Recorded &r) {
+            return r.path.contains(pathFragment);
+        });
     return (hit == m_requests.crend()) ? QByteArray{} : hit->body;
 }
 
@@ -68,15 +69,14 @@ void MockHttpServer::serve(QTcpSocket *sock)
     // sock as timer context throughout: if the client gave up and the socket
     // died, a pending send is dropped with it instead of writing to a dangling
     // pointer.
-    const auto hold = std::find_if(m_holds.cbegin(), m_holds.cend(), [&path](const Hold &h) {
-        return path.contains(h.pathFragment);
-    });
+    const auto hold = std::ranges::find_if(
+        m_holds, [&path](const Hold &h) { return path.contains(h.pathFragment); });
     const std::function<bool()> gate =
         (hold == m_holds.cend()) ? std::function<bool()>{} : hold->until;
     if (gate) {
         // Poll, never block: this server runs inside the test's own event loop,
         // so blocking here would stop the very requests the predicate waits for.
-        const auto sendWhenReady = [sock, out](auto &&self, std::function<bool()> ready,
+        const auto sendWhenReady = [sock, out](auto &&self, const std::function<bool()> &ready,
                                                qint32 waitedMs) -> void {
             constexpr qint32 kPollMs = 10;
             constexpr qint32 kGiveUpMs = 10000;

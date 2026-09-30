@@ -634,8 +634,8 @@ private slots:
         // position — the client refreshes the portfolio and the balance right after the
         // submit, and those GETs can be recorded before the spy wakes.
         const QList<MockHttpServer::Recorded> sentRequests = server.requests();
-        const bool postedOnRealSegment = std::any_of(
-            sentRequests.cbegin(), sentRequests.cend(), [](const MockHttpServer::Recorded &r) {
+        const bool postedOnRealSegment =
+            std::ranges::any_of(sentRequests, [](const MockHttpServer::Recorded &r) {
                 return (r.method == "POST")
                        && r.path.contains(QStringLiteral("/trading/execution/orders"))
                        && !r.path.contains(QStringLiteral("/demo/"));

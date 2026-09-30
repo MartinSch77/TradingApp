@@ -540,7 +540,7 @@ QVariantList closedHistoryRows(const QList<ClosedTrade> &closed, qint64 nowMs, q
             rows.append(c);
         }
     }
-    std::sort(rows.begin(), rows.end(), [](const ClosedTrade &a, const ClosedTrade &b) {
+    std::ranges::sort(rows, [](const ClosedTrade &a, const ClosedTrade &b) {
         return a.closeTime > b.closeTime;   // newest first
     });
     QVariantList out;
@@ -570,8 +570,8 @@ QVariantList calendarRows(const QList<EconomicEvent> &events, qint64 nowMs, qint
             upcoming.append(e);
         }
     }
-    std::sort(upcoming.begin(), upcoming.end(),
-              [](const EconomicEvent &a, const EconomicEvent &b) { return a.when < b.when; });
+    std::ranges::sort(
+        upcoming, [](const EconomicEvent &a, const EconomicEvent &b) { return a.when < b.when; });
     QVariantList out;
     const qsizetype shown =
         (limit > 0) ? std::min<qsizetype>(limit, upcoming.size()) : upcoming.size();

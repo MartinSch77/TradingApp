@@ -328,7 +328,7 @@ void MarketFeeds::fetchInstrumentRatings()
         }
         // The "d" array maps 1:1 to the requested columns (15m, 1h, 1D); a null entry
         // (timeframe unavailable right now) stays NaN.
-        auto cell = [](const QJsonArray &d, qsizetype i) {
+        const auto cell = [](const QJsonArray &d, qsizetype i) {
             if (i < d.size()) {
                 const QJsonValue v = d.at(i);
                 if (v.isDouble()) {

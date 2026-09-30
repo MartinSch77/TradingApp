@@ -67,12 +67,12 @@ private slots:
         // thread, which QVariant-wraps them. A type that lost its metatype
         // declaration would fail there at runtime, in a slot that simply never
         // fires — so the declaration is worth a test of its own.
-        const auto roundTrip = [](auto value) -> bool {
+        const auto roundTrip = []<typename T>(const T &value) -> bool {
             const QVariant packed = QVariant::fromValue(value);
-            if (!packed.isValid() || !packed.canConvert<decltype(value)>()) {
+            if (!packed.isValid() || !packed.canConvert<T>()) {
                 return false;
             }
-            static_cast<void>(packed.value<decltype(value)>());
+            static_cast<void>(packed.value<T>());
             return true;
         };
         QVERIFY(roundTrip(Instrument{}));

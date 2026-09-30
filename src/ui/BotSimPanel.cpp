@@ -306,8 +306,8 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     aiRow->addWidget(m_aiModeBox);
     m_aiCheckButton = new QPushButton(QStringLiteral("Check model"), account);
     m_aiCheckButton->setObjectName(QStringLiteral("aiCheckButton"));
-    static_cast<void>(connect(m_aiCheckButton, &QPushButton::clicked, this,
-                              [this]() { m_runner->checkAi(); }));
+    static_cast<void>(
+        connect(m_aiCheckButton, &QPushButton::clicked, this, [this] { m_runner->checkAi(); }));
     aiRow->addWidget(m_aiCheckButton);
     m_trainButton = new QPushButton(QStringLiteral("Train from experience"), account);
     m_trainButton->setObjectName(QStringLiteral("trainButton"));
@@ -317,7 +317,7 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
         "trades as well. The model only gets to refuse trades once it has seen enough of "
         "them and has beaten a coin flip on ones it never saw."));
     static_cast<void>(connect(m_trainButton, &QPushButton::clicked, this,
-                              [this]() { m_runner->trainFromExperience(); }));
+                              [this] { m_runner->trainFromExperience(); }));
     aiRow->addWidget(m_trainButton);
     aiRow->addStretch(1);
     accountLayout->addLayout(aiRow);
@@ -473,7 +473,7 @@ void BotSimDialog::rebuildAccount()
     for (auto it = perf.netByReason.cbegin(); it != perf.netByReason.cend(); ++it) {
         ranked.append({it.value(), it.key()});
     }
-    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) {
+    std::ranges::sort(ranked, [](const auto &a, const auto &b) {
         return a.first < b.first;   // worst first: that is the one to look at
     });
     for (const auto &[net, reason] : ranked) {

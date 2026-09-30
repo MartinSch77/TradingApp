@@ -120,7 +120,7 @@ void ChartView::mouseMoveEvent(QMouseEvent *event)
         m_lastPos = event->position();
         const QList<QAbstractAxis *> axes = chart()->axes(Qt::Vertical);
         if (!axes.isEmpty()) {
-            if (auto *ax = qobject_cast<QValueAxis *>(axes.first())) {
+            if (const auto *ax = qobject_cast<QValueAxis *>(axes.first())) {
                 const double axisMin = ax->min();
                 const double axisMax = ax->max();
                 const double mid = (axisMin + axisMax) / 2.0;

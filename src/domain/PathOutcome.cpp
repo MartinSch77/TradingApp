@@ -76,8 +76,8 @@ PathLabel resolvePathLabelForPrediction(const Prediction &decision, const QList<
             sameSymbol.append(row);
         }
     }
-    std::sort(sameSymbol.begin(), sameSymbol.end(),
-             [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
+    std::ranges::sort(sameSymbol,
+                      [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
 
     QList<DailyBar> bars;
     bars.reserve(sameSymbol.size());

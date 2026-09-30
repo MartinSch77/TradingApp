@@ -193,11 +193,9 @@ QList<QHash<QString, QString>> readCsv(const QString &path)
 const QHash<QString, QString> *rowForDay(const QList<QHash<QString, QString>> &rows,
                                          const QString &day)
 {
-    const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                 [&day](const QHash<QString, QString> &row) {
-                                     return row.value(QStringLiteral("decision_time"))
-                                         .startsWith(day);
-                                 });
+    const auto it = std::ranges::find_if(rows, [&day](const QHash<QString, QString> &row) {
+        return row.value(QStringLiteral("decision_time")).startsWith(day);
+    });
     return it == rows.cend() ? nullptr : &*it;
 }
 

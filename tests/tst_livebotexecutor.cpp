@@ -264,7 +264,7 @@ private slots:
         QCOMPARE(sent.stopLossAmount, 13.89);   // 150 × 277.78/3000
         QCOMPARE(sent.takeProfitAmount, 20.83);   // 225 × 277.78/3000
         QVERIFY(!sent.isLimit());
-        QList<OrderAuditEntry> audit = f.audit();
+        const QList<OrderAuditEntry> audit = f.audit();
         QCOMPARE(audit.size(), 1);
         QCOMPARE(audit.constLast().outcome, QStringLiteral("sent"));
         QCOMPARE(audit.constLast().requestId, QStringLiteral("fake-request-id"));
@@ -328,7 +328,7 @@ private slots:
         const qint64 simId = f.client.instrument().instrumentId;
         f.exec.onFx(0.9);
         QVERIFY(f.exec.arm());
-        QSignalSpy closed(&f.client, &EtoroClient::positionClosed);
+        const QSignalSpy closed(&f.client, &EtoroClient::positionClosed);
 
         // The mirror sends (the fake records it); the venue then names the position it
         // opened — here the simulation, opening the same order on its own instrument.
@@ -480,7 +480,7 @@ private slots:
         }
         // A runner that does NOT own the book (another process trades it) is refused too.
         {
-            Fixture owner;
+            const Fixture owner;
             Fixture onlooker;
             QVERIFY(owner.runner.ownsBook());
             QVERIFY(!onlooker.runner.ownsBook());

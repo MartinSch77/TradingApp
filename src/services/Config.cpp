@@ -125,7 +125,7 @@ QStringList configCandidates(const QString &fileName)
 void applyEnv(Config &cfg)
 {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    auto take = [&env](const char *key, QString &out) {
+    const auto take = [&env](const char *key, QString &out) {
         if (env.contains(QString::fromLatin1(key))) {
             out = env.value(QString::fromLatin1(key));
         }

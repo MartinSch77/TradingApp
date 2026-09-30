@@ -86,6 +86,17 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   candidate opens off its candle close (TS-FEED-016, TS-DEC-011, TS-BOTSIM-005).
   The console front ends scan the coins; the desktop GUI stays crypto-free at
   the source, a separate decision.
+- clang-tidy newer than CI's 18 (a developer machine on the 24 snapshot reported
+  1251 findings against a green CI): the wildcard check families switch on every
+  check a new release adds. Measured on 23.1.2: five churn checks are now disabled
+  in `.clang-tidy` with their counts (designated initializers 449, trailing commas
+  329, unchecked `operator[]` 275, math parentheses 90, enum class 3) and the
+  deterministic test seeds in `tests/.clang-tidy` (8); everything else was fixed
+  in the code — const-correctness, internal linkage for file-local functions,
+  `std::ranges` algorithms, by-value parameters, functional casts, `std::move`,
+  redundant `()` on lambdas, two FinBERT fields unused without ONNX Runtime,
+  `MainWindow::eventFilter` back to QObject's public visibility and the class's
+  copy/move explicitly deleted.
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

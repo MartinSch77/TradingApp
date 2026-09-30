@@ -249,13 +249,12 @@ void HeavyweightsPanel::fillTable(QTableWidget *table, QLabel *summary,
     // name that has not moved says nothing about where the index goes next. Unknown
     // rows sort last — they are not "no movement", they are no reading.
     QList<HeavyweightRow> ordered = pulse.rows;
-    std::stable_sort(ordered.begin(), ordered.end(),
-                     [](const HeavyweightRow &a, const HeavyweightRow &b) {
-                         if (a.known != b.known) {
-                             return a.known;
-                         }
-                         return std::abs(a.changePct) > std::abs(b.changePct);
-                     });
+    std::ranges::stable_sort(ordered, [](const HeavyweightRow &a, const HeavyweightRow &b) {
+        if (a.known != b.known) {
+            return a.known;
+        }
+        return std::abs(a.changePct) > std::abs(b.changePct);
+    });
     table->setRowCount(static_cast<int>(ordered.size()));
     int row = 0;
     for (const HeavyweightRow &entry : ordered) {
@@ -340,8 +339,8 @@ void HeavyweightsPanel::fillChart(const QHash<QString, QList<double>> &series)
         c.move = std::abs(c.pct.constLast());
         curves.append(c);
     }
-    std::stable_sort(curves.begin(), curves.end(),
-                     [](const Curve &a, const Curve &b) { return a.move > b.move; });
+    std::ranges::stable_sort(curves,
+                             [](const Curve &a, const Curve &b) { return a.move > b.move; });
 
     double lo = 0.0;
     double hi = 0.0;

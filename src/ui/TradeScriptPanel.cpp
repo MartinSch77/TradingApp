@@ -312,10 +312,8 @@ void TradeScriptRunner::onPendingOrders(const QList<PendingOrder> &orders)
         } else if (t.state == EntryState::Resting && !t.orderId.isEmpty()) {
             // Our order left the registry: the broker resolved it (filled,
             // rejected or expired there) — the client's own log says which.
-            const bool stillThere =
-                std::any_of(orders.cbegin(), orders.cend(), [&t](const PendingOrder &o) {
-                    return o.orderId == t.orderId;
-                });
+            const bool stillThere = std::ranges::any_of(
+                orders, [&t](const PendingOrder &o) { return o.orderId == t.orderId; });
             if (!stillThere) {
                 t.state = EntryState::Done;
                 t.note = QStringLiteral("resolved at the broker — see the activity log");
@@ -424,7 +422,7 @@ void TradeScriptDialog::rebuild()
     for (qsizetype i = 0; i < rows.size(); ++i) {
         const Tracked &t = rows.at(i);
         const trading::ScriptEntry &e = t.entry;
-        auto cell = [this, i](qint32 col, const QString &text) {
+        const auto cell = [this, i](qint32 col, const QString &text) {
             auto *item = new QTableWidgetItem(text);
             m_table->setItem(static_cast<qint32>(i), col, item);
             return item;

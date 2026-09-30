@@ -38,8 +38,8 @@ ImpactGuess guessImpact(const EconomicEvent &e)
     auto has = [&t](const char *k) { return t.contains(QLatin1String(k)); };
     // Keyword groups are checked via any_of instead of long || chains: keeps
     // every decision within the 6 conditions clang-18 can instrument for MC/DC.
-    auto hasAny = [&has](std::initializer_list<const char *> keys) {
-        return std::any_of(keys.begin(), keys.end(), has);
+    const auto hasAny = [&has](std::initializer_list<const char *> keys) {
+        return std::ranges::any_of(keys, has);
     };
 
     const std::optional<double> f = parseNum(e.forecast);
@@ -50,9 +50,9 @@ ImpactGuess guessImpact(const EconomicEvent &e)
     qint32 dir = 0;  // +1 bullish, -1 bearish, 0 uncertain/volatile
     QString reason;
 
-    auto fromDelta = [&dir, &reason, haveDelta, delta](
-                         bool higherIsBullish, const QString &up, const QString &down,
-                         const QString &flat, const QString &noData) {
+    const auto fromDelta = [&dir, &reason, haveDelta,
+                            delta](bool higherIsBullish, const QString &up, const QString &down,
+                                   const QString &flat, const QString &noData) {
         if (!haveDelta) {
             dir = 0;
             reason = noData;
@@ -167,8 +167,8 @@ QString eventAbout(const EconomicEvent &e, const QString &symbol)
 {
     const QString t = e.title.toLower();
     auto has = [&t](const char *k) { return t.contains(QLatin1String(k)); };
-    auto hasAny = [&has](std::initializer_list<const char *> keys) {
-        return std::any_of(keys.begin(), keys.end(), has);
+    const auto hasAny = [&has](std::initializer_list<const char *> keys) {
+        return std::ranges::any_of(keys, has);
     };
 
     if (hasAny({"fomc", "interest rate", "federal funds", "fed funds", "rate decision"})) {

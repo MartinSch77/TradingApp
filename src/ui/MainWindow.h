@@ -89,11 +89,15 @@ public:
     // every translation unit that includes this header (moc's, main.cpp's) — where they
     // are incomplete. The definition lives in MainWindow.cpp, beside the includes.
     ~MainWindow() override;
+    Q_DISABLE_COPY_MOVE(MainWindow)
+
+    // Double-tap 's' = Sell, 'b' = Buy (application-wide, ignored while typing). Public,
+    // as in QObject: narrowing an override's visibility is what clang-tidy's
+    // misc-override-with-different-visibility flags, and it changes nothing here.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 protected:
     void closeEvent(QCloseEvent *event) override;
-    // Double-tap 's' = Sell, 'b' = Buy (application-wide, ignored while typing).
-    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onReady(const Instrument &instrument);
@@ -153,7 +157,7 @@ private:
     // parameter there and fails with "Parse error at \"void\"".
     [[nodiscard]] QPushButton *makeHeaderButton(QWidget *central, const QString &text,
                                                 const QString &objectName, const QString &tip,
-                                                void (MainWindow::*slot)());
+                                                void (MainWindow::*slot)()) const;
 
     // Construct + gate the two autonomous runners — the trade script (REQ-F-028)
     // and the paper-trading bot simulation (REQ-F-029). Kept out of the

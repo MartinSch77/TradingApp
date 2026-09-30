@@ -192,10 +192,8 @@ bool CrowdStore::migrate()
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_scores_instrument_time"
                        " ON crowd_scores(instrument, computed_at)"),
     };
-    const auto failed = std::find_if(statements.cbegin(), statements.cend(),
-                                     [&query](const QString &statement) {
-                                         return !query.exec(statement);
-                                     });
+    const auto failed = std::ranges::find_if(
+        statements, [&query](const QString &statement) { return !query.exec(statement); });
     if (failed != statements.cend()) {
         m_lastError = query.lastError().text();
         return false;

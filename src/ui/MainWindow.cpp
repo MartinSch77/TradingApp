@@ -180,7 +180,7 @@ QTableWidgetItem *makeWebRatingItem(const WebRating &r)
     it->setForeground((score >= 0.1) ? trading::ui::kGreen
                                      : ((score <= -0.1) ? trading::ui::kRed
                                                         : trading::ui::kGrey));
-    auto tf = [](double v) {
+    const auto tf = [](double v) {
         return std::isnan(v) ? QStringLiteral("n/a") : QStringLiteral("%1").arg(v, 0, 'f', 2);
     };
     // Sequenced into locals: four calls inside one .arg() would be unsequenced.
@@ -578,11 +578,11 @@ bool MainWindow::handleZoomWheel(QObject *watched, QEvent *event)
         // Qt idiom: event->type() is checked above, so static_cast is the
         // supported downcast here (see pro-type-static-cast-downcast note in
         // .clang-tidy).
-        auto *we = static_cast<QWheelEvent *>(event);
+        const auto *we = static_cast<QWheelEvent *>(event);
         const bool ctrlHeld = we->modifiers().testFlag(Qt::ControlModifier);
         const qint32 wheelDelta = we->angleDelta().y();
         if (ctrlHeld && (wheelDelta != 0) && (QApplication::activeWindow() != nullptr)) {
-            QWidget *w = qobject_cast<QWidget *>(watched);
+            const QWidget *w = qobject_cast<QWidget *>(watched);
             const QWidget *top = (w != nullptr) ? w->window() : nullptr;
             if ((top != nullptr) && (top != m_chart)) {
                 const double steps = static_cast<double>(wheelDelta) / 120.0;  // one notch = 120
@@ -597,7 +597,7 @@ bool MainWindow::handleZoomWheel(QObject *watched, QEvent *event)
 bool MainWindow::handleQuickKeyEvent(QEvent *event)
 {
     if (event->type() == QEvent::KeyPress) {
-        auto *ke = static_cast<QKeyEvent *>(event);  // guarded by type() above
+        const auto *ke = static_cast<QKeyEvent *>(event);   // guarded by type() above
         if (!ke->isAutoRepeat() && ((ke->key() == Qt::Key_S) || (ke->key() == Qt::Key_B))) {
             QWidget *fw = QApplication::focusWidget();
             // Numeric spin fields (amount, SL/TP, limit rates) reject letters
@@ -1079,8 +1079,9 @@ void MainWindow::openPendingOrderEditor(qint32 row)
         fields->addRow(QStringLiteral("%1 (%2)").arg(label, m_ccy), field);
         return field;
     };
-    QDoubleSpinBox *stopLoss = addAmount(QStringLiteral("Stop loss"), order.stopLossAmount);
-    QDoubleSpinBox *takeProfit = addAmount(QStringLiteral("Take profit"), order.takeProfitAmount);
+    const QDoubleSpinBox *stopLoss = addAmount(QStringLiteral("Stop loss"), order.stopLossAmount);
+    const QDoubleSpinBox *takeProfit =
+        addAmount(QStringLiteral("Take profit"), order.takeProfitAmount);
     layout->addLayout(fields);
 
     auto *note = new QLabel(
@@ -1459,7 +1460,7 @@ void MainWindow::pushBooksToHeavyPanel()
 // repeating a five-line pattern eight times, not to raise the limit.
 QPushButton *MainWindow::makeHeaderButton(QWidget *central, const QString &text,
                                           const QString &objectName, const QString &tip,
-                                          void (MainWindow::*slot)())
+                                          void (MainWindow::*slot)()) const
 {
     auto *button = new QPushButton(text, central);
     button->setObjectName(objectName);   // REQ-N-007: the Squish map addresses by name
@@ -2001,7 +2002,8 @@ void MainWindow::buildAiPanel(QVBoxLayout *signalsWinLayout)
     m_aiUpProb->setFont(aiFont);
     m_aiAdvice->setFont(aiFont);
 
-    auto addAiRow = [this, aiForm](const QString &caption, QLabel *value, const QString &tip) {
+    const auto addAiRow = [this, aiForm](const QString &caption, QLabel *value,
+                                         const QString &tip) {
         auto *cap = new QLabel(caption, m_aiBox);
         cap->setToolTip(tip);
         value->setToolTip(tip);
@@ -2245,7 +2247,7 @@ void MainWindow::buildRecommendationsPanel(QWidget *lower)
     m_recoBox->setObjectName(QStringLiteral("recoBox"));
     auto *recoLayout = new QVBoxLayout(m_recoBox);
     // Two columns: BUY calls on the left, SELL calls on the right (each strongest first).
-    auto makeRecoList = [this]() {
+    const auto makeRecoList = [this] {
         auto *list = new QListWidget(m_recoBox);
         list->setMaximumHeight(120);
         list->setSelectionMode(QAbstractItemView::NoSelection);
@@ -2719,8 +2721,8 @@ void MainWindow::connectWorkerResults()
                                   renderMonteCarlo(m_mcWatcher.result());
                               }));
     static_cast<void>(connect(&m_rowPlanWatcher,
-                              &QFutureWatcher<QHash<QString, trading::TradePlan>>::finished,
-                              this, [this]() { applyRowPlanVerdicts(); }));
+                              &QFutureWatcher<QHash<QString, trading::TradePlan>>::finished, this,
+                              [this] { applyRowPlanVerdicts(); }));
     static_cast<void>(connect(&m_planWatcher, &QFutureWatcher<trading::TradePlan>::finished,
                               this, [this] {
                                   renderTradePlanResult(m_planWatcher.result(),
@@ -2829,7 +2831,7 @@ void MainWindow::onPortfolio(const QList<Position> &positions)
         const double scale = std::max({std::abs(a), std::abs(b), 1.0});
         return std::abs(a - b) <= scale * 1e-4;  // absorbs 2dp/5dp round-trip rounding
     };
-    auto withPending = [this, nowMs, &ratesClose](const Position &src) -> Position {
+    const auto withPending = [this, nowMs, &ratesClose](const Position &src) -> Position {
         Position p = src;
         const auto it = m_pendingSlTp.find(p.positionId);
         if (it == m_pendingSlTp.end()) {
@@ -2923,7 +2925,7 @@ void MainWindow::onPositionSlTpEdited(qint32 row, qint32 column, const QString &
         return ok ? v : 0.0;
     };
     // The edited cell arrives as text; the sibling cell is read from the model.
-    auto cellValue = [this, row, col, &text, &parseAmount](qint32 /*r*/, qint32 c) -> double {
+    const auto cellValue = [this, row, col, &text, &parseAmount](qint32 /*r*/, qint32 c) -> double {
         if (c == col) {
             return parseAmount(text);
         }
@@ -2959,7 +2961,7 @@ void MainWindow::onPositionSlTpEdited(qint32 row, qint32 column, const QString &
     const double slRateOut = (slRate > 0.0) ? slRate : 0.0;
 
     // Format a signed amount as e.g. "-$50.00" / "+$50.00".
-    auto signedCcy = [this](double v) {
+    const auto signedCcy = [this](double v) {
         const QString amount = QLocale().toString(std::abs(v), 'f', 2);
         return ((v < 0.0) ? QStringLiteral("-") : QStringLiteral("+")) + m_ccy + amount;
     };
@@ -3875,12 +3877,12 @@ void MainWindow::onExternalSignal(bool available, double score, const QString &r
 void MainWindow::onMonthlyPnl(const MonthlyPnl &summary)
 {
     const QString ccy = m_ccy;  // figures are USD from the API; shown in euro
-    auto colorFor = [](double v) {
+    const auto colorFor = [](double v) {
         return (v > 0.0) ? QColor(0x25, 0xb5, 0x63)                    // green
                          : ((v < 0.0) ? QColor(0xe3, 0x55, 0x55)       // red
                                       : QColor(0xb0, 0xb0, 0xb0));     // grey
     };
-    auto signed2 = [this](double v) {
+    const auto signed2 = [this](double v) {
         const double d = toDisplay(v);
         return QStringLiteral("%1%2").arg((d >= 0.0) ? QStringLiteral("+") : QString(),
                                           QLocale().toString(d, 'f', 2));
@@ -4021,7 +4023,7 @@ void MainWindow::proposeSlTpDefaults(double volPct)
     // a focused, text-selected or just-cleared field would be overwritten by
     // the next poll. Focus can sit on the spin box or its internal QLineEdit,
     // hence the subtree check.
-    QWidget *fw = QApplication::focusWidget();
+    const QWidget *fw = QApplication::focusWidget();
     if ((fw != nullptr)
         && ((fw == m_stopLoss) || (fw == m_takeProfit) || m_stopLoss->isAncestorOf(fw)
             || m_takeProfit->isAncestorOf(fw))) {
@@ -4294,7 +4296,7 @@ void MainWindow::rebuildClosedTradesTable()
     m_closedTable->setRowCount(rows);
     for (qint32 i = 0; i < rows; ++i) {
         const ClosedTrade &t = shown[i];
-        auto make = [&t](const QString &text) {
+        const auto make = [&t](const QString &text) {
             auto *it = new QTableWidgetItem(text);
             if (!t.listed) {
                 // The palette constant directly, not the `grey` reference above:
@@ -4305,7 +4307,7 @@ void MainWindow::rebuildClosedTradesTable()
             }
             return it;
         };
-        auto money = [this](double usd) { return QLocale().toString(toDisplay(usd), 'f', 2); };
+        const auto eur = [this](double usd) { return QLocale().toString(toDisplay(usd), 'f', 2); };
 
         m_closedTable->setItem(i, 0,
             make(t.closeTime.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))));
@@ -4317,7 +4319,7 @@ void MainWindow::rebuildClosedTradesTable()
         auto *lev = make(QStringLiteral("x%1").arg(t.leverage, 0, 'f', 0));
         lev->setTextAlignment(Qt::AlignCenter);
         m_closedTable->setItem(i, 3, lev);
-        auto *inv = make(money(t.investment));
+        auto *inv = make(eur(t.investment));
         inv->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 4, inv);
         m_closedTable->setItem(i, 5,
@@ -4332,13 +4334,13 @@ void MainWindow::rebuildClosedTradesTable()
                            : ((t.netProfit < 0.0) ? trading::ui::kRed : trading::ui::kGrey));
         net->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 7, net);
-        auto *fees = make(money(t.fees));
+        auto *fees = make(eur(t.fees));
         fees->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 8, fees);
-        auto *oc = make(t.costEstValid ? money(t.openCostEst) : QStringLiteral("—"));
+        auto *oc = make(t.costEstValid ? eur(t.openCostEst) : QStringLiteral("—"));
         oc->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 9, oc);
-        auto *cc = make(t.costEstValid ? money(t.closeCostEst) : QStringLiteral("—"));
+        auto *cc = make(t.costEstValid ? eur(t.closeCostEst) : QStringLiteral("—"));
         cc->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_closedTable->setItem(i, 10, cc);
         QString spreadText = QStringLiteral("—");
@@ -4426,13 +4428,9 @@ void MainWindow::onLocalModelProposals(const QList<trading::AiProposal> &picks)
 // about it. Its picks are a ranked list, so the first match is its best word on it.
 trading::AiProposal MainWindow::localPickFor(const QString &symbol) const
 {
-    const auto hit = std::find_if(m_localPicks.cbegin(), m_localPicks.cend(),
-                                  [&symbol](const trading::AiProposal &p) {
-                                      return p.ok
-                                             && (p.resolvedSymbol.compare(symbol,
-                                                                          Qt::CaseInsensitive)
-                                                 == 0);
-                                  });
+    const auto hit = std::ranges::find_if(m_localPicks, [&symbol](const trading::AiProposal &p) {
+        return p.ok && (p.resolvedSymbol.compare(symbol, Qt::CaseInsensitive) == 0);
+    });
     return (hit != m_localPicks.cend()) ? *hit : trading::AiProposal{};
 }
 
@@ -4571,8 +4569,8 @@ void MainWindow::onBotTradeOpened(const QString & /*symbol*/)
                                 QMessageBox::Ok, this);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setModal(false);
-    static_cast<void>(connect(box, &QObject::destroyed, this,
-                              [this]() { m_botTradeNotice = nullptr; }));
+    static_cast<void>(
+        connect(box, &QObject::destroyed, this, [this] { m_botTradeNotice = nullptr; }));
     m_botTradeNotice = box;
     box->show();
 }
@@ -4900,8 +4898,8 @@ QString MainWindow::recommendationTooltip(const trading::DecisionRow &d) const
                .arg(d.symbol, side)
                .arg(qRound(d.confidence));
     tip << QString();
-    const auto sr = std::find_if(m_screenerRows.cbegin(), m_screenerRows.cend(),
-                                 [&d](const ScreenerRow &r) { return r.symbol == d.symbol; });
+    const auto sr = std::ranges::find_if(
+        m_screenerRows, [&d](const ScreenerRow &r) { return r.symbol == d.symbol; });
     const trading::Ensemble e =
         ((sr != m_screenerRows.cend()) && sr->ok && !sr->closes.isEmpty())
             ? trading::computeEnsemble(sr->closes, m_vixValid, m_vixChangePct)
@@ -5010,18 +5008,16 @@ QString callWord(qint32 dir)
 const trading::DecisionRow *rowForSymbol(const QList<trading::DecisionRow> &rows,
                                          const QString &symbol)
 {
-    const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                 [&symbol](const trading::DecisionRow &d) {
-                                     return d.symbol == symbol;
-                                 });
+    const auto it = std::ranges::find_if(
+        rows, [&symbol](const trading::DecisionRow &d) { return d.symbol == symbol; });
     return (it == rows.cend()) ? nullptr : &*it;
 }
 
 // The highest-ranked row that actually calls a direction (dir != 0).
 const trading::DecisionRow *firstDirectionalRow(const QList<trading::DecisionRow> &rows)
 {
-    const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                 [](const trading::DecisionRow &d) { return d.dir != 0; });
+    const auto it =
+        std::ranges::find_if(rows, [](const trading::DecisionRow &d) { return d.dir != 0; });
     return (it == rows.cend()) ? nullptr : &*it;
 }
 
@@ -5029,8 +5025,8 @@ const trading::DecisionRow *firstDirectionalRow(const QList<trading::DecisionRow
 // (ScreenerRow lives in the global namespace — domain/Models.h is not namespaced.)
 const ScreenerRow *screenerRowFor(const QList<ScreenerRow> &rows, const QString &symbol)
 {
-    const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                 [&symbol](const ScreenerRow &r) { return r.symbol == symbol; });
+    const auto it =
+        std::ranges::find_if(rows, [&symbol](const ScreenerRow &r) { return r.symbol == symbol; });
     return (it == rows.cend()) ? nullptr : &*it;
 }
 
@@ -5328,9 +5324,9 @@ void MainWindow::openDecision()
                                     m_decisionSelected);
             }));
         // Double-click → switch the whole app to that instrument.
-        static_cast<void>(connect(
-            m_decisionRanked, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-                QTableWidgetItem *it = m_decisionRanked->item(row, RankedColInstrument);
+        static_cast<void>(
+            connect(m_decisionRanked, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+                const QTableWidgetItem *it = m_decisionRanked->item(row, RankedColInstrument);
                 if (it == nullptr) {
                     return;
                 }
@@ -5549,7 +5545,7 @@ void MainWindow::renderDecisionFocus(const QList<trading::DecisionRow> &rows,
                                   m_localAsked.contains(focusSymbol, Qt::CaseInsensitive),
                                   m_localAsked.size()));
 
-    auto make = [](const QString &t) {
+    const auto make = [](const QString &t) {
         auto *it = new QTableWidgetItem(t);
         it->setFlags(it->flags() & ~Qt::ItemIsEditable);
         return it;
@@ -5710,7 +5706,7 @@ void MainWindow::dispatchRowPlans(const QList<trading::DecisionRow> &rows)
     if (inputs.isEmpty()) {
         return;
     }
-    m_rowPlanWatcher.setFuture(QtConcurrent::run([inputs]() {
+    m_rowPlanWatcher.setFuture(QtConcurrent::run([inputs] {
         QHash<QString, trading::TradePlan> plans;
         for (const auto &entry : inputs) {
             static_cast<void>(
@@ -5803,7 +5799,7 @@ void MainWindow::renderTradePlan(const trading::DecisionRow *focus, const QStrin
         for (qint32 i = 0; i < m_leverage->count(); ++i) {
             steps << m_leverage->itemText(i).toInt();
         }
-        in.leverageSteps = steps;
+        in.leverageSteps = std::move(steps);
         const double bid = m_client->lastBid();
         const double ask = m_client->lastAsk();
         if ((bid > 0.0) && (ask > bid)) {
@@ -5880,7 +5876,7 @@ QString MainWindow::planCostSummaryHtml(const trading::TradePlan &plan) const
     const QString green = trading::ui::greenHex();
     const QString red = trading::ui::redHex();
     const QString amber = trading::ui::amberHex();
-    auto eur = [this](double v) {
+    const auto eur = [this](double v) {
         return QStringLiteral("%1%2").arg(m_ccy, QLocale().toString(v, 'f', 2));
     };
     const QString openCostText = eur(plan.openCost);
@@ -5928,7 +5924,7 @@ QString MainWindow::planReferenceQuoteHtml(const QString &focusSymbol, bool isCu
         return {};
     }
     const QString grey = trading::ui::greyHex();
-    auto rate = [](double v) {
+    const auto rate = [](double v) {
         return QLocale().toString(v, 'f', trading::priceDecimals(v));
     };
     const double deltaPct = ((m_webQuotePrice - m_lastPrice) / m_lastPrice) * 100.0;
@@ -5974,10 +5970,10 @@ void MainWindow::renderTradePlanResult(const trading::TradePlan &plan,
     const QString vColor = (plan.verdict == QStringLiteral("BUY"))
                                ? green
                                : ((plan.verdict == QStringLiteral("SELL")) ? red : amber);
-    auto eur = [this](double v) {
+    const auto eur = [this](double v) {
         return QStringLiteral("%1%2").arg(m_ccy, QLocale().toString(v, 'f', 2));
     };
-    auto rate = [](double v) {
+    const auto rate = [](double v) {
         return QLocale().toString(v, 'f', trading::priceDecimals(v));
     };
 
@@ -6121,7 +6117,7 @@ void MainWindow::updateTradeHours(const QString &symbol)
         QStringLiteral("Nuclear")};
 
     // A GMT wall-clock time (today) rendered in the user's local HH:mm.
-    auto localOf = [](qint32 h, qint32 m) {
+    const auto localOf = [](qint32 h, qint32 m) {
         const QDate today = QDate::currentDate();
         const QTime gmtTime(h, m);
         const QTimeZone utc = QTimeZone::utc();

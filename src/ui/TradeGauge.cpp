@@ -92,7 +92,7 @@ void TradeGaugeWidget::paintEvent(QPaintEvent * /*event*/)
     // Loss and win zones: from SL to open in red, open to TP in green. For a
     // short position the zones mirror automatically because SL sits above and
     // TP below the open rate on the price scale.
-    auto drawZone = [&](double fromValue, double toValue, QColor color) {
+    const auto drawZone = [&](double fromValue, double toValue, QColor color) {
         const double a0 = valueToAngle(fromValue, lo, hi);
         const double a1 = valueToAngle(toValue, lo, hi);
         const QPen pen(color, side * 0.055, Qt::SolidLine, Qt::FlatCap);

@@ -23,7 +23,7 @@ QList<DailyBar> uptrendWithPullback(qint32 steepDays, double steepSlope,
 {
     QList<DailyBar> bars;
     double price = 100.0;
-    auto addBar = [&bars](double close) {
+    const auto addBar = [&bars](double close) {
         DailyBar b;
         b.open = close - 0.1;
         b.high = close + 0.3;

@@ -35,10 +35,9 @@ QStringList rowOf(const QList<Sheet> &sheets, const QString &name, const QString
         if (s.name != name) {
             continue;
         }
-        const auto it =
-            std::find_if(s.rows.cbegin(), s.rows.cend(), [&firstCell](const QStringList &row) {
-                return !row.isEmpty() && (row.first() == firstCell);
-            });
+        const auto it = std::ranges::find_if(s.rows, [&firstCell](const QStringList &row) {
+            return !row.isEmpty() && (row.first() == firstCell);
+        });
         if (it != s.rows.cend()) {
             return *it;
         }

@@ -56,9 +56,9 @@ private slots:
         QVERIFY(families.contains(Source::InstitutionalPositioning));
 
         // The COT datum models the publication LAG: received several days AFTER the event.
-        const auto cot = std::find_if(
-            first.observations.cbegin(), first.observations.cend(),
-            [](const Observation &o) { return o.source == Source::InstitutionalPositioning; });
+        const auto cot = std::ranges::find_if(first.observations, [](const Observation &o) {
+            return o.source == Source::InstitutionalPositioning;
+        });
         QVERIFY(cot != first.observations.cend());
         QVERIFY(cot->receivedTime > cot->eventTime);
         QVERIFY(cot->eventTime.daysTo(cot->receivedTime) >= 2);

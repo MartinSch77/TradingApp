@@ -58,9 +58,7 @@ double SimulationEngine::gaussian()
 {
     double u1 = m_rng.generateDouble();
     const double u2 = m_rng.generateDouble();
-    if (u1 < 1e-12) {
-        u1 = 1e-12;
-    }
+    u1 = std::max(u1, 1e-12);
     const double magnitude = std::sqrt(-2.0 * std::log(u1));
     const double angle = std::cos(2.0 * kPi * u2);
     return magnitude * angle;
@@ -124,9 +122,7 @@ void SimulationEngine::emitSnapshot()
 void SimulationEngine::tick()
 {
     m_simPrice *= (1.0 + (gaussian() * 0.0008));
-    if (m_simPrice < 1.0) {
-        m_simPrice = 1.0;
-    }
+    m_simPrice = std::max(m_simPrice, 1.0);
     emit priceUpdated(QDateTime::currentDateTime(), m_simPrice);
     // Resting entry orders first: an order the new price triggered becomes a
     // position that this same tick can already price (and stop out).
@@ -145,9 +141,7 @@ void SimulationEngine::tick()
         }
         if (p.isBuy) {
             const double s = m_simPrice - p.trailDistance;
-            if (s > p.stopLossRate) {
-                p.stopLossRate = s;
-            }
+            p.stopLossRate = std::max(s, p.stopLossRate);
         } else {
             const double s = m_simPrice + p.trailDistance;
             if ((p.stopLossRate <= 0.0) || (s < p.stopLossRate)) {

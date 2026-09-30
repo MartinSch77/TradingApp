@@ -50,19 +50,19 @@ ScreenerDialog::ScreenerDialog(QWidget *parent)
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     // Double-click a row -> trade that instrument (same as picking it in the header).
-    static_cast<void>(connect(m_table, &QTableWidget::cellDoubleClicked, this,
-                              [this](int row, int) {
-                                  QTableWidgetItem *it = m_table->item(row, 0);
-                                  if (it == nullptr) {
-                                      return;
-                                  }
-                                  const QString sym = it->data(Qt::UserRole).toString();
-                                  if (sym.isEmpty()) {
-                                      return;
-                                  }
-                                  emit instrumentChosen(sym);
-                                  accept();
-                              }));
+    static_cast<void>(
+        connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+            const QTableWidgetItem *it = m_table->item(row, 0);
+            if (it == nullptr) {
+                return;
+            }
+            const QString sym = it->data(Qt::UserRole).toString();
+            if (sym.isEmpty()) {
+                return;
+            }
+            emit instrumentChosen(sym);
+            accept();
+        }));
     lay->addWidget(m_table);
 
     auto *footer = new QHBoxLayout;
@@ -166,8 +166,8 @@ void ScreenerDialog::updateRows(const QList<ScreenerRow> &rows, bool vixValid, d
     m_table->setRowCount(viewCount);
     for (qint32 row = 0; row < viewCount; ++row) {
         const View &v = views[row];
-        auto setCell = [this, row](qint32 col, const QString &text, const QString &hex,
-                                   Qt::Alignment align) -> QTableWidgetItem * {
+        const auto setCell = [this, row](qint32 col, const QString &text, const QString &hex,
+                                         Qt::Alignment align) -> QTableWidgetItem * {
             auto *item = new QTableWidgetItem(text);
             item->setTextAlignment(align);
             if (!hex.isEmpty()) {

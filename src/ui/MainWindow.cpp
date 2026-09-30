@@ -240,6 +240,9 @@ QString eventTooltip(const EconomicEvent &e, const trading::ImpactGuess &guess,
 
 } // namespace
 
+// See the header: defined where LiveBotExecutor and EtoroOrderGateway are complete.
+MainWindow::~MainWindow() = default;
+
 MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
                        EconomicCalendar *calendar, QWidget *parent)
     : QMainWindow(parent)

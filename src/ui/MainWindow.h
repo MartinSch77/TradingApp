@@ -84,6 +84,11 @@ public:
     // lifecycles — the UI consumes their signals and owns none of them.
     explicit MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
                         EconomicCalendar *calendar, QWidget *parent = nullptr);
+    // Out of line: the two unique_ptr members below hold types this header only
+    // forward-declares, and an implicit destructor would instantiate their deleters in
+    // every translation unit that includes this header (moc's, main.cpp's) — where they
+    // are incomplete. The definition lives in MainWindow.cpp, beside the includes.
+    ~MainWindow() override;
 
 protected:
     void closeEvent(QCloseEvent *event) override;

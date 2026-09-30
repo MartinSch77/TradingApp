@@ -99,6 +99,84 @@ bool seedBookHoldingBtc()
     return file.write(QJsonDocument(root).toJson()) > 0;
 }
 
+// A book holding one OPEN swing-strategy position — strategyVersion set, the fixed R basis
+// seeded, VALID entry features (the composite path's featuresFor sets them at open; the
+// swing path's swingFeaturesFor does too, and recordExperience drops a record without
+// them) and NO venue id, so the runner marks it off the 1-minute series exactly like an
+// id-less crypto position. Entry 100 with the initial stop at 98: R = 2, so the strategy's
+// 2R partial fires at a daily close of 104 or better. Returns the trade id, 0 on failure.
+constexpr double kSwingEntry = 100.0;
+constexpr double kSwingStop = 98.0;
+
+qint64 seedBookHoldingSwingPosition(const QString &symbol)
+{
+    PaperBook book;
+    EntrySignal sig;
+    sig.valid = true;
+    sig.symbol = symbol;
+    sig.instrumentId = 0;
+    sig.isBuy = true;
+    sig.fillRate = kSwingEntry;
+    sig.spreadPct = 0.1;
+    sig.leverage = 1;
+    sig.slRate = kSwingStop;
+    sig.tpRate = 0.0;   // the swing has no fixed target: the 2R partial is its first exit
+    const qint64 id = book.open(sig, 1000.0, QDateTime::currentDateTime().addDays(-1));
+    if (id == 0) {
+        return 0;
+    }
+    book.setStrategyVersion(id, QStringLiteral("swing-pullback-v1"));
+    book.setSwingInitialStop(id, kSwingStop);
+    book.setSwingState(id, kSwingStop, false, 0);
+    EntryFeatures features;
+    features.volPct = 0.8;
+    features.stopPct = 2.0;
+    features.targetPct = 4.0;
+    features.spreadPct = sig.spreadPct;
+    features.leverage = 1;
+    features.dir = 1;
+    book.setFeatures(id, features);
+    QFile file(runnerFiles().constFirst());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return 0;
+    }
+    return (file.write(QJsonDocument(book.toJson()).toJson()) > 0) ? id : 0;
+}
+
+// `closes.size()` daily bars closing at the given values, each with a half-point range
+// around its close — the shape applySwingExit's day rules read (close, and the low for
+// the five-day-low trailing stop).
+QList<DailyBar> dailyBars(const QList<double> &closes)
+{
+    QList<DailyBar> bars;
+    for (const double close : closes) {
+        DailyBar bar;
+        bar.open = close - 0.2;
+        bar.high = close + 0.5;
+        bar.low = close - 0.5;
+        bar.close = close;
+        bars.append(bar);
+    }
+    return bars;
+}
+
+// Every example the runner's experience log holds for `symbol`, one JSON object per line.
+QList<QJsonObject> experienceRecordsFor(const QString &symbol)
+{
+    QList<QJsonObject> records;
+    QFile file(runnerFiles().at(3));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return records;
+    }
+    while (!file.atEnd()) {
+        const QJsonObject rec = QJsonDocument::fromJson(file.readLine().trimmed()).object();
+        if (rec.value(QStringLiteral("symbol")).toString() == symbol) {
+            records.append(rec);
+        }
+    }
+    return records;
+}
+
 // The venue, as far as this needs it: BTC resolves to kBtcId, and its rates row is stamped
 // `behindSecs` behind the clock AT EACH REQUEST — a row that lags but keeps moving, which
 // is what eToro's public feed does for a delayed instrument during an open session (the
@@ -592,6 +670,74 @@ private slots:
         QVERIFY2(fresh.code != QStringLiteral("<no decision reported>"), qPrintable(fresh.code));
         QCOMPARE(fresh.openAfter, 1);
         QVERIFY(fresh.markLive);
+    }
+
+    //! @tstid TS-BOTSIM-007 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-033, scope=function)
+    //
+    // The experience log counts a partially closed position ONCE, labelled with the WHOLE
+    // position's net. The only producer of partial records is the swing strategy's 2R
+    // partial (applySwingExit), so that is what drives it: a book restored holding one
+    // swing position (entry 100, initial stop 98, R = 2) is marked off a 1-minute close of
+    // 105 — the day rules take 45% off at 2.5R and raise the trailing stop to at least the
+    // five-day low — and no example is written yet (the setup is still open). A second
+    // mark at 99, below that trailing stop but ABOVE the initial one, closes the remainder
+    // at a loss; the log then holds exactly one line for the symbol whose label is the
+    // partial's net plus the remainder's — positive, where the remainder's alone is
+    // negative. That mislabel (a banked 2R trailed out below entry taught a LOSS) is the
+    // measured defect, and the domain identity behind the sum is TS-PAPER-046. The seed
+    // carries its features directly: the swing ENTRY path setting them (swingFeaturesFor
+    // in trySwingOpen) is not drivable here — the runner has no public switch for
+    // BotConfig::useSwingStrategy and the book file does not persist it — so that wiring
+    // is verified by inspection; this pins that a record WITH features is folded, not
+    // dropped or written twice.
+    void TS_BOTSIM_007_aPartiallyClosedPositionIsOneExampleLabelledWithTheWholeNet()
+    {
+        const QString symbol = QStringLiteral("SPX500");
+        QVERIFY(seedBookHoldingSwingPosition(symbol) != 0);
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QCOMPARE(runner.book().openTrades().size(), 1);
+        QVERIFY(runner.book().openTrades().constFirst().features.isValid());
+        QCOMPARE(runner.book().openTrades().constFirst().strategyVersion,
+                 QStringLiteral("swing-pullback-v1"));
+        // Six sessions rising to 105: 2.5R above entry, and a five-day low of 100.5.
+        runner.setDailyBars(symbol, dailyBars({100.0, 101.0, 102.0, 103.0, 104.0, 105.0}));
+
+        // First mark: the partial. One closed record, flagged partial; the remainder stays
+        // open under the same id with its stop trailed up; nothing in the log yet.
+        MarketSnapshot atTarget;
+        atTarget.intradayBySymbol.insert(symbol, {104.0, 105.0});
+        runner.onDecisions({}, atTarget);
+        QCOMPARE(runner.book().closedTrades().size(), 1);
+        QVERIFY(runner.book().closedTrades().constFirst().partial);
+        QVERIFY(runner.book().closedTrades().constFirst().netPnl > 0.0);
+        QCOMPARE(runner.book().openTrades().size(), 1);
+        QVERIFY(runner.book().openTrades().constFirst().swingPartialTaken);
+        QVERIFY(runner.book().openTrades().constFirst().slRate >= 100.5);
+        QVERIFY(experienceRecordsFor(symbol).isEmpty());
+
+        // Second mark: below the trailing stop, above the initial one — the remainder
+        // closes at a loss through the barrier check, the position is gone.
+        MarketSnapshot belowTrail;
+        belowTrail.intradayBySymbol.insert(symbol, {99.5, 99.0});
+        runner.onDecisions({}, belowTrail);
+        QVERIFY(runner.book().openTrades().isEmpty());
+        const QList<PaperClosedTrade> &closed = runner.book().closedTrades();
+        QCOMPARE(closed.size(), 2);
+        QVERIFY(!closed.at(1).partial);
+        QCOMPARE(closed.at(1).reason, CloseReason::StopLoss);
+        QVERIFY(closed.at(1).netPnl < 0.0);   // the remainder alone reads as a loss
+
+        // ONE example, labelled with the position's net over both legs.
+        const QList<QJsonObject> records = experienceRecordsFor(symbol);
+        QCOMPARE(records.size(), 1);
+        const double label = records.constFirst().value(QStringLiteral("netPnl")).toDouble();
+        QCOMPARE(label, closed.at(0).netPnl + closed.at(1).netPnl);
+        QVERIFY(label > 0.0);   // one winning trade, not one win and one loss
+        QVERIFY(label != closed.at(1).netPnl);
+        QCOMPARE(records.constFirst().value(QStringLiteral("reason")).toString(),
+                 closeReasonWord(CloseReason::StopLoss));
     }
 };
 

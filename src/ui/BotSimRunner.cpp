@@ -945,6 +945,42 @@ trading::EntryFeatures BotSimRunner::featuresFor(const trading::CandidateInput &
     return f;
 }
 
+trading::EntryFeatures BotSimRunner::swingFeaturesFor(const trading::EntrySignal &sig,
+                                                      const QList<trading::DailyBar> &bars,
+                                                      double stake, const QDateTime &now)
+{
+    // The swing entry never set features, and EntryFeatures::isValid() is `volPct > 0`,
+    // so recordExperience dropped EVERY swing record — the one-label-per-position rule
+    // there had no producer to act on, and the strategy's closes taught the network
+    // nothing. The same vector as featuresFor, from what this entry actually knew:
+    // "per bar" is per SESSION here (the daily bars the strategy read, over its own ATR
+    // window, exactly as heldHours labels the hold in hours either way), the target is
+    // the partial's 2R level (the swing has no fixed target; that is where profit is
+    // first taken), and the edge is priced over the spread round trip alone — the
+    // swing's carry over a hold of days is its exit rules' business, and the composite's
+    // intraday horizon is the only one paperEntryEconomics has. The composite's
+    // contemporaneous conviction is recorded as the confidence (0 when the scan had no
+    // row for the symbol): the swing does not consult it, but it WAS true about the entry.
+    QList<double> closes;
+    closes.reserve(bars.size());
+    for (const trading::DailyBar &bar : bars) {
+        closes.append(bar.close);
+    }
+    trading::EntrySignal probe = sig;
+    probe.volPct = trading::volatilityPct(
+        closes, std::min<qsizetype>(swingConfig().atrPeriod, closes.size() - 1));
+    const double stopDistance = qAbs(sig.fillRate - sig.slRate);
+    probe.tpRate = sig.isBuy ? (sig.fillRate + (swingConfig().partialTargetR * stopDistance))
+                             : (sig.fillRate - (swingConfig().partialTargetR * stopDistance));
+    trading::CandidateInput in;
+    in.symbol = sig.symbol;
+    in.confidence = m_confBySymbol.value(sig.symbol, 0.0);
+    in.spreadPct = sig.spreadPct;
+    in.now = now;
+    in.feesKnown = false;
+    return featuresFor(in, probe, stake, now);
+}
+
 void BotSimRunner::recordExperience(const PaperClosedTrade &done)
 {
     // One JSON line per closed POSITION, appended and never rewritten: the bot's own
@@ -1351,6 +1387,9 @@ void BotSimRunner::trySwingOpen(const QString &symbol, const QDateTime &now)
     m_book.setStrategyVersion(openedId, swingStrategy().version());
     m_book.setSwingInitialStop(openedId, stopPrice);
     m_book.setSwingState(openedId, stopPrice, false, 0);
+    // The input half of the example this position becomes when it closes (REQ-F-033);
+    // a record without it is dropped by recordExperience, partial and final alike.
+    m_book.setFeatures(openedId, swingFeaturesFor(sig, bars, margin, now));
     m_swingLastEvalDate.insert(openedId, now.date());
     emit tradeOpened(symbol);
     emit entryDecision(symbol, true, QStringLiteral("opened"), decision.why);

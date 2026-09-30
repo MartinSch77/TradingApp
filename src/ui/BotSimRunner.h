@@ -220,6 +220,13 @@ private:
     [[nodiscard]] trading::EntryFeatures featuresFor(const trading::CandidateInput &in,
                                                      const trading::EntrySignal &sig, double stake,
                                                      const QDateTime &now);
+    // The swing entry's counterpart of featuresFor: the same feature vector, measured over
+    // the DAILY bars the strategy reasoned over. Set at open, because recordExperience
+    // writes nothing for a record whose features are invalid — without it every swing
+    // close, partial or final, silently left the training set.
+    [[nodiscard]] trading::EntryFeatures swingFeaturesFor(const trading::EntrySignal &sig,
+                                                          const QList<trading::DailyBar> &bars,
+                                                          double stake, const QDateTime &now);
     // Append one training example for a trade that just closed. A PARTIAL record
     // (PaperBook::partialClose) appends nothing: its net is banked in m_partialNetById
     // and folded into the label of the final close of the same id.

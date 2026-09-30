@@ -186,18 +186,43 @@ an otherwise-accepted trade, but it can never open one on its own, and an untrai
 model only annotates (never gates), matching the same "an unmeasurable/untrusted signal
 never manufactures a refusal out of nothing" discipline as §§3-5.
 
-## 8. `SwingPullbackStrategyV1` — standalone / backtest-only, NOT in the live loop
+## 8. `SwingPullbackStrategyV1` — wired into the live loop, OFF by default, not yet validated live
 
 The 2026-08-12 strategy redesign's `ITradingStrategy`/`SwingPullbackStrategyV1`/
-`swingExitDecision`/`StrategyBacktest` modules are real, tested code (`docs/design.md`,
-`DES-DOM-SWING`/`DES-DOM-BACKTEST`) — but `grep`ing `BotSimRunner.cpp` for
-`SwingPullback`/`ITradingStrategy` returns **no matches**. The only non-test caller is
-`StrategyBacktest.cpp`. This is stated in the class's own header comment
-(`SwingPullbackStrategy.h:90`: *"the caller (BotSimRunner, **once wired**)..."*) and repeated
-here because it is the kind of fact that is easy to assume is live once code exists and
-compiles. Wiring it into the scan loop — alongside a decision about whether it *replaces*
-or *runs beside* the composite/lead path for its own focus symbol — is future work, not
-part of what any of items 1-7 above changed.
+`swingExitDecision`/`StrategyBacktest` modules (`docs/design.md`, `DES-DOM-SWING`/
+`DES-DOM-BACKTEST`) ARE in the runner: `BotSimRunner::considerSwingEntries` runs once per
+scan (`onDecisions`, right after `markAndExit` and BEFORE the composite/AI leg, on the same
+arming switch) over `BotConfig::swingStrategySymbols` (default `SPX500`), and `BotSimRunner::applySwingExit` manages every open position tagged
+with a non-empty `PaperTrade::strategyVersion`. Both sit behind `BotConfig::useSwingStrategy`,
+**off by default** — a book that has not opted in runs the composite/AI path of §§2-7 exactly
+as before, and the strategy *runs beside* that path rather than replacing it (its own
+`swing …` basis, its own refusal codes through `entryDecision`). What it does when on:
+
+- **Inputs**: DAILY bars per symbol via `setDailyBars` (`MarketFeeds::dailyBarsReady`,
+  wired in `MainWindow::connectInstrumentFeeds`), plus the shared event-risk flag and the
+  volatility term structure. Only the desktop GUI feeds those bars today — in the console
+  binaries the path has no bars and opens nothing.
+- **Entry**: `SwingPullbackStrategyV1::evaluate` on the bars; the fill is the LAST DAILY
+  CLOSE, not a live quote; the stop is the strategy's ATR-based distance; the stake comes
+  from `sizeByExplicitRisk` (`riskPerTradeFor`, `swingLeverage`) capped by the SAME
+  `paperStakeCeiling` (portfolio/group/symbol risk, margin, cash) the composite bot's
+  entries respect. `preTradeRefusal` applies the same focus/market-closed obstacles first;
+  one swing position per symbol at a time, like the backtester.
+- **Exit**: the shared `barrierHit` stop/target check every mark tick, then — at most once
+  per calendar day, since `swingExitDecision`'s state is day-granular — the strategy's own
+  time-stop, 2R partial (`PaperBook::partialClose`, same id, reduced stake) and trailing
+  stop. NEVER `paperCloseDecision`: its SignalFade/GiveBack are tuned for the composite's
+  conviction signal, which this strategy is not scored against. The day-target harvest
+  (§9's sibling, `harvestDayTarget`) skips swing positions for the same reason.
+- **State**: `swingPartialTaken`/`swingSessionsHeld`/`swingInitialStopRate` live on the
+  `PaperTrade` itself and are persisted with the book; `m_swingLastEvalDate` is not (at
+  most one day-count tick is lost across a restart).
+
+What is NOT established: the live path has not been validated against the backtester on
+real days — a fill at the daily close, marked against 1-minute prices from the next tick,
+is a different animal from the backtest's bar-to-bar replay, and the swing-mode book
+(daily target off, `dailyProfitTarget = 0`) does not exist as a preset yet. Treat a swing
+result on a shared book as unmeasured until a dedicated book has run it.
 
 ## 9. The final entry gate (`paperEntryVerdict`, `PaperTrader.cpp:1423`)
 

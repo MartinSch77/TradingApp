@@ -10,6 +10,65 @@ absent) — `docs/roadmap.md` remains the forward-looking plan; this file is
 the realized-history counterpart `process/strategies/project-management-
 strategy.md`'s planning-artefact composition names.
 
+## Unreleased
+
+Nine paper-bot corrections, every one measured on the running bot or verified in
+the code before it was changed, plus the documentation that had drifted from it.
+Real-money execution stays excluded throughout (REQ-N-005).
+
+- Rollover: `paperRolloverNights` billed a weekend as 5 nights (Sat 3 + Sun 1 +
+  Mon 1). eToro charges it ONCE, tripled, on the Friday night — Saturday and
+  Sunday boundaries now count 0, so Fri→Mon is 3; `paperCostToHold` and the
+  entry economics follow (TS-PAPER-002 extended).
+- Entry gate: a Friday open on a non-24/7 instrument with a known positive fee
+  table was closed as `WeekendCarry` on its FIRST mark, a pure spread round trip
+  every Friday. `paperEntryVerdict` now refuses it `weekend-carry-ahead` right
+  after the day gate, priced by the same arithmetic the exit uses, silent
+  exactly when the exit rule is (TS-PAPER-044).
+- Quote age: a per-tick quote that stopped updating still counted as live.
+  `trading::quoteIsFresh` (one age rule, the open-trades table's own 120 s
+  bound) decides `Sides::live` and `mark.live`; a stale quote still prices the
+  candidate off the bulk mid but is refused `no-live-quote`. The unstamped
+  bulk-mid and candle paths stay live and SAY so. New `tst_botsimrunner` target
+  (TS-BOTSIM-001, TS-PAPER-045).
+- Day-target harvest: no longer cuts a swing-strategy position to bank the
+  composite bot's day, and `paperHarvestPick` judges the ledger against `now`
+  — before the first close of a new date it read yesterday's realized and
+  harvested for a target the day had not earned (TS-PT-031 extended).
+- Experience log: a swing 2R partial never reached `recordExperience`, so the
+  one example written at the final close carried the remainder's net alone (a
+  trade that banked half at +2R and trailed out taught a LOSS). A partial now
+  banks its net and the final close writes ONE example labelled with the whole
+  trade's net (TS-PAPER-046 pins the proration identity).
+- Ledger scoring and saving: `resolveAll` copied the sorted tail per row and
+  scanned past the horizon's bound; it now walks a span and stops at the first
+  row of any instrument beyond the limit, identical results (TS-LEDGER-007).
+  The runner caches the ledger instead of re-reading the growing file every
+  scan (TS-BOTSIM-002), and pure mark moves save `botsim.json` at most once a
+  minute instead of every 5-second tick (~17 000 rewrites a day).
+- One process per book: a `QLockFile` beside the store. The GUI and the console
+  share one book by design and could both run the bot on it; the second runner
+  now loads and shows the book read-only, refuses to arm naming the holder,
+  and never marks, enters or saves (`ownsBook()`, TS-BOTSIM-003).
+- Session structure: the runner computed `openingRange` and the ledger's
+  prior-move baseline from the eToro scan's HOURLY closes (a 30-hour "opening
+  range"). Both now read the 1-minute series the window shows; the hourly
+  closes remain the volatility source only. Ledger rows carry
+  `strategyVersion` `composite-v2` from the switch so the two baselines are
+  scored apart (TS-BOTSIM-004).
+- Crypto: no crypto position ever opened — the eToro scan queues only resolved
+  ids (crypto never resolves one) and `tryOpen` refused every id-less
+  candidate. `MarketFeeds::fetchCryptoScreenerRows` supplies hourly Yahoo rows
+  (`ScreenerRow::fromFallbackFeed`), `trading::mergeScreenerRow` is the ONE
+  venue-beats-fallback rule for both front ends, and an id-less crypto
+  candidate opens off its candle close (TS-FEED-016, TS-DEC-011, TS-BOTSIM-005).
+  The console front ends scan the coins; the desktop GUI stays crypto-free at
+  the source, a separate decision.
+- Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
+  strategy is outside the live loop (it is wired behind `useSwingStrategy`,
+  off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the
+  reads and TS-PAPER-027 as the test that pins the confluence majority rule.
+
 ## v1.1.2
 
 The first release since v1.0.6. `v1.1.0` and `v1.1.1` were tagged but never

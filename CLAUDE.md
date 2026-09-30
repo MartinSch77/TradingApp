@@ -333,7 +333,8 @@ publish_release; refuses to publish on a red pipeline).
   swing strategy's SPX500-only scope belongs to ITS OWN config, not to the shared
   general-purpose default. Real-money execution stays excluded throughout every one of
   these items.
-- Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
+- Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-059..-075 — one
+  requirement per read, REQ-F-069 the agreement gate; REQ-F-035 is superseded by them —
   `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
   1/5/15-minute push (ONE read, because three horizons off one series are one piece of
   evidence in three hats; disagreeing horizons are neutral), volatility DIRECTION (^VXN
@@ -369,7 +370,8 @@ publish_release; refuses to publish on a red pipeline).
   The bot refuses below a MAJORITY of the measured reads, floored at `minAgreeingReads`
   (3) and clamped to what is available (`no-confluence`), 0 switching it off. The majority
   rule is load-bearing: an absolute 3 was a majority of five reads and a MINORITY of nine,
-  so every read added silently weakened the gate (TS-PAPER-025 pins it).
+  so every read added silently weakened the gate (TS-PAPER-027 pins it: four of nine
+  refused as needing five, five of nine taken).
 - A probability is MEASURED, never asserted (REQ-F-037, `domain/PredictionLedger`).
   The 0..100 strength is EVIDENCE; P(up, 5/15/60/180 min) comes only from the record.
   EVERY evaluation is appended to `prediction-ledger.jsonl`, including the ones that

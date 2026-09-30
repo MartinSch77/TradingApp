@@ -63,6 +63,12 @@ struct LiveMirrorInputs {
     double eurPerUsd = 0.0;   // 0 = unknown -> refused live-fx-unknown
     Currency accountCurrency = Currency::Usd;
     qint32 openLivePositionsForSymbol = 0;
+    // A second ceiling ALREADY in the order currency — the armed session's own per-order
+    // cap, fixed at the rate of the moment it was granted (LiveArm). Invalid = none. It
+    // exists because the EUR cap is converted at the CURRENT rate: a euro that
+    // strengthened since the arming would otherwise make a plan a few cents over the
+    // arm's cap, and the guarded send would refuse every order for the rest of the day.
+    Money orderCurrencyCap;
 };
 
 [[nodiscard]] LiveOrderPlan liveOrderFor(const LiveMirrorInputs &in, const LiveMirrorConfig &cfg);

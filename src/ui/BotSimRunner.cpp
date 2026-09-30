@@ -615,6 +615,17 @@ bool BotSimRunner::harvestDayTarget(const QDateTime &now)
     return true;
 }
 
+void BotSimRunner::announceOpened(qint64 id, const QString &symbol)
+{
+    emit tradeOpened(symbol);
+    for (const PaperTrade &trade : m_book.openTrades()) {
+        if (trade.id == id) {
+            emit tradeOpenedDetail(trade);
+            return;
+        }
+    }
+}
+
 void BotSimRunner::closeTrade(const PaperTrade &trade, CloseReason reason)
 {
     const Mark mark = markFor(trade);
@@ -624,6 +635,7 @@ void BotSimRunner::closeTrade(const PaperTrade &trade, CloseReason reason)
     if (done.id == 0) {
         return;
     }
+    emit tradeClosed(done);
     static_cast<void>(m_holdOpinions.remove(done.id));
     recordExperience(done);
     // Retrain on a cadence rather than on every close: the model only moves once
@@ -1442,7 +1454,7 @@ void BotSimRunner::trySwingOpen(const QString &symbol, const QDateTime &now)
     // a record without it is dropped by recordExperience, partial and final alike.
     m_book.setFeatures(openedId, swingFeaturesFor(sig, bars, margin, now));
     m_swingLastEvalDate.insert(openedId, now.date());
-    emit tradeOpened(symbol);
+    announceOpened(openedId, symbol);
     emit entryDecision(symbol, true, QStringLiteral("opened"), decision.why);
     emit log(QStringLiteral("SWING OPEN %1 %2 %3 @ %4 x%5 — SL %6 — %7")
                  .arg(symbol, decision.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"),
@@ -1894,7 +1906,7 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     // The COMPOSITE's conviction, whatever decided the trade: the fade rule compares
     // like with like (REQ-F-032).
     m_book.setEntryCompositeConf(openedId, row.confidence);
-    emit tradeOpened(sig.symbol);
+    announceOpened(openedId, sig.symbol);
     emit entryDecision(sig.symbol, true, QStringLiteral("opened"), verdict.why);
     appendOpenedNote(sig, in, verdict, row.confidence, now);
     emit log(QStringLiteral("SIM OPEN %1 %2 %3 @ %4 x%5 — SL %6 / TP %7, spread cost %8 — %9")

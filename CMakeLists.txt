@@ -305,6 +305,8 @@ qt_add_executable(TradingApp
     src/ui/CrowdDashboardWindow.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
+    src/ui/LiveBotExecutor.cpp
+    src/ui/LiveBotExecutor.h
     src/ui/BotSimPanel.cpp
     src/ui/BotSimPanel.h
     src/ui/ScreenerDialog.h

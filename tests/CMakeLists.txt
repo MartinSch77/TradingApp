@@ -125,6 +125,15 @@ tradingapp_add_test(tst_botsimrunner tst_botsimrunner.cpp MockHttpServer.cpp Moc
     ../src/ui/BotSimRunner.cpp ../src/ui/BotSimRunner.h)
 target_include_directories(tst_botsimrunner PRIVATE ../src)
 target_link_libraries(tst_botsimrunner PRIVATE Qt6::Concurrent)
+# The real-money mirror's executor (REQ-F-076), compiled directly like the runner and driven
+# headless: a FakeOrderGateway records what would have been sent, the simulation client
+# (never a real account) answers the close, and the "is the client live" question is the
+# constructor-injected predicate the composition root leaves at the client's own answer.
+tradingapp_add_test(tst_livebotexecutor tst_livebotexecutor.cpp
+    ../src/ui/BotSimRunner.cpp ../src/ui/BotSimRunner.h
+    ../src/ui/LiveBotExecutor.cpp ../src/ui/LiveBotExecutor.h)
+target_include_directories(tst_livebotexecutor PRIVATE ../src)
+target_link_libraries(tst_livebotexecutor PRIVATE Qt6::Concurrent)
 tradingapp_add_test(tst_swingpullbackstrategy tst_swingpullbackstrategy.cpp)
 tradingapp_add_test(tst_strategybacktest tst_strategybacktest.cpp)
 tradingapp_add_test(tst_pathoutcome tst_pathoutcome.cpp)

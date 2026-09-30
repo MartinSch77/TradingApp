@@ -52,7 +52,13 @@ Money liveStakeFor(const LiveMirrorInputs &in, const LiveMirrorConfig &cfg, QStr
                    .arg(moneyPlain(capped));
         return {};
     }
-    return Money::fromDouble(capped.toDouble() / in.eurPerUsd, Currency::Usd);
+    const Money converted = Money::fromDouble(capped.toDouble() / in.eurPerUsd, Currency::Usd);
+    // The armed session's own cap, when given, is the second ceiling; a cap in some other
+    // currency compares as unordered and is therefore ignored rather than misapplied.
+    if (in.orderCurrencyCap.isValid() && (converted > in.orderCurrencyCap)) {
+        return in.orderCurrencyCap;
+    }
+    return converted;
 }
 
 }   // namespace

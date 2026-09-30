@@ -180,6 +180,13 @@ signals:
     // A simulated position was just opened. The window is not always open, so the
     // notice is raised by whoever owns the runner rather than from here.
     void tradeOpened(const QString &symbol);
+    // The same open, with the WHOLE trade (stake, leverage, geometry, venue id), and the
+    // matching close. These are what the real-money mirror (REQ-F-076, LiveBotExecutor)
+    // follows — the runner itself still holds no gateway and places nothing; it reports.
+    // Direct connections only (every consumer lives on this thread), so the two structs
+    // need no metatype registration for a queued delivery.
+    void tradeOpenedDetail(const trading::PaperTrade &trade);
+    void tradeClosed(const trading::PaperClosedTrade &done);
     // One line PER evaluated candidate each scan (REQ-F-034 visibility): traded or refused,
     // the countable code and the human reason. The GUI need not connect it (its decision
     // window shows this already); the advise console prints it so a person watching one
@@ -348,6 +355,9 @@ private:
     // marks were taken at. True when it closed a position.
     bool harvestDayTarget(const QDateTime &now);
     void closeTrade(const trading::PaperTrade &trade, trading::CloseReason reason);
+    // Emit tradeOpened AND tradeOpenedDetail for the position the book just opened under
+    // `id` — the one place both open paths report from, so neither can forget the other.
+    void announceOpened(qint64 id, const QString &symbol);
     void save() const;
     void load();
     // Try the book's lock once, right after load(): sets m_ownsBook, and when the book is

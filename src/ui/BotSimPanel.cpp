@@ -9,6 +9,7 @@
 #include "domain/IndexConfluence.h"
 #include "domain/LeadSignal.h"
 #include "services/OllamaAdvisor.h"
+#include "ui/LiveBotExecutor.h"
 
 #include <QComboBox>
 #include <QCoreApplication>
@@ -68,16 +69,19 @@ QTableWidgetItem *cell(const QString &text, bool numeric = false, double signVal
 // Index of `id` in a trade list, or -1. The list holds at most maxOpenTrades
 } // namespace
 
-
-BotSimDialog::BotSimDialog(BotSimRunner *runner, QWidget *parent)
-    : QDialog(parent)
-    , m_runner(runner)
+BotSimDialog::BotSimDialog(BotSimRunner *runner, LiveBotExecutor *live, QWidget *parent)
+    : QDialog(parent), m_runner(runner), m_live(live)
 {
     setWindowTitle(QStringLiteral("Trading-bot simulation (paper money)"));
-    resize(1180, 760);
+    resize(1180, 860);
     buildUi();
     static_cast<void>(connect(m_runner, &BotSimRunner::changed, this, &BotSimDialog::rebuild));
     static_cast<void>(connect(m_runner, &BotSimRunner::log, this, &BotSimDialog::appendLog));
+    if (m_live != nullptr) {
+        static_cast<void>(
+            connect(m_live, &LiveBotExecutor::changed, this, &BotSimDialog::rebuildLive));
+        static_cast<void>(connect(m_live, &LiveBotExecutor::log, this, &BotSimDialog::appendLog));
+    }
     rebuild();
 }
 
@@ -85,7 +89,140 @@ void BotSimDialog::buildUi()
 {
     auto *layout = new QVBoxLayout(this);
     buildAccountBox(layout);
+    buildLiveBox(layout);
     buildTables(layout);
+}
+
+// The real-money box (REQ-F-076): the ONE surface that can arm the mirror. The arming
+// button is the REQ-N-005 double press over the executor's grant action, which names the
+// scope, both caps and the duration — so what the two presses confirm is exactly what
+// they permit. The other three buttons are single-press on purpose: disarming, the kill
+// switch and clearing it move no money, and a panic action must not need two presses.
+void BotSimDialog::buildLiveBox(QVBoxLayout *layout)
+{
+    auto *box = new QGroupBox(QStringLiteral("Real money — SPX500 + NSDQ100"), this);
+    auto *boxLayout = new QVBoxLayout(box);
+    m_liveStateLabel = new QLabel(box);
+    m_liveStateLabel->setObjectName(QStringLiteral("liveStateLabel"));
+    m_liveStateLabel->setWordWrap(true);
+    m_liveStateLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    boxLayout->addWidget(m_liveStateLabel);
+
+    auto *buttons = new QHBoxLayout;
+    m_liveArmButton = new QPushButton(QStringLiteral("Arm REAL money (press twice)"), box);
+    m_liveArmButton->setObjectName(QStringLiteral("liveArmButton"));
+    m_liveArmButton->setToolTip(QStringLiteral(
+        "Mirror the paper bot's SPX500 and NSDQ100 decisions to REAL orders for one trading "
+        "day, under the caps named in the state line. Two presses within one second, like "
+        "every money-moving control. Requires real keys and mode=real, a paper record that "
+        "clears the real-money criteria, and a kill switch that is not tripped."));
+    static_cast<void>(
+        connect(m_liveArmButton, &QPushButton::clicked, this, &BotSimDialog::pressLiveArm));
+    m_liveDisarmButton = new QPushButton(QStringLiteral("Disarm"), box);
+    m_liveDisarmButton->setObjectName(QStringLiteral("liveDisarmButton"));
+    m_liveKillButton = new QPushButton(QStringLiteral("KILL SWITCH"), box);
+    m_liveKillButton->setObjectName(QStringLiteral("liveKillButton"));
+    m_liveKillButton->setToolTip(QStringLiteral(
+        "Disarm at once and STAY disarmed until cleared by hand — a panic action that no "
+        "timer tick, re-arm click or restart can undo."));
+    m_liveClearButton = new QPushButton(QStringLiteral("Clear kill switch"), box);
+    m_liveClearButton->setObjectName(QStringLiteral("liveClearButton"));
+    if (m_live != nullptr) {
+        static_cast<void>(
+            connect(m_liveDisarmButton, &QPushButton::clicked, this, [this] { m_live->disarm(); }));
+        static_cast<void>(connect(m_liveKillButton, &QPushButton::clicked, this, [this] {
+            m_live->trip(QStringLiteral("kill switch pressed in the bot window"));
+        }));
+        static_cast<void>(connect(m_liveClearButton, &QPushButton::clicked, this,
+                                  [this] { m_live->clearTrip(); }));
+    }
+    for (QPushButton *button :
+         {m_liveArmButton, m_liveDisarmButton, m_liveKillButton, m_liveClearButton}) {
+        buttons->addWidget(button);
+    }
+    buttons->addStretch(1);
+    boxLayout->addLayout(buttons);
+
+    m_liveTable = new QTableWidget(box);
+    m_liveTable->setObjectName(QStringLiteral("liveTable"));
+    configureTable(m_liveTable, {QStringLiteral("Instrument"), QStringLiteral("Side"),
+                                 QStringLiteral("Stake"), QStringLiteral("Position id"),
+                                 QStringLiteral("State"), QStringLiteral("Paper trade")});
+    m_liveTable->setMaximumHeight(140);
+    boxLayout->addWidget(m_liveTable);
+    layout->addWidget(box);
+}
+
+void BotSimDialog::pressLiveArm()
+{
+    if (m_live == nullptr) {
+        return;
+    }
+    const trading::ConfirmDecision decision =
+        trading::confirmPress(m_liveGate, m_live->grantAction(),
+                              QDateTime::currentMSecsSinceEpoch(), trading::kConfirmWindowMs);
+    m_liveGate = decision.next;
+    if (!decision.commit) {
+        appendLog(decision.prompt, false);
+        m_liveArmButton->setText(QStringLiteral("Press again within 1 s to ARM"));
+        // The window is the gate's, not the button's: when it has passed the button says
+        // what a fresh press would do again, and a stale arm is visibly stale.
+        QTimer::singleShot(trading::kConfirmWindowMs, this, [this] { rebuildLive(); });
+        return;
+    }
+    static_cast<void>(m_live->arm());   // refusals are logged by the executor itself
+    rebuildLive();
+}
+
+void BotSimDialog::rebuildLive()
+{
+    if (m_live == nullptr) {
+        m_liveStateLabel->setText(QStringLiteral(
+            "Real-money execution is not available in this front end — it holds no order "
+            "gateway. The Widgets app composes one; the console binaries never do."));
+        for (QPushButton *button :
+             {m_liveArmButton, m_liveDisarmButton, m_liveKillButton, m_liveClearButton}) {
+            button->setEnabled(false);
+        }
+        m_liveTable->setRowCount(0);
+        return;
+    }
+    const trading::LiveReadiness live = m_runner->liveReadiness();
+    const bool armed = m_live->isArmed();
+    const bool tripped = m_live->isTripped();
+    const bool clientLive = m_live->clientLive();
+    m_liveStateLabel->setText(
+        QStringLiteral("<b>%1</b><br>%2 · record: %3")
+            .arg(m_live->stateLine(),
+                 clientLive ? QStringLiteral("broker client LIVE (real keys, mode=real)")
+                            : QStringLiteral("broker client not live — real keys and "
+                                             "mode=real required"),
+                 live.ready ? QStringLiteral("<span style='color:#1b8a3a'>real-money "
+                                             "criteria met</span>")
+                            : QStringLiteral("<span style='color:#c0392b'>not ready</span> — %1")
+                                  .arg(live.blockers.join(u"; "))));
+    m_liveArmButton->setText(m_liveGate.action.isEmpty()
+                                 ? QStringLiteral("Arm REAL money (press twice)")
+                                 : QStringLiteral("Press again within 1 s to ARM"));
+    m_liveArmButton->setEnabled(clientLive && !armed && !tripped);
+    m_liveDisarmButton->setEnabled(armed);
+    m_liveKillButton->setEnabled(!tripped);
+    m_liveClearButton->setEnabled(tripped);
+
+    const QList<LiveMirroredPosition> mirrored = m_live->mirrored();
+    m_liveTable->setRowCount(static_cast<int>(mirrored.size()));
+    for (qsizetype i = 0; i < mirrored.size(); ++i) {
+        const LiveMirroredPosition &p = mirrored.at(i);
+        const int row = static_cast<int>(i);
+        m_liveTable->setItem(row, 0, cell(p.symbol));
+        m_liveTable->setItem(row, 1,
+                             cell(p.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL")));
+        m_liveTable->setItem(row, 2, cell(p.stake.toString(), true));
+        m_liveTable->setItem(
+            row, 3, cell(p.positionId.isEmpty() ? QStringLiteral("confirming…") : p.positionId));
+        m_liveTable->setItem(row, 4, cell(p.state));
+        m_liveTable->setItem(row, 5, cell(QStringLiteral("#%1").arg(p.paperId), true));
+    }
 }
 
 // The header: the account, the day, the record, the real-money verdict, the model,
@@ -128,8 +265,9 @@ void BotSimDialog::buildAccountBox(QVBoxLayout *layout)
     m_armButton->setObjectName(QStringLiteral("armButton"));
     m_armButton->setCheckable(true);
     m_armButton->setToolTip(QStringLiteral(
-        "Start / stop the simulation. The bot trades SIMULATED money on live prices — "
-        "it never places an order at eToro and never moves real funds."));
+        "Start / stop the simulation. The bot trades SIMULATED money on live prices — the "
+        "simulation itself never places an order at eToro. Real money is the separate, "
+        "separately armed box below (REQ-F-076)."));
     static_cast<void>(connect(m_armButton, &QPushButton::toggled, this, [this](bool on) {
         m_runner->setArmed(on);
     }));
@@ -239,6 +377,7 @@ void BotSimDialog::rebuild()
                                            : QStringLiteral("Arm the bot"));
     rebuildAccount();
     rebuildAi();
+    rebuildLive();
     rebuildOpenTable();
     rebuildClosedTable();
 }
@@ -347,14 +486,13 @@ void BotSimDialog::rebuildAccount()
                                ? QStringLiteral("<b>By exit rule</b> nothing closed yet")
                                : QStringLiteral("<b>By exit rule</b> (worst first) %1")
                                      .arg(byReason.join(u" · ")));
+    // The RECORD's verdict (REQ-F-031). Whether real money follows is the box below's
+    // business (REQ-F-076), which shows this same verdict beside its arming button.
     m_liveLabel->setText(
         live.ready
             ? QStringLiteral("<b style='color:#1b8a3a'>Real-money criteria met</b> — the paper "
-                             "record clears every threshold. Live execution is NOT wired in this "
-                             "build: the bot still trades simulated money only.")
-            : QStringLiteral("<b style='color:#c0392b'>Not ready for real money</b> — %1. "
-                             "Live execution is not wired in this build either; the bot trades "
-                             "simulated money only.")
+                             "record clears every threshold.")
+            : QStringLiteral("<b style='color:#c0392b'>Not ready for real money</b> — %1.")
                   .arg(live.blockers.join(u"; ")));
     m_statsLabel->setText(
         QStringLiteral("%1 open · %2 closed (%3 won / %4 lost, win rate %5%) · "
@@ -365,8 +503,8 @@ void BotSimDialog::rebuildAccount()
             .arg(s.losses)
             .arg(s.winRate, 0, 'f', 0)
             .arg(botPlain(s.costsPaid), botMoney(s.bestTrade), botMoney(s.worstTrade)));
-    m_storeLabel->setText(QStringLiteral("Simulated money only — no order ever reaches eToro. "
-                                         "Books: %1")
+    m_storeLabel->setText(QStringLiteral("The simulated books never reach eToro; the only order "
+                                         "path is the real-money box below. Books: %1")
                               .arg(m_runner->storePath()));
 }
 

@@ -102,6 +102,16 @@ private slots:
         QVERIFY(std::fabs((20.83 / liveUnits) - 37.5) < 0.01);
         QVERIFY(plan.why.contains(QStringLiteral("BUY SPX500 277.78 USD at x10")));
 
+        // The armed session's own cap in the ORDER currency is a second ceiling: with the
+        // euro stronger than when the grant was priced (277.78 USD at 0.9), a rate of 0.88
+        // would make 250 EUR 284.09 USD — the arm's cap wins, so the guarded send never
+        // refuses a plan for cents of FX drift. A cap in another currency is ignored.
+        LiveMirrorInputs drifted = inputs(spxTrade(), 0.88);
+        drifted.orderCurrencyCap = usd(277.78);
+        QCOMPARE(liveOrderFor(drifted, grant()).amounts.stake, usd(277.78));
+        drifted.orderCurrencyCap = eur(1.0);
+        QCOMPARE(liveOrderFor(drifted, grant()).amounts.stake, usd(284.09));
+
         // A paper stake BELOW the cap goes out at the paper stake: the cap is a ceiling,
         // not a size. 100 EUR / 0.9 = 111.11 USD.
         PaperTrade small = spxTrade();

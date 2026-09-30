@@ -351,6 +351,16 @@ ScreenerRow scanRow(const QString &symbol, qsizetype count)
     return row;
 }
 
+// The one-instrument snapshot most scans below feed the runner: a 60-close scan row plus
+// a 30-close session series under the same symbol (PMD CPD: one helper, not three copies).
+MarketSnapshot oneSymbolSnapshot(const QString &symbol)
+{
+    MarketSnapshot snap;
+    snap.screenerRows = {scanRow(symbol, 60)};
+    snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+    return snap;
+}
+
 // `count` closes moving monotonically by `step` from `start` — a series whose last six
 // points have ONE unambiguous direction, which scanRow's noisy shape does not guarantee.
 QList<double> trend(double start, double step, qsizetype count)
@@ -396,12 +406,9 @@ ScreenerRow hourlyRow(const QString &symbol, const QList<double> &closes)
 
 const Prediction *rowFor(const QList<Prediction> &ledger, const QString &symbol)
 {
-    for (const Prediction &p : ledger) {
-        if (p.symbol == symbol) {
-            return &p;
-        }
-    }
-    return nullptr;
+    const auto it =
+        std::ranges::find_if(ledger, [&symbol](const Prediction &p) { return p.symbol == symbol; });
+    return (it == ledger.cend()) ? nullptr : &*it;
 }
 
 // Every ledger row for `symbol`, in the order written — one per scan that evaluated it.
@@ -433,12 +440,9 @@ QList<Prediction> compositeRows(const QList<Prediction> &ledger)
 // not read as an empty (= taken) code.
 QString decisionCodeFor(const QSignalSpy &spy, const QString &symbol)
 {
-    for (const QList<QVariant> &args : spy) {
-        if (args.at(0).toString() == symbol) {
-            return args.at(2).toString();
-        }
-    }
-    return QStringLiteral("<no decision reported>");
+    const auto it = std::ranges::find_if(
+        spy, [&symbol](const QList<QVariant> &args) { return args.at(0).toString() == symbol; });
+    return (it == spy.cend()) ? QStringLiteral("<no decision reported>") : it->at(2).toString();
 }
 
 // Seed the book, bring up the venue and a real-mode client on it, let the per-tick quote
@@ -471,9 +475,7 @@ void scanBtcWithRowBehindBy(qint64 behindSecs, QuoteRun *out)
     QCOMPARE(client.instrumentIdFor(symbol), kBtcId);
     out->quoteAgeMs = client.quotes().value(kBtcId).ageMs(QDateTime::currentDateTimeUtc());
 
-    MarketSnapshot snap;
-    snap.screenerRows = {scanRow(symbol, 60)};
-    snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+    const MarketSnapshot snap = oneSymbolSnapshot(symbol);
     runner.onDecisions({buyRow(symbol)}, snap);
 
     out->code = decisionCodeFor(decisions, symbol);
@@ -628,9 +630,7 @@ private slots:
         const QSignalSpy logs(&runner, &BotSimRunner::log);
         QVERIFY(logs.isValid());
         runner.setArmed(true);
-        MarketSnapshot snap;
-        snap.screenerRows = {scanRow(symbol, 60)};
-        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        const MarketSnapshot snap = oneSymbolSnapshot(symbol);
 
         // Scan 1: the file gains the runner's row, and the line reports the record OF THAT
         // FILE — the seeded history with the new row resolving its last call.
@@ -1226,9 +1226,7 @@ private slots:
         const QSignalSpy logs(&runner, &BotSimRunner::log);
         QVERIFY(logs.isValid());
         runner.setArmed(true);
-        MarketSnapshot snap;
-        snap.screenerRows = {scanRow(symbol, 60)};
-        snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+        const MarketSnapshot snap = oneSymbolSnapshot(symbol);
         runner.onDecisions({buyRow(symbol)}, snap);
 
         const QList<Prediction> file = loadPredictions(BotSimRunner::ledgerPath());

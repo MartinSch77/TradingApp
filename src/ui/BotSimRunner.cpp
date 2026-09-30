@@ -618,11 +618,10 @@ bool BotSimRunner::harvestDayTarget(const QDateTime &now)
 void BotSimRunner::announceOpened(qint64 id, const QString &symbol)
 {
     emit tradeOpened(symbol);
-    for (const PaperTrade &trade : m_book.openTrades()) {
-        if (trade.id == id) {
-            emit tradeOpenedDetail(trade);
-            return;
-        }
+    const auto &open = m_book.openTrades();
+    const auto hit = std::ranges::find_if(open, [id](const PaperTrade &t) { return t.id == id; });
+    if (hit != open.cend()) {
+        emit tradeOpenedDetail(*hit);
     }
 }
 

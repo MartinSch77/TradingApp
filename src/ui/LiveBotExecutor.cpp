@@ -6,6 +6,7 @@
 #include "services/EtoroClient.h"
 #include "ui/BotSimRunner.h"
 
+#include <algorithm>
 #include <utility>
 
 using trading::LiveMirrorInputs;
@@ -185,11 +186,11 @@ bool LiveBotExecutor::isArmed(const QDateTime &now) const
 QString LiveBotExecutor::stateLine(const QDateTime &now) const
 {
     const qint32 open = openLiveCountFor(QString());
-    const QString day = (m_day.realized.isValid() && (m_day.date == now.toUTC().date()))
-                            ? m_day.realized.toString()
-                            : QStringLiteral("nothing realised today");
+    const QString realised = (m_day.realized.isValid() && (m_day.date == now.toUTC().date()))
+                                 ? m_day.realized.toString()
+                                 : QStringLiteral("nothing realised today");
     return QStringLiteral("%1 · day: %2 of %3 loss cap · %4 mirrored (%5 open)")
-        .arg(m_arm.stateLine(now), day,
+        .arg(m_arm.stateLine(now), realised,
              m_dayLossCap.isValid() ? m_dayLossCap.toString()
                                     : (m_cfg.maxDailyLoss.isValid() ? m_cfg.maxDailyLoss.toString()
                                                                     : QStringLiteral("no")))
@@ -199,13 +200,10 @@ QString LiveBotExecutor::stateLine(const QDateTime &now) const
 
 qint32 LiveBotExecutor::openLiveCountFor(const QString &symbol) const
 {
-    qint32 count = 0;
-    for (const LiveMirroredPosition &pos : m_mirrored) {
-        if (!pos.closed && (symbol.isEmpty() || (pos.symbol == symbol))) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<qint32>(
+        std::ranges::count_if(m_mirrored, [&symbol](const LiveMirroredPosition &pos) {
+            return !pos.closed && (symbol.isEmpty() || (pos.symbol == symbol));
+        }));
 }
 
 trading::OrderContext LiveBotExecutor::contextFor(const PaperTrade &trade,

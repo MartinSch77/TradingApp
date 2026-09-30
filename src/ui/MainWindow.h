@@ -89,7 +89,12 @@ public:
     // every translation unit that includes this header (moc's, main.cpp's) — where they
     // are incomplete. The definition lives in MainWindow.cpp, beside the includes.
     ~MainWindow() override;
-    Q_DISABLE_COPY_MOVE(MainWindow)
+    // Spelled out rather than Q_DISABLE_COPY_MOVE: cppcheck 2.13's Qt library knows
+    // Q_DISABLE_COPY but not the _MOVE variant and reports it as an unknown macro.
+    MainWindow(const MainWindow &) = delete;
+    MainWindow &operator=(const MainWindow &) = delete;
+    MainWindow(MainWindow &&) = delete;
+    MainWindow &operator=(MainWindow &&) = delete;
 
     // Double-tap 's' = Sell, 'b' = Buy (application-wide, ignored while typing). Public,
     // as in QObject: narrowing an override's visibility is what clang-tidy's

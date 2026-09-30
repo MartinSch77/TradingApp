@@ -717,8 +717,9 @@ struct PaperClosedTrade {
                                    double markRate, bool isBuy);
 
 // Rollover nights between two instants, charging a night per date boundary
-// crossed, with a Friday→Monday crossing counted as THREE (eToro's tripled
-// weekend rollover, REQ-F-013). Never negative.
+// crossed, with the Friday night counted as THREE (eToro's tripled weekend
+// rollover, REQ-F-013) and the Saturday and Sunday nights as ZERO — they are
+// inside that one charge, so Friday→Monday is 3 nights, not 5. Never negative.
 [[nodiscard]] qint32 paperRolloverNights(const QDateTime &from, const QDateTime &to);
 
 // Rollover cost in EUR for `nights` nights on this position, from the
@@ -1009,7 +1010,9 @@ struct ExitContext {
 [[nodiscard]] double paperRemainingUpside(const PaperTrade &trade, double markRate);
 
 // What holding this position until `until` will cost in EUR: the rollover nights in
-// between (with eToro's tripled weekend night, via paperRolloverNights) plus the
+// between (with eToro's tripled weekend night, via paperRolloverNights — the
+// Saturday and Sunday nights are inside that tripled Friday charge and add nothing,
+// so a horizon spanning a weekend rents 3 nights for it, not 5) plus the
 // half-spread it must still pay to get out. A carry CREDIT makes this smaller, and
 // can make it negative — being paid to hold is not a reason to close.
 [[nodiscard]] double paperCostToHold(const PaperTrade &trade, const ExitContext &ctx,

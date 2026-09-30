@@ -30,6 +30,7 @@ constexpr qsizetype kMinCloses = 12;
 // eToro charges at the tripled weekend rate.
 constexpr int kFriday = 5;
 constexpr int kSaturday = 6;
+constexpr int kSunday = 7;
 // Fraction of free cash a single stake may use, so the opening half-spread (at most
 // ~0.5% of the stake at the leverage cap) still fits and cash stays >= 0.
 constexpr double kCashHeadroom = 0.98;
@@ -1089,6 +1090,26 @@ double PaperClosedTrade::heldHours() const
 // Cost and P/L model
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Rollover nights billed at the date boundary that STARTS `day`: the night began
+// the previous evening, so the Friday night (the boundary into Saturday) is the
+// tripled weekend charge, the Saturday and Sunday nights are already inside it and
+// bill nothing, and every other night is one.
+[[nodiscard]] qint32 nightsEndingOn(const QDate &day)
+{
+    const int previous = day.addDays(-1).dayOfWeek();
+    if (previous == kFriday) {
+        return 3;
+    }
+    if ((previous == kSaturday) || (previous == kSunday)) {
+        return 0;
+    }
+    return 1;
+}
+
+}   // namespace
+
 double paperUnits(double stake, qint32 leverage, double rate)
 {
     if (rate <= 0.0) {
@@ -1124,10 +1145,14 @@ qint32 paperRolloverNights(const QDateTime &from, const QDateTime &to)
         return 0;
     }
     // One night per date boundary crossed. The night that ends on date d began
-    // the previous evening, so a Friday evening's rollover is the weekend one.
+    // the previous evening, so a Friday evening's rollover is the weekend one —
+    // charged three times, and it is the WHOLE weekend: eToro bills nothing more
+    // on the Saturday and Sunday nights, so those two boundaries count 0. Counting
+    // them as ordinary nights made Friday→Monday cost 5 nights (3 + 1 + 1) instead
+    // of the 3 the account actually pays.
     qint32 nights = 0;
     for (QDate day = from.date().addDays(1); day <= to.date(); day = day.addDays(1)) {
-        nights += (day.addDays(-1).dayOfWeek() == kFriday) ? 3 : 1;
+        nights += nightsEndingOn(day);
     }
     return nights;
 }

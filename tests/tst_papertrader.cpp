@@ -157,6 +157,17 @@ private slots:
         // Tuesday -> Saturday crosses Tue/Wed, Wed/Thu, Thu/Fri and the FRIDAY
         // night, which eToro charges three times: 3 + 3 = 6.
         QCOMPARE(paperRolloverNights(tue, tue.addDays(4)), 6);
+        // The tripled Friday night IS the whole weekend: the Saturday and Sunday
+        // nights bill nothing more, so Friday -> Monday is 3, not the 5 (3 + 1 + 1)
+        // the counter once charged.
+        const QDateTime fri(QDate(2026, 8, 7), QTime(12, 0), QTimeZone::UTC);   // Friday
+        QCOMPARE(paperRolloverNights(fri, fri.addDays(3)), 3);   // Fri -> Mon
+        QCOMPARE(paperRolloverNights(fri.addDays(-1), fri.addDays(3)), 4);   // Thu -> Mon
+        QCOMPARE(paperRolloverNights(fri.addDays(1), fri.addDays(2)), 0);   // Sat -> Sun
+        QCOMPARE(paperRolloverNights(fri, fri.addDays(1)), 3);   // Fri -> Sat
+        // Sunday -> Tuesday: the Monday boundary (previous day Sunday) is 0, the
+        // Tuesday boundary an ordinary night — 1 in all.
+        QCOMPARE(paperRolloverNights(fri.addDays(2), fri.addDays(4)), 1);
         // Invalid or reversed inputs never charge.
         QCOMPARE(paperRolloverNights(QDateTime(), tue), 0);
         QCOMPARE(paperRolloverNights(tue, tue.addDays(-1)), 0);

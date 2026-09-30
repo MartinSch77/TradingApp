@@ -15,7 +15,12 @@ into a live decision, that is stated explicitly rather than left to be discovere
 
 Every scan cycle, `BotSimRunner` builds a ranked list of instruments from `DecisionEngine`'s
 composite (itself blended from a technical ensemble, a web rating, a keyword-based news
-score, a crowd tilt and a regime term). For each candidate it separately computes the
+score, a crowd tilt and a regime term). The per-instrument scan rows behind that composite come
+from the venue's screener (`EtoroClient::scanInstruments`, hourly candles for every instrument
+whose eToro id resolved) merged — through the one `mergeScreenerRow` rule — with the public-feed
+fallback rows `MarketFeeds::fetchCryptoScreenerRows` publishes for catalogued crypto, whose id
+never resolves in this build and which the venue scan therefore never rows; a venue row wins over
+a fallback row for the same symbol whenever it is usable. For each candidate it separately computes the
 nine-read confluence and the combined `LeadSignal`, asks the local LLM (if enabled) and
 resolves its answer against the composite, sizes an entry (`buildEntrySignal`), runs it
 through the entry gate (`paperEntryVerdict` — day rules, tradability, pace/session,
@@ -181,29 +186,75 @@ an otherwise-accepted trade, but it can never open one on its own, and an untrai
 model only annotates (never gates), matching the same "an unmeasurable/untrusted signal
 never manufactures a refusal out of nothing" discipline as §§3-5.
 
-## 8. `SwingPullbackStrategyV1` — standalone / backtest-only, NOT in the live loop
+## 8. `SwingPullbackStrategyV1` — wired into the live loop, OFF by default, not yet validated live
 
 The 2026-08-12 strategy redesign's `ITradingStrategy`/`SwingPullbackStrategyV1`/
-`swingExitDecision`/`StrategyBacktest` modules are real, tested code (`docs/design.md`,
-`DES-DOM-SWING`/`DES-DOM-BACKTEST`) — but `grep`ing `BotSimRunner.cpp` for
-`SwingPullback`/`ITradingStrategy` returns **no matches**. The only non-test caller is
-`StrategyBacktest.cpp`. This is stated in the class's own header comment
-(`SwingPullbackStrategy.h:90`: *"the caller (BotSimRunner, **once wired**)..."*) and repeated
-here because it is the kind of fact that is easy to assume is live once code exists and
-compiles. Wiring it into the scan loop — alongside a decision about whether it *replaces*
-or *runs beside* the composite/lead path for its own focus symbol — is future work, not
-part of what any of items 1-7 above changed.
+`swingExitDecision`/`StrategyBacktest` modules (`docs/design.md`, `DES-DOM-SWING`/
+`DES-DOM-BACKTEST`) ARE in the runner: `BotSimRunner::considerSwingEntries` runs once per
+scan (`onDecisions`, right after `markAndExit` and BEFORE the composite/AI leg, on the same
+arming switch) over `BotConfig::swingStrategySymbols` (default `SPX500`), and `BotSimRunner::applySwingExit` manages every open position tagged
+with a non-empty `PaperTrade::strategyVersion`. Both sit behind `BotConfig::useSwingStrategy`,
+**off by default** — a book that has not opted in runs the composite/AI path of §§2-7 exactly
+as before, and the strategy *runs beside* that path rather than replacing it (its own
+`swing …` basis, its own refusal codes through `entryDecision`). What it does when on:
+
+- **Inputs**: DAILY bars per symbol via `setDailyBars` (`MarketFeeds::dailyBarsReady`,
+  wired in `MainWindow::connectInstrumentFeeds`), plus the shared event-risk flag and the
+  volatility term structure. Only the desktop GUI feeds those bars today — in the console
+  binaries the path has no bars and opens nothing.
+- **Entry**: `SwingPullbackStrategyV1::evaluate` on the bars; the fill is the LAST DAILY
+  CLOSE, not a live quote; the stop is the strategy's ATR-based distance; the stake comes
+  from `sizeByExplicitRisk` (`riskPerTradeFor`, `swingLeverage`) capped by the SAME
+  `paperStakeCeiling` (portfolio/group/symbol risk, margin, cash) the composite bot's
+  entries respect. `preTradeRefusal` applies the same focus/market-closed obstacles first;
+  one swing position per symbol at a time, like the backtester.
+- **Exit**: the shared `barrierHit` stop/target check every mark tick, then — at most once
+  per calendar day, since `swingExitDecision`'s state is day-granular — the strategy's own
+  time-stop, 2R partial (`PaperBook::partialClose`, same id, reduced stake) and trailing
+  stop. NEVER `paperCloseDecision`: its SignalFade/GiveBack are tuned for the composite's
+  conviction signal, which this strategy is not scored against. The day-target harvest
+  (§9's sibling, `harvestDayTarget`) skips swing positions for the same reason.
+- **State**: `swingPartialTaken`/`swingSessionsHeld`/`swingInitialStopRate` live on the
+  `PaperTrade` itself and are persisted with the book; `m_swingLastEvalDate` is not (at
+  most one day-count tick is lost across a restart).
+
+What is NOT established: the live path has not been validated against the backtester on
+real days — a fill at the daily close, marked against 1-minute prices from the next tick,
+is a different animal from the backtest's bar-to-bar replay, and the swing-mode book
+(daily target off, `dailyProfitTarget = 0`) does not exist as a preset yet. Treat a swing
+result on a shared book as unmeasured until a dedicated book has run it.
 
 ## 9. The final entry gate (`paperEntryVerdict`, `PaperTrader.cpp:1423`)
 
 Checked in this exact order; the first refusal wins and names itself with a stable `code`:
 
-1. **Day gate** (`paperDayGate`) — daily profit target / loss limit already hit today.
+1. **Day gate** (`paperDayGate`) — daily profit target / loss limit already hit today, or
+   the weekend for a non-24/7 instrument (`day-target` / `day-loss` / `weekend`).
+1b. **Weekend charge ahead** (`paperWeekendCarryWouldClose`) — a calendar/economics fact,
+   not a signal one: on a Friday with a known positive fee table, a position opened now
+   would start at net ≤ 0 and the `WeekendCarry` exit would close it on its FIRST mark, a
+   pure spread round trip; refused as `weekend-carry-ahead`, naming the tripled Friday
+   charge in EUR. Silent exactly when that exit rule is (fees unknown, a credit, a zero
+   fee), so the two are one rule read from both ends.
 2. **Tradability** — market open → quote live → a signal (`dir != 0`) exists at all
-   (`market-closed` / `no-live-quote` / `no-signal`).
+   (`market-closed` / `no-live-quote` / `no-signal`). "Live" is the runner's claim
+   (`BotSimRunner::sidesFor`): a per-tick quote — the one price that carries the venue's
+   own stamp — counts only while `quoteIsFresh` says it is no older than the open-trades
+   table's own stale bound (`kQuoteStaleMs`, 120 s); a stalled one still prices the
+   candidate off the bulk mid but is refused here. The bulk-snapshot mid and the candle
+   fallback carry no stamp and count as live when nothing dated contradicts them — a
+   stated gap, not a hidden one.
 3. **Pace/session** (`paceVerdict`) — sit-out session phase (opening chaos, policy window) →
    the **confidence floor** (scaled by the phase's own window factor) → re-entry cooldown →
-   opens-per-hour pace limit → trading into a fresh opposite range break → the **LeadSignal
+   opens-per-hour pace limit → trading into a fresh opposite range break (`against-range-break`;
+   the runner reads `openingRange` off the instrument's 1-MINUTE series, `intradayBySymbol`,
+   the same series §2's engine and the window use — the eToro scan's hourly closes are the
+   volatility source only — and only while that series is LIVE, which the runner judges
+   as "changed since the previous scan" (`adoptSymbolSeries`/`liveSessionSeries`: the
+   snapshot carries no stamp, the producers never clear an entry, and the two indices'
+   series are the CASH index Yahoo freezes at the New York close while the CFD is scanned
+   on; a first sighting is not yet known live); a symbol without a live 1-minute series
+   has no read) → the **LeadSignal
    veto** (§4's indication disagreeing at Strong-grade strength refuses as `lead-against`) →
    the **confluence majority** (§3: a majority of *measured* reads must agree, refuses as
    `no-confluence`).
@@ -234,13 +285,21 @@ BotSimRunner::onDecisions
         └─ tryOpen(row):
              1. preTradeRefusal            (focus set, then broker tradability)
              2. gateFor(row) → paperAiGate                       (§6: composite × model)
-             3. candidateFor(row, …) → indexReads/confluenceFor  (§3)
+             3. candidateFor(row, …) → openingRange(1-minute series) → rangeBreakDir
+                                      → indexReads/confluenceFor  (§3, ownSeries = the same series)
                                       → leadSignal                (§4)
              4. buildEntrySignal(candidate, cfg)                  (stop/target geometry, leverage)
              5. paperLeverageWithAi(sized, asked, aiMode)         (§6: leverage cap only)
              6. paperEntryVerdict(candidate, signal, book, cfg)   (§9: the entry gate)
              7. [if taken] applyNetGate → paperNetGate            (§7: BotNet last-chance veto)
              8. PaperBook::open(signal, stake, now)                — or refuse(code, why) and log it
+             9. recordPrediction(row, …)  — taken OR refused: one ledger row, priced by the
+                fill's own rule (sidesFor's mid; the hourly last close only when nothing prices
+                it — never the cash index's frozen 1-minute close), its "prior five minutes"
+                baseline from the LIVE 1-minute series (0 = unmeasured otherwise), tagged
+                strategyVersion "composite-v2" since 2026-09-29. The scan's FORECAST line
+                (reportForecast) scores rows of THAT version only: untagged rows from before
+                the switch stay in the file but never enter the runner's record
 ```
 
 Every step that refuses names a stable `code`; every step that could not measure something

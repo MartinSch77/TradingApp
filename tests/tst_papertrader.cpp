@@ -10,6 +10,7 @@
 #include "domain/PaperTrader.h"
 
 #include "domain/InstrumentCatalog.h"
+#include "domain/PositionMath.h"
 
 #include <QJsonArray>
 #include <QtTest/QtTest>
@@ -118,6 +119,33 @@ PaperTrade tradeAt(double openRate, bool isBuy, double stake = 3000.0, qint32 le
     return t;
 }
 
+// The position PaperBook::open would create from this candidate's signal on
+// `margin` EUR, seconds old: its half-spread paid, nothing earned yet.
+PaperTrade freshPositionFrom(const CandidateInput &in, const EntrySignal &sig, double margin)
+{
+    PaperTrade t = tradeAt(sig.fillRate, sig.isBuy, margin, sig.leverage);
+    t.symbol = in.symbol;
+    t.slRate = sig.slRate;
+    t.tpRate = sig.tpRate;
+    t.openCost = paperHalfSpreadCost(margin, sig.leverage, sig.spreadPct);
+    t.openTime = in.now;
+    t.feesChargedTo = in.now;
+    t.markTime = in.now.addSecs(5);
+    return t;
+}
+
+// That position's FIRST mark: at its own fill, five seconds later, with the same
+// spread and fee knowledge the candidate carried.
+ExitContext firstMarkFor(const CandidateInput &in, const EntrySignal &sig)
+{
+    ExitContext ctx = exitAt(sig.fillRate, in.dir, in.confidence, in.now.addSecs(5));
+    ctx.spreadPct = in.spreadPct;
+    ctx.fees = in.fees;
+    ctx.feesKnown = in.feesKnown;
+    ctx.eurPerUsd = in.eurPerUsd;
+    return ctx;
+}
+
 } // namespace
 
 class TestPaperTrader : public QObject
@@ -157,6 +185,17 @@ private slots:
         // Tuesday -> Saturday crosses Tue/Wed, Wed/Thu, Thu/Fri and the FRIDAY
         // night, which eToro charges three times: 3 + 3 = 6.
         QCOMPARE(paperRolloverNights(tue, tue.addDays(4)), 6);
+        // The tripled Friday night IS the whole weekend: the Saturday and Sunday
+        // nights bill nothing more, so Friday -> Monday is 3, not the 5 (3 + 1 + 1)
+        // the counter once charged.
+        const QDateTime fri(QDate(2026, 8, 7), QTime(12, 0), QTimeZone::UTC);   // Friday
+        QCOMPARE(paperRolloverNights(fri, fri.addDays(3)), 3);   // Fri -> Mon
+        QCOMPARE(paperRolloverNights(fri.addDays(-1), fri.addDays(3)), 4);   // Thu -> Mon
+        QCOMPARE(paperRolloverNights(fri.addDays(1), fri.addDays(2)), 0);   // Sat -> Sun
+        QCOMPARE(paperRolloverNights(fri, fri.addDays(1)), 3);   // Fri -> Sat
+        // Sunday -> Tuesday: the Monday boundary (previous day Sunday) is 0, the
+        // Tuesday boundary an ordinary night — 1 in all.
+        QCOMPARE(paperRolloverNights(fri.addDays(2), fri.addDays(4)), 1);
         // Invalid or reversed inputs never charge.
         QCOMPARE(paperRolloverNights(QDateTime(), tue), 0);
         QCOMPARE(paperRolloverNights(tue, tue.addDays(-1)), 0);
@@ -2252,45 +2291,46 @@ private slots:
         cfg.dailyProfitTarget = 350.0;
         BotDay day;
         day.date = QDate(2026, 8, 4);
+        const QDateTime now(day.date, QTime(15, 0), QTimeZone::UTC);   // the ledger's own day
 
         // Nothing yet booked, nothing open: nothing to bank.
-        QCOMPARE(paperHarvestPick({}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({}, day, now, cfg), qint64{0});
 
         // No single position covers the whole 350: the rule waits rather than
         // stacking closes — banking a PART of the day is what the exits already do.
         const QList<HarvestOption> small{{1, 100.0}, {2, 180.0}, {3, -40.0}};
-        QCOMPARE(paperHarvestPick(small, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick(small, day, now, cfg), qint64{0});
 
         // One does: it is closed, and the day is made.
         const QList<HarvestOption> enough{{1, 100.0}, {2, 420.0}, {3, -40.0}};
-        QCOMPARE(paperHarvestPick(enough, day, cfg), qint64{2});
+        QCOMPARE(paperHarvestPick(enough, day, now, cfg), qint64{2});
 
         // Several do: the SMALLEST sufficient one goes, so the best position keeps
         // running and the least upside is given up.
         const QList<HarvestOption> several{{1, 900.0}, {2, 420.0}, {3, 355.0}, {4, 40.0}};
-        QCOMPARE(paperHarvestPick(several, day, cfg), qint64{3});
+        QCOMPARE(paperHarvestPick(several, day, now, cfg), qint64{3});
 
         // What is already booked counts: with 300 banked, 60 completes the day.
         day.realized = 300.0;
-        QCOMPARE(paperHarvestPick({{7, 60.0}, {8, 900.0}}, day, cfg), qint64{7});
-        QCOMPARE(paperHarvestPick({{7, 49.99}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 60.0}, {8, 900.0}}, day, now, cfg), qint64{7});
+        QCOMPARE(paperHarvestPick({{7, 49.99}}, day, now, cfg), qint64{0});
 
         // Target already reached — the day gate stops the bot; this rule stops too
         // instead of closing healthy positions for a number that is already made.
         day.realized = 400.0;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
 
         // A losing day is not banked by this rule either: the loss limit governs.
         day.realized = -500.0;
-        QCOMPARE(paperHarvestPick({{7, 100.0}}, day, cfg), qint64{0});   // 100 < 850 missing
+        QCOMPARE(paperHarvestPick({{7, 100.0}}, day, now, cfg), qint64{0});   // 100 < 850 missing
 
         // Switched off, or no target: never.
         day.realized = 0.0;
         cfg.harvestForDailyTarget = false;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
         cfg.harvestForDailyTarget = true;
         cfg.dailyProfitTarget = 0.0;
-        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, cfg), qint64{0});
+        QCOMPARE(paperHarvestPick({{7, 900.0}}, day, now, cfg), qint64{0});
 
         // The reason has a word of its own for the table — the record must show WHY
         // a winner was cut, since that is the cost this rule pays.
@@ -2530,25 +2570,54 @@ private slots:
         cfg.dailyProfitTarget = 100.0;
         cfg.harvestForDailyTarget = true;
         BotDay day;
+        day.date = QDate(2026, 8, 4);
         day.realized = 40.0;   // 60 still missing
+        const QDateTime now(day.date, QTime(15, 0), QTimeZone::UTC);
 
         // Nothing on offer covers the rest of the day: nothing is closed.
-        QCOMPARE(paperHarvestPick({{1, 10.0}, {2, 59.99}}, day, cfg), 0);
+        QCOMPARE(paperHarvestPick({{1, 10.0}, {2, 59.99}}, day, now, cfg), 0);
         // Two that do: the SMALLER is taken, because it gives up the least upside.
-        QCOMPARE(paperHarvestPick({{1, 500.0}, {2, 61.0}, {3, 60.0}}, day, cfg), 3);
+        QCOMPARE(paperHarvestPick({{1, 500.0}, {2, 61.0}, {3, 60.0}}, day, now, cfg), 3);
         // The day is already made — the day gate stops the bot, not the harvest.
         BotDay made;
+        made.date = day.date;
         made.realized = 100.0;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, made, cfg), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, made, now, cfg), 0);
         // The rule can be switched off, and a target of zero disables it too.
         BotConfig off = cfg;
         off.harvestForDailyTarget = false;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, off), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, now, off), 0);
         BotConfig noTarget = cfg;
         noTarget.dailyProfitTarget = 0.0;
-        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, noTarget), 0);
+        QCOMPARE(paperHarvestPick({{1, 500.0}}, day, now, noTarget), 0);
         // No options at all is not a crash.
-        QCOMPARE(paperHarvestPick({}, day, cfg), 0);
+        QCOMPARE(paperHarvestPick({}, day, now, cfg), 0);
+
+        // The ledger rolls over on the first CLOSE of a new date, so before that close
+        // it still says what YESTERDAY banked. 300 of a 350 target booked on the 4th
+        // lets a 60-EUR winner complete the day on the 4th — but on the 5th the full 350
+        // is missing and 60 covers none of it, so the same book closes nothing.
+        BotConfig target350 = cfg;
+        target350.dailyProfitTarget = 350.0;
+        BotDay yesterday;
+        yesterday.date = QDate(2026, 8, 4);
+        yesterday.realized = 300.0;
+        const QList<HarvestOption> winner{{9, 60.0}};
+        QCOMPARE(paperHarvestPick(winner, yesterday,
+                                  QDateTime(QDate(2026, 8, 4), QTime(21, 0), QTimeZone::UTC),
+                                  target350),
+                 9);
+        QCOMPARE(paperHarvestPick(winner, yesterday,
+                                  QDateTime(QDate(2026, 8, 5), QTime(9, 0), QTimeZone::UTC),
+                                  target350),
+                 0);
+        // No clock at all is not "today" either: the same silence paperDayGate keeps.
+        QCOMPARE(paperHarvestPick(winner, yesterday, QDateTime(), target350), 0);
+        // A winner that covers the FULL target is still taken on the new day.
+        QCOMPARE(paperHarvestPick({{9, 60.0}, {10, 350.0}}, yesterday,
+                                  QDateTime(QDate(2026, 8, 5), QTime(9, 0), QTimeZone::UTC),
+                                  target350),
+                 10);
     }
 
     //! @tstid TS-PT-032 @design DES-DOM-LIFECYCLE
@@ -3123,6 +3192,246 @@ private slots:
         QVERIFY(std::min(proposedMargin, ceiling.stake) <= ceiling.stake + 1e-9);
         const double smallMargin = ceiling.stake / 2.0;
         QCOMPARE(std::min(smallMargin, ceiling.stake), smallMargin);
+    }
+
+    //! @tstid TS-PAPER-044 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // The WeekendCarry exit reads paperWeekendChargeAhead, which is true the WHOLE
+    // Friday, and a fresh position starts at net ≤ 0 — so anything opened on a Friday
+    // with a known positive fee table was closed on its first mark, a pure spread round
+    // trip. The entry gate now refuses what that rule would close at once, and it must
+    // be silent exactly when the exit rule is: the two are one rule read from both ends.
+    void TS_PAPER_044_entryRefusesWhatTheWeekendCarryRuleWouldCloseAtOnce()
+    {
+        const BotConfig cfg;
+        CandidateInput friday = goodCandidate();
+        friday.now = QDateTime(QDate(2026, 8, 7), QTime(12, 0), QTimeZone::UTC);   // a Friday
+        QVERIFY(paperWeekendChargeAhead(friday.now));
+        friday.feesKnown = true;
+        friday.fees.buyOvernight = 0.5;   // USD per unit per night: a CHARGE
+        friday.fees.sellOvernight = 0.5;
+        friday.fees.buyWeekend = 1.5;
+        friday.fees.sellWeekend = 1.5;
+        friday.eurPerUsd = 1.0;
+        const EntrySignal fridaySig = buildEntrySignal(friday, cfg);
+        QVERIFY(fridaySig.valid);
+        QVERIFY(paperWeekendCarryWouldClose(friday, fridaySig));
+        const EntryVerdict refused = paperEntryVerdict(friday, fridaySig, freshBook(), cfg);
+        QVERIFY(!refused.take);
+        QCOMPARE(refused.code, QStringLiteral("weekend-carry-ahead"));
+        // The `why` names the charge in EUR on the stake the sizing would give.
+        const double stake = std::max(
+            paperStakeFor(freshBook(), cfg, paperEntrySignalRisk(fridaySig)), cfg.minStake);
+        const double charge = paperWeekendChargeForEntry(friday, fridaySig, stake);
+        QVERIFY(charge > 0.0);
+        QVERIFY(refused.why.contains(QString::number(charge, 'f', 2) + QStringLiteral(" EUR")));
+
+        // The cross-check that makes this a mirror and not a policy: the position this
+        // candidate would open, marked at its own fill a few seconds later, is exactly
+        // what paperCloseDecision closes as WeekendCarry.
+        const PaperTrade fresh = freshPositionFrom(friday, fridaySig, stake);
+        QVERIFY(fresh.netPnl() <= 0.0);
+        QCOMPARE(paperCloseDecision(fresh, firstMarkFor(friday, fridaySig), cfg),
+                 CloseReason::WeekendCarry);
+
+        // The same candidate on a Wednesday is simply taken: the weekend is not ahead.
+        CandidateInput wednesday = friday;
+        wednesday.now = QDateTime(QDate(2026, 8, 5), QTime(12, 0), QTimeZone::UTC);
+        const EntrySignal wednesdaySig = buildEntrySignal(wednesday, cfg);
+        QVERIFY(!paperWeekendCarryWouldClose(wednesday, wednesdaySig));
+        QVERIFY(paperEntryVerdict(wednesday, wednesdaySig, freshBook(), cfg).take);
+
+        // Silent exactly when the exit rule is silent. Fees unknown: the exit rule
+        // cannot price the weekend, so the entry does not pretend to either…
+        CandidateInput unknownFees = friday;
+        unknownFees.feesKnown = false;
+        const EntrySignal unknownSig = buildEntrySignal(unknownFees, cfg);
+        QVERIFY(!paperWeekendCarryWouldClose(unknownFees, unknownSig));
+        QCOMPARE(paperCloseDecision(freshPositionFrom(unknownFees, unknownSig, stake),
+                                    firstMarkFor(unknownFees, unknownSig), cfg),
+                 CloseReason::None);
+        QVERIFY(paperEntryVerdict(unknownFees, unknownSig, freshBook(), cfg).take);
+        // …a CREDIT is money for holding, never a reason to close or to refuse…
+        CandidateInput credit = friday;
+        credit.fees.buyOvernight = -0.2;
+        const EntrySignal creditSig = buildEntrySignal(credit, cfg);
+        QVERIFY(paperWeekendChargeForEntry(credit, creditSig, stake) < 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(credit, creditSig));
+        QCOMPARE(paperCloseDecision(freshPositionFrom(credit, creditSig, stake),
+                                    firstMarkFor(credit, creditSig), cfg),
+                 CloseReason::None);
+        QVERIFY(paperEntryVerdict(credit, creditSig, freshBook(), cfg).take);
+        // …and a fee table that is all zeros charges nothing, so nothing is refused.
+        CandidateInput zeroFee = friday;
+        zeroFee.fees = InstrumentFees{};
+        const EntrySignal zeroSig = buildEntrySignal(zeroFee, cfg);
+        QCOMPARE(paperWeekendChargeForEntry(zeroFee, zeroSig, stake), 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(zeroFee, zeroSig));
+        QVERIFY(paperEntryVerdict(zeroFee, zeroSig, freshBook(), cfg).take);
+        // An unsized signal has no position to close, so it answers false and leaves
+        // the refusal to the gate that names the missing history. The REAL unsized
+        // shape is what buildEntrySignal returns for a priced candidate whose history is
+        // too short: fillRate already at the mid, leverage at its default x1, valid
+        // false — a bare EntrySignal{} (fillRate 0) would pass this on a version that
+        // gated on the rate instead of on `valid`, which is exactly the version that
+        // counted every short-history Friday row as weekend-carry-ahead.
+        CandidateInput thin = friday;
+        thin.closes = thin.closes.mid(0, 5);
+        const EntrySignal thinSig = buildEntrySignal(thin, cfg);
+        QVERIFY(!thinSig.valid);
+        QVERIFY(thinSig.fillRate > 0.0);
+        QCOMPARE(paperWeekendChargeForEntry(thin, thinSig, stake), 0.0);
+        QVERIFY(!paperWeekendCarryWouldClose(thin, thinSig));
+        QCOMPARE(paperEntryVerdict(thin, thinSig, freshBook(), cfg).code,
+                 QStringLiteral("no-history"));
+        QVERIFY(!paperWeekendCarryWouldClose(friday, EntrySignal{}));
+
+        // A 24/7 instrument: the exit rule applies paperWeekendChargeAhead regardless of
+        // tradesOnWeekend, and the entry refusal must mirror THAT — whichever way it
+        // goes — rather than assert a policy of its own about crypto.
+        CandidateInput btc = friday;
+        btc.symbol = QStringLiteral("BTC");
+        btc.instrumentId = 0;
+        QVERIFY(tradesOnWeekend(btc.symbol));
+        const EntrySignal btcSig = buildEntrySignal(btc, cfg);
+        QVERIFY(btcSig.valid);
+        const bool exitCloses = paperCloseDecision(freshPositionFrom(btc, btcSig, stake),
+                                                   firstMarkFor(btc, btcSig), cfg)
+                                == CloseReason::WeekendCarry;
+        QCOMPARE(paperWeekendCarryWouldClose(btc, btcSig), exitCloses);
+        QCOMPARE(paperEntryVerdict(btc, btcSig, freshBook(), cfg).code
+                     == QStringLiteral("weekend-carry-ahead"),
+                 exitCloses);
+        // …and the mirror holds on the silent side too: with the fee table unknown the
+        // exit rule cannot fire, so the refusal disappears for the 24/7 name as well.
+        CandidateInput btcUnknown = btc;
+        btcUnknown.feesKnown = false;
+        const EntrySignal btcUnknownSig = buildEntrySignal(btcUnknown, cfg);
+        QCOMPARE(paperCloseDecision(freshPositionFrom(btcUnknown, btcUnknownSig, stake),
+                                    firstMarkFor(btcUnknown, btcUnknownSig), cfg),
+                 CloseReason::None);
+        QVERIFY(!paperWeekendCarryWouldClose(btcUnknown, btcUnknownSig));
+        QVERIFY(paperEntryVerdict(btcUnknown, btcUnknownSig, freshBook(), cfg).code
+                != QStringLiteral("weekend-carry-ahead"));
+    }
+
+    //! @tstid TS-PAPER-045 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // The runner prices an entry AND reports a live mark off ONE age rule, pinned here as
+    // the pure function it calls: a per-tick quote is fresh while its own stamp is within
+    // the bound, an unstamped quote fails OPEN (the venue gave no age — that is not a
+    // stall), a stamp ahead of the clock is skew and passes, and the ONE refusal is a
+    // dated stall past the bound. The bound the runner uses is the open-trades table's
+    // kQuoteStaleMs, so the boundary is checked at that value and one millisecond past
+    // it. A quote that stopped updating used to pass `quoteLive` unread; the gate's
+    // answer to a non-live quote is `no-live-quote`, and nothing else about the
+    // candidate is allowed to change that.
+    void TS_PAPER_045_quoteIsFreshRefusesOnlyADatedStall()
+    {
+        const QDateTime now(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        constexpr qint64 maxAge = kQuoteStaleMs;
+        Quote q;
+        q.bid = 5000.0;
+        q.ask = 5001.0;
+        // Unstamped: fails open.
+        QVERIFY(!q.asOf.isValid());
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        // Just printed.
+        q.asOf = now.addSecs(-30);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        // Exactly at the bound still passes; one millisecond past it is a stall.
+        q.asOf = now.addMSecs(-maxAge);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        q.asOf = now.addMSecs(-(maxAge + 1));
+        QVERIFY(!quoteIsFresh(q, now, maxAge));
+        // The measured lag of eToro's .24-7 feeds (11 minutes) is a stall.
+        q.asOf = now.addSecs(-11 * 60);
+        QVERIFY(!quoteIsFresh(q, now, maxAge));
+        // A stamp ahead of the local clock is skew, not staleness.
+        q.asOf = now.addSecs(5);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+
+        // What the runner does with a `false`: the candidate is still priced (bid/ask
+        // set) but not live, and the gate names exactly that.
+        const BotConfig cfg;
+        CandidateInput in = goodCandidate();
+        in.quoteLive = false;
+        const EntrySignal sig = buildEntrySignal(in, cfg);
+        QVERIFY(sig.valid);
+        QCOMPARE(paperEntryVerdict(in, sig, freshBook(), cfg).code,
+                 QStringLiteral("no-live-quote"));
+        in.quoteLive = true;
+        QVERIFY(paperEntryVerdict(in, sig, freshBook(), cfg).take);
+    }
+
+    //! @tstid TS-PAPER-046 @design DES-DOM-PAPER
+    // @relation(REQ-F-031, REQ-F-033, scope=function)
+    //
+    // The cost-proration identity behind the experience log's ONE label per position:
+    // a partial close followed by the close of the remainder books, over the two records,
+    // exactly what a single close of the whole position would have booked — gross, entry
+    // and exit half-spread, the rollover already accrued, and therefore the net — and
+    // leaves the account (cash, realized, costs paid) in the same place. That is what
+    // lets the runner label the final close's example with "record net + banked partial
+    // net" and call it the trade's net (TS-PAPER-041 pins the proration of ONE partial
+    // record; this pins the sum). Rollover is accrued BEFORE the partial so the feesPaid
+    // proration is exercised, not just the zero case.
+    void TS_PAPER_046_partialThenRemainderSumToOneWholeClose()
+    {
+        const BotConfig cfg;
+        const QDateTime t0(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        const EntrySignal good = buildEntrySignal(goodCandidate(), cfg);
+        QVERIFY(good.valid);
+        InstrumentFees fees;
+        fees.buyOvernight = 0.5;
+        const double exitRate = good.fillRate * 1.015;
+        const double exitSpreadPct = 0.03;   // wider than the entry's, so the two are told apart
+        const QDateTime tClose = t0.addDays(2).addSecs(3600);
+
+        // The split path: 40% out, then the rest, at the same rate and time.
+        PaperBook split(cfg);
+        const qint64 id = split.open(good, 2000.0, t0);
+        QVERIFY(id != 0);
+        split.accrueRollover(id, fees, 1.0, t0.addDays(2));
+        QVERIFY(split.openTrades().constFirst().feesPaid > 0.0);
+        const PaperBook::ExitPricing pricing{exitRate, exitSpreadPct, CloseReason::TakeProfit,
+                                             tClose};
+        const PaperClosedTrade partial = split.partialClose(id, 0.40, pricing);
+        QVERIFY(partial.partial);
+        const PaperClosedTrade rest =
+            split.close(id, exitRate, exitSpreadPct, CloseReason::StopLoss, tClose);
+        QVERIFY(!rest.partial);
+        QCOMPARE(rest.id, id);
+        QCOMPARE(split.state().openCount, 0);
+
+        // The whole path: the identical position closed in one go.
+        PaperBook whole(cfg);
+        const qint64 wholeId = whole.open(good, 2000.0, t0);
+        whole.accrueRollover(wholeId, fees, 1.0, t0.addDays(2));
+        const PaperClosedTrade one =
+            whole.close(wholeId, exitRate, exitSpreadPct, CloseReason::TakeProfit, tClose);
+        QVERIFY(!one.partial);
+        QVERIFY(one.feesPaid > 0.0);
+
+        // Leg by leg, the two records add up to the one.
+        QVERIFY(qAbs((partial.stake + rest.stake) - one.stake) < 1e-9);
+        QVERIFY(qAbs((partial.grossPnl + rest.grossPnl) - one.grossPnl) < 1e-9);
+        QVERIFY(qAbs((partial.openCost + rest.openCost) - one.openCost) < 1e-9);
+        QVERIFY(qAbs((partial.closeCost + rest.closeCost) - one.closeCost) < 1e-9);
+        QVERIFY(qAbs((partial.feesPaid + rest.feesPaid) - one.feesPaid) < 1e-9);
+        QVERIFY(qAbs((partial.netPnl + rest.netPnl) - one.netPnl) < 1e-9);
+        // …and the remainder's own net is NOT the trade's net: labelling it alone would
+        // understate a winner by exactly the partial's share.
+        QVERIFY(qAbs(rest.netPnl - one.netPnl) > 1.0);
+        QVERIFY(partial.netPnl > 0.0);
+
+        // The account ends in the same place either way.
+        QVERIFY(qAbs(split.state().cash - whole.state().cash) < 1e-9);
+        QVERIFY(qAbs(split.stats().realized - whole.stats().realized) < 1e-9);
+        QVERIFY(qAbs(split.stats().costsPaid - whole.stats().costsPaid) < 1e-9);
+        QVERIFY(qAbs(split.stats().equity - whole.stats().equity) < 1e-9);
     }
 };
 

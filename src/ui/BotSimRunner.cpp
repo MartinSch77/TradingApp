@@ -25,6 +25,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 using trading::CloseReason;
@@ -55,6 +56,11 @@ namespace {
 // produces new decisions; there is nothing to gain from evaluating entries faster
 // than the data behind them changes.
 constexpr int kTickMs = 5000;
+// How long a pure-mark tick may leave the book unsaved. The marks move every tick above,
+// but nothing a mark carries (P/L, peakNet, accrued rollover) is worth a full atomic
+// rewrite of botsim.json twelve times a minute; a minute bounds what a crash can lose to
+// something a restart re-marks within seconds anyway. Shape changes never wait.
+constexpr qint64 kMarkSaveIntervalSecs = 60;
 // How old a local model's proposal may be when it lands and still be acted on.
 // A CPU model legitimately takes tens of seconds, and another scan may well have
 // completed meanwhile — that is fine, because the entry is re-validated against
@@ -63,6 +69,27 @@ constexpr int kTickMs = 5000;
 constexpr qint64 kProposalMaxAgeMs = qint64{5} * 60 * 1000;
 // Persisted books (REQ-F-029: an experiment spans days, not one session).
 constexpr auto kStoreFile = "botsim.json";
+// The strategy version every ledger row of the composite/AI bot carries
+// (Prediction::strategyVersion). v2 marks the switch of 2026-09-29: the "previous five
+// minutes" baseline comes from the 1-minute series (before it, from the last six HOURLY
+// scan closes — five hours) and the row is priced by the fill's own rule (before it, the
+// hourly last close), so the earlier rows measure a different thing. They carry an EMPTY
+// version, and reportForecast scores ONLY rows of this version: the old ones stay in the
+// file for anyone scoring them on their own, but they never enter the runner's record —
+// filtering is what the field's contract promises, and the filter has to be applied
+// somewhere for it to be true.
+constexpr auto kCompositeStrategyVersion = "composite-v2";
+// The ONE age rule for a per-tick quote in this runner, shared by the entry pricing
+// (sidesFor) and the mark (markFor): a quote whose own stamp is older than this is
+// neither traded off nor reported as a live mark. The bound is deliberately the
+// open-trades table's own trading::kQuoteStaleMs (120 s) and not a second number —
+// two thresholds for "stale" in one process would let the bot open a trade off a
+// quote the window beside it already flags as a stale row. The runner's 5 s tick
+// against a scan cycle of minutes needs nothing longer than the feed's own bound.
+bool perTickQuoteFresh(const Quote &quote)
+{
+    return trading::quoteIsFresh(quote, QDateTime::currentDateTimeUtc(), trading::kQuoteStaleMs);
+}
 // How many newly closed trades it takes before the outcome model is refitted. Low
 // enough that a running experiment keeps learning, high enough that the fit is not
 // repeated for a single new example (REQ-F-033).
@@ -176,6 +203,7 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
       m_storeFile(std::move(storeFileName))
 {
     load();
+    acquireBookLock();
     loadModel();
     // What the bot has learned so far, and how much say it gets. Off by default:
     // a model that has never been trained must not quietly change what trades.
@@ -189,16 +217,26 @@ BotSimRunner::BotSimRunner(EtoroClient *client, OllamaAdvisor *ai, QObject *pare
     }
     m_timer->setInterval(kTickMs);
     static_cast<void>(connect(m_timer, &QTimer::timeout, this, &BotSimRunner::tick));
-    m_timer->start();  // marking runs always: the books must stay current even
-                       // while disarmed, or a restart would report stale P/L.
+    if (m_ownsBook) {
+        m_timer->start();   // marking runs always: the books must stay current even
+                            // while disarmed, or a restart would report stale P/L.
+    }
+    // …unless another process holds the book: then IT marks, and the timer never starts
+    // here — the minimal guard, since tick() is the only path that marks and exits
+    // between scans (onDecisions guards itself the same way).
 
     // load() ran before any consumer could connect, so its verdict is reported from
     // the event loop instead of from the constructor — otherwise the one line that
     // says whether a multi-day experiment is still running would be emitted into
-    // the void.
-    if (!m_restoreNote.isEmpty()) {
+    // the void. The same goes for the book being held elsewhere.
+    if (!m_restoreNote.isEmpty() || !m_ownsBook) {
         QTimer::singleShot(0, this, [this]() {
-            emit log(m_restoreNote, false);
+            if (!m_restoreNote.isEmpty()) {
+                emit log(m_restoreNote, false);
+            }
+            if (!m_ownsBook) {
+                emit log(bookHolderLine(), true);
+            }
             emit changed();
         });
     }
@@ -286,6 +324,7 @@ void BotSimRunner::applyDailyRules(double target, double lossLimit)
                           ? QStringLiteral(" (a rule set to 0 is switched off)")
                           : QString()),
              false);
+    save();   // a rule change is structural: it must not wait for the next mark save
 }
 
 void BotSimRunner::setAiMode(trading::BotAiMode mode)
@@ -307,6 +346,7 @@ void BotSimRunner::setAiMode(trading::BotAiMode mode)
                                                   "composite agrees")
                                  : QStringLiteral("the model's pick and side are traded"))),
              false);
+    save();   // the mode is persisted (a restart must not change what the experiment measures)
     emit changed();
 }
 
@@ -349,6 +389,16 @@ void BotSimRunner::setCoreFocusSymbols(const QStringList &symbols)
 
 void BotSimRunner::setArmed(bool armed)
 {
+    // Every way of arming goes through here — the button, TRADINGAPP_BOT_ARM at start-up,
+    // the console's launch — and none of them may arm a book another process is running.
+    if (armed && !m_ownsBook) {
+        emit log(bookHolderLine() + QStringLiteral(" Arming refused."), true);
+        // The GUI's arm button is checkable and only re-reads armed() on `changed`;
+        // without this it stays pressed on a runner that just refused, until the next
+        // scan happens to emit it — an armed-looking control over a disarmed bot.
+        emit changed();
+        return;
+    }
     if (m_armed == armed) {
         return;
     }
@@ -367,6 +417,11 @@ void BotSimRunner::setArmed(bool armed)
                      .arg(s.openTrades),
                  false);
     }
+    // The armed flag is persisted so an unattended experiment survives a restart — and
+    // it has to reach the disk NOW, not on the next mark save: those are throttled to
+    // once a minute (saveAfterMarks), and a bot armed 50 s before a power loss that
+    // restarts DISARMED is exactly the silent stop the persistence exists to prevent.
+    save();
     emit changed();
 }
 
@@ -389,8 +444,9 @@ BotSimRunner::Mark BotSimRunner::markFor(const PaperTrade &trade) const
     const auto it = quotes.constFind(trade.instrumentId);
     if (it != quotes.constEnd() && it->isValid()) {
         mark.rate = (it->bid + it->ask) / 2.0;
-        const qint64 age = it->ageMs(QDateTime::currentDateTimeUtc());
-        mark.live = (age >= 0) && (age < trading::kQuoteStaleMs);
+        // A stalled per-tick quote still marks the position (its last print is the best
+        // rate there is) but is not a LIVE mark — the window shows it as a stale row.
+        mark.live = perTickQuoteFresh(*it);
         if (mark.rate > 0.0) {
             return mark;
         }
@@ -424,6 +480,10 @@ void BotSimRunner::markAndExit()
     for (const PaperTrade &t : m_book.openTrades()) {
         ids.append(t.id);
     }
+    // The book's SHAPE before the pass: a close, a partial (one more closed record) or a
+    // harvest changes one of these counts, and that is what must reach the disk at once.
+    const qsizetype openBefore = m_book.openTrades().size();
+    const qsizetype closedBefore = m_book.closedTrades().size();
 
     bool moved = false;
     for (const qint64 id : ids) {
@@ -487,16 +547,40 @@ void BotSimRunner::markAndExit()
             moved = true;
         }
     }
-    if (harvestDayTarget()) {
+    if (harvestDayTarget(now)) {
         moved = true;
     }
     if (moved) {
-        save();
-        emit changed();
+        saveAfterMarks(now, openBefore, closedBefore);
+        emit changed();   // the window still refreshes every tick; only the DISK waits
     }
 }
 
-bool BotSimRunner::harvestDayTarget()
+void BotSimRunner::saveAfterMarks(const QDateTime &now, qsizetype openBefore,
+                                  qsizetype closedBefore)
+{
+    // A structural change is saved where it happens — the open (considerEntries), the
+    // reset, the focus/AI-mode/daily-rules setters and setArmed each call save() — and a
+    // close, partial or harvest inside THIS pass is caught by the shape check below; the
+    // throttle is ONLY for the pass that moved marks and rollover accrual and nothing
+    // else. (The arm/AI-mode/daily-rules saves are NOT as they were before the throttle:
+    // those changes used to ride on the next 5-second mark save, which the throttle
+    // would have stretched to a minute.) The swing strategy's day-granular
+    // state (trailing stop, sessions held) rides on the same throttle: it changes at most
+    // once a day per position, so a crash inside the minute after it costs one day's
+    // trailing step, not a position.
+    const bool structural = (m_book.openTrades().size() != openBefore)
+                            || (m_book.closedTrades().size() != closedBefore);
+    const bool due =
+        !m_lastMarkSave.isValid() || (m_lastMarkSave.secsTo(now) >= kMarkSaveIntervalSecs);
+    if (!structural && !due) {
+        return;
+    }
+    save();
+    m_lastMarkSave = now;
+}
+
+bool BotSimRunner::harvestDayTarget(const QDateTime &now)
 {
     // What each open position would BOOK if it closed right now: its net so far
     // minus the half-spread it still has to cross. A position whose exit cost is
@@ -504,6 +588,13 @@ bool BotSimRunner::harvestDayTarget()
     // and the carry rules apply.
     QList<trading::HarvestOption> options;
     for (const PaperTrade &trade : m_book.openTrades()) {
+        // A swing-strategy position is managed by swingExitDecision ONLY — the same
+        // dispatch markAndExit applies before paperCloseDecision. The daily target is
+        // the composite bot's stopping rule; cutting a multi-session swing trade for
+        // it would apply one strategy's discipline to another's book.
+        if (!trade.strategyVersion.isEmpty()) {
+            continue;
+        }
         const double spreadPct = effectiveSpreadPct(trade.symbol);
         if (spreadPct <= 0.0) {
             continue;
@@ -512,7 +603,7 @@ bool BotSimRunner::harvestDayTarget()
                         trade.netPnl()
                             - trading::paperHalfSpreadCost(trade.stake, trade.leverage, spreadPct)});
     }
-    const qint64 pick = trading::paperHarvestPick(options, m_book.day(), m_book.config());
+    const qint64 pick = trading::paperHarvestPick(options, m_book.day(), now, m_book.config());
     if (pick == 0) {
         return false;
     }
@@ -562,11 +653,22 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     sides.spreadPct = effectiveSpreadPct(symbol);
     const QHash<qint64, Quote> &quotes = m_client->quotes();
     const auto it = quotes.constFind(instrumentId);
+    // A per-tick quote exists only for an instrument the bot already holds, and it is
+    // the one price here that carries the venue's own stamp. Fresh: it prices the
+    // candidate and is live. Stale: the venue says this instrument stopped printing,
+    // so the candidate is still priced off the bulk mid below (the scan just priced
+    // it) but is NOT live — the gate then refuses it as `no-live-quote`, which is the
+    // countable answer; a line per candidate here would be noise (see the Sides note).
+    bool stalled = false;
     if (it != quotes.constEnd() && it->isValid()) {
-        sides.bid = it->bid;
-        sides.ask = it->ask;
-        sides.ok = true;
-        return sides;
+        if (perTickQuoteFresh(*it)) {
+            sides.bid = it->bid;
+            sides.ask = it->ask;
+            sides.ok = true;
+            sides.live = true;
+            return sides;
+        }
+        stalled = true;
     }
     // Most instruments have no per-tick quote (nothing is held in them), but the
     // tradeability poll keeps a mid AND a spread warm for every resolved one — so
@@ -574,12 +676,21 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     double mid = m_client->lastRateFor(instrumentId);
     // CRYPTO (and anything else the eToro id/rate path does not warm here) has no such mid:
     // it never resolves a non-zero instrumentId in this build, so lastRateFor is 0. Fall back
-    // to the scan's own 1-minute candle close — which equals the eToro bid to the cent (see the
-    // candle-vs-rate note) — so a priced-and-tradable instrument is not refused `no-live-quote`
-    // purely for lacking an eToro rate row. Still widened by the effective spread, which for
-    // crypto is already the modelled 1% floor, so the fill is never at the untouched mid.
-    if ((mid <= 0.0) && !closes.isEmpty() && (closes.constLast() > 0.0)) {
-        mid = closes.constLast();
+    // to its candle close — which equals the eToro bid to the cent (see the candle-vs-rate
+    // note) — so a priced-and-tradable instrument is not refused `no-live-quote` purely for
+    // lacking an eToro rate row. The 1-minute series (m_symbolSeries, the Yahoo <TICKER>-USD
+    // sweep) comes FIRST because it is the same book markFor marks the position off: an entry
+    // filled at the scan row's HOURLY close would open with up to an hour of the coin's move
+    // already booked as P/L against a 1-minute mark. The row's own closes stand in only when
+    // there is no session series. Still widened by the effective spread, which for crypto is
+    // already the modelled 1% floor, so the fill is never at the untouched mid.
+    if (mid <= 0.0) {
+        const QList<double> session = m_symbolSeries.value(symbol);
+        if (!session.isEmpty() && (session.constLast() > 0.0)) {
+            mid = session.constLast();
+        } else if (!closes.isEmpty() && (closes.constLast() > 0.0)) {
+            mid = closes.constLast();
+        }
     }
     if ((mid <= 0.0) || (sides.spreadPct <= 0.0)) {
         return sides;
@@ -588,7 +699,40 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     sides.bid = mid - half;
     sides.ask = mid + half;
     sides.ok = true;
+    // Neither fallback carries a stamp, so only a dated stall above can deny liveness.
+    sides.live = !stalled;
     return sides;
+}
+
+// Which 1-minute series are LIVE, judged the only way this runner can: MarketSnapshot
+// carries no stamp for them, and neither producer (the window's map, the console's books)
+// ever clears an entry — a sweep that fails, or answers an empty close array (the failure
+// mode MarketFeeds documents for equities), leaves the last GOOD series in place, and the
+// two indices' series are the CASH index, which Yahoo freezes at the New York close while
+// the CFD is scanned for hours more. Both look exactly like a live series to a presence
+// test. What separates them is that a live 1-minute feed ALWAYS has new bars between two
+// scans minutes apart, so a series identical to the previous scan's has stopped, whatever
+// the reason. A series seen for the first time has nothing to be compared with and is not
+// yet known live — unknown, the same answer every other unmeasurable read gives — which
+// costs the structure read and the baseline of one scan after a restart, and saves an
+// evening of a frozen index counted as fresh. Two scans inside one minute (a manual
+// refresh) can judge a live series still, and lose one read; that is the cheap side.
+void BotSimRunner::adoptSymbolSeries(const QHash<QString, QList<double>> &series)
+{
+    m_liveSeries.clear();
+    for (auto it = series.cbegin(); it != series.cend(); ++it) {
+        const auto previous = m_symbolSeries.constFind(it.key());
+        if (!it.value().isEmpty() && (previous != m_symbolSeries.cend())
+            && (previous.value() != it.value())) {
+            m_liveSeries.insert(it.key());
+        }
+    }
+    m_symbolSeries = series;
+}
+
+QList<double> BotSimRunner::liveSessionSeries(const QString &symbol) const
+{
+    return m_liveSeries.contains(symbol) ? m_symbolSeries.value(symbol) : QList<double>{};
 }
 
 void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
@@ -604,7 +748,15 @@ void BotSimRunner::onDecisions(const QList<trading::DecisionRow> &rows,
     // APP SYMBOL, not by Yahoo ticker — passing the ticker book here is exactly the
     // mistake that left the futures lead permanently unknown.
     m_referenceVolumes = snap.referenceVolumes;
-    m_symbolSeries = snap.intradayBySymbol;
+    adoptSymbolSeries(snap.intradayBySymbol);
+    // The read-only views above are all a non-owned book gets: the process holding the
+    // book marks, exits and enters on it, and doing so here as well would rewrite its
+    // book and ledgers over its own (the entry paths below are unreachable anyway, since
+    // such a runner cannot be armed — this stops the exits).
+    if (!m_ownsBook) {
+        emit changed();
+        return;
+    }
     // Exits first: a position the ranking has turned against should go before the
     // capital it frees is committed elsewhere.
     markAndExit();
@@ -705,16 +857,24 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     // The churn inputs (REQ-F-034): when this instrument last closed a position,
     // and how many the whole book has opened in the past hour.
     in.lastClosedAt = lastCloseFor(row.symbol);
-    // The session's own structure, from the 1-minute series the scan already carries.
-    in.rangeBreakDir = trading::openingRange(closes).breakDir;
+    // The session's own structure, from the SAME 1-minute series the window's decision
+    // engine reads (MarketSnapshot::intradayBySymbol, kept as m_symbolSeries). Never from
+    // `closes`: those are the eToro scan's HOURLY candles, and an "opening range" over
+    // their first thirty points is a thirty-HOUR range — the gate then refused a fresh
+    // opposite break the window never showed. Only a LIVE series (see liveSessionSeries):
+    // the two indices' series are the CASH index, frozen from the New York close while the
+    // CFD is scanned for hours more, and a break that is hours old is not the FRESH one
+    // REQ-F-056 refuses into. A symbol without a live 1-minute series reads 0 (no read),
+    // the honest answer; the hourly closes are the volatility source only.
+    in.rangeBreakDir = trading::openingRange(liveSessionSeries(row.symbol)).breakDir;
     // How many independent reference reads agree with this side (REQ-F-069). Built once
     // and used for both the count and the combined indication below — the two must be
-    // computed from identical inputs or the window contradicts itself.
-    trading::ReadInputs inputs = trading::readInputsFor(row.symbol, m_referenceSeries,
-                                                        m_referenceVolumes, m_symbolSeries);
-    // The scan's own series for this instrument, which is fresher than the reference
-    // sweep's copy and is what every other decision in this function already uses.
-    inputs.ownSeries = closes;
+    // computed from identical inputs or the window contradicts itself. readInputsFor
+    // files the instrument's own 1-minute series as `ownSeries` from that same book, so
+    // nothing here overrides it — the hourly scan closes once stood in and turned the
+    // structure read into the thirty-hour range described above.
+    const trading::ReadInputs inputs =
+        trading::readInputsFor(row.symbol, m_referenceSeries, m_referenceVolumes, m_symbolSeries);
     const trading::IndexReads reads = trading::indexReads(row.symbol, inputs);
     const trading::Confluence score = trading::confluenceFor(reads, gate.dir);
     in.agreeingReads = score.met;
@@ -748,7 +908,9 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     // never opens a crypto trade for which there is no candle.
     in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol)
                     || trading::tradesOnWeekend(row.symbol);
-    in.quoteLive = sides.ok && in.marketOpen;
+    // Priced AND fresh (a stalled per-tick quote prices the row but is not live — see
+    // sidesFor) AND in an open market.
+    in.quoteLive = sides.ok && sides.live && in.marketOpen;
     // What the fee table says holding it will cost — the entry prices the round
     // trip, not just the spread (REQ-F-032).
     in.fees = (m_client != nullptr) ? m_client->feesFor(row.symbol) : InstrumentFees{};
@@ -834,11 +996,59 @@ trading::EntryFeatures BotSimRunner::featuresFor(const trading::CandidateInput &
     return f;
 }
 
+trading::EntryFeatures BotSimRunner::swingFeaturesFor(const trading::EntrySignal &sig,
+                                                      const QList<trading::DailyBar> &bars,
+                                                      double stake, const QDateTime &now)
+{
+    // The swing entry never set features, and EntryFeatures::isValid() is `volPct > 0`,
+    // so recordExperience dropped EVERY swing record — the one-label-per-position rule
+    // there had no producer to act on, and the strategy's closes taught the network
+    // nothing. The same vector as featuresFor, from what this entry actually knew:
+    // "per bar" is per SESSION here (the daily bars the strategy read, over its own ATR
+    // window, exactly as heldHours labels the hold in hours either way), the target is
+    // the partial's 2R level (the swing has no fixed target; that is where profit is
+    // first taken), and the edge is priced over the spread round trip alone — the
+    // swing's carry over a hold of days is its exit rules' business, and the composite's
+    // intraday horizon is the only one paperEntryEconomics has. The composite's
+    // contemporaneous conviction is recorded as the confidence (0 when the scan had no
+    // row for the symbol): the swing does not consult it, but it WAS true about the entry.
+    QList<double> closes;
+    closes.reserve(bars.size());
+    for (const trading::DailyBar &bar : bars) {
+        closes.append(bar.close);
+    }
+    trading::EntrySignal probe = sig;
+    probe.volPct = trading::volatilityPct(
+        closes, std::min<qsizetype>(swingConfig().atrPeriod, closes.size() - 1));
+    const double stopDistance = qAbs(sig.fillRate - sig.slRate);
+    probe.tpRate = sig.isBuy ? (sig.fillRate + (swingConfig().partialTargetR * stopDistance))
+                             : (sig.fillRate - (swingConfig().partialTargetR * stopDistance));
+    trading::CandidateInput in;
+    in.symbol = sig.symbol;
+    in.confidence = m_confBySymbol.value(sig.symbol, 0.0);
+    in.spreadPct = sig.spreadPct;
+    in.now = now;
+    in.feesKnown = false;
+    return featuresFor(in, probe, stake, now);
+}
+
 void BotSimRunner::recordExperience(const PaperClosedTrade &done)
 {
-    // One JSON line per closed trade, appended and never rewritten: the bot's own
+    // One JSON line per closed POSITION, appended and never rewritten: the bot's own
     // history is the training set, and a file that is only ever appended to cannot
     // lose it to a crash mid-write (REQ-F-033).
+    //
+    // A partial close is not a closed setup. The position it came from is still open
+    // under the SAME id with the SAME entry features, so writing it as an example would
+    // teach one setup twice — and label each copy with a fraction of the result, the
+    // remainder's share being NOT the trade's net (a 2R partial banked in profit followed
+    // by a trailing stop below entry is one winning trade, not one win and one loss).
+    // Bank its net here and label the final close with the whole.
+    if (done.partial) {
+        m_partialNetById[done.id] += done.netPnl;
+        return;
+    }
+    const double label = done.netPnl + m_partialNetById.take(done.id);
     if (!done.features.isValid()) {
         return;   // a trade from before the features existed teaches nothing
     }
@@ -850,7 +1060,9 @@ void BotSimRunner::recordExperience(const PaperClosedTrade &done)
     rec.insert(QStringLiteral("symbol"), done.symbol);
     rec.insert(QStringLiteral("closedAt"), done.closeTime.toString(Qt::ISODate));
     rec.insert(QStringLiteral("heldHours"), done.heldHours());
-    rec.insert(QStringLiteral("netPnl"), done.netPnl);
+    // The label is the position's net over every leg; `costs` stays the final
+    // leg's own record (the trainers read netPnl and the features only).
+    rec.insert(QStringLiteral("netPnl"), label);
     rec.insert(QStringLiteral("costs"), done.totalCost());
     rec.insert(QStringLiteral("reason"), trading::closeReasonWord(done.reason));
     QJsonObject features;
@@ -1226,6 +1438,9 @@ void BotSimRunner::trySwingOpen(const QString &symbol, const QDateTime &now)
     m_book.setStrategyVersion(openedId, swingStrategy().version());
     m_book.setSwingInitialStop(openedId, stopPrice);
     m_book.setSwingState(openedId, stopPrice, false, 0);
+    // The input half of the example this position becomes when it closes (REQ-F-033);
+    // a record without it is dropped by recordExperience, partial and final alike.
+    m_book.setFeatures(openedId, swingFeaturesFor(sig, bars, margin, now));
     m_swingLastEvalDate.insert(openedId, now.date());
     emit tradeOpened(symbol);
     emit entryDecision(symbol, true, QStringLiteral("opened"), decision.why);
@@ -1313,7 +1528,9 @@ bool BotSimRunner::applySwingExit(const trading::PaperTrade &trade, double markR
         const double exitRate = (markRate > 0.0) ? markRate : bars.constLast().close;
         const trading::PaperBook::ExitPricing pricing{exitRate, effectiveSpreadPct(trade.symbol),
                                                        CloseReason::TakeProfit, now};
-        static_cast<void>(m_book.partialClose(trade.id, action.partialFraction, pricing));
+        // The partial's net goes to the experience log's ledger for this id — never
+        // as an example of its own (see recordExperience).
+        recordExperience(m_book.partialClose(trade.id, action.partialFraction, pricing));
         m_book.setSwingState(trade.id, action.nextState.stopPrice, action.nextState.partialTaken,
                             action.nextState.sessionsHeld);
         emit log(QStringLiteral("SWING PARTIAL %1: closed %2% — %3")
@@ -1410,10 +1627,15 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
     }
     const trading::DecisionRow &lead = rows.constFirst();
     const QList<double> closes = m_symbolSeries.value(lead.symbol);
-    const QList<trading::Prediction> history = trading::loadPredictions(ledgerPath());
+    // This instrument's rows of THIS strategy version only (see kCompositeStrategyVersion):
+    // a row from before the switch was priced off another series and carries a five-HOUR
+    // baseline, so scoring it here would pair an old row against a new row's price from a
+    // different feed and count its baseline in the five-minute one's hit rate. The filter
+    // covers both consumers below — the pairing walks only what it is handed.
     QList<trading::Prediction> forSymbol;
-    for (const trading::Prediction &row : history) {
-        if (row.symbol == lead.symbol) {
+    for (const trading::Prediction &row : ledgerRows()) {
+        if ((row.symbol == lead.symbol)
+            && (row.strategyVersion == QLatin1String(kCompositeStrategyVersion))) {
             forSymbol.append(row);
         }
     }
@@ -1439,6 +1661,15 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
              false);
 }
 
+const QList<trading::Prediction> &BotSimRunner::ledgerRows()
+{
+    if (!m_ledgerLoaded) {
+        m_ledger = trading::loadPredictions(ledgerPath());
+        m_ledgerLoaded = true;
+    }
+    return m_ledger;
+}
+
 // One ledger row per evaluated candidate, whatever the outcome (REQ-F-037). The rows
 // that STAY OUT are the reason the ledger is worth keeping: a record of the trades
 // actually taken can only measure the gate in front of it, never the signal — it cannot
@@ -1446,11 +1677,15 @@ void BotSimRunner::reportForecast(const QList<trading::DecisionRow> &rows)
 //
 // Its own function rather than a lambda inside tryOpen: recording what was decided is a
 // different job from deciding, and folding it in pushed tryOpen past the complexity gate.
-void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
-                                    const QList<double> &closes, const QDateTime &now,
-                                    const trading::CandidateInput &in,
-                                    const QString &refusal) const
+void BotSimRunner::recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
+                                    const QDateTime &now, const trading::CandidateInput &in,
+                                    const QString &refusal)
 {
+    // The instrument's own 1-minute series, when LIVE (liveSessionSeries); `closes` are the
+    // eToro scan's HOURLY candles, kept for the regime (persistence needs a session) and as
+    // the price of last resort. Looked up here rather than passed, so the signature stays
+    // within the parameter limit.
+    const QList<double> session = liveSessionSeries(row.symbol);
     trading::Prediction entry;
     entry.at = now.toUTC();
     entry.symbol = row.symbol;
@@ -1458,7 +1693,23 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
     entry.strength = in.leadStrength;
     entry.measured = in.leadMeasured;
     entry.unknowns = in.leadUnknowns;
-    entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    entry.strategyVersion = QLatin1String(kCompositeStrategyVersion);
+    // The mark the call was made at, by the SAME rule the simulated fill is priced by
+    // (sidesFor: the per-tick quote, else the venue's bulk mid, else — crypto — its 1-minute
+    // close): an outcome is resolved against a LATER row's price, so every row of one
+    // instrument must be priced off one feed, and it must be a feed that MOVES whenever the
+    // instrument is called. The 1-minute series is not that for the two indices — theirs is
+    // the CASH index (^GSPC / ^NDX), which Yahoo freezes at the New York close while the CFD
+    // keeps being scanned for hours; rows priced off it paired into a "no move" outcome and a
+    // miss for every directional call of the evening. The hourly last close stands in only
+    // when nothing prices the candidate (the row is then dropped unless it has a price).
+    const qint64 id = (m_client != nullptr) ? m_client->instrumentIdFor(row.symbol) : 0;
+    const Sides sides = sidesFor(row.symbol, id, closes);
+    if (sides.ok) {
+        entry.price = (sides.bid + sides.ask) / 2.0;
+    } else {
+        entry.price = closes.isEmpty() ? 0.0 : closes.constLast();
+    }
     trading::RegimeInputs regime;
     // Persistence needs a session to measure; below that it stays UNKNOWN rather than
     // defaulting to a comfortable "range".
@@ -1475,14 +1726,27 @@ void BotSimRunner::recordPrediction(const trading::DecisionRow &row,
     entry.taken = refusal.isEmpty();
     entry.refusal = refusal;
     // The baseline this app CAN measure at decision time: the previous five minutes'
-    // direction. The session-VWAP side stays 0 — unknown — because the instrument's own
-    // candles carry no volume, and an unmeasurable baseline must not be scored.
-    if (closes.size() > 5) {
-        const double then = closes.at(closes.size() - 6);
-        const double last = closes.constLast();
+    // direction — the last six points of the 1-MINUTE series, never of the hourly scan
+    // closes, whose last six points span five hours and are a different rival for the
+    // signal than the one the ledger names. Fewer than six points, or a series that is not
+    // live (frozen at the cash close, or a sweep that failed and left the last good one in
+    // place — the sign of its last five minutes is then a stale rival, not this call's),
+    // leave it 0: a baseline that could not be measured is not scored (the ledger treats 0
+    // as "no side"). The session-VWAP side stays 0 — unknown — because the instrument's
+    // own candles carry no volume, and an unmeasurable baseline must not be scored.
+    if (session.size() > 5) {
+        const double then = session.at(session.size() - 6);
+        const double last = session.constLast();
         entry.priorMoveDir = (last > then) ? 1 : ((last < then) ? -1 : 0);
     }
-    static_cast<void>(trading::appendPrediction(ledgerPath(), entry));
+    // The file first, the cache only when the file took the row: the in-memory ledger is
+    // a copy of what is on disk, and a row the disk refused must not be scored as if it
+    // had been recorded. Loaded before the append so the copy never misses what the
+    // file already held.
+    static_cast<void>(ledgerRows());
+    if (trading::appendPrediction(ledgerPath(), entry)) {
+        m_ledger.append(entry);
+    }
 }
 
 // The two obstacles that outrank everything, in order, so a refusal names one a reader can
@@ -1498,7 +1762,12 @@ QString BotSimRunner::preTradeRefusal(const QString &symbol, QString *why) const
         *why = QStringLiteral("outside the bot's focus set (%1)").arg(focus.join(u", "));
         return QStringLiteral("not-focus");
     }
-    if (m_tradeabilityKnown && !m_tradeable.contains(symbol)) {
+    // The venue's tradeable set covers only the instruments it lists with a session — a
+    // 24/7 instrument (crypto) is never in it, so the membership test alone read every
+    // coin as `market-closed` the moment the first tradeability poll answered, one gate
+    // before candidateFor's own 24/7 exemption could ever run. Its market has no
+    // closing hours; whether it can be PRICED is still candidateFor's `sides.ok`.
+    if (m_tradeabilityKnown && !m_tradeable.contains(symbol) && !trading::tradesOnWeekend(symbol)) {
         *why = QStringLiteral("market closed for this instrument — the broker does not list it "
                               "as tradable right now");
         return QStringLiteral("market-closed");
@@ -1596,11 +1865,27 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
         !netGate.allow) {
         return refuse(netGate.code, netGate.why, in);
     }
-    const qint64 openedId = (id == 0) ? 0 : m_book.open(sig, verdict.stake, now);
-    if (openedId == 0) {
+    // An instrument without a venue id cannot be opened — EXCEPT crypto, which is priced and
+    // marked off its candle close by design (sidesFor / markFor), so the simulation's whole
+    // geometry — fill, stop, target, marks, exits — never needs the id; it reached this line
+    // priced, or the gate would have refused it `no-live-quote`. A real order path (which does
+    // not exist here, REQ-N-005) would need the id, and that is where this exemption ends.
+    // Everything else keeps the refusal: the sidesFor/markFor candle fallbacks were written
+    // for crypto precisely because its id never resolves in this build, and refusing it here
+    // only moved the refusal one step along.
+    if ((id == 0) && !trading::isCryptoSymbol(row.symbol)) {
         return refuse(QStringLiteral("instrument-unresolved"),
                       QStringLiteral("the venue's instrument id for %1 is not known, so no "
                                      "order geometry could be attached to it")
+                          .arg(row.symbol),
+                      in);
+    }
+    const qint64 openedId = m_book.open(sig, verdict.stake, now);
+    if (openedId == 0) {
+        // Unreachable after a taken verdict (it guarantees a valid signal and a positive
+        // stake), kept so a book that declines is named rather than reported as opened.
+        return refuse(QStringLiteral("book-refused"),
+                      QStringLiteral("the book declined to open %1: no valid geometry or stake")
                           .arg(row.symbol),
                       in);
     }
@@ -1611,22 +1896,7 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
     m_book.setEntryCompositeConf(openedId, row.confidence);
     emit tradeOpened(sig.symbol);
     emit entryDecision(sig.symbol, true, QStringLiteral("opened"), verdict.why);
-    // The same event in the persistent log, with the geometry beside the evidence, so the
-    // file answers "why WAS this traded?" as fully as it answers why the others were not.
-    {
-        trading::DecisionNote note =
-            decisionNoteFor(sig.symbol, sig.isBuy ? 1 : -1, row.confidence, in, now);
-        note.traded = true;
-        note.why = verdict.why;
-        note.stake = verdict.stake;
-        note.leverage = sig.leverage;
-        note.fillRate = sig.fillRate;
-        note.slRate = sig.slRate;
-        note.tpRate = sig.tpRate;
-        note.openCost =
-            trading::paperHalfSpreadCost(verdict.stake, sig.leverage, sig.spreadPct);
-        static_cast<void>(trading::appendDecision(decisionLogPath(), note));
-    }
+    appendOpenedNote(sig, in, verdict, row.confidence, now);
     emit log(QStringLiteral("SIM OPEN %1 %2 %3 @ %4 x%5 — SL %6 / TP %7, spread cost %8 — %9")
                  .arg(sig.symbol)
                  .arg(sig.isBuy ? QStringLiteral("BUY") : QStringLiteral("SELL"))
@@ -1640,6 +1910,27 @@ bool BotSimRunner::tryOpen(const trading::DecisionRow &row, const QList<double> 
                  .arg(verdict.why),
              false);
     return true;
+}
+
+void BotSimRunner::appendOpenedNote(const trading::EntrySignal &sig,
+                                    const trading::CandidateInput &in,
+                                    const trading::EntryVerdict &verdict,
+                                    double compositeConfidence, const QDateTime &now) const
+{
+    // The same event as the SIM OPEN line, in the persistent log with the geometry beside
+    // the evidence, so the file answers "why WAS this traded?" as fully as it answers why
+    // the others were not.
+    trading::DecisionNote note =
+        decisionNoteFor(sig.symbol, sig.isBuy ? 1 : -1, compositeConfidence, in, now);
+    note.traded = true;
+    note.why = verdict.why;
+    note.stake = verdict.stake;
+    note.leverage = sig.leverage;
+    note.fillRate = sig.fillRate;
+    note.slRate = sig.slRate;
+    note.tpRate = sig.tpRate;
+    note.openCost = trading::paperHalfSpreadCost(verdict.stake, sig.leverage, sig.spreadPct);
+    static_cast<void>(trading::appendDecision(decisionLogPath(), note));
 }
 
 void BotSimRunner::syncQuoteInterest()
@@ -1673,6 +1964,9 @@ void BotSimRunner::resetBooks()
     m_armed = false;
     m_dirBySymbol.clear();
     m_confBySymbol.clear();
+    // The reset closes above wrote no examples; a fresh book reuses ids, so a partial
+    // banked for a discarded position must not label a new one.
+    m_partialNetById.clear();
     syncQuoteInterest();
     save();
     emit log(QStringLiteral("BOT SIM reset — back to %1, no positions, no history.")
@@ -1683,6 +1977,13 @@ void BotSimRunner::resetBooks()
 
 void BotSimRunner::save() const
 {
+    // The ONE place the book reaches the disk, so this is where a non-owned book is kept
+    // off it: aboutToQuit's save, a focus/AI-mode/daily-rules change and the mark saves
+    // all end here, and a read-only viewer must leave the owner's file exactly as the
+    // owner wrote it.
+    if (!m_ownsBook) {
+        return;
+    }
     const QString path = storePath();
     static_cast<void>(QDir().mkpath(QFileInfo(path).absolutePath()));
     QSaveFile file(path);  // atomic: a crash mid-write must not truncate the books
@@ -1722,15 +2023,66 @@ void BotSimRunner::load()
         m_book.setConfig(cfg);
     }
     m_armed = root.value(QStringLiteral("armed")).toBool();
-    const PaperStats s = m_book.stats();
+    // Provisional: acquireBookLock() rewrites this when the book turns out to be held
+    // elsewhere, because "resumed" is only true of the process that runs it.
     m_restoreNote =
-        QStringLiteral("BOT SIM books restored: equity %1, %2 open, %3 closed — %4 (AI mode: %5)")
-                 .arg(botPlain(s.equity))
-                 .arg(s.openTrades)
-                 .arg(s.closedTrades)
-            .arg(m_armed ? QStringLiteral("RESUMED ARMED, the experiment continues")
-                         : QStringLiteral("DISARMED — press \"Arm the bot\" to continue"))
-            .arg(trading::botAiModeWord(cfg.aiMode));
+        restoreNoteFor(m_armed ? QStringLiteral("RESUMED ARMED, the experiment continues")
+                               : QStringLiteral("DISARMED — press \"Arm the bot\" to continue"));
+}
+
+QString BotSimRunner::restoreNoteFor(const QString &state) const
+{
+    const PaperStats s = m_book.stats();
+    return QStringLiteral(
+               "BOT SIM books restored: equity %1, %2 open, %3 closed — %4 (AI mode: %5)")
+        .arg(botPlain(s.equity))
+        .arg(s.openTrades)
+        .arg(s.closedTrades)
+        .arg(state, trading::botAiModeWord(m_book.config().aiMode));
+}
+
+void BotSimRunner::acquireBookLock()
+{
+    const QString path = storePath();
+    // QLockFile cannot create its file in a directory that does not exist yet, and on a
+    // first run nothing has created the config dir before this point.
+    static_cast<void>(QDir().mkpath(QFileInfo(path).absolutePath()));
+    m_bookLock = std::make_unique<QLockFile>(path + QStringLiteral(".lock"));
+    // The age rule is OFF (see m_bookLock): a book is held for as long as the bot runs,
+    // and QLockFile's default judges a live holder's lock stale by its 30 s age alone.
+    m_bookLock->setStaleLockTime(std::chrono::milliseconds::zero());
+    // One attempt, no waiting: a held book is an answer, not a condition to wait out. A
+    // lock whose process is gone (or that predates a reboot) is stale by QLockFile's
+    // pid/boot-id rule and is taken over; a live holder's is refused, however old.
+    m_ownsBook = m_bookLock->tryLock(std::chrono::milliseconds::zero());
+    if (m_ownsBook) {
+        return;
+    }
+    // load() may have restored "armed" from a book the OTHER process is running; the
+    // experiment continues there, not here, so the flag is dropped rather than resumed
+    // (setArmed would refuse it too — this keeps armed() honest from the first call).
+    // The restore note follows the same fact: what it announced before this point was
+    // the FILE's flag, and "resumed, the experiment continues" beside the read-only line
+    // would say the experiment runs in two processes.
+    if (!m_restoreNote.isEmpty()) {
+        m_restoreNote = restoreNoteFor(
+            m_armed ? QStringLiteral("saved ARMED — the holder runs it, not this process")
+                    : QStringLiteral("saved DISARMED — only the holder can arm it"));
+    }
+    m_armed = false;
+}
+
+QString BotSimRunner::bookHolderLine() const
+{
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    const bool known = (m_bookLock != nullptr) && m_bookLock->getLockInfo(&pid, &host, &app);
+    return QStringLiteral("BOT SIM read-only: the book %1 is held by %2 — this process shows "
+                          "it but cannot be armed and never marks, trades or saves; one "
+                          "process runs the bot on one book.")
+        .arg(storePath(), known ? QStringLiteral("pid %1 (%2 on %3)").arg(pid).arg(app, host)
+                                : QStringLiteral("another process"));
 }
 
 // ---------------------------------------------------------------------------

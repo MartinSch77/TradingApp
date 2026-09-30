@@ -440,6 +440,57 @@ private slots:
         QCOMPARE(relativeStrength(series, {0.0, 0.0}), 0.0);
         QVERIFY(relativeStrength(series, QList<double>(40, 100.0)) > 0.0);
     }
+
+    //! @tstid TS-DEC-011 @design DES-DOM-DEC
+    // @relation(REQ-F-031, scope=function)
+    void TS_DEC_011_mergeScreenerRowPrefersTheVenueRowOverTheFallback()
+    {
+        // A scan has two row sources — the venue's screener and the public-feed fallback for
+        // crypto — arriving in either order, and ONE rule files them: the venue's usable row
+        // is the better evidence, so a fallback never displaces it, while a venue row always
+        // displaces a fallback and a newer fallback replaces an older one.
+        const auto venueRow = [](const QString &sym, double last, bool ok) {
+            ScreenerRow r = row(sym, {last - 1.0, last});
+            r.ok = ok;
+            return r;
+        };
+        const auto fallbackRow = [](const QString &sym, double last) {
+            ScreenerRow r = row(sym, {last - 1.0, last});
+            r.fromFallbackFeed = true;
+            return r;
+        };
+        const QString btc = QStringLiteral("BTC");
+        QList<ScreenerRow> rows;
+
+        // A new symbol is appended, whatever its source.
+        mergeScreenerRow(rows, fallbackRow(btc, 100.0));
+        QCOMPARE(rows.size(), 1);
+        // A fallback replaces a fallback: the newer answer wins.
+        mergeScreenerRow(rows, fallbackRow(btc, 101.0));
+        QCOMPARE(rows.size(), 1);
+        QCOMPARE(rows.constFirst().lastPrice, 101.0);
+        // A venue row replaces a fallback…
+        mergeScreenerRow(rows, venueRow(btc, 102.0, true));
+        QCOMPARE(rows.size(), 1);
+        QCOMPARE(rows.constFirst().lastPrice, 102.0);
+        QVERIFY(!rows.constFirst().fromFallbackFeed);
+        // …and a fallback never replaces a usable venue row, however much newer it is.
+        mergeScreenerRow(rows, fallbackRow(btc, 103.0));
+        QCOMPARE(rows.constFirst().lastPrice, 102.0);
+        QVERIFY(!rows.constFirst().fromFallbackFeed);
+        // A venue row that is NOT usable (no leverage or candles) leaves the fallback as the
+        // only source there is, so the fallback does replace it.
+        mergeScreenerRow(rows, venueRow(btc, 0.0, false));
+        QVERIFY(!rows.constFirst().ok);
+        mergeScreenerRow(rows, fallbackRow(btc, 104.0));
+        QCOMPARE(rows.constFirst().lastPrice, 104.0);
+        QVERIFY(rows.constFirst().fromFallbackFeed);
+        // A second symbol is its own entry; merging it touches nothing else.
+        mergeScreenerRow(rows, venueRow(QStringLiteral("SPX500"), 5000.0, true));
+        QCOMPARE(rows.size(), 2);
+        QCOMPARE(rows.constFirst().lastPrice, 104.0);
+        QCOMPARE(rows.constLast().symbol, QStringLiteral("SPX500"));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestDecisionEngine)

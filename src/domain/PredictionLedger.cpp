@@ -53,23 +53,78 @@ QPair<qint32, qint32> bandFor(double strength)
     return {low, low + kBucketWidth};
 }
 
+// The VALID rows of `history` in time order, which is what both resolvers walk. Invalid
+// rows (no stamp, no price) can neither be a call nor answer one, and dropping them here
+// also keeps the comparator a strict order — an invalid stamp compares as nothing.
+// A STABLE sort, so two rows at the same instant keep their ledger order and "the earliest
+// qualifying row" stays the first one written rather than whichever the sort left first.
+QList<Prediction> validRowsByTime(const QList<Prediction> &history)
+{
+    QList<Prediction> sorted;
+    sorted.reserve(history.size());
+    for (const Prediction &row : history) {
+        if (row.isValid()) {
+            sorted.append(row);
+        }
+    }
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
+    return sorted;
+}
+
+// The ONE pairing rule, over rows already sorted by time and starting at index `from`:
+// the earliest row of the same instrument at or past the horizon, refused when the
+// nearest one is already too far past it. Because the rows are ordered by time
+// REGARDLESS of symbol, the first row of ANY symbol beyond the limit ends the walk: every
+// row after it is later still, so no same-symbol row can qualify behind it — which is
+// what turns the ledger's O(n²) scoring into one bounded walk per call as the file grows
+// by a scan's worth of rows every few minutes. Rows before the call (in the public
+// unsorted path) sit below the horizon and are skipped like any too-early row.
+std::optional<Outcome> resolveOutcomeFrom(const Prediction &prediction, Horizon horizon,
+                                          const QList<Prediction> &sorted, qsizetype from)
+{
+    if (!prediction.isValid()) {
+        return std::nullopt;
+    }
+    const qint32 wanted = horizonMinutes(horizon);
+    const qint32 limit = maxElapsedFor(horizon);
+    for (qsizetype i = from; i < sorted.size(); ++i) {
+        const Prediction &row = sorted.at(i);
+        const qint64 minutes = prediction.at.secsTo(row.at) / 60;
+        if (minutes > limit) {
+            break;   // sorted by time: nothing behind this row can be nearer
+        }
+        if ((minutes < wanted) || (row.symbol != prediction.symbol)) {
+            continue;
+        }
+        // The EARLIEST row at or past the horizon: the first honest answer to "where was
+        // it after n minutes". Taking the latest available instead would silently lengthen
+        // the horizon whenever the ledger happens to be long — and in time order the first
+        // qualifying row IS the earliest, so the walk ends here.
+        Outcome out;
+        out.movePct = ((row.price - prediction.price) / prediction.price) * 100.0;
+        out.actualDir = (out.movePct > 0.0) ? 1 : ((out.movePct < 0.0) ? -1 : 0);
+        out.elapsedMinutes = static_cast<qint32>(minutes);
+        return out;
+    }
+    return std::nullopt;
+}
+
 // Every row of `history` that can be resolved at `horizon`, carrying a directional call.
 // Rows that stayed out are recorded and loaded — they are the point of the ledger — but
 // they cannot contribute to a DIRECTIONAL hit rate, so they are excluded here and
-// counted elsewhere.
+// counted elsewhere. Sorted ONCE; each call then walks the span after itself and stops
+// at the horizon's limit (see resolveOutcomeFrom) — no copy of the tail per row.
 QList<Resolved> resolveAll(const QList<Prediction> &history, Horizon horizon)
 {
-    QList<Prediction> sorted = history;
-    std::sort(sorted.begin(), sorted.end(),
-              [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
+    const QList<Prediction> sorted = validRowsByTime(history);
     QList<Resolved> out;
     for (qsizetype i = 0; i < sorted.size(); ++i) {
         const Prediction &call = sorted.at(i);
-        if ((call.dir == 0) || !call.isValid()) {
+        if (call.dir == 0) {
             continue;
         }
-        const std::optional<Outcome> outcome =
-            resolveOutcome(call, horizon, sorted.mid(i + 1));
+        const std::optional<Outcome> outcome = resolveOutcomeFrom(call, horizon, sorted, i + 1);
         if (outcome.has_value()) {
             out.append(Resolved{call, *outcome});
         }
@@ -256,38 +311,9 @@ QString HorizonScore::headline() const
 std::optional<Outcome> resolveOutcome(const Prediction &prediction, Horizon horizon,
                                       const QList<Prediction> &later)
 {
-    if (!prediction.isValid()) {
-        return std::nullopt;
-    }
-    const qint32 wanted = horizonMinutes(horizon);
-    const qint32 limit = maxElapsedFor(horizon);
-    // The EARLIEST row at or past the horizon: the first honest answer to "where was it
-    // after n minutes". Taking the latest available instead would silently lengthen the
-    // horizon whenever the ledger happens to be long.
-    const Prediction *best = nullptr;
-    qint32 bestElapsed = 0;
-    for (const Prediction &row : later) {
-        if (!row.isValid() || (row.symbol != prediction.symbol)) {
-            continue;
-        }
-        const qint64 minutes = prediction.at.secsTo(row.at) / 60;
-        if ((minutes < wanted) || (minutes > limit)) {
-            continue;
-        }
-        const auto elapsed = static_cast<qint32>(minutes);
-        if ((best == nullptr) || (elapsed < bestElapsed)) {
-            best = &row;
-            bestElapsed = elapsed;
-        }
-    }
-    if (best == nullptr) {
-        return std::nullopt;
-    }
-    Outcome out;
-    out.movePct = ((best->price - prediction.price) / prediction.price) * 100.0;
-    out.actualDir = (out.movePct > 0.0) ? 1 : ((out.movePct < 0.0) ? -1 : 0);
-    out.elapsedMinutes = bestElapsed;
-    return out;
+    // `later` may arrive in any order: sort this one call's rows and apply the same rule
+    // the bulk scorer applies, so the two can never disagree about a pairing.
+    return resolveOutcomeFrom(prediction, horizon, validRowsByTime(later), 0);
 }
 
 HorizonScore scoreHorizon(const QList<Prediction> &history, Horizon horizon)

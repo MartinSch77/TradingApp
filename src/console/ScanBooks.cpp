@@ -42,8 +42,15 @@ void wireScanBooks(const EtoroClient &client, const MarketFeeds &feeds, ScanBook
                      [books](const QString &symbol, const QList<NewsHeadline> &headlines) {
                          books->news.insert(symbol, headlines);
                      });
-    QObject::connect(&client, &EtoroClient::screenerRow, context,
-                     [books](const ScreenerRow &row) { books->rows.append(row); });
+    // Both row sources file through the ONE merge rule (trading::mergeScreenerRow): the
+    // venue's row wins over the public-feed fallback for the same symbol whenever it is
+    // usable, whichever arrives first — the two fetches run concurrently.
+    QObject::connect(&client, &EtoroClient::screenerRow, context, [books](const ScreenerRow &row) {
+        trading::mergeScreenerRow(books->rows, row);
+    });
+    QObject::connect(
+        &feeds, &MarketFeeds::cryptoScreenerRow, context,
+        [books](const ScreenerRow &row) { trading::mergeScreenerRow(books->rows, row); });
 }
 
 trading::MarketSnapshot snapshotFrom(const ScanBooks &books)

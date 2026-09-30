@@ -37,6 +37,7 @@
 #include <cstdio>
 
 #include <functional>
+#include <memory>
 
 namespace {
 
@@ -219,6 +220,7 @@ void runGather(EtoroClient &client, MarketFeeds &feeds, ScanBooks *books,
     client.scanInstruments();
     feeds.fetchInstrumentRatings();
     feeds.fetchInstrumentNews();
+    feeds.fetchCryptoScreenerRows();
     feeds.fetchIntradaySeries();
     feeds.fetchReferenceSeries();
     feeds.start(60 * 1000);   // the periodic tick fetches VIX/F&G/quote on its first pass
@@ -379,6 +381,76 @@ void reportCycle(const CycleContext &ctx, const AdviseArgs &args, const Config &
     }
 }
 
+// What a cycle's report still waits for when the VENUE cannot row the focus symbol — an id
+// that never resolves, which is every crypto in this build: its scan row is the Yahoo hourly
+// fallback and its fill and mark are its 1-minute close, so both of THIS cycle's answers have
+// to be in the books before the runner decides. Armed when the cycle's requests go out,
+// cleared as each answer lands; the report runs on the second one.
+struct FeedWait {
+    bool row = false;   // the fallback scan row of this cycle is still outstanding
+    bool series = false;   // the 1-minute series of this cycle is still outstanding
+};
+
+// The report for a venue-less focus symbol, gated on the feeds' OWN answers. Measured on
+// `TradingAdvise BTC --trade`: scanInstrumentsReal finds nothing to scan for an id-less symbol
+// and emits screenerFinished SYNCHRONOUSLY from inside rescan — before that cycle's feed
+// requests have even been sent — so a report taken there decided and MARKED on the previous
+// interval's row and series, one full interval late for every stop or target hit inside it,
+// with the ledger row's price as old as the interval. The books' merge slots are connected
+// first (wireScanBooks, in main), so by the time these run the row and the series are in.
+// A feed that does not answer this cycle reports nothing this cycle — the honest answer
+// when the data did not arrive; the runner keeps marking its open positions on its own
+// tick, and the next rescan arms the wait again.
+void wireFeedGatedReport(const MarketFeeds &feeds, const std::shared_ptr<FeedWait> &wait,
+                         const std::function<void()> &report, const QString &focus,
+                         QObject *context)
+{
+    QObject::connect(&feeds, &MarketFeeds::cryptoScreenerRow, context,
+                     [wait, report, focus](const ScreenerRow &row) {
+                         if ((row.symbol != focus) || !wait->row) {
+                             return;
+                         }
+                         wait->row = false;
+                         if (!wait->series) {
+                             report();
+                         }
+                     });
+    QObject::connect(&feeds, &MarketFeeds::intradayCloses, context,
+                     [wait, report, focus](const QString &symbol, const QList<double> &) {
+                         if ((symbol != focus) || !wait->series) {
+                             return;
+                         }
+                         wait->series = false;
+                         if (!wait->row) {
+                             report();
+                         }
+                     });
+}
+
+// The report on the venue's own scan: it runs when the cycle's real scan ends with the
+// venue's row for the focus symbol in the books. A fallback row there means the venue could
+// not row the symbol, and screenerFinished fired synchronously from inside rescan with the
+// PREVIOUS interval's books — that cycle is reported by wireFeedGatedReport instead, when
+// this interval's row and series land.
+void wireVenueReport(EtoroClient &client, const ScanBooks *books,
+                     const std::function<void()> &report, const QString &focus)
+{
+    QObject::connect(
+        &client, &EtoroClient::screenerFinished, &client, [&client, books, report, focus] {
+            const auto row =
+                std::find_if(books->rows.cbegin(), books->rows.cend(),
+                             [&focus](const ScreenerRow &r) { return r.symbol == focus; });
+            if (row == books->rows.cend()) {
+                // Ids not resolved yet. The id-less scan emits screenerFinished
+                // SYNCHRONOUSLY, so re-scanning inline here recurses until the
+                // stack blows — defer to the event loop instead.
+                QTimer::singleShot(2000, &client, [&client] { client.scanInstruments(); });
+            } else if (!row->fromFallbackFeed) {
+                report();
+            }
+        });
+}
+
 // The continuous path for --watch / --trade: kick the feeds and an initial scan, then on each
 // scan completion report a cycle, and re-scan every --interval seconds. Runs until killed.
 struct WatchContext {
@@ -441,34 +513,37 @@ int runContinuous(const WatchContext &ctx, const AdviseArgs &args, const Config 
         });
         pnl->start(10 * 1000);
     }
-    const auto rescan = [&client, &feeds] {
+    const auto report = [&, books, runner, botAiLine] {
+        reportCycle({books, &client, runner, *botAiLine}, args, cfg);
+    };
+    // Armed BEFORE the venue scan of a cycle goes out: for a symbol the venue cannot row,
+    // that scan finishes synchronously inside scanInstruments(), and the report must
+    // already know to wait for the feeds (wireFeedGatedReport) rather than fire there.
+    auto feedWait = std::make_shared<FeedWait>();
+    const auto armFeedWait = [&client, feedWait, &args] {
+        feedWait->row = feedWait->series = (client.instrumentIdFor(args.symbol) == 0);
+    };
+    wireFeedGatedReport(feeds, feedWait, report, args.symbol, &client);
+    const auto rescan = [&client, &feeds, armFeedWait] {
+        armFeedWait();
         client.scanInstruments();
         feeds.fetchInstrumentRatings();
         feeds.fetchInstrumentNews();
+        feeds.fetchCryptoScreenerRows();
         feeds.fetchIntradaySeries();
         feeds.fetchReferenceSeries();
     };
-    QObject::connect(&client, &EtoroClient::screenerFinished, &client, [&, books, runner] {
-        const bool haveRow =
-            std::any_of(books->rows.cbegin(), books->rows.cend(),
-                        [&args](const ScreenerRow &r) { return r.symbol == args.symbol; });
-        if (haveRow) {
-            reportCycle({books, &client, runner, *botAiLine}, args, cfg);
-        } else {
-            // Ids not resolved yet. The id-less scan emits screenerFinished
-            // SYNCHRONOUSLY, so re-scanning inline here recurses until the
-            // stack blows — defer to the event loop instead.
-            QTimer::singleShot(2000, &client, [&client] { client.scanInstruments(); });
-        }
-    });
+    wireVenueReport(client, books, report, args.symbol);
     // Order matters and is proven by the one-shot path: start the client and kick its scan
     // BEFORE starting the feeds. Starting MarketFeeds first left the client's first
     // proxy/QNAM setup half-initialised and segfaulted in proxyForQuery on that first scan.
     client.start();
+    armFeedWait();
     client.scanInstruments();
     feeds.start(60 * 1000);
     feeds.fetchInstrumentRatings();
     feeds.fetchInstrumentNews();
+    feeds.fetchCryptoScreenerRows();
     feeds.fetchIntradaySeries();
     feeds.fetchReferenceSeries();
     auto *timer = new QTimer(&client);

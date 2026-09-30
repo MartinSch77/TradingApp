@@ -136,6 +136,18 @@ struct RegimeRead {
 // One DecisionRow per instrument with data, sorted by confidence descending.
 [[nodiscard]] QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m);
 
+// File `row` into the scan's row list — THE one replace rule for the two sources a
+// scan has (the venue's own screener rows and the public-feed fallback rows for
+// crypto, ScreenerRow::fromFallbackFeed), shared by every front end so the rule
+// cannot drift between them. A row for a new symbol is appended; a row for a known
+// symbol replaces it, with ONE exception: a fallback row never replaces a usable
+// (`ok`) venue row, because the venue's own candles and leverage are the better
+// evidence whenever it has them. A venue row always replaces a fallback row, a
+// fallback replaces a fallback (the newer answer wins), and a fallback DOES replace
+// a venue row that is not `ok` — a venue that could not deliver leaves the public
+// feed as the only source there is.
+void mergeScreenerRow(QList<ScreenerRow> &rows, const ScreenerRow &row);
+
 // The plain-text evidence prompt handed to the AI advisor: the candidates, their
 // per-source reads and the market context, plus the answer contract.
 //

@@ -441,9 +441,12 @@ struct HarvestOption {
 // Picks the SMALLEST sufficient winner: the day gets banked with the least upside
 // given up, and a position that is running well keeps running. Returns 0 when the
 // rule is off, the target is already made (the day gate stops entries then), no
-// single winner is enough, or nothing is in profit.
+// single winner is enough, or nothing is in profit. `day` counts only when it is
+// about `now`'s date — the same rule paperDayGate applies: the ledger rolls over on
+// the first CLOSE of a new date, so before that close it still holds yesterday's
+// realized, and a fresh day has banked nothing, whatever yesterday did.
 [[nodiscard]] qint64 paperHarvestPick(const QList<HarvestOption> &options, const BotDay &day,
-                                      const BotConfig &cfg);
+                                      const QDateTime &now, const BotConfig &cfg);
 
 // ---------------------------------------------------------------------------
 // When it is worth trading at all (REQ-F-034)
@@ -717,8 +720,9 @@ struct PaperClosedTrade {
                                    double markRate, bool isBuy);
 
 // Rollover nights between two instants, charging a night per date boundary
-// crossed, with a Friday→Monday crossing counted as THREE (eToro's tripled
-// weekend rollover, REQ-F-013). Never negative.
+// crossed, with the Friday night counted as THREE (eToro's tripled weekend
+// rollover, REQ-F-013) and the Saturday and Sunday nights as ZERO — they are
+// inside that one charge, so Friday→Monday is 3 nights, not 5. Never negative.
 [[nodiscard]] qint32 paperRolloverNights(const QDateTime &from, const QDateTime &to);
 
 // Rollover cost in EUR for `nights` nights on this position, from the
@@ -731,6 +735,16 @@ struct PaperClosedTrade {
 // ---------------------------------------------------------------------------
 // Entry evaluation (pure)
 // ---------------------------------------------------------------------------
+
+// Is a per-tick quote fresh enough to trade off or to report as a LIVE mark? True
+// while the venue's own price stamp (`Quote::asOf`) is no more than `maxAgeMs`
+// behind `now`. A quote WITHOUT a stamp passes (fail open, exactly as the
+// open-trades table's own row rule does): the venue published no age for it, which
+// is not the same as a feed that stopped. A stamp slightly AHEAD of the local clock
+// is clock skew, not staleness, and passes too. The one thing this refuses is a
+// dated stall — a quote whose own stamp says the market has not printed for longer
+// than the bound, which is what a halted market or a stuck feed looks like from here.
+[[nodiscard]] bool quoteIsFresh(const Quote &quote, const QDateTime &now, qint64 maxAgeMs);
 
 // Everything the bot knows about one candidate instrument on one scan.
 struct CandidateInput {
@@ -850,7 +864,8 @@ struct EntryVerdict {
     QString why;
     // Stable, countable category of the refusal, so one scan can summarise WHY it
     // opened nothing ("market-closed x18, confidence x5") instead of leaving the
-    // window silent — which is indistinguishable from a broken bot.
+    // window silent — which is indistinguishable from a broken bot. The calendar
+    // codes come first: "day-target" | "day-loss" | "weekend" | "weekend-carry-ahead".
     QString code;               // "market-closed" | "no-live-quote" | "no-signal" |
                                 // "confidence" | "already-holding" | "trade-limit" |
                                 // "ruin-guard" | "no-history" | "spread-unknown" |
@@ -1009,7 +1024,9 @@ struct ExitContext {
 [[nodiscard]] double paperRemainingUpside(const PaperTrade &trade, double markRate);
 
 // What holding this position until `until` will cost in EUR: the rollover nights in
-// between (with eToro's tripled weekend night, via paperRolloverNights) plus the
+// between (with eToro's tripled weekend night, via paperRolloverNights — the
+// Saturday and Sunday nights are inside that tripled Friday charge and add nothing,
+// so a horizon spanning a weekend rents 3 nights for it, not 5) plus the
 // half-spread it must still pay to get out. A carry CREDIT makes this smaller, and
 // can make it negative — being paid to hold is not a reason to close.
 [[nodiscard]] double paperCostToHold(const PaperTrade &trade, const ExitContext &ctx,
@@ -1018,6 +1035,33 @@ struct ExitContext {
 // Is the next rollover this position pays the TRIPLED weekend one? True when the
 // next date boundary crossed from `now` starts a Saturday.
 [[nodiscard]] bool paperWeekendChargeAhead(const QDateTime &now);
+
+// The tripled weekend charge, in EUR, that a FRESH position opened from this
+// candidate with the signal's geometry would pay on `stake` EUR of margin:
+// paperRolloverCost over the 3 Friday nights with the SAME side/fees/eurPerUsd
+// semantics the WeekendCarry exit reads, so entry and exit can never disagree
+// about the figure. 0 when the fees are unknown, the signal is unsized (`valid`
+// false — which buildEntrySignal reports WITH a priced fillRate and the default x1
+// when only the history is too short, so `valid` and not the rate is what says
+// there is no position to price) or the stake is not positive; NEGATIVE for a
+// carry credit, exactly as the exit sees it.
+[[nodiscard]] double paperWeekendChargeForEntry(const CandidateInput &in, const EntrySignal &sig,
+                                                double stake);
+
+// Would the WeekendCarry exit close a position opened from this candidate NOW, at
+// its FIRST mark? True exactly when that rule's own condition holds for a fresh
+// position: the fee table is known, the next boundary is the Friday night
+// (paperWeekendChargeAhead — which is true the WHOLE Friday) and the 3-night charge
+// is positive. No P/L comparison is needed: a position seconds old has paid its
+// half-spread and earned nothing, so its net is ≤ 0 and below any positive charge.
+// Measured before this gate existed: every Friday open on a non-24/7 instrument
+// with a known fee table was closed WeekendCarry ~5 s later — a pure spread round
+// trip. Silent exactly when the exit rule is (fees unknown, a credit, a zero fee),
+// and an unsized signal answers false (it has no position to close; the
+// `no-history` gate names that). The model's ACTIVE keep (aiMayOverrideCarry) is
+// a per-mark opinion about an OPEN position and cannot be known here, so it is
+// not consulted.
+[[nodiscard]] bool paperWeekendCarryWouldClose(const CandidateInput &in, const EntrySignal &sig);
 
 // Whether this position should close now, and why: its stop-loss or take-profit
 // rate touched, the carry no longer covered by the remaining upside, the tripled

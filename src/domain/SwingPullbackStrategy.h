@@ -87,8 +87,10 @@ private:
 
 // What must be tracked ACROSS calls for one open swing position — kept separate
 // from PaperTrade so this one strategy's bookkeeping does not grow a struct
-// every other strategy also carries; the caller (BotSimRunner, once wired)
-// persists this itself alongside the position id. stopPrice must be SEEDED with
+// every other strategy also carries; the caller (BotSimRunner::applySwingExit)
+// rebuilds it per evaluation from the swing fields PaperTrade carries for its own
+// position (swingPartialTaken, swingSessionsHeld, slRate), which the book persists
+// with the position id. stopPrice must be SEEDED with
 // the entry's own initial stop when the position opens — swingExitDecision only
 // ever tightens it from there, never loosens it (the design's own "stop never
 // moved outward" rule).

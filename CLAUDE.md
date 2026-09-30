@@ -190,7 +190,11 @@ publish_release; refuses to publish on a red pipeline).
   simulation without costs measures nothing. Those costs also DECIDE exits: close
   when the remaining upside no longer covers rollover-to-horizon + exit spread, and
   before the tripled weekend charge unless the position has earned it (a credit
-  never closes; unknown fees keep both rules silent). An ACTIVE keep from the model
+  never closes; unknown fees keep both rules silent). Entries MIRROR the weekend rule:
+  a Friday open that the weekend-carry rule would close on its first mark (a fresh
+  position is at net ≤ 0, and `paperWeekendChargeAhead` is true the whole Friday) is
+  refused `weekend-carry-ahead` instead of being opened and closed for the spread
+  (`paperWeekendCarryWouldClose`, silent exactly when the exit rule is). An ACTIVE keep from the model
   (`ExitContext::aiBacksHold`, config `aiMayOverrideCarry`, default OFF since 2026-08-12 —
   see the strategic redirection below) waives BOTH carry
   closes so a conviction trade may ride overnight/over the weekend — but ONLY those two: the
@@ -241,11 +245,24 @@ publish_release; refuses to publish on a red pipeline).
   never resolves a non-zero eToro `instrumentId`, so the id/rate quote path leaves `lastRateFor`
   at 0 and every crypto candidate was refused `no-live-quote` even with a composite direction.
   `BotSimRunner::sidesFor` (entry) and `markFor` (marking/exits) therefore FALL BACK to the
-  scan's candle close (the row's own closes for entry, `m_symbolSeries` for the mark — the Yahoo
-  `<TICKER>-USD` sweep, which quotes crypto 24/7), widened by the effective spread (already the
+  candle close — BOTH off `m_symbolSeries` first (the Yahoo `<TICKER>-USD` 1-minute sweep, which
+  quotes crypto 24/7), the entry then off the row's own hourly closes only when there is no
+  session series, so an open never starts with an hour of the coin's move already booked against
+  a 1-minute mark — widened by the effective spread (already the
   1% floor). `candidateFor` also treats a 24/7 instrument as `marketOpen` (`tradesOnWeekend`),
+  and `preTradeRefusal`'s venue-set test exempts it the same way (TS-BOTSIM-011 — the set
+  never lists a coin, so without the exemption every coin was `market-closed` one gate
+  earlier once the first tradeability poll answered),
   since the eToro tradeable set does not cover it — but `sides.ok` still gates, so a crypto with
   no candle is still honestly refused. A candle-derived mark is NOT flagged live (fromCandle).
+  Two more facts make it ACTUALLY tradable: the bot's crypto SCAN ROWS come from the Yahoo HOURLY
+  feed (`MarketFeeds::fetchCryptoScreenerRows`, `ScreenerRow::fromFallbackFeed`, merged with the
+  venue's rows through the one `mergeScreenerRow` rule) because the eToro scan queues only
+  resolved ids and so never rowed crypto at all; and an id-less crypto candidate is OPENED with
+  `instrumentId == 0` (`tryOpen` exempts crypto from `instrument-unresolved`) since the simulation's
+  whole geometry runs off its candle close and no order path needs the id. The desktop GUI is
+  crypto-free at the SOURCE (`nonCryptoTradableSymbols()` for client, feeds and its bot's focus),
+  so the fallback feed is wired into the console front ends, which scan the full catalogue.
 - The bot TRADES ONLY its FOCUS SET (`BotConfig::focusSymbols`, default `defaultFocusSymbols()` = SPX500 + NSDQ100 + every catalog crypto):
   anything else is refused before every other check with code `not-focus`, and only focus
   instruments are shown to the model. Measured on the ledger this removes the two failure
@@ -319,7 +336,8 @@ publish_release; refuses to publish on a red pipeline).
   swing strategy's SPX500-only scope belongs to ITS OWN config, not to the shared
   general-purpose default. Real-money execution stays excluded throughout every one of
   these items.
-- Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-035,
+- Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-059..-075 — one
+  requirement per read, REQ-F-069 the agreement gate; REQ-F-035 is superseded by them —
   `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
   1/5/15-minute push (ONE read, because three horizons off one series are one piece of
   evidence in three hats; disagreeing horizons are neutral), volatility DIRECTION (^VXN
@@ -355,7 +373,8 @@ publish_release; refuses to publish on a red pipeline).
   The bot refuses below a MAJORITY of the measured reads, floored at `minAgreeingReads`
   (3) and clamped to what is available (`no-confluence`), 0 switching it off. The majority
   rule is load-bearing: an absolute 3 was a majority of five reads and a MINORITY of nine,
-  so every read added silently weakened the gate (TS-PAPER-025 pins it).
+  so every read added silently weakened the gate (TS-PAPER-027 pins it: four of nine
+  refused as needing five, five of nine taken).
 - A probability is MEASURED, never asserted (REQ-F-037, `domain/PredictionLedger`).
   The 0..100 strength is EVIDENCE; P(up, 5/15/60/180 min) comes only from the record.
   EVERY evaluation is appended to `prediction-ledger.jsonl`, including the ones that
@@ -367,12 +386,28 @@ publish_release; refuses to publish on a red pipeline).
   `kMinSamplesPerBucket` the answer is UNCALIBRATED with its sample count and NO number —
   the `paperLiveReadiness` discipline. Every score sits beside baselines on identical
   samples (always-long, prior 5-min move, VWAP side) plus a Brier score against 0.25, and
-  an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten.
+  an UNMEASURABLE baseline is named rather than scored 0% and counted as beaten. Rows carry
+  `strategyVersion` `composite-v2` since 2026-09-29 (the baseline switched to the 1-minute
+  series and the price to the fill's own mid, `sidesFor` — never the 1-minute series
+  directly: for the two indices that is the CASH index, frozen from the New York close while
+  the CFD is called for hours, and rows priced off it paired into "no move" misses); the
+  runner's FORECAST scores rows of that version ONLY, so earlier untagged rows are EXCLUDED
+  from its record rather than averaged in (TS-BOTSIM-010). The field's contract is a filter
+  somebody has to apply — the runner is its one consumer, and it once filtered by symbol alone.
 - Session STRUCTURE is read before any oscillator (REQ-F-022, `openingRange` +
   `relativeStrength` in DecisionEngine): both come from the 1-minute series the app
   already fetches for every catalog instrument — including ES=F and NQ=F via
   SP.24-7 / NSDQ100.24-7 — so they cost no new feed. They go into the evidence prompt,
-  and the bot refuses to open INTO a fresh opposite break (`against-range-break`).
+  and the bot refuses to open INTO a fresh opposite break (`against-range-break`) — its
+  gate reads the SAME 1-minute series as the window (`m_symbolSeries`), never the hourly
+  scan closes, which are the volatility source only (a 30-point range over those is a
+  30-HOUR range) — and only while that series is LIVE: `MarketSnapshot` carries no stamp
+  and neither producer ever clears an entry, so a failed sweep and a cash index frozen at
+  the New York close both leave a present, dead series; the runner's one test is that the
+  series CHANGED since the previous scan (`liveSessionSeries`; a live 1-minute feed always
+  has new bars between scans, a first sighting is not yet known live), and a series that is
+  not live gives no range read and no five-minute baseline (TS-BOTSIM-004 pins both, the
+  range read in its negative form).
   True market breadth (advance/decline, up-volume, constituents above VWAP) is NOT
   available here: it needs per-constituent data the app does not fetch, and the
   Nasdaq-vs-S&P read is the honest stand-in — don't let a comment claim otherwise.

@@ -211,6 +211,12 @@ struct ScreenerRow {
     QList<double> closes;     // recent closes (oldest to newest), for the signal
     double lastPrice = 0.0;   // most recent close / live rate
     bool ok = false;          // false = leverage and/or candle data unavailable
+    // True when the row came from the public-feed FALLBACK (MarketFeeds'
+    // hourly Yahoo bars for catalogued crypto, whose eToro id does not resolve
+    // and which the venue scan therefore never rows) rather than from the venue
+    // itself. A consumer merging both prefers the venue's own row
+    // (trading::mergeScreenerRow); it is never a reason to refuse the row.
+    bool fromFallbackFeed = false;
 };
 
 // One recent news headline for an instrument, from a public news feed. Used to

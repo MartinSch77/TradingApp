@@ -15,9 +15,12 @@
 #include <QHash>
 #include <QList>
 #include <QFutureWatcher>
+#include <QLockFile>
 #include <QObject>
 #include <QSet>
 #include <QString>
+
+#include <memory>
 
 class EtoroClient;
 class OllamaAdvisor;
@@ -74,6 +77,13 @@ public:
     // stays absent. Optional: the console front end never calls it and behaves identically.
     void setCrowdEvidence(const QString &instrument, const QString &line);
     [[nodiscard]] bool armed() const { return m_armed; }
+    // Whether THIS process holds the book (a QLockFile beside the store file). The GUI
+    // and the console share one config dir and one book by design, and nothing else
+    // stopped both from running the bot at once — each marking, opening and rewriting
+    // botsim.json and the ledgers over the other. A runner that does not own its book
+    // still loads and shows it (examining is the console's purpose) but cannot be armed,
+    // never marks, trades or saves, and says so in the log; the views may show it.
+    [[nodiscard]] bool ownsBook() const { return m_ownsBook; }
 
     // How the AI proposal is used (REQ-F-030). Changing it is logged: it changes
     // what the running experiment measures.
@@ -210,7 +220,16 @@ private:
     [[nodiscard]] trading::EntryFeatures featuresFor(const trading::CandidateInput &in,
                                                      const trading::EntrySignal &sig, double stake,
                                                      const QDateTime &now);
-    // Append one training example for a trade that just closed.
+    // The swing entry's counterpart of featuresFor: the same feature vector, measured over
+    // the DAILY bars the strategy reasoned over. Set at open, because recordExperience
+    // writes nothing for a record whose features are invalid — without it every swing
+    // close, partial or final, silently left the training set.
+    [[nodiscard]] trading::EntryFeatures swingFeaturesFor(const trading::EntrySignal &sig,
+                                                          const QList<trading::DailyBar> &bars,
+                                                          double stake, const QDateTime &now);
+    // Append one training example for a trade that just closed. A PARTIAL record
+    // (PaperBook::partialClose) appends nothing: its net is banked in m_partialNetById
+    // and folded into the label of the final close of the same id.
     void recordExperience(const trading::PaperClosedTrade &done);
     void loadModel();
     void onTrainingDone();
@@ -236,10 +255,29 @@ private:
     // refused, and the refusals are the point (REQ-F-037). A default-constructed `in`
     // means nothing was evaluated yet, so the row carries the refusal and no evidence.
     // An EMPTY refusal means the trade was taken — the two cannot then disagree.
+    // `closes` are the scan's HOURLY candles (the regime's input and the price of last
+    // resort); the row's price is the mid the fill would be priced at (sidesFor), its
+    // five-minute baseline comes from the instrument's 1-minute series when that is LIVE
+    // (liveSessionSeries), and every row is tagged with the composite bot's strategy
+    // version. Not const: the row goes to the on-disk ledger AND to the in-memory copy
+    // of it.
     void recordPrediction(const trading::DecisionRow &row, const QList<double> &closes,
                           const QDateTime &now, const trading::CandidateInput &in,
-                          const QString &refusal) const;  // entries for the stored scan, with m_proposal
+                          const QString &refusal);   // entries for the stored scan, with m_proposal
+    // The prediction ledger as this process knows it: read from disk ONCE, on first use,
+    // then kept in step with every row recordPrediction appends. Re-reading the file per
+    // scan was O(file) work on a file that grows by a scan's worth of rows every few
+    // minutes — unbounded over the weeks a Pi is left running. The copy is PER PROCESS:
+    // a row another process appends to the shared file (the advise console) is not seen
+    // here until restart, where the per-scan re-read used to pick it up.
+    [[nodiscard]] const QList<trading::Prediction> &ledgerRows();
     void markAndExit();          // one pass over the open simulated positions
+    // The save at the end of a mark pass: immediately when the pass changed the book's
+    // SHAPE (a close, a partial, a harvest — the open/closed counts differ from the ones
+    // taken before the pass), otherwise at most once per kMarkSaveIntervalSecs, because
+    // a pure mark moved every 5-second tick and rewrote the whole book ~17 000 times a
+    // day while one position was open.
+    void saveAfterMarks(const QDateTime &now, qsizetype openBefore, qsizetype closedBefore);
     // The rate a simulated position closes at right now (bid for a long, ask for
     // a short), plus whether that came from a live quote. 0 = unknown.
     struct Mark {
@@ -250,8 +288,21 @@ private:
     // Two-sided quote for a candidate instrument: the per-tick quote book when the
     // bot already holds it, otherwise the mid of the last bulk snapshot widened by
     // the instrument's live spread. ok=false = not priced, so not tradable.
+    //
+    // `live` is the honest part, and only ONE of the three price paths is actually
+    // time-checked: a per-tick quote carries the venue's own stamp, so it is live only
+    // while trading::quoteIsFresh says so — a stalled one still prices the candidate
+    // (it falls through to the bulk mid, since the scan just priced the instrument)
+    // but is NOT live, because the venue's own stamp says this instrument stopped
+    // printing and an unstamped mid from the same venue cannot overrule that. The
+    // bulk-snapshot mid and the candle-close fallback have NO stamp of their own; they
+    // count as live when nothing dated contradicts them — the behaviour they always had,
+    // stated here rather than invented a timestamp for. The ledger row of a candidate is
+    // priced off the same mid (recordPrediction), so the record and the fill never
+    // disagree about what the instrument cost at the moment of the call.
     struct Sides {
         bool ok = false;
+        bool live = false;
         double bid = 0.0;
         double ask = 0.0;
         double spreadPct = 0.0;
@@ -265,6 +316,11 @@ private:
     // inside the complexity budget).
     bool tryOpen(const trading::DecisionRow &row, const QList<double> &closes,
                  const QDateTime &now, QString *skipCode);
+    // The opened trade's line in the persistent decision log, geometry beside evidence
+    // (see DES-DOM-DECLOG). Split out of tryOpen to keep it inside the metrics ratchet.
+    void appendOpenedNote(const trading::EntrySignal &sig, const trading::CandidateInput &in,
+                          const trading::EntryVerdict &verdict, double compositeConfidence,
+                          const QDateTime &now) const;
     // One candidate's direction under the current AI mode, refusal reason included.
     [[nodiscard]] trading::AiGate gateFor(const trading::DecisionRow &row) const;
     // The swing strategy's own entry path (2026-08-12 redesign, item 5's live wiring):
@@ -288,11 +344,23 @@ private:
     // PaperBook::openTrades(): closing removes that entry, so such a reference
     // would dangle halfway through this call. Both call sites hold a local copy.
     // Book the day when one open winner already completes the target (REQ-F-031).
-    // True when it closed a position.
-    bool harvestDayTarget();
+    // `now` is the mark clock, so "today" is judged against the same time the
+    // marks were taken at. True when it closed a position.
+    bool harvestDayTarget(const QDateTime &now);
     void closeTrade(const trading::PaperTrade &trade, trading::CloseReason reason);
     void save() const;
     void load();
+    // Try the book's lock once, right after load(): sets m_ownsBook, and when the book is
+    // held elsewhere drops a RESTORED armed flag — the process that holds the book is the
+    // one running the experiment, this one only looks at it.
+    void acquireBookLock();
+    // The one sentence every refusal of a non-owned book uses, naming the holder
+    // (QLockFile::getLockInfo: pid, host, application).
+    [[nodiscard]] QString bookHolderLine() const;
+    // The "books restored" line over the loaded book, with `state` saying what became of
+    // the file's armed flag — composed by load() and composed AGAIN by acquireBookLock()
+    // once it is known whether this process runs the book or only looks at it.
+    [[nodiscard]] QString restoreNoteFor(const QString &state) const;
 
     EtoroClient *m_client = nullptr;
     OllamaAdvisor *m_ai = nullptr;          // optional local-model advisor (may be null)
@@ -324,6 +392,14 @@ private:
     // by Yahoo ticker, and the per-instrument series keyed by APP symbol.
     QHash<QString, trading::VolumeSeries> m_referenceVolumes;
     QHash<QString, QList<double>> m_symbolSeries;
+    // The symbols whose series in m_symbolSeries CHANGED between the previous scan and this
+    // one — the runner's only test of a live 1-minute feed (see adoptSymbolSeries). The
+    // structure read and the ledger baseline use a series only while it is in here.
+    QSet<QString> m_liveSeries;
+    // Store the scan's per-symbol series and judge which of them are live.
+    void adoptSymbolSeries(const QHash<QString, QList<double>> &series);
+    // The symbol's 1-minute series when it is live, else empty (= no read).
+    [[nodiscard]] QList<double> liveSessionSeries(const QString &symbol) const;
     // The swing strategy's own daily bars (2026-08-12 redesign, item 5's live wiring),
     // keyed by APP symbol like every other per-instrument series here — set via
     // setDailyBars, read by considerSwingEntries/applySwingExit only.
@@ -347,9 +423,39 @@ private:
     trading::BotNet m_net;                  // what the record has taught it so far
     trading::BotNetMode m_netMode = trading::BotNetMode::Off;
     qint64 m_experienceCount = 0;           // training examples written this session
+    // Net already booked by PARTIAL closes of a still-open position, per trade id, so the
+    // one example written when the remainder finally closes is labelled with the WHOLE
+    // position's net rather than the remainder's share (REQ-F-033: one setup, one label).
+    // Not persisted: a restart mid-position loses at most the partial's share of that
+    // label, which is a smaller error than a second example with the same entry
+    // features would be.
+    QHash<qint64, double> m_partialNetById;
+    // The in-memory ledger behind ledgerRows(); `m_ledgerLoaded` distinguishes "not read
+    // yet" from "read, and empty" — a fresh install has no file at all.
+    QList<trading::Prediction> m_ledger;
+    bool m_ledgerLoaded = false;
+    // When markAndExit last wrote the book for marks alone (see saveAfterMarks). Not
+    // persisted: a crash loses at most that interval's worth of mark/peakNet/rollover
+    // state, and aboutToQuit still saves on a clean exit.
+    QDateTime m_lastMarkSave;
     QString m_evidence;                     // prompt of the scan being decided
     QHash<QString, QString> m_crowdEvidence; // instrument -> evidence line (REQ-F-046)
     QString m_storeFile;   // book file override (empty = botsim.json)
+    // One process per book: `storePath() + ".lock"`, held for the runner's lifetime and
+    // released by QLockFile's own destructor. Its stale time is set to 0 — the age rule
+    // OFF — because QLockFile's default treats a lock file older than 30 s as stale EVEN
+    // WHEN its holder is alive (isApparentlyStale checks the pid and the boot id, then
+    // falls through to the age; the modification time is never refreshed while held),
+    // and a bot holds its book for weeks. Measured: a lock naming a live pid with the
+    // recorded application name is refused while fresh, and TAKEN OVER once its file is
+    // 45 s old — the earlier "a live holder's lock is never stale by age" claim was
+    // wrong; that measurement was refused by the holder's flock on the file, which only
+    // a local filesystem enforces, not by the pid check. With the age rule off a lock is
+    // stale exactly when its pid is gone or the machine has rebooted (both free it at
+    // once, TS-BOTSIM-009), and a live holder keeps it however old (also on a
+    // filesystem without flock); the native lock is a second guard on top.
+    std::unique_ptr<QLockFile> m_bookLock;
+    bool m_ownsBook = false;
     QList<trading::DecisionRow> m_pendingRows;
     QList<ScreenerRow> m_pendingScan;
     QDateTime m_askedAt;                    // when the in-flight request went out
@@ -357,7 +463,8 @@ private:
     QString m_aiStatus;                     // last availability line, for the window
     // What load() found, emitted once the object graph is connected: a signal from
     // the CONSTRUCTOR reaches nobody, and "RESUMED ARMED" is precisely the line a
-    // multi-day experiment must not lose.
+    // multi-day experiment must not lose. A book held by another process never says
+    // "resumed" here (acquireBookLock rewrites it): the experiment continues THERE.
     QString m_restoreNote;
 };
 

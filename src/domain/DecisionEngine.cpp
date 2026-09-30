@@ -134,6 +134,22 @@ RegimeRead marketRegime(const MarketSnapshot &m)
     return read;
 }
 
+void mergeScreenerRow(QList<ScreenerRow> &rows, const ScreenerRow &row)
+{
+    const auto known = std::find_if(
+        rows.begin(), rows.end(), [&row](const ScreenerRow &r) { return r.symbol == row.symbol; });
+    if (known == rows.end()) {
+        rows.append(row);
+        return;
+    }
+    // The one case the newer row loses: the public feed standing in for a venue that
+    // already delivered a usable row of its own.
+    if (row.fromFallbackFeed && !known->fromFallbackFeed && known->ok) {
+        return;
+    }
+    *known = row;
+}
+
 QList<DecisionRow> computeDecisionRows(const MarketSnapshot &m)
 {
     const RegimeRead regimeRead = marketRegime(m);

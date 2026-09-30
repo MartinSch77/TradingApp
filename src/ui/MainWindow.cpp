@@ -4618,22 +4618,20 @@ void MainWindow::startScreenerScan()
 
 void MainWindow::onScreenerRow(const ScreenerRow &row)
 {
-    // The screener is a manual-entry helper, and crypto is not offered for manual trading
-    // (REQ-F-031) — the scan itself still covers it, because the bot reads the same scan.
+    // The rows feed the manual surfaces (screener dialog, recommendations, decision window)
+    // AND the desktop bot, and crypto is not offered for manual trading (REQ-F-031). In this
+    // app crypto is kept out at the SOURCE — the client and the feeds are handed
+    // nonCryptoTradableSymbols() and the desktop bot's focus set is that same list — so no
+    // crypto row reaches here and the desktop bot does not trade crypto by design; the crypto
+    // fallback feed (MarketFeeds::fetchCryptoScreenerRows) is therefore wired into the console
+    // front ends, which scan the full catalogue, and not here. This guard is the second line:
+    // should a crypto row ever arrive, the manual surfaces still never see it.
     if (trading::isCryptoSymbol(row.symbol)) {
         return;
     }
-    // Replace any existing row for the same symbol (a rescan), else append; then
-    // re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
-    const auto known = std::find_if(m_screenerRows.begin(), m_screenerRows.end(),
-                                    [&row](const ScreenerRow &r) {
-                                        return r.symbol == row.symbol;
-                                    });
-    if (known != m_screenerRows.end()) {
-        *known = row;
-    } else {
-        m_screenerRows.append(row);
-    }
+    // File it by symbol (a rescan replaces) through the ONE merge rule every front end uses,
+    // then re-rank. The list is small (~26), so rebuilding on each arrival is cheap.
+    trading::mergeScreenerRow(m_screenerRows, row);
     if (m_screenerDialog != nullptr) {  // leverage-screener window, if ever opened
         m_screenerDialog->updateRows(m_screenerRows, m_vixValid, m_vix, m_vixChangePct);
     }

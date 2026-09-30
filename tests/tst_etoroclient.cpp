@@ -1429,6 +1429,69 @@ private slots:
         QCOMPARE(positions[0].profit, 150.0);
         QCOMPARE(positions[0].closingCost, 0.0);
     }
+
+    //! @tstid TS-CLI-041 @design DES-SVC-CLIENT
+    // @relation(REQ-F-025, REQ-F-029, scope=function)
+    void TS_CLI_041_aPaperHeldDelayedRowIsRepairedLikeAnAccountHeldOne()
+    {
+        // The paper bot's holdings ride along in the per-tick rates poll
+        // (setExtraQuoteInstruments), but the candle repair used to cover only the
+        // ACCOUNT's holdings and the instrument on screen — so a delayed row for an
+        // instrument only the bot held stayed delayed for as long as eToro lagged it,
+        // and the bot's own age rule then refused to stack it as `no-live-quote` while
+        // the very same row would have been re-based within seconds had the real
+        // account held it too. Instrument 27 is on screen and live; 100000 is nobody's
+        // but the bot's, its row 11 minutes behind, its candle feed live.
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const QString fresh = nowUtc.toString(Qt::ISODate);
+        const QString delayed = nowUtc.addSecs(-11 * 60LL).toString(Qt::ISODate);
+        const QDateTime minuteStart(
+            nowUtc.date(), QTime(nowUtc.time().hour(), nowUtc.time().minute()), QTimeZone::UTC);
+        const QString thisMinute = minuteStart.toString(Qt::ISODate);
+        const QString candle = QStringLiteral(R"({"candles":[{"instrumentId":100000,"candles":[
+                {"fromDate":"%1","open":61000.0,"high":61200.0,"low":60900.0,
+                 "close":61100.0}]}]})")
+                                   .arg(thisMinute);
+        const QString rates = QStringLiteral(R"({"rates":[
+                {"instrumentId":27,"bid":5000.0,"ask":5001.0,"date":"%1"},
+                {"instrumentId":100000,"bid":60000.0,"ask":60010.0,"date":"%2"}]})")
+                                  .arg(fresh, delayed);
+        const MockHttpServer::Handler venue = [candle, rates](const QByteArray &,
+                                                              const QString &path) {
+            if (const auto standard = standardSpx500Responses(path)) {
+                return *standard;
+            }
+            if (path.contains(QStringLiteral("/instruments/100000/history/candles"))) {
+                return MockHttpServer::Response{200, candle.toUtf8(), {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                return MockHttpServer::Response{200, rates.toUtf8(), {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        };
+        MockHttpServer server(venue);
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 25;
+        EtoroClient client(cfg);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.setExtraQuoteInstruments({100000});   // the bot's holding, before the first poll
+        client.start();
+
+        // The bot's instrument is re-based on its live candle (close = bid, the row's
+        // 10.0 spread kept) — exactly what a held instrument gets.
+        QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(100000).fromCandle, kWaitMs);
+        const Quote repaired = client.quotes().value(100000);
+        QCOMPARE(repaired.bid, 61100.0);
+        QCOMPARE(repaired.ask, 61110.0);
+        QVERIFY(repaired.ageMs(QDateTime::currentDateTimeUtc()) <= trading::kQuoteStaleMs);
+        // …and the repair stays selective: the fresh row on screen is left as published.
+        const Quote shown = client.quotes().value(27);
+        QVERIFY(shown.isValid());
+        QVERIFY(!shown.fromCandle);
+        QCOMPARE(shown.bid, 5000.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

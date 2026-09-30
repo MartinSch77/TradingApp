@@ -250,8 +250,19 @@ private:
     // Two-sided quote for a candidate instrument: the per-tick quote book when the
     // bot already holds it, otherwise the mid of the last bulk snapshot widened by
     // the instrument's live spread. ok=false = not priced, so not tradable.
+    //
+    // `live` is the honest part, and only ONE of the three price paths is actually
+    // time-checked: a per-tick quote carries the venue's own stamp, so it is live only
+    // while trading::quoteIsFresh says so — a stalled one still prices the candidate
+    // (it falls through to the bulk mid, since the scan just priced the instrument)
+    // but is NOT live, because the venue's own stamp says this instrument stopped
+    // printing and an unstamped mid from the same venue cannot overrule that. The
+    // bulk-snapshot mid and the candle-close fallback have NO stamp of their own; they
+    // count as live when nothing dated contradicts them — the behaviour they always had,
+    // stated here rather than invented a timestamp for.
     struct Sides {
         bool ok = false;
+        bool live = false;
         double bid = 0.0;
         double ask = 0.0;
         double spreadPct = 0.0;

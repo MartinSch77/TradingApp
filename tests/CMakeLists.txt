@@ -114,6 +114,13 @@ target_compile_definitions(tst_botnet PRIVATE
     TRADINGAPP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 tradingapp_add_test(tst_positionmath tst_positionmath.cpp)
 tradingapp_add_test(tst_invariants tst_invariants.cpp)
+# The paper bot's RUNNER (the Qt Core plumbing the console binaries link too), compiled
+# directly like the console views and driven through its public surface in simulation:
+# the client is never started, and the ledger it writes is the observable.
+tradingapp_add_test(tst_botsimrunner tst_botsimrunner.cpp
+    ../src/ui/BotSimRunner.cpp ../src/ui/BotSimRunner.h)
+target_include_directories(tst_botsimrunner PRIVATE ../src)
+target_link_libraries(tst_botsimrunner PRIVATE Qt6::Concurrent)
 tradingapp_add_test(tst_swingpullbackstrategy tst_swingpullbackstrategy.cpp)
 tradingapp_add_test(tst_strategybacktest tst_strategybacktest.cpp)
 tradingapp_add_test(tst_pathoutcome tst_pathoutcome.cpp)

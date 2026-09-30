@@ -207,7 +207,13 @@ Checked in this exact order; the first refusal wins and names itself with a stab
    charge in EUR. Silent exactly when that exit rule is (fees unknown, a credit, a zero
    fee), so the two are one rule read from both ends.
 2. **Tradability** — market open → quote live → a signal (`dir != 0`) exists at all
-   (`market-closed` / `no-live-quote` / `no-signal`).
+   (`market-closed` / `no-live-quote` / `no-signal`). "Live" is the runner's claim
+   (`BotSimRunner::sidesFor`): a per-tick quote — the one price that carries the venue's
+   own stamp — counts only while `quoteIsFresh` says it is no older than the open-trades
+   table's own stale bound (`kQuoteStaleMs`, 120 s); a stalled one still prices the
+   candidate off the bulk mid but is refused here. The bulk-snapshot mid and the candle
+   fallback carry no stamp and count as live when nothing dated contradicts them — a
+   stated gap, not a hidden one.
 3. **Pace/session** (`paceVerdict`) — sit-out session phase (opening chaos, policy window) →
    the **confidence floor** (scaled by the phase's own window factor) → re-entry cooldown →
    opens-per-hour pace limit → trading into a fresh opposite range break → the **LeadSignal

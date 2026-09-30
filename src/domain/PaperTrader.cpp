@@ -1182,6 +1182,14 @@ double paperRolloverCost(const PaperTrade &trade, const InstrumentFees &fees, qi
 // Entry evaluation
 // ---------------------------------------------------------------------------
 
+bool quoteIsFresh(const Quote &quote, const QDateTime &now, qint64 maxAgeMs)
+{
+    // ageMs is -1 for an unstamped quote and negative for a stamp ahead of the clock;
+    // both pass by the header's rule, so the one comparison below is the whole test.
+    const qint64 age = quote.ageMs(now);
+    return (age < 0) || (age <= maxAgeMs);
+}
+
 EntrySignal buildEntrySignal(const CandidateInput &in, const BotConfig &cfg)
 {
     EntrySignal sig;

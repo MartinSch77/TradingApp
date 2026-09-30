@@ -63,6 +63,17 @@ constexpr int kTickMs = 5000;
 constexpr qint64 kProposalMaxAgeMs = qint64{5} * 60 * 1000;
 // Persisted books (REQ-F-029: an experiment spans days, not one session).
 constexpr auto kStoreFile = "botsim.json";
+// The ONE age rule for a per-tick quote in this runner, shared by the entry pricing
+// (sidesFor) and the mark (markFor): a quote whose own stamp is older than this is
+// neither traded off nor reported as a live mark. The bound is deliberately the
+// open-trades table's own trading::kQuoteStaleMs (120 s) and not a second number —
+// two thresholds for "stale" in one process would let the bot open a trade off a
+// quote the window beside it already flags as a stale row. The runner's 5 s tick
+// against a scan cycle of minutes needs nothing longer than the feed's own bound.
+bool perTickQuoteFresh(const Quote &quote)
+{
+    return trading::quoteIsFresh(quote, QDateTime::currentDateTimeUtc(), trading::kQuoteStaleMs);
+}
 // How many newly closed trades it takes before the outcome model is refitted. Low
 // enough that a running experiment keeps learning, high enough that the fit is not
 // repeated for a single new example (REQ-F-033).
@@ -389,8 +400,9 @@ BotSimRunner::Mark BotSimRunner::markFor(const PaperTrade &trade) const
     const auto it = quotes.constFind(trade.instrumentId);
     if (it != quotes.constEnd() && it->isValid()) {
         mark.rate = (it->bid + it->ask) / 2.0;
-        const qint64 age = it->ageMs(QDateTime::currentDateTimeUtc());
-        mark.live = (age >= 0) && (age < trading::kQuoteStaleMs);
+        // A stalled per-tick quote still marks the position (its last print is the best
+        // rate there is) but is not a LIVE mark — the window shows it as a stale row.
+        mark.live = perTickQuoteFresh(*it);
         if (mark.rate > 0.0) {
             return mark;
         }
@@ -569,11 +581,22 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     sides.spreadPct = effectiveSpreadPct(symbol);
     const QHash<qint64, Quote> &quotes = m_client->quotes();
     const auto it = quotes.constFind(instrumentId);
+    // A per-tick quote exists only for an instrument the bot already holds, and it is
+    // the one price here that carries the venue's own stamp. Fresh: it prices the
+    // candidate and is live. Stale: the venue says this instrument stopped printing,
+    // so the candidate is still priced off the bulk mid below (the scan just priced
+    // it) but is NOT live — the gate then refuses it as `no-live-quote`, which is the
+    // countable answer; a line per candidate here would be noise (see the Sides note).
+    bool stalled = false;
     if (it != quotes.constEnd() && it->isValid()) {
-        sides.bid = it->bid;
-        sides.ask = it->ask;
-        sides.ok = true;
-        return sides;
+        if (perTickQuoteFresh(*it)) {
+            sides.bid = it->bid;
+            sides.ask = it->ask;
+            sides.ok = true;
+            sides.live = true;
+            return sides;
+        }
+        stalled = true;
     }
     // Most instruments have no per-tick quote (nothing is held in them), but the
     // tradeability poll keeps a mid AND a spread warm for every resolved one — so
@@ -595,6 +618,8 @@ BotSimRunner::Sides BotSimRunner::sidesFor(const QString &symbol, qint64 instrum
     sides.bid = mid - half;
     sides.ask = mid + half;
     sides.ok = true;
+    // Neither fallback carries a stamp, so only a dated stall above can deny liveness.
+    sides.live = !stalled;
     return sides;
 }
 
@@ -755,7 +780,9 @@ trading::CandidateInput BotSimRunner::candidateFor(const trading::DecisionRow &r
     // never opens a crypto trade for which there is no candle.
     in.marketOpen = !m_tradeabilityKnown || m_tradeable.contains(row.symbol)
                     || trading::tradesOnWeekend(row.symbol);
-    in.quoteLive = sides.ok && in.marketOpen;
+    // Priced AND fresh (a stalled per-tick quote prices the row but is not live — see
+    // sidesFor) AND in an open market.
+    in.quoteLive = sides.ok && sides.live && in.marketOpen;
     // What the fee table says holding it will cost — the entry prices the round
     // trip, not just the spread (REQ-F-032).
     in.fees = (m_client != nullptr) ? m_client->feesFor(row.symbol) : InstrumentFees{};

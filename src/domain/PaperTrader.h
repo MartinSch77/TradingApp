@@ -736,6 +736,16 @@ struct PaperClosedTrade {
 // Entry evaluation (pure)
 // ---------------------------------------------------------------------------
 
+// Is a per-tick quote fresh enough to trade off or to report as a LIVE mark? True
+// while the venue's own price stamp (`Quote::asOf`) is no more than `maxAgeMs`
+// behind `now`. A quote WITHOUT a stamp passes (fail open, exactly as the
+// open-trades table's own row rule does): the venue published no age for it, which
+// is not the same as a feed that stopped. A stamp slightly AHEAD of the local clock
+// is clock skew, not staleness, and passes too. The one thing this refuses is a
+// dated stall — a quote whose own stamp says the market has not printed for longer
+// than the bound, which is what a halted market or a stuck feed looks like from here.
+[[nodiscard]] bool quoteIsFresh(const Quote &quote, const QDateTime &now, qint64 maxAgeMs);
+
 // Everything the bot knows about one candidate instrument on one scan.
 struct CandidateInput {
     QString symbol;

@@ -1,0 +1,172 @@
+// SPDX-FileCopyrightText: 2026 Martin Schuler
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The paper bot's RUNNER — the plumbing between the live feeds and the pure rules —
+// driven headless through its public surface (DES-UI-BOTSIM, REQ-F-029).
+//
+// The client is constructed without credentials (SIMULATION mode, no network, never
+// started), the books live in the test config directory under their own store name, and
+// the honest observable is what the runner REPORTS per evaluated candidate: the
+// `entryDecision` signal (traded or refused, with the countable code) — the same line the
+// advise console prints — so a rule that silently refuses (or silently passes) shows up
+// as a code rather than as an absence. The prediction ledger is checked where it applies:
+// a ledger row needs a price (`Prediction::isValid`), so an UNPRICED candidate has none.
+
+#include "ui/BotSimRunner.h"
+
+#include "domain/DecisionEngine.h"
+#include "domain/Models.h"
+#include "domain/PredictionLedger.h"
+#include "services/Config.h"
+#include "services/EtoroClient.h"
+
+#include <QDir>
+#include <QFile>
+#include <QSignalSpy>
+#include <QStandardPaths>
+#include <QtTest/QtTest>
+
+using namespace trading;
+
+namespace {
+
+// The runner's own book for these tests; its decision and experience logs are siblings
+// named from it (see BotSimRunner::siblingPath), the prediction ledger is shared.
+constexpr auto kStore = "tst-botsim.json";
+
+QStringList runnerFiles()
+{
+    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
+    return {dir.filePath(QLatin1String(kStore)),
+            dir.filePath(QStringLiteral("tst-botsim-decisions.log")),
+            dir.filePath(QStringLiteral("tst-botsim-experience.jsonl")),
+            BotSimRunner::ledgerPath()};
+}
+
+// A row the composite calls BUY with conviction, as the scan hands it to the runner.
+DecisionRow buyRow(const QString &symbol)
+{
+    DecisionRow row;
+    row.symbol = symbol;
+    row.dir = 1;
+    row.composite = 0.6;
+    row.confidence = 60.0;
+    row.maxLev = 2;
+    return row;
+}
+
+// `count` hourly closes, gently rising with a little noise — enough history to derive
+// a stop from, a non-degenerate volatility. Zero = an instrument nothing has priced.
+ScreenerRow scanRow(const QString &symbol, qsizetype count)
+{
+    ScreenerRow row;
+    row.symbol = symbol;
+    row.maxLeverage = 2;
+    for (qsizetype i = 0; i < count; ++i) {
+        row.closes.append(60000.0 + (static_cast<double>(i) * 20.0)
+                          + (((i % 3) == 0) ? 60.0 : -40.0));
+    }
+    row.lastPrice = row.closes.isEmpty() ? 0.0 : row.closes.constLast();
+    row.ok = !row.closes.isEmpty();
+    return row;
+}
+
+const Prediction *rowFor(const QList<Prediction> &ledger, const QString &symbol)
+{
+    for (const Prediction &p : ledger) {
+        if (p.symbol == symbol) {
+            return &p;
+        }
+    }
+    return nullptr;
+}
+
+// The refusal code the runner reported for `symbol` (empty when it traded), or a
+// sentinel when it reported nothing about the candidate at all — an ABSENT decision must
+// not read as an empty (= taken) code.
+QString decisionCodeFor(const QSignalSpy &spy, const QString &symbol)
+{
+    for (const QList<QVariant> &args : spy) {
+        if (args.at(0).toString() == symbol) {
+            return args.at(2).toString();
+        }
+    }
+    return QStringLiteral("<no decision reported>");
+}
+
+}   // namespace
+
+class TestBotSimRunner : public QObject
+{
+    Q_OBJECT;
+
+private slots:
+    void initTestCase()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        QVERIFY(QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)));
+    }
+
+    // Every test starts from no books at all: a store or ledger left by an earlier run
+    // would make "the row this scan wrote" indistinguishable from an old one.
+    void init()
+    {
+        for (const QString &path : runnerFiles()) {
+            static_cast<void>(QFile::remove(path));
+        }
+    }
+
+    void cleanup() { init(); }
+
+    //! @tstid TS-BOTSIM-001 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // `quoteLive` is the runner's claim, and the simulation client cannot hand it a stale
+    // per-tick quote (its only quote is stamped `now`), so the AGE rule itself is pinned
+    // in TS-PAPER-045. What IS drivable here is the other half of the same contract, the
+    // two untimed price paths: an instrument with no per-tick quote and no venue rate is
+    // still priced off its scan candle close and counts as live — the gate gets past
+    // `no-live-quote` to whatever comes next, and the ledger has its row — while an
+    // instrument nothing prices at all is refused exactly there, and REFUSED rather than
+    // absent: the runner reports a decision for both, so a silent skip could not pass as
+    // a refusal. Crypto on purpose: 24/7, so the day gate cannot turn this into a
+    // weekend-dependent test.
+    void TS_BOTSIM_001_unpricedCandidateIsNoLiveQuoteWhilePricedFallbackIsLive()
+    {
+        EtoroClient client(Config{});
+        BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        QVERIFY(decisions.isValid());
+        runner.setArmed(true);
+        QVERIFY(runner.armed());
+
+        const QString priced = QStringLiteral("BTC");
+        const QString unpriced = QStringLiteral("ETH");
+        MarketSnapshot snap;
+        snap.screenerRows = {scanRow(priced, 60), scanRow(unpriced, 0)};
+        snap.intradayBySymbol.insert(priced, scanRow(priced, 30).closes);
+        runner.onDecisions({buyRow(priced), buyRow(unpriced)}, snap);
+
+        // One decision per candidate, whatever it was.
+        QCOMPARE(decisions.size(), 2);
+        // Nothing prices ETH here — no per-tick quote, no venue rate, no candle — and
+        // that is the one refusal the quote rule owns.
+        QCOMPARE(decisionCodeFor(decisions, unpriced), QStringLiteral("no-live-quote"));
+        // BTC is priced off its candle close: the untimed fallback is live, so whatever
+        // refuses it (or takes it) is a LATER gate, never the quote rule or the market.
+        const QString btcCode = decisionCodeFor(decisions, priced);
+        QVERIFY2(btcCode != QStringLiteral("no-live-quote"), qPrintable(btcCode));
+        QVERIFY2(btcCode != QStringLiteral("market-closed"), qPrintable(btcCode));
+        QVERIFY2(btcCode != QStringLiteral("<no decision reported>"), qPrintable(btcCode));
+        // …and being priced, it is the one of the two the ledger can record (a row needs a
+        // price): the row carries the same verdict the signal reported.
+        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
+        const Prediction *btc = rowFor(ledger, priced);
+        QVERIFY(btc != nullptr);
+        QCOMPARE(btc->refusal, btcCode == QStringLiteral("opened") ? QString{} : btcCode);
+        QVERIFY(rowFor(ledger, unpriced) == nullptr);
+    }
+};
+
+QTEST_GUILESS_MAIN(TestBotSimRunner)
+#include "tst_botsimrunner.moc"

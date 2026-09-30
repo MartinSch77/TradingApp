@@ -10,6 +10,7 @@
 #include "domain/PaperTrader.h"
 
 #include "domain/InstrumentCatalog.h"
+#include "domain/PositionMath.h"
 
 #include <QJsonArray>
 #include <QtTest/QtTest>
@@ -3299,6 +3300,56 @@ private slots:
         QVERIFY(!paperWeekendCarryWouldClose(btcUnknown, btcUnknownSig));
         QVERIFY(paperEntryVerdict(btcUnknown, btcUnknownSig, freshBook(), cfg).code
                 != QStringLiteral("weekend-carry-ahead"));
+    }
+
+    //! @tstid TS-PAPER-045 @design DES-DOM-PAPER
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // The runner prices an entry AND reports a live mark off ONE age rule, pinned here as
+    // the pure function it calls: a per-tick quote is fresh while its own stamp is within
+    // the bound, an unstamped quote fails OPEN (the venue gave no age — that is not a
+    // stall), a stamp ahead of the clock is skew and passes, and the ONE refusal is a
+    // dated stall past the bound. The bound the runner uses is the open-trades table's
+    // kQuoteStaleMs, so the boundary is checked at that value and one millisecond past
+    // it. A quote that stopped updating used to pass `quoteLive` unread; the gate's
+    // answer to a non-live quote is `no-live-quote`, and nothing else about the
+    // candidate is allowed to change that.
+    void TS_PAPER_045_quoteIsFreshRefusesOnlyADatedStall()
+    {
+        const QDateTime now(QDate(2026, 8, 4), QTime(11, 0), QTimeZone::UTC);
+        constexpr qint64 maxAge = kQuoteStaleMs;
+        Quote q;
+        q.bid = 5000.0;
+        q.ask = 5001.0;
+        // Unstamped: fails open.
+        QVERIFY(!q.asOf.isValid());
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        // Just printed.
+        q.asOf = now.addSecs(-30);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        // Exactly at the bound still passes; one millisecond past it is a stall.
+        q.asOf = now.addMSecs(-maxAge);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+        q.asOf = now.addMSecs(-(maxAge + 1));
+        QVERIFY(!quoteIsFresh(q, now, maxAge));
+        // The measured lag of eToro's .24-7 feeds (11 minutes) is a stall.
+        q.asOf = now.addSecs(-11 * 60);
+        QVERIFY(!quoteIsFresh(q, now, maxAge));
+        // A stamp ahead of the local clock is skew, not staleness.
+        q.asOf = now.addSecs(5);
+        QVERIFY(quoteIsFresh(q, now, maxAge));
+
+        // What the runner does with a `false`: the candidate is still priced (bid/ask
+        // set) but not live, and the gate names exactly that.
+        const BotConfig cfg;
+        CandidateInput in = goodCandidate();
+        in.quoteLive = false;
+        const EntrySignal sig = buildEntrySignal(in, cfg);
+        QVERIFY(sig.valid);
+        QCOMPARE(paperEntryVerdict(in, sig, freshBook(), cfg).code,
+                 QStringLiteral("no-live-quote"));
+        in.quoteLive = true;
+        QVERIFY(paperEntryVerdict(in, sig, freshBook(), cfg).take);
     }
 };
 

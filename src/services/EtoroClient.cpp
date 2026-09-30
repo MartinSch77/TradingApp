@@ -1411,7 +1411,15 @@ void EtoroClient::repairStaleQuotes()
     // every time the bound is crossed. Only the delayed instruments pay for this.
     static constexpr qint64 kCandleRefreshMs = 5000;
     const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    // The SAME set the per-tick poll quotes (pollPriceReal): the account's holdings, the
+    // instrument on screen, and the paper bot's simulated holdings. The bot's set used to
+    // be missing here, so a delayed rates row for an instrument only the bot held was
+    // polled every tick but never re-based on the candle — and the bot then refused to
+    // stack it as `no-live-quote` for as long as the row lagged, while the same row for
+    // an instrument the ACCOUNT also held was repaired within seconds. A delayed row is a
+    // feed artefact to re-base (the Quote note), not a halted market, whoever holds it.
     QSet<qint64> want = m_heldInstrumentIds;
+    want.unite(m_extraQuoteIds);
     if (m_instrument.isValid()) {
         static_cast<void>(want.insert(m_instrument.instrumentId));
     }

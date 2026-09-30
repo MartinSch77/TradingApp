@@ -5,17 +5,22 @@
 // driven headless through its public surface (DES-UI-BOTSIM, REQ-F-029).
 //
 // The client is constructed without credentials (SIMULATION mode, no network, never
-// started), the books live in the test config directory under their own store name, and
-// the honest observable is what the runner REPORTS per evaluated candidate: the
-// `entryDecision` signal (traded or refused, with the countable code) — the same line the
-// advise console prints — so a rule that silently refuses (or silently passes) shows up
-// as a code rather than as an absence. The prediction ledger is checked where it applies:
-// a ledger row needs a price (`Prediction::isValid`), so an UNPRICED candidate has none.
+// started) except where a test says otherwise (TS-BOTSIM-006 runs a real-mode client
+// against an in-process mock of the venue, because only that can hand the runner a
+// per-tick quote with a venue stamp on it). The books live in the test config directory
+// under their own store name, and the honest observable is what the runner REPORTS per
+// evaluated candidate: the `entryDecision` signal (traded or refused, with the countable
+// code) — the same line the advise console prints — so a rule that silently refuses (or
+// silently passes) shows up as a code rather than as an absence. The prediction ledger is
+// checked where it applies: a ledger row needs a price (`Prediction::isValid`), so an
+// UNPRICED candidate has none.
 
 #include "ui/BotSimRunner.h"
 
+#include "MockHttpServer.h"
 #include "domain/DecisionEngine.h"
 #include "domain/Models.h"
+#include "domain/PositionMath.h"
 #include "domain/PredictionLedger.h"
 #include "services/Config.h"
 #include "services/EtoroClient.h"
@@ -23,6 +28,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -48,6 +54,94 @@ QStringList runnerFiles()
             dir.filePath(QStringLiteral("tst-botsim-experience.jsonl")),
             BotSimRunner::ledgerPath()};
 }
+
+// No books at all: a store or ledger left by an earlier run (or an earlier pass of the
+// same test) would make "the row this scan wrote" indistinguishable from an old one.
+void removeRunnerFiles()
+{
+    for (const QString &path : runnerFiles()) {
+        static_cast<void>(QFile::remove(path));
+    }
+}
+
+// The venue id the mock gives BTC. A per-tick quote exists only for an instrument the bot
+// HOLDS (its holdings are registered as quote interest) or the one on screen; here BTC is
+// both, so the quote the runner reads for it is the one the mock stamps.
+constexpr qint64 kBtcId = 100000;
+
+// A book holding one open BTC position on kBtcId, written as the runner's store so a
+// runner constructed next restores it (and registers the id as quote interest): the
+// stacking case, which is the only way the composite bot ever meets a per-tick quote
+// for a candidate. Wide stop and target, so no barrier can close it on the first mark.
+bool seedBookHoldingBtc()
+{
+    PaperBook book;
+    EntrySignal sig;
+    sig.valid = true;
+    sig.symbol = QStringLiteral("BTC");
+    sig.instrumentId = kBtcId;
+    sig.isBuy = true;
+    sig.fillRate = 60000.0;
+    sig.spreadPct = 1.0;
+    sig.leverage = 2;
+    sig.slRate = 50000.0;
+    sig.tpRate = 70000.0;
+    sig.confidence = 60.0;
+    if (book.open(sig, 500.0, QDateTime::currentDateTime()) == 0) {
+        return false;
+    }
+    QJsonObject root = book.toJson();
+    root.insert(QStringLiteral("armed"), true);
+    QFile file(runnerFiles().constFirst());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+    return file.write(QJsonDocument(root).toJson()) > 0;
+}
+
+// The venue, as far as this needs it: BTC resolves to kBtcId, and its rates row is stamped
+// `behindSecs` behind the clock AT EACH REQUEST — a row that lags but keeps moving, which
+// is what eToro's public feed does for a delayed instrument during an open session (the
+// tradeability rule reads a moving stamp as "open"; the age rule is what says "stale").
+// Everything else (portfolio, fees, candles — so no candle repair can rescue the row) 404s.
+MockHttpServer::Handler venueWithBtcRowBehindBy(qint64 behindSecs)
+{
+    return [behindSecs](const QByteArray &, const QString &path) {
+        if (path.contains(QStringLiteral("/market-data/search"))) {
+            return MockHttpServer::Response{
+                200,
+                QStringLiteral(R"({"items":[{"instrumentId":%1,"internalSymbolFull":"BTC",
+                                             "currentRate":60000.0}]})")
+                    .arg(kBtcId)
+                    .toUtf8(),
+                {}};
+        }
+        if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+            const QString stamp =
+                QDateTime::currentDateTimeUtc().addSecs(-behindSecs).toString(Qt::ISODate);
+            return MockHttpServer::Response{
+                200,
+                QStringLiteral(R"({"rates":[{"instrumentId":%1,"bid":60000.0,"ask":60010.0,
+                                             "date":"%2"}]})")
+                    .arg(kBtcId)
+                    .arg(stamp)
+                    .toUtf8(),
+                {}};
+        }
+        return MockHttpServer::Response{404, "{}", {}};
+    };
+}
+
+// What one scan of the seeded book against that venue produced. Filled by
+// scanBtcWithRowBehindBy; the sentinels survive an early return inside it, so a failed
+// setup reads as a wrong value in the caller's assertions, never as a pass.
+struct QuoteRun {
+    qint64 quoteAgeMs = -2;   // the per-tick quote's age when read
+    QString code = QStringLiteral("<not run>");   // the reported entry code for BTC
+    QString ledgerRefusal = QStringLiteral("<no row>");   // the ledger row's, if any
+    int openAfter = -1;   // open positions after the scan
+    bool markLive = true;   // the held position's mark flag
+};
 
 // The persisted book as the runner wrote it (empty when there is none yet).
 QJsonObject savedBook()
@@ -133,6 +227,53 @@ QString decisionCodeFor(const QSignalSpy &spy, const QString &symbol)
     return QStringLiteral("<no decision reported>");
 }
 
+// Seed the book, bring up the venue and a real-mode client on it, let the per-tick quote
+// land, then run ONE scan with a BUY row for BTC and report what the runner said.
+void scanBtcWithRowBehindBy(qint64 behindSecs, QuoteRun *out)
+{
+    removeRunnerFiles();
+    QVERIFY(seedBookHoldingBtc());
+    MockHttpServer server(venueWithBtcRowBehindBy(behindSecs));
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    EtoroClient::setTradeConfigBaseForTesting(server.baseUrl());   // fees: local, 404
+
+    Config cfg;
+    cfg.apiKey = QStringLiteral("k");   // credentials → the real-mode client
+    cfg.userKey = QStringLiteral("u");
+    cfg.mode = QStringLiteral("demo");
+    cfg.symbol = QStringLiteral("BTC");
+    cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+    cfg.pollIntervalMs = 25;
+    EtoroClient client(cfg);
+    BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
+    QCOMPARE(runner.book().openTrades().size(), 1);   // the seeded holding was restored
+    QVERIFY(runner.armed());
+    QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+    QVERIFY(decisions.isValid());
+    client.start();
+
+    const QString symbol = QStringLiteral("BTC");
+    QTRY_VERIFY_WITH_TIMEOUT(client.quotes().value(kBtcId).isValid(), 15000);
+    QCOMPARE(client.instrumentIdFor(symbol), kBtcId);
+    out->quoteAgeMs = client.quotes().value(kBtcId).ageMs(QDateTime::currentDateTimeUtc());
+
+    MarketSnapshot snap;
+    snap.screenerRows = {scanRow(symbol, 60)};
+    snap.intradayBySymbol.insert(symbol, scanRow(symbol, 30).closes);
+    runner.onDecisions({buyRow(symbol)}, snap);
+
+    out->code = decisionCodeFor(decisions, symbol);
+    out->openAfter = static_cast<int>(runner.book().openTrades().size());
+    if (out->openAfter == 1) {
+        out->markLive = runner.book().openTrades().constFirst().markLive;
+    }
+    // The list must outlive the pointer into it (rowFor returns one into its argument).
+    const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
+    if (const Prediction *row = rowFor(ledger, symbol); row != nullptr) {
+        out->ledgerRefusal = row->refusal;
+    }
+}
+
 }   // namespace
 
 class TestBotSimRunner : public QObject
@@ -146,30 +287,28 @@ private slots:
         QVERIFY(QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)));
     }
 
-    // Every test starts from no books at all: a store or ledger left by an earlier run
-    // would make "the row this scan wrote" indistinguishable from an old one.
-    void init()
-    {
-        for (const QString &path : runnerFiles()) {
-            static_cast<void>(QFile::remove(path));
-        }
-    }
+    // Every test starts from no books at all (see removeRunnerFiles).
+    void init() { removeRunnerFiles(); }
 
-    void cleanup() { init(); }
+    void cleanup() { removeRunnerFiles(); }
 
     //! @tstid TS-BOTSIM-001 @design DES-UI-BOTSIM
     // @relation(REQ-F-029, REQ-F-032, scope=function)
     //
-    // `quoteLive` is the runner's claim, and the simulation client cannot hand it a stale
+    // `quoteLive` is the runner's claim. The simulation client cannot hand it a stale
     // per-tick quote (its only quote is stamped `now`), so the AGE rule itself is pinned
-    // in TS-PAPER-045. What IS drivable here is the other half of the same contract, the
-    // two untimed price paths: an instrument with no per-tick quote and no venue rate is
-    // still priced off its scan candle close and counts as live — the gate gets past
+    // as the pure function in TS-PAPER-045 and the runner's WIRING of it — the stale
+    // branch of sidesFor, the `live` term in candidateFor, the mark — in TS-BOTSIM-006
+    // against a mock venue. What this one drives is the other half of the same contract,
+    // the two untimed price paths: an instrument with no per-tick quote and no venue rate
+    // is still priced off its scan candle close and counts as live — the gate gets past
     // `no-live-quote` to whatever comes next, and the ledger has its row — while an
     // instrument nothing prices at all is refused exactly there, and REFUSED rather than
     // absent: the runner reports a decision for both, so a silent skip could not pass as
     // a refusal. Crypto on purpose: 24/7, so the day gate cannot turn this into a
-    // weekend-dependent test.
+    // weekend-dependent test. That is ALL crypto buys here — the client is never started,
+    // so tradeability is unknown and `market-closed` is unreachable for any symbol, which
+    // is why this test makes no claim about it.
     void TS_BOTSIM_001_unpricedCandidateIsNoLiveQuoteWhilePricedFallbackIsLive()
     {
         EtoroClient client(Config{});
@@ -195,7 +334,6 @@ private slots:
         // refuses it (or takes it) is a LATER gate, never the quote rule or the market.
         const QString btcCode = decisionCodeFor(decisions, priced);
         QVERIFY2(btcCode != QStringLiteral("no-live-quote"), qPrintable(btcCode));
-        QVERIFY2(btcCode != QStringLiteral("market-closed"), qPrintable(btcCode));
         QVERIFY2(btcCode != QStringLiteral("<no decision reported>"), qPrintable(btcCode));
         // …and being priced, it is the one of the two the ledger can record (a row needs a
         // price): the row carries the same verdict the signal reported.
@@ -405,10 +543,55 @@ private slots:
         } else {
             QVERIFY(runner.book().openTrades().isEmpty());
         }
-        // Either way the ledger has its row, carrying the same verdict.
-        const Prediction *btc = rowFor(loadPredictions(BotSimRunner::ledgerPath()), symbol);
+        // Either way the ledger has its row, carrying the same verdict. (The list is a
+        // named local: rowFor returns a pointer INTO it, which a temporary would free.)
+        const QList<Prediction> ledger = loadPredictions(BotSimRunner::ledgerPath());
+        const Prediction *btc = rowFor(ledger, symbol);
         QVERIFY(btc != nullptr);
         QCOMPARE(btc->refusal, code == QStringLiteral("opened") ? QString{} : code);
+    }
+
+    //! @tstid TS-BOTSIM-006 @design DES-UI-BOTSIM
+    // @relation(REQ-F-029, REQ-F-032, scope=function)
+    //
+    // The runner's WIRING of the age rule (the rule itself is TS-PAPER-045), driven the
+    // only way a per-tick quote with a venue stamp can reach it: a real-mode client on a
+    // mock venue, and a book that already HOLDS the instrument — the stacking case, which
+    // is the measured defect (a held instrument whose per-tick quote had stopped printing
+    // 11 minutes earlier was still stacked, because `quoteLive` never read the stamp).
+    // With BTC's rates row stamped a minute past the open-trades table's own bound
+    // (`kQuoteStaleMs`) the per-tick quote is stale: the candidate is still PRICED (a row
+    // in the ledger, so the refusal is countable) but refused exactly `no-live-quote`, and
+    // the held position's mark is booked as NOT live — while the same venue with the row
+    // stamped now takes the runner past that gate (whatever refuses or takes it comes
+    // later) and marks the position live. 24/7 crypto on purpose, so neither the day gate
+    // nor a weekday session can precede the quote rule. The row lags but keeps MOVING at
+    // each request, exactly eToro's delayed-feed shape: the tradeability rule reads that
+    // as an open market, and only the age rule can say "stale".
+    void TS_BOTSIM_006_aStalePerTickQuoteIsPricedButRefusedAsNotLiveAndMarksNotLive()
+    {
+        QuoteRun stale;
+        scanBtcWithRowBehindBy((kQuoteStaleMs / 1000) + 60, &stale);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY2(stale.quoteAgeMs > kQuoteStaleMs, qPrintable(QString::number(stale.quoteAgeMs)));
+        QCOMPARE(stale.code, QStringLiteral("no-live-quote"));
+        QCOMPARE(stale.ledgerRefusal, QStringLiteral("no-live-quote"));   // priced, so counted
+        QCOMPARE(stale.openAfter, 1);   // the held position is marked, not closed
+        QVERIFY(!stale.markLive);
+
+        QuoteRun fresh;
+        scanBtcWithRowBehindBy(0, &fresh);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY2(fresh.quoteAgeMs <= kQuoteStaleMs, qPrintable(QString::number(fresh.quoteAgeMs)));
+        QVERIFY2(fresh.code != QStringLiteral("no-live-quote"), qPrintable(fresh.code));
+        QVERIFY2(fresh.code != QStringLiteral("market-closed"), qPrintable(fresh.code));
+        QVERIFY2(fresh.code != QStringLiteral("<no decision reported>"), qPrintable(fresh.code));
+        QCOMPARE(fresh.openAfter, 1);
+        QVERIFY(fresh.markLive);
     }
 };
 

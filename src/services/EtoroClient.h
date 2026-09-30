@@ -437,7 +437,8 @@ private:
     QHash<qint64, Quote> m_quoteById;
     QSet<qint64> m_heldInstrumentIds;
     // Instruments the paper bot holds simulated positions in (see
-    // setExtraQuoteInstruments): quoted alongside the held ones, never traded.
+    // setExtraQuoteInstruments): quoted alongside the held ones AND repaired from the
+    // candle feed alongside them (repairStaleQuotes), never traded.
     QSet<qint64> m_extraQuoteIds;
     QSet<qint64> m_candleRepairInFlight;
     QHash<qint64, QDateTime> m_candleRepairAt;

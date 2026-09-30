@@ -10,7 +10,7 @@ absent) — `docs/roadmap.md` remains the forward-looking plan; this file is
 the realized-history counterpart `process/strategies/project-management-
 strategy.md`'s planning-artefact composition names.
 
-## Unreleased
+## v1.2.0
 
 Nine paper-bot corrections, every one measured on the running bot or verified in
 the code before it was changed, plus the documentation that had drifted from it.
@@ -104,7 +104,15 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   Qt library, now spelled out; three raw loops now `std::ranges` algorithms; a
   local `day` shadowing `LiveBotExecutor::day()`) and one PMD CPD clone in
   tst_botsimrunner (the one-symbol snapshot, now a helper) — all fixed, both
-  tools at 0 again.
+  tools at 0 again. `tools/clang_analyzer.py` no longer pins `clang++-18`: it
+  takes the NEWEST `clang++-NN` on PATH (the `llvm_suffix` rule), because a pinned
+  18 cannot parse a GCC 14 compile database's libstdc++ headers and reported
+  every translation unit as `clang-analyzer-failed` (136 lines) on a developer
+  machine whose clang 23 parses them fine — the count `publish_release.sh`
+  refused on. The same stage now resolves its extra checkers against the
+  compiler's own `-analyzer-checker-help` listing: clang 23 folded the two
+  `valist.*` checkers into `security.VAList`, and naming a checker the compiler
+  does not know is a hard error that again failed every translation unit.
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

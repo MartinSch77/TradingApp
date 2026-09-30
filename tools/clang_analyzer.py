@@ -68,6 +68,15 @@ EXTRA_CHECKERS = (
     "valist.Uninitialized",
     "valist.CopyToSelf",
 )
+# A checker a NEWER clang renamed: enabled under its new name when the old one is
+# gone. clang 23 folded valist.Uninitialized / valist.CopyToSelf (/ Unterminated)
+# into one security.VAList; naming a checker the compiler does not know is a hard
+# `clang --analyze` error, which reported every TU as clang-analyzer-failed
+# (163 of 163, 2026-09-30) — not a finding about the code.
+RENAMED_CHECKERS = {
+    "valist.Uninitialized": "security.VAList",
+    "valist.CopyToSelf": "security.VAList",
+}
 
 # Deeper exploration than the analyzer's defaults.
 ANALYZER_CONFIG = (
@@ -85,10 +94,37 @@ LOCATED = re.compile(r"^(?P<file>.+?):(?P<line>\d+):(?P<col>\d+): "
                      r"warning: (?P<msg>.*) \[(?P<checker>[A-Za-z0-9_.]+)\]$")
 
 
+MIN_CLANG_MAJOR = 18
+VERSIONED_CLANGXX = re.compile(r"^clang\+\+-(\d+)(?:\.exe)?$")
+
+
+def _versioned_clangxx() -> list[str]:
+    """Every `clang++-NN` on PATH with NN >= MIN_CLANG_MAJOR, newest first.
+
+    The same rule as tools/common.sh's llvm_suffix(): the NEWEST clang wins, and no
+    version is ever pinned. A pinned clang++-18 broke on a machine whose compile
+    database came from GCC 14 — clang 18 cannot parse libstdc++ 14's headers, so
+    every TU failed to compile and the stage reported one clang-analyzer-failed
+    line per file (136 of them, 2026-09-30) while the clang 23 beside it was fine.
+    """
+    majors: set[int] = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            m = VERSIONED_CLANGXX.match(name)
+            if m and int(m.group(1)) >= MIN_CLANG_MAJOR:
+                majors.add(int(m.group(1)))
+    return [f"clang++-{major}" for major in sorted(majors, reverse=True)]
+
+
 def _find_compiler(db_compiler: str) -> str | None:
     """A clang driver that understands the compile database's flag dialect.
 
-    An MSVC-style database (cl.exe) needs clang-cl, everything else clang++.
+    An MSVC-style database (cl.exe) needs clang-cl, everything else clang++: the
+    newest versioned clang++ on PATH first, then the unversioned one.
     CLANG_ANALYZER_CXX overrides the choice.
     """
     override = os.environ.get("CLANG_ANALYZER_CXX")
@@ -96,7 +132,8 @@ def _find_compiler(db_compiler: str) -> str | None:
         return shutil.which(override) or override
     msvc_style = os.path.basename(db_compiler).lower().startswith(("cl.", "cl-", "cl_")) \
         or os.path.basename(db_compiler).lower() == "cl"
-    candidates = ("clang-cl",) if msvc_style else ("clang++-18", "clang++", "clang-cl")
+    candidates = ("clang-cl",) if msvc_style \
+        else (*_versioned_clangxx(), "clang++", "clang-cl")
     for candidate in candidates:
         found = shutil.which(candidate)
         if found:
@@ -124,9 +161,54 @@ def _supports_z3(compiler: str) -> bool:
         return run.returncode == 0 and "Z3" not in run.stderr
 
 
-def _analyzer_flags(with_z3: bool) -> list[str]:
-    flags = ["--analyze", "-Xclang", "-analyzer-output=text"]
+# A checker line of `-analyzer-checker-help`: an indented DOTTED name, then either
+# the description (one or more spaces, e.g. "optin.core.EnumCastOutOfRange Check…"),
+# or nothing — a long name stands alone and its description wraps to the next,
+# deeper-indented line. Requiring the dot keeps those wrapped description lines
+# ("Warns when …", "Reports …") from reading as checker names.
+CHECKER_LINE = re.compile(r"^\s+([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)(?:\s|$)")
+
+
+def _available_checkers(compiler: str) -> set[str] | None:
+    """The checker names this clang knows (`-cc1 -analyzer-checker-help`).
+
+    None when the probe cannot be read at all (clang-cl lacks -cc1 as spelled
+    here, or an odd driver): the caller then enables EXTRA_CHECKERS unchanged,
+    which is the behaviour every clang up to 18 verified.
+    """
+    try:
+        run = subprocess.run([compiler, "-cc1", "-analyzer-checker-help"],
+                             capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    names = {m.group(1) for m in map(CHECKER_LINE.match, run.stdout.splitlines()) if m}
+    return names if run.returncode == 0 and names else None
+
+
+def _resolve_checkers(available: set[str] | None) -> tuple[list[str], list[str]]:
+    """EXTRA_CHECKERS against what the compiler offers: (enabled, dropped).
+
+    A renamed checker is enabled under its new name once; one that is simply
+    gone is dropped and NAMED in the stage summary, never silently.
+    """
+    if available is None:
+        return list(EXTRA_CHECKERS), []
+    enabled: list[str] = []
+    dropped: list[str] = []
     for checker in EXTRA_CHECKERS:
+        name = checker if checker in available else RENAMED_CHECKERS.get(checker, checker)
+        if name in available:
+            if name not in enabled:
+                enabled.append(name)
+        else:
+            dropped.append(checker)
+    return enabled, dropped
+
+
+def _analyzer_flags(with_z3: bool, checkers: tuple[str, ...] | list[str] = EXTRA_CHECKERS
+                    ) -> list[str]:
+    flags = ["--analyze", "-Xclang", "-analyzer-output=text"]
+    for checker in checkers:
         flags += ["-Xclang", f"-analyzer-checker={checker}"]
     config = list(ANALYZER_CONFIG) + (["crosscheck-with-z3=true"] if with_z3 else [])
     for option in config:
@@ -207,7 +289,8 @@ def main() -> int:
         return 3  # the pipeline's "stage skipped" code
 
     with_z3 = _supports_z3(compiler)
-    flags = _analyzer_flags(with_z3)
+    checkers, dropped = _resolve_checkers(_available_checkers(compiler))
+    flags = _analyzer_flags(with_z3, checkers)
 
     lines: set[str] = set()
     with cf.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
@@ -217,8 +300,9 @@ def main() -> int:
 
     with open(out_path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(sorted(lines)) + ("\n" if lines else ""))
+    unknown = f", unknown to this clang: {' '.join(dropped)}" if dropped else ""
     print(f"clang-analyzer ({os.path.basename(compiler)}, "
-          f"{len(EXTRA_CHECKERS)} extra checkers, "
+          f"{len(checkers)} extra checkers{unknown}, "
           f"z3 {'on' if with_z3 else 'unavailable'}): "
           f"{len(lines)} findings over {len(entries)} TUs")
     return 0

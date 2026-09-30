@@ -749,6 +749,24 @@ ACCEPTANCE_CRITERIA: Traced to DES-UI-LEADGAUGE, DES-CON-BOT and DES-DOM-CONFLUE
 ISSUE: GitHub issue #14 (REQ-F-035 atomic decomposition, second pass); see process/requirements-schema-upgrade.md.
 
 [REQUIREMENT]
+UID: REQ-F-076
+VERIFICATION: T/I
+TITLE: Live execution of the bot's SPX500/NSDQ100 decisions under an explicit double-pressed, time-bounded arming with hard caps
+STATEMENT: >>>
+The bot's decisions for a FIXED scope — SPX500 and NSDQ100, and no other instrument — may be mirrored to real orders, but ONLY while a human has armed real-money execution by the REQ-N-005 double press on a control that names the whole grant: the scope, the per-order cap, the daily-loss cap and the duration. Nothing the app computes shall arm it. Arming shall additionally require that the REQ-F-031 readiness verdict is met at the moment of arming, that the broker client is live (real credentials and mode "real") and that the kill switch is not tripped; a refused arming shall name which of those refused it. The arming is time-bounded (REQ-N-009's armed state, expiring on its own), is never persisted across a restart, and every order passes REQ-N-009's validated-armed-recorded path — the validator, the armed state with its caps and the append-only audit record — so no mirrored order can skip any of the three.
+
+The per-order stake shall be the SMALLER of the configured cap and the paper trade's own stake, sent at the paper trade's leverage and with the paper trade's geometry: the stop-loss and take-profit AMOUNTS scale with the stake so the live position carries the same stop and target rates the simulated one does. At most ONE live position shall be held per instrument. A realised daily loss over the mirrored positions reaching the configured cap shall TRIP the kill switch — sticky, cleared only by an explicit human action — after which no further order is sent that day or any later one until it is cleared. A paper close of a mirrored trade shall close the live position; a live position whose broker id is not yet known shall be reported as needing a manual close rather than silently left open. Both caps shall be configuration with safe defaults (250 EUR per order, 250 EUR realised daily loss), and a cap of zero shall mean that no order can be sent, never that the cap is off.
+
+The window shall show the armed state and its caps, the mirrored positions with their broker ids, and the REQ-F-031 readiness verdict BESIDE the arming control. The paper bot shall keep its own books unchanged — the simulated position opens and closes exactly as it would without the mirror, so the record REQ-F-031 measures stays the record of the strategy, not of the live fills.
+<<<
+SOURCE: Owner request 2026-09-30 ("a button to use real money for robot trading with SPX500 and NSDQ100"), with the answers to the three questions asked before implementation recorded in RATIONALE.
+RATIONALE: The owner's answers were: caps of 250 EUR per order and 250 EUR realised daily loss; scope SPX500 and NSDQ100 only, at most one live position per instrument, leverage as the paper bot chose; and — the third — that the REQ-F-031 readiness verdict should NOT be a precondition of arming. That third answer is NOT implemented, and this is recorded here rather than hidden: REQ-F-031's "shall not be connectable to real-money execution while any condition is unmet" is a safety property this repository committed to, the implementation session was refused the change that would have weakened it, and the wiring therefore requires the gate to pass — which is also exactly the condition the project's own instructions name for wiring live execution ("a REQ-N-005 carve-out, the gate passing, and per-order/daily caps"). Lifting that precondition is an owner decision to be taken IN REQ-F-031 itself, with the change-management strategy's two independent approvals, not in a code path. The precedent for replacing a per-order double press with a double-pressed ARMING is REQ-F-028: an autonomous executor cannot present each order for confirmation, so the confirmation moves to the grant, and the grant names everything it permits. The mirror is GUI-only (the console front ends hold no gateway) and the paper runner itself still has no route to an order endpoint — it emits trade events, and the one object holding a gateway is composed in the main window.
+PRIORITY: must
+STATUS: implemented
+ACCEPTANCE_CRITERIA: Traced to DES-DOM-LIVEMIRROR (the pure plan and day-loss rules; TS-LIVE-001..004), DES-UI-LIVEBOT (the executor over the guarded send; TS-LBOT-001..005), DES-SVC-GATEWAY (the real gateway refusing a non-live client; TS-GATE-007) and DES-SVC-CLIENT (a market order on a priced instrument that is not on screen, and the opened position id as a signal; TS-CLI-042), all passing with 0 hard gaps. Inspection: the bot window's "Real money" box shows the armed state, the caps, the mirrored positions and the readiness verdict beside the arming button, the arming button needs two presses within one second, and an unmet readiness verdict refuses the arming with the blockers named.
+ISSUE: none
+
+[REQUIREMENT]
 UID: REQ-N-008
 VERIFICATION: T
 TITLE: Money shall be counted, not approximated
@@ -1005,7 +1023,9 @@ STATEMENT: No secret (API key, user key) shall be stored in version control.
 UID: REQ-N-005
 VERIFICATION: T/I
 TITLE: Explicit confirmation for money-moving actions
-STATEMENT: Money-moving actions shall require explicit user confirmation (double-press) and shall never be triggered by advisory features (plans, watchdog, AI).
+STATEMENT: >>>
+Money-moving actions shall require explicit user confirmation (double-press) and shall never be triggered by advisory features (plans, watchdog, AI). An autonomous executor (REQ-F-028's scripts, REQ-F-076's bot mirror) replaces the per-order double press with a double-pressed, visible, time-bounded ARMING that names the caps it is granted under; it is never armed by anything the app computes.
+<<<
 
 [REQUIREMENT]
 UID: REQ-N-006

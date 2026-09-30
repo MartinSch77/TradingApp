@@ -112,7 +112,7 @@ private slots:
     }
 
     //! @tstid TS-CFG-005 @design DES-SVC-CFG
-    // @relation(REQ-F-031, scope=function)
+    // @relation(REQ-F-031, REQ-F-076, scope=function)
     void TS_CFG_005_dailyRulesAreConfigurable()
     {
         const QTemporaryDir dir;
@@ -120,20 +120,34 @@ private slots:
         const Config defaults = Config::load();
         QCOMPARE(defaults.botDailyTarget, 350.0);        // the documented default
         QCOMPARE(defaults.botDailyLossLimit, 350.0);
+        // The real-money mirror's caps (REQ-F-076): the owner's 250/250 are the defaults.
+        QCOMPARE(defaults.botLiveMaxPerOrderEur, 250.0);
+        QCOMPARE(defaults.botLiveDailyLossEur, 250.0);
 
         writeFile(dir.filePath(QStringLiteral("config.json")),
-                  R"({"botDailyTarget":500.0,"botDailyLossLimit":250.0})");
+                  R"({"botDailyTarget":500.0,"botDailyLossLimit":250.0,
+                      "botLiveMaxPerOrderEur":100.0,"botLiveDailyLossEur":150.0})");
         const Config fromFile = Config::load();
         QCOMPARE(fromFile.botDailyTarget, 500.0);
         QCOMPARE(fromFile.botDailyLossLimit, 250.0);
+        QCOMPARE(fromFile.botLiveMaxPerOrderEur, 100.0);
+        QCOMPARE(fromFile.botLiveDailyLossEur, 150.0);
 
         // 0 is a real value here: it switches the rule off. And a negative number is
         // rejected rather than applied — a typo must never widen what may be lost.
         qputenv("TRADINGAPP_BOT_TARGET", "0");
         qputenv("TRADINGAPP_BOT_LOSS_LIMIT", "-100");
+        // The live caps follow the same non-negative rule; a 0 here is accepted too, and
+        // it CLOSES the door (no order can be sent) rather than removing the cap.
+        qputenv("TRADINGAPP_BOT_LIVE_ORDER_CAP", "0");
+        qputenv("TRADINGAPP_BOT_LIVE_LOSS_CAP", "-50");
         const Config fromEnv = Config::load();
         QCOMPARE(fromEnv.botDailyTarget, 0.0);
         QCOMPARE(fromEnv.botDailyLossLimit, 250.0);      // the file value stands
+        QCOMPARE(fromEnv.botLiveMaxPerOrderEur, 0.0);
+        QCOMPARE(fromEnv.botLiveDailyLossEur, 150.0);   // the file value stands
+        qunsetenv("TRADINGAPP_BOT_LIVE_ORDER_CAP");
+        qunsetenv("TRADINGAPP_BOT_LIVE_LOSS_CAP");
     }
 
     //! @tstid TS-CFG-006 @design DES-SVC-CFG

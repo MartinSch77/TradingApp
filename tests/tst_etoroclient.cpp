@@ -1492,6 +1492,115 @@ private slots:
         QVERIFY(!shown.fromCandle);
         QCOMPARE(shown.bid, 5000.0);
     }
+
+    //! @tstid TS-CLI-042 @design DES-SVC-CLIENT
+    // @relation(REQ-F-076, REQ-F-001, scope=function)
+    void TS_CLI_042_aMarketOrderOnAnotherPricedInstrumentIsSentOffItsOwnRate()
+    {
+        // The bot's real-money mirror (REQ-F-076) trades SPX500/NSDQ100 while anything may
+        // be on screen. What a MARKET order needs is a price for ITS instrument: with
+        // SPX500 (27) on screen at 5000/5001, a buy on NSDQ100 (100000, in the bulk
+        // snapshot at 20000/20002) is POSTed on 100000 and its stop is priced off 20001 —
+        // not off the shown instrument's 5001, which is where the old refusal ("only the
+        // instrument currently being traded") protected against and what this pins. An
+        // instrument with no price at all is refused with a sentence, and nothing is sent.
+        // The order lookup's positionExecutions entry becomes the positionOpened signal.
+        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        const QString rates = QStringLiteral(R"({"rates":[
+                {"instrumentId":27,"bid":5000.0,"ask":5001.0,"date":"%1"},
+                {"instrumentId":100000,"bid":20000.0,"ask":20002.0,"date":"%1"}]})")
+                                  .arg(now);
+        MockHttpServer server([rates](const QByteArray &method, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                const bool nsdq = path.contains(QStringLiteral("NSDQ100"));
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"items":[{"instrumentId":%1,"internalSymbolFull":"%2",
+                        "displayname":"%2","currentRate":%3}]})")
+                        .arg(nsdq ? QStringLiteral("100000") : QStringLiteral("27"),
+                             nsdq ? QStringLiteral("NSDQ100") : QStringLiteral("SPX500"),
+                             nsdq ? QStringLiteral("20000.0") : QStringLiteral("5000.0"))
+                        .toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                return MockHttpServer::Response{200, rates.toUtf8(), {}};
+            }
+            if (path.contains(QStringLiteral("orders:lookup"))) {
+                return MockHttpServer::Response{200,
+                                                R"({"orderId":9001,
+                    "status":{"id":3,"name":"Filled"},
+                    "positionExecutions":[{"positionId":555,"state":"open"}]})",
+                                                {}};
+            }
+            if (path.contains(QStringLiteral("/execution")) && (method == "POST")) {
+                return MockHttpServer::Response{200, R"({"orderId":9001})", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+
+        Config cfg = mockConfig(server);
+        cfg.pollIntervalMs = 50000;   // no background polling: only what the test drives
+        EtoroClient client(cfg);
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        QSignalSpy results(&client, &EtoroClient::orderResult);
+        QSignalSpy opened(&client, &EtoroClient::positionOpened);
+        client.setTradableSymbols({QStringLiteral("SPX500"), QStringLiteral("NSDQ100")});
+        client.start();
+        QVERIFY(ready.wait(kWaitMs));
+        QTRY_COMPARE_WITH_TIMEOUT(client.instrumentIdFor(QStringLiteral("NSDQ100")), 100000,
+                                  kWaitMs);
+        // The bulk snapshot the tradeability poll keeps warm is what prices 100000.
+        client.refreshTradeability();
+        QTRY_VERIFY_WITH_TIMEOUT(client.lastRateFor(100000) > 0.0, kWaitMs);
+        QCOMPARE(client.instrument().instrumentId, 27);   // SPX500 stays on screen
+
+        OrderRequest req;
+        req.isBuy = true;
+        req.instrumentId = 100000;
+        req.amount = 500.0;
+        req.leverage = 5.0;
+        req.stopLossAmount = 50.0;
+        req.takeProfitAmount = 75.0;
+        client.openPosition(req);
+        QVERIFY(results.wait(kWaitMs));
+        QVERIFY2(results.constFirst().at(0).toBool(),
+                 qPrintable(results.constFirst().at(1).toString()));
+        const QJsonObject body =
+            QJsonDocument::fromJson(server.lastBodyFor(QStringLiteral("/execution"))).object();
+        QCOMPARE(body.value(QStringLiteral("instrumentId")).toInt(), 100000);
+        QCOMPARE(body.value(QStringLiteral("orderType")).toString(), QStringLiteral("mkt"));
+        QCOMPARE(body.value(QStringLiteral("amount")).toDouble(), 500.0);
+        // Priced off NSDQ100's own mid (20001): units 500×5/20001 = 0.12499, so the 50 stop
+        // sits 400.02 below → 19600.98, the 75 target 600.03 above → 20601.03. Off the
+        // shown instrument's 5001 the stop would have been ~4901 — a rate NSDQ100 never had.
+        const double sl = body.value(QStringLiteral("stopLossRate")).toDouble();
+        const double tp = body.value(QStringLiteral("takeProfitRate")).toDouble();
+        QVERIFY2(std::fabs(sl - 19600.98) < 0.05, qPrintable(QString::number(sl)));
+        QVERIFY2(std::fabs(tp - 20601.03) < 0.05, qPrintable(QString::number(tp)));
+
+        // The lookup's positionExecutions entry is the opened position, as a SIGNAL with
+        // the instrument and side the mirror pairs it by.
+        if (opened.isEmpty()) {
+            QVERIFY(opened.wait(kWaitMs));
+        }
+        QCOMPARE(opened.constFirst().at(0).toString(), QStringLiteral("555"));
+        QCOMPARE(opened.constFirst().at(1).toLongLong(), 100000LL);
+        QVERIFY(opened.constFirst().at(2).toBool());
+
+        // An instrument nothing prices: refused with a sentence, and NOTHING is POSTed.
+        const qsizetype postsBefore = server.requests().size();
+        results.clear();
+        OrderRequest unpriced = req;
+        unpriced.instrumentId = 424242;
+        client.openPosition(unpriced);
+        QCOMPARE(results.count(), 1);   // refused synchronously, before any network
+        QVERIFY(!results.constFirst().at(0).toBool());
+        QVERIFY(results.constFirst().at(1).toString().contains(
+            QStringLiteral("no live rate for #424242")));
+        QCOMPARE(server.requests().size(), postsBefore);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestEtoroClient)

@@ -80,6 +80,9 @@ signals:
     // positionId travels WITH the result. The message already names it, but a UI that
     // needed the id would have to parse prose — and prose is not an interface.
     void positionClosed(bool ok, const QString &message, const QString &positionId);
+    // The position an openPosition just booked, by id — mirrors EtoroClient's own signal
+    // so a simulation run of the GUI exercises the real-money mirror's pairing end to end.
+    void positionOpened(const QString &positionId, qint64 instrumentId, bool isBuy);
     void leverageOptions(const QList<int> &values);
     void monthlyPnlReady(const MonthlyPnl &summary);
     void screenerRow(const ScreenerRow &row);

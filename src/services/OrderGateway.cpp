@@ -3,6 +3,8 @@
 
 #include "services/OrderGateway.h"
 
+#include "services/EtoroClient.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -10,6 +12,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QUuid>
 
 namespace trading {
 
@@ -332,6 +335,29 @@ OrderResult FakeOrderGateway::placeOrder(const OrderRequest &request, const Mone
 {
     m_sent.append({request, stake});
     return m_next;
+}
+
+EtoroOrderGateway::EtoroOrderGateway(EtoroClient *client) : m_client(client) {}
+
+OrderResult EtoroOrderGateway::placeOrder(const OrderRequest &request, const Money &stake)
+{
+    OrderResult out;
+    if ((m_client == nullptr) || !m_client->config().isLive()) {
+        out.detail = QStringLiteral("the broker client is not live (real keys and mode \"real\" "
+                                    "are required) — nothing was sent");
+        return out;
+    }
+    // The validator already pinned request.amount to `stake` to the cent (stake-mismatch),
+    // so the request is what goes out; the stake is echoed in the detail so the audit line
+    // and the broker's own body can be read against each other.
+    out.requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_client->openPosition(request);
+    out.accepted = true;
+    out.detail = QStringLiteral("submitted to eToro (%1 at x%2); the fill is reported by the "
+                                "client's own signals")
+                     .arg(stake.toString())
+                     .arg(request.leverage, 0, 'f', 0);
+    return out;
 }
 
 QString GuardedSendOutcome::refusalText() const

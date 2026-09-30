@@ -53,6 +53,13 @@ struct Config {
     // capital decision, not a code decision — 0 disables the rule it belongs to.
     double botDailyTarget = 350.0;
     double botDailyLossLimit = 350.0;
+    // The real-money mirror's caps (REQ-F-076), in EUR: the most one mirrored order may
+    // stake, and the realised daily loss over the mirrored positions that TRIPS the kill
+    // switch. Unlike the two rules above, 0 is NOT "off" here — a cap of zero means no
+    // order can be sent, which is the safe reading of a number somebody set to nothing.
+    // The owner's numbers (2026-09-30) are the defaults.
+    double botLiveMaxPerOrderEur = 250.0;
+    double botLiveDailyLossEur = 250.0;
 
     // Forced SIMULATION, set by TRADINGAPP_FORCE_SIMULATION and by nothing else.
     // While it is on, hasCredentials() answers false — so isLive() is false, the

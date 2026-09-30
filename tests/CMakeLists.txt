@@ -133,7 +133,9 @@ tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 
 # --- integration tests (services layer) ------------------------------------
 tradingapp_add_test(tst_config tst_config.cpp)
-tradingapp_add_test(tst_ordergateway tst_ordergateway.cpp)
+# The gateway suite runs the REAL gateway against the in-process mock too (TS-GATE-007): the
+# refusal on a non-live client needs no network, the accepted send needs a venue to POST to.
+tradingapp_add_test(tst_ordergateway tst_ordergateway.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
 tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)

@@ -54,6 +54,14 @@ void applyJson(Config &cfg, const QJsonObject &obj)
         cfg.botDailyLossLimit =
             obj.value(QStringLiteral("botDailyLossLimit")).toDouble(cfg.botDailyLossLimit);
     }
+    if (obj.contains(QStringLiteral("botLiveMaxPerOrderEur"))) {
+        cfg.botLiveMaxPerOrderEur =
+            obj.value(QStringLiteral("botLiveMaxPerOrderEur")).toDouble(cfg.botLiveMaxPerOrderEur);
+    }
+    if (obj.contains(QStringLiteral("botLiveDailyLossEur"))) {
+        cfg.botLiveDailyLossEur =
+            obj.value(QStringLiteral("botLiveDailyLossEur")).toDouble(cfg.botLiveDailyLossEur);
+    }
 }
 
 void applyNonNegative(const QProcessEnvironment &env, const QString &key, double &target)
@@ -167,6 +175,11 @@ void applyEnv(Config &cfg)
     }
     applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_TARGET"), cfg.botDailyTarget);
     applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_LOSS_LIMIT"), cfg.botDailyLossLimit);
+    // Same non-negative rule for the real-money caps; here 0 closes the door rather than
+    // opening it (see Config.h), so the typo case is a cap of zero, never a wider one.
+    applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_LIVE_ORDER_CAP"),
+                     cfg.botLiveMaxPerOrderEur);
+    applyNonNegative(env, QStringLiteral("TRADINGAPP_BOT_LIVE_LOSS_CAP"), cfg.botLiveDailyLossEur);
 }
 
 } // namespace

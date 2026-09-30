@@ -212,6 +212,12 @@ signals:
     // than waiting for a portfolio poll that is measurably behind. Empty only when no
     // position was named at all.
     void positionClosed(bool ok, const QString &message, const QString &positionId);
+    // A position THIS client opened, with the broker's id — once the order lookup names
+    // it (real) or the simulation books it. The orderResult sentence already carries the
+    // id in prose, and prose is not an interface: the bot's real-money mirror (REQ-F-076)
+    // pairs a fill with the request that caused it by instrument and side, and needs the
+    // id to close that position when the paper trade closes.
+    void positionOpened(const QString &positionId, qint64 instrumentId, bool isBuy);
     void monthlyPnlReady(const MonthlyPnl &summary);
     void monthlyPnlFailed(const QString &error);
     // The individual closed trades behind the latest history walk (newest first,
@@ -338,8 +344,11 @@ private:
     void openPositionReal(const OrderRequest &req);
     // The rate a new order's units and SL/TP are priced off: a buy fills near the
     // ask, a sell near the bid (mid / instrument rate as fallbacks) — and a limit
-    // order at its own trigger, since that is where the position will open.
-    [[nodiscard]] double orderReferenceRate(const OrderRequest &req) const;
+    // order at its own trigger, since that is where the position will open. For an
+    // instrument that is NOT on screen the price is its own per-tick quote side when
+    // the quote book has one, else the bulk-snapshot mid; 0 = no price at all, and a
+    // market order is then refused rather than priced off the wrong instrument.
+    [[nodiscard]] double orderReferenceRate(const OrderRequest &req, qint64 instrumentId) const;
     // The UnifiedOrderRequest body common to market and limit orders. The amount
     // and the SL/TP rates are added by openPositionReal, after the unit-cap shrink.
     // static: built purely from its arguments — it must not depend on client state.
@@ -388,7 +397,8 @@ private:
     // a genuine rejection with eToro's reason, and never a false "opened nothing"
     // just because the (lagging) portfolio snapshot hasn't caught up yet. attempt is
     // the poll count so far (0 on the first call); it self-reschedules while pending.
-    void confirmOrderReal(qint64 orderId, bool isBuy, const QString &symbolLabel, qint32 attempt);
+    void confirmOrderReal(qint64 orderId, qint64 instrumentId, bool isBuy,
+                          const QString &symbolLabel, qint32 attempt);
     void closePositionReal(const QString &positionId);
     void modifyPositionReal(const QString &positionId, double stopLossRate,
                             double takeProfitRate, bool trailingStop);

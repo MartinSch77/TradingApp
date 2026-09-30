@@ -3,7 +3,14 @@
 
 #include "services/OrderGateway.h"
 
+#include "MockHttpServer.h"
+#include "services/Config.h"
+#include "services/EtoroClient.h"
+
 #include <QDir>
+#include <QHostAddress>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -513,6 +520,117 @@ private slots:
         // given, which is how the app itself constructs it.
         const OrderAudit dflt;
         QVERIFY(dflt.path().endsWith(QStringLiteral("order-audit.jsonl")));
+    }
+
+    //! @tstid TS-GATE-007 @design DES-SVC-GATEWAY
+    // @relation(REQ-N-009, REQ-F-076, scope=function)
+    //
+    // The REAL gateway fails closed on its own, and when it may send, it sends exactly the
+    // validated request to the venue and reports the SEND, not the fill.
+    void TS_GATE_007_theRealGatewayRefusesANonLiveClientAndOtherwiseSendsTheRequest()
+    {
+        // A credential-less client is in SIMULATION; a demo-mode client with keys is not
+        // live either. Both are refused AT THE GATEWAY, whatever the caller believed, and
+        // nothing reaches the client: no orderResult, no simulated position.
+        {
+            EtoroClient sim(Config{});
+            EtoroOrderGateway gateway(&sim);
+            const QSignalSpy results(&sim, &EtoroClient::orderResult);
+            const QSignalSpy opened(&sim, &EtoroClient::positionOpened);
+            QCOMPARE(gateway.name(), QStringLiteral("eToro (real)"));
+            const OrderResult refused = gateway.placeOrder(goodRequest(), usd(500.0));
+            QVERIFY(!refused.accepted);
+            QVERIFY(refused.requestId.isEmpty());
+            QVERIFY(refused.detail.contains(QStringLiteral("not live")));
+            QCOMPARE(results.count(), 0);
+            QCOMPARE(opened.count(), 0);
+
+            // …and through the guarded send the refusal is a broker-side "rejected" in the
+            // audit, with the gateway's own words, committing nothing against the day.
+            const QTemporaryDir dir;
+            OrderAudit audit(dir.filePath(QStringLiteral("audit.jsonl")));
+            LiveArm arm;
+            QVERIFY(arm.arm(60, usd(1000.0), usd(5000.0), at(9)));
+            GuardedOrderSender sender(&gateway, &arm, &audit);
+            const GuardedSendOutcome out = sender.send(goodRequest(), amounts(500.0, 100.0, 150.0),
+                                                       goodContext(), at(9), at(9, 1));
+            QVERIFY(!out.sent);
+            QVERIFY(out.validation.ok());
+            QCOMPARE(out.armRefusal, ArmRefusal::None);
+            QCOMPARE(out.audited.outcome, QStringLiteral("rejected"));
+            QVERIFY(out.audited.detail.contains(QStringLiteral("not live")));
+            QVERIFY(arm.committedToday().isZero());
+            QVERIFY(out.refusalText().contains(QStringLiteral("not live")));
+
+            Config demo;
+            demo.apiKey = QStringLiteral("k");
+            demo.userKey = QStringLiteral("u");
+            demo.mode = QStringLiteral("demo");
+            EtoroClient demoClient(demo);
+            EtoroOrderGateway demoGateway(&demoClient);
+            QVERIFY(!demoGateway.placeOrder(goodRequest(), usd(500.0)).accepted);
+            // A gateway composed without a client sends nothing either.
+            EtoroOrderGateway orphan(nullptr);
+            QVERIFY(!orphan.placeOrder(goodRequest(), usd(500.0)).accepted);
+        }
+
+        // A LIVE client (real keys, mode real) against the in-process venue: the gateway
+        // hands the request to EtoroClient::openPosition, which POSTs it as a market
+        // order on the named instrument, and the gateway reports the send with an id.
+        MockHttpServer server([](const QByteArray &method, const QString &path) {
+            if (path.contains(QStringLiteral("/market-data/search"))) {
+                return MockHttpServer::Response{200,
+                                                R"({"items":[{"instrumentId":27,
+                    "internalSymbolFull":"SPX500","currentRate":5000.0}]})",
+                                                {}};
+            }
+            if (path.contains(QStringLiteral("/market-data/instruments/rates"))) {
+                const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+                return MockHttpServer::Response{
+                    200,
+                    QStringLiteral(R"({"rates":[{"instrumentId":27,"bid":5000.0,"ask":5001.0,
+                                                 "date":"%1"}]})")
+                        .arg(now)
+                        .toUtf8(),
+                    {}};
+            }
+            if (path.contains(QStringLiteral("/execution")) && (method == "POST")) {
+                return MockHttpServer::Response{200, R"({"orderId":4711})", {}};
+            }
+            return MockHttpServer::Response{404, "{}", {}};
+        });
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        Config live;
+        live.apiKey = QStringLiteral("k");
+        live.userKey = QStringLiteral("u");
+        live.mode = QStringLiteral("real");
+        live.baseUrl = server.baseUrl() + QStringLiteral("/api");
+        live.pollIntervalMs = 50000;   // no background polling: only the order path runs
+        EtoroClient client(live);
+        QVERIFY(client.config().isLive());
+        QSignalSpy ready(&client, &EtoroClient::ready);
+        QSignalSpy results(&client, &EtoroClient::orderResult);
+        client.setTradableSymbols({QStringLiteral("SPX500")});
+        client.start();
+        QVERIFY(ready.wait(15000));
+
+        EtoroOrderGateway gateway(&client);
+        const OrderResult sent = gateway.placeOrder(goodRequest(), usd(500.0));
+        QVERIFY(sent.accepted);
+        QVERIFY(!sent.requestId.isEmpty());
+        QVERIFY(sent.detail.contains(QStringLiteral("submitted")));
+        QVERIFY(results.wait(15000));
+        QVERIFY(results.constFirst().at(0).toBool());   // "submitted" — the send, not the fill
+        const QJsonObject body =
+            QJsonDocument::fromJson(server.lastBodyFor(QStringLiteral("/execution"))).object();
+        QCOMPARE(body.value(QStringLiteral("instrumentId")).toInt(), 27);
+        QCOMPARE(body.value(QStringLiteral("orderType")).toString(), QStringLiteral("mkt"));
+        QCOMPARE(body.value(QStringLiteral("transaction")).toString(), QStringLiteral("buy"));
+        QCOMPARE(body.value(QStringLiteral("amount")).toDouble(), 500.0);
+        QCOMPARE(body.value(QStringLiteral("leverage")).toInt(), 5);
+        // The real account segment: no "/demo" in the path.
+        QVERIFY(server.requests().constLast().path.contains(
+            QStringLiteral("/trading/execution/orders")));
     }
 };
 

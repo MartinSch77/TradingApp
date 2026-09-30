@@ -251,6 +251,7 @@ void SimulationEngine::openPosition(const OrderRequest &req)
                                .arg(takeProfitAmount, 0, 'f', 0)
                                .arg(pos.positionId,
                                     pos.trailingStop ? QStringLiteral(" trailing") : QString()));
+    emit positionOpened(pos.positionId, pos.instrumentId, isBuy);
     emit portfolioUpdated(m_simPositions);
     emit cashUpdated(m_simCash, m_orderCurrency);
 }

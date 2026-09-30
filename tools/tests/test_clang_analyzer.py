@@ -104,6 +104,89 @@ def test_supports_z3_false_when_z3_mentioned_even_if_rc_zero(monkeypatch):
 # _analyzer_flags
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# _available_checkers / _resolve_checkers
+# --------------------------------------------------------------------------
+
+HELP_23 = """OVERVIEW: Clang Static Analyzer Checkers List
+
+USAGE: -analyzer-checker <CHECKER or PACKAGE,...>
+
+CHECKERS:
+  core.CallAndMessage           Check for logical errors
+  optin.cplusplus.UninitializedObject
+                                Reports uninitialized fields after object construction
+  optin.cplusplus.VirtualCall   Check virtual function calls
+  optin.core.EnumCastOutOfRange Check integer to enumeration casts for out of range values
+  optin.portability.UnixAPI     Finds implementation-defined behavior
+  security.FloatLoopCounter     Warn on using a floating point value
+  security.VAList               Warn on misuse of va_list objects
+  security.cert.env.InvalidPtr  Finds usages of possibly invalidated pointers
+  nullability.NullableDereferenced
+                                Warns when a nullable pointer is dereferenced.
+  nullability.NullablePassedToNonnull
+                                Warns when a nullable pointer is passed to a function
+  nullability.NullableReturnedFromNonnull
+                                Warns when a nullable pointer is returned from a function
+"""
+
+
+def _fake_run(stdout, returncode=0):
+    def run(args, **kwargs):
+        return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr="")
+    return run
+
+
+def test_available_checkers_parses_the_help_listing(monkeypatch):
+    monkeypatch.setattr(ca.subprocess, "run", _fake_run(HELP_23))
+    names = ca._available_checkers("/usr/bin/clang++-23")
+    assert "security.VAList" in names and "core.CallAndMessage" in names
+    # clang 23 prints a long name ALONE on its line and a medium one with a single
+    # space before the description — both are checker names, the wrapped
+    # description lines ("Warns…", "Reports…") are not.
+    assert "optin.cplusplus.UninitializedObject" in names
+    assert "optin.core.EnumCastOutOfRange" in names
+    assert "nullability.NullableDereferenced" in names
+    assert not {n for n in names if not any(c == "." for c in n)}
+    assert "CHECKERS:" not in names and "USAGE:" not in names
+
+
+def test_available_checkers_none_when_the_probe_fails(monkeypatch):
+    monkeypatch.setattr(ca.subprocess, "run", _fake_run("", returncode=1))
+    assert ca._available_checkers("/usr/bin/clang++") is None
+
+    def boom(args, **kwargs):
+        raise OSError("no such driver")
+    monkeypatch.setattr(ca.subprocess, "run", boom)
+    assert ca._available_checkers("/usr/bin/clang++") is None
+
+
+def test_resolve_checkers_renames_valist_once_and_keeps_the_rest():
+    available = {m.group(1) for m in map(ca.CHECKER_LINE.match, HELP_23.splitlines()) if m}
+    enabled, dropped = ca._resolve_checkers(available)
+    assert dropped == []
+    assert enabled.count("security.VAList") == 1       # two old names, one new checker
+    assert "valist.Uninitialized" not in enabled and "valist.CopyToSelf" not in enabled
+    assert enabled[:2] == list(ca.EXTRA_CHECKERS[:2])   # order and the rest untouched
+
+
+def test_resolve_checkers_drops_and_names_what_no_rename_covers():
+    available = set(ca.EXTRA_CHECKERS) - {"security.FloatLoopCounter", "valist.CopyToSelf"}
+    enabled, dropped = ca._resolve_checkers(available)
+    assert dropped == ["security.FloatLoopCounter", "valist.CopyToSelf"]
+    assert "security.FloatLoopCounter" not in enabled and "valist.Uninitialized" in enabled
+
+
+def test_resolve_checkers_without_a_probe_keeps_the_verified_clang18_set():
+    assert ca._resolve_checkers(None) == (list(ca.EXTRA_CHECKERS), [])
+
+
+def test_analyzer_flags_take_the_resolved_checker_list():
+    flags = ca._analyzer_flags(False, ["security.VAList"])
+    assert flags.count("-analyzer-checker=security.VAList") == 1
+    assert not any(f.startswith("-analyzer-checker=valist") for f in flags)
+
+
 def test_analyzer_flags_without_z3():
     flags = ca._analyzer_flags(with_z3=False)
     assert "--analyze" in flags

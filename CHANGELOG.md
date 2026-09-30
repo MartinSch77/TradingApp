@@ -109,7 +109,10 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   18 cannot parse a GCC 14 compile database's libstdc++ headers and reported
   every translation unit as `clang-analyzer-failed` (136 lines) on a developer
   machine whose clang 23 parses them fine — the count `publish_release.sh`
-  refused on.
+  refused on. The same stage now resolves its extra checkers against the
+  compiler's own `-analyzer-checker-help` listing: clang 23 folded the two
+  `valist.*` checkers into `security.VAList`, and naming a checker the compiler
+  does not know is a hard error that again failed every translation unit.
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the

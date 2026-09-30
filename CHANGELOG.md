@@ -10,7 +10,7 @@ absent) — `docs/roadmap.md` remains the forward-looking plan; this file is
 the realized-history counterpart `process/strategies/project-management-
 strategy.md`'s planning-artefact composition names.
 
-## Unreleased
+## v1.2.0
 
 Nine paper-bot corrections, every one measured on the running bot or verified in
 the code before it was changed, plus the documentation that had drifted from it.

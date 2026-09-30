@@ -443,7 +443,7 @@ private slots:
         // been answered. Timing it instead (searches at 200 ms, rates at 1000 ms)
         // passed locally for months and then failed on a loaded Windows runner,
         // where the 600 ms margin was not enough.
-        auto pagesServed = QSharedPointer<qint32>::create(0);
+        const auto pagesServed = QSharedPointer<qint32>::create(0);
         MockHttpServer server([pagesServed](const QByteArray &, const QString &path) {
             if (path.contains(QStringLiteral("/market-data/search"))) {
                 const QUrlQuery q(QUrl(path).query());
@@ -571,8 +571,8 @@ private slots:
         // every reply (session live), HKG50's is frozen at its first value (session
         // over, the feed still serving the last price), EURUSD's is two days old
         // (weekend, i.e. stale on the very first look).
-        auto frozenStamp = QSharedPointer<QString>::create();
-        auto weekendStamp = QSharedPointer<QString>::create();
+        const auto frozenStamp = QSharedPointer<QString>::create();
+        const auto weekendStamp = QSharedPointer<QString>::create();
         MockHttpServer server([frozenStamp, weekendStamp](const QByteArray &,
                                                          const QString &path) {
             if (path.contains(QStringLiteral("/market-data/search"))) {
@@ -661,7 +661,7 @@ private slots:
         // sees the price. Its SL/TP must be measured from the TRIGGER rate: the position
         // opens there, so pricing them off today's quote would put the stop at a
         // distance the trade never had.
-        auto orderStatus = QSharedPointer<qint32>::create(11);  // 11 = WaitingForMarket
+        const auto orderStatus = QSharedPointer<qint32>::create(11);   // 11 = WaitingForMarket
         // The status flips from "waiting" to "filled" when the test says so.
         MockHttpServer server(limitOrderMock(
             [] { return QByteArray(R"({"orderId":13902598})"); },
@@ -761,7 +761,7 @@ private slots:
         // The cancel went to the documented per-order endpoint, as a DELETE.
         const auto sent = server.requests();
         const bool cancelled =
-            std::any_of(sent.cbegin(), sent.cend(), [](const MockHttpServer::Recorded &r) {
+            std::ranges::any_of(sent, [](const MockHttpServer::Recorded &r) {
                 return (r.method == "DELETE")
                        && r.path.contains(QStringLiteral("/trading/execution/demo/orders/777"));
             });
@@ -818,7 +818,7 @@ private slots:
         // DELETE + a fresh POST — in that order, or a failed cancel would leave two live
         // orders for one intended trade. The replacement keeps size, leverage and side.
         // A different order id per POST, as the broker would hand out.
-        auto nextId = QSharedPointer<qint32>::create(900);
+        const auto nextId = QSharedPointer<qint32>::create(900);
         MockHttpServer server(limitOrderMock(
             [nextId] {
                 return QStringLiteral(R"({"orderId":%1})").arg(++(*nextId)).toUtf8();
@@ -893,7 +893,7 @@ private slots:
         // own trigger rate, so the replacement can — and must — go to the ORDER's
         // instrument whatever the app is showing.
         // The broker reports one resting order on instrument 38 — until it is replaced.
-        auto listOldOrder = QSharedPointer<bool>::create(true);
+        const auto listOldOrder = QSharedPointer<bool>::create(true);
         MockHttpServer server(limitOrderMock(
             [] { return QByteArray(R"({"orderId":4712})"); },
             [] { return orderStatusBody(4712, 11, QStringLiteral("Waiting for market")); },
@@ -1029,7 +1029,7 @@ private slots:
     {
         // Both money-moving position operations, including the failure branch: a
         // rejected close has to say so rather than leave the row looking closed.
-        auto failNext = QSharedPointer<bool>::create(false);
+        const auto failNext = QSharedPointer<bool>::create(false);
         MockHttpServer server([failNext](const QByteArray &method, const QString &path) {
             bool handled = false;
             MockHttpServer::Response common = commonMarketData(path, &handled);
@@ -1177,7 +1177,7 @@ private slots:
         // configurable (here 50 s), and how fresh "is my order still waiting?" is must not
         // depend on that setting. The order stays WaitingForMarket throughout, so every
         // lookup after the first is the cycle doing its work.
-        auto lookups = QSharedPointer<qint32>::create(0);
+        const auto lookups = QSharedPointer<qint32>::create(0);
         MockHttpServer server(limitOrderMock(
             [] { return QByteArray(R"({"orderId":555})"); },
             [lookups] {

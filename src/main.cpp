@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     const QString path = qEnvironmentVariable("TRADINGAPP_SHOT");
     if (!path.isEmpty()) {
         if (qEnvironmentVariableIsSet("TRADINGAPP_SHOT_OPEN")) {
-            QTimer::singleShot(1500, &window, [&window]() {
+            QTimer::singleShot(1500, &window, [&window] {
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openDecision"));
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openClosedTrades"));
                 static_cast<void>(QMetaObject::invokeMethod(&window, "openBotSim"));
@@ -109,7 +109,7 @@ int main(int argc, char *argv[])
         const qint32 delayMs = qEnvironmentVariableIsSet("TRADINGAPP_SHOT_DELAY_MS")
                                    ? qEnvironmentVariableIntValue("TRADINGAPP_SHOT_DELAY_MS")
                                    : 3000;
-        QTimer::singleShot(delayMs, qApp, [path]() {
+        QTimer::singleShot(delayMs, qApp, [path] {
             qint32 idx = 0;
             const QWidgetList widgets = QApplication::allWidgets();
             for (QWidget *w : widgets) {

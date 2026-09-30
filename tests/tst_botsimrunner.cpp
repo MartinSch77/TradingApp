@@ -462,7 +462,7 @@ void scanBtcWithRowBehindBy(qint64 behindSecs, QuoteRun *out)
     BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
     QCOMPARE(runner.book().openTrades().size(), 1);   // the seeded holding was restored
     QVERIFY(runner.armed());
-    QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+    const QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
     QVERIFY(decisions.isValid());
     client.start();
 
@@ -527,7 +527,7 @@ private slots:
     {
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
-        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        const QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
         QVERIFY(decisions.isValid());
         runner.setArmed(true);
         QVERIFY(runner.armed());
@@ -572,7 +572,7 @@ private slots:
     {
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
-        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        const QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
         QVERIFY(decisions.isValid());
         runner.setArmed(true);
         emit client.tradeabilityUpdated({QStringLiteral("SPX500")});
@@ -625,7 +625,7 @@ private slots:
 
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
-        QSignalSpy logs(&runner, &BotSimRunner::log);
+        const QSignalSpy logs(&runner, &BotSimRunner::log);
         QVERIFY(logs.isValid());
         runner.setArmed(true);
         MarketSnapshot snap;
@@ -697,7 +697,7 @@ private slots:
 
         BotSimRunner second(&client, nullptr, nullptr, QLatin1String(kStore));
         QSignalSpy logs(&second, &BotSimRunner::log);
-        QSignalSpy decisions(&second, &BotSimRunner::entryDecision);
+        const QSignalSpy decisions(&second, &BotSimRunner::entryDecision);
         QSignalSpy changes(&second, &BotSimRunner::changed);
         QVERIFY(logs.isValid());
         QVERIFY(decisions.isValid());
@@ -894,7 +894,7 @@ private slots:
     {
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
-        QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
+        const QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
         QVERIFY(decisions.isValid());
         // The open reported WITH the trade (tradeOpenedDetail) is what the real-money
         // mirror follows (REQ-F-076); it must carry the booked trade, geometry and all.
@@ -929,8 +929,8 @@ private slots:
         QCOMPARE(decisions.size(), 3);
         const auto openTrade = [&runner](const QString &symbol) {
             const QList<PaperTrade> &open = runner.book().openTrades();
-            return std::find_if(open.cbegin(), open.cend(),
-                                [&symbol](const PaperTrade &t) { return t.symbol == symbol; });
+            return std::ranges::find_if(
+                open, [&symbol](const PaperTrade &t) { return t.symbol == symbol; });
         };
         const auto notOpen = [&openTrade, &runner](const QString &symbol) {
             return openTrade(symbol) == runner.book().openTrades().cend();
@@ -1181,7 +1181,7 @@ private slots:
         QVERIFY(writeLockFile(lockPath, lockBytes, aMinuteAgo));
         {
             const BotSimRunner viewer(&client, nullptr, nullptr, QLatin1String(kStore));
-            QSignalSpy logs(&viewer, &BotSimRunner::log);
+            const QSignalSpy logs(&viewer, &BotSimRunner::log);
             QVERIFY(!viewer.ownsBook());
             QCoreApplication::processEvents();
             QCOMPARE(logs.size(), 1);
@@ -1223,7 +1223,7 @@ private slots:
 
         EtoroClient client(Config{});
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
-        QSignalSpy logs(&runner, &BotSimRunner::log);
+        const QSignalSpy logs(&runner, &BotSimRunner::log);
         QVERIFY(logs.isValid());
         runner.setArmed(true);
         MarketSnapshot snap;

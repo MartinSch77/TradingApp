@@ -26,6 +26,7 @@
 #include <array>
 #include <cmath>
 #include <random>
+#include <utility>
 
 using namespace trading;
 
@@ -388,7 +389,7 @@ private slots:
 
         for (qint32 i = 0; i < kIterations; ++i) {
             const qint32 dir = coin(rng) ? 1 : -1;
-            auto randomRead = [&]() {
+            const auto randomRead = [&] {
                 Read r;
                 r.known = (knownDist(rng) == 1);
                 r.dir = r.known ? ((sideDist(rng) == 1) ? 1 : -1) : 0;
@@ -416,7 +417,7 @@ private slots:
                 &reads.yields,      &reads.curve,           &reads.participation,
                 &reads.aboveVwap,   &reads.upDownVolume,    &reads.structure};
             qint32 knownIndex = -1;
-            for (qint32 f = 0; f < static_cast<qint32>(fields.size()); ++f) {
+            for (qint32 f = 0; std::cmp_less(f, fields.size()); ++f) {
                 if (fields.at(static_cast<std::size_t>(f))->known) {
                     knownIndex = f;
                     break;

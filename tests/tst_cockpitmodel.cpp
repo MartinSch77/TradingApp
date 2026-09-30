@@ -515,7 +515,7 @@ private slots:
     {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         const auto daysAgo = [now](int d) {
-            return QDateTime::fromMSecsSinceEpoch(now - qint64(d) * 24 * 3600 * 1000);
+            return QDateTime::fromMSecsSinceEpoch(now - static_cast<qint64>(d) * 24 * 3600 * 1000);
         };
 
         ClosedTrade recentWin;
@@ -569,7 +569,7 @@ private slots:
     {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         const auto inHours = [now](double h) {
-            return QDateTime::fromMSecsSinceEpoch(now + qint64(h * 3600 * 1000));
+            return QDateTime::fromMSecsSinceEpoch(now + static_cast<qint64>(h * 3600 * 1000));
         };
 
         EconomicEvent past;

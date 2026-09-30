@@ -415,13 +415,14 @@ analyzer versions differ. On the reference machine:
 
 * **cppcheck 2.21** reports one `returnByReference` performance finding in
   `src/ui/TradeGauge.h` that the older Linux cppcheck does not.
-* **clang-tidy 19/22** reports ~27 findings from checks that did not exist in
-  clang-tidy 18 (`modernize-use-designated-initializers`,
-  `readability-math-missing-parentheses`, `readability-use-std-min-max`,
-  `modernize-use-ranges`).
+* **clang-tidy newer than 18** used to report findings from checks that did not
+  exist in clang-tidy 18 (1251 on a clang-tidy 24 snapshot, 2026-09-30). That is
+  settled in `.clang-tidy`: the five churn checks are disabled there with their
+  measured counts, and every other finding of that run was fixed in the code —
+  so 18 and a newer release both report 0.
 
-These are real findings in existing code, surfaced by newer tools — they are
-reported, not suppressed.
+The cppcheck finding is a real finding in existing code, surfaced by a newer
+tool — it is reported, not suppressed.
 
 ## Axivion on Windows
 

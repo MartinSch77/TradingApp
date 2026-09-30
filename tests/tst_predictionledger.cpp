@@ -450,8 +450,8 @@ private slots:
         QCOMPARE(fifteen.hits, 1);
         // Order of the input never matters: the same ledger in time order scores the same.
         QList<Prediction> ordered = ledger;
-        std::sort(ordered.begin(), ordered.end(),
-                  [](const Prediction &x, const Prediction &y) { return x.at < y.at; });
+        std::ranges::sort(ordered,
+                          [](const Prediction &x, const Prediction &y) { return x.at < y.at; });
         for (const Horizon horizon : allHorizons()) {
             QCOMPARE(scoreHorizon(ordered, horizon).samples, scoreHorizon(ledger, horizon).samples);
             QCOMPARE(scoreHorizon(ordered, horizon).hits, scoreHorizon(ledger, horizon).hits);

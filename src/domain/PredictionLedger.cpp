@@ -67,8 +67,8 @@ QList<Prediction> validRowsByTime(const QList<Prediction> &history)
             sorted.append(row);
         }
     }
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
+    std::ranges::stable_sort(sorted,
+                             [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
     return sorted;
 }
 
@@ -381,7 +381,7 @@ QList<HorizonProbability> horizonProbabilities(const Prediction &now,
         const auto sameBand = [&band](const CalibrationBucket &candidate) {
             return candidate.lowStrength == band.first;
         };
-        const auto found = std::find_if(score.buckets.cbegin(), score.buckets.cend(), sameBand);
+        const auto found = std::ranges::find_if(score.buckets, sameBand);
         // No such band means no comparable calls, which is the uncalibrated case below.
         const CalibrationBucket bucket =
             (found != score.buckets.cend()) ? *found : CalibrationBucket{};
@@ -531,8 +531,7 @@ QList<Prediction> loadPredictions(const QString &path)
         }
     }
     file.close();
-    std::sort(out.begin(), out.end(),
-              [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
+    std::ranges::sort(out, [](const Prediction &a, const Prediction &b) { return a.at < b.at; });
     return out;
 }
 

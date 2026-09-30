@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -56,12 +57,13 @@ QList<QPointF> decimateWindow(const QList<QPointF> &src, qreal xmin, qreal xmax,
     // Ascending in x, so the window is a binary search rather than a scan. One
     // point beyond each edge is kept so the line reaches the plot border instead
     // of stopping just short of it.
-    const auto byX = [](const QPointF &p, qreal x) { return p.x() < x; };
-    auto first = std::lower_bound(src.cbegin(), src.cend(), xmin, byX);
+    // std::ranges with a projection onto x(): the iterator/comparator form needs a
+    // comparator callable both ways, which the ranges overload set rejects.
+    auto first = std::ranges::lower_bound(src, xmin, std::less{}, &QPointF::x);
     if (first != src.cbegin()) {
         --first;
     }
-    auto last = std::lower_bound(first, src.cend(), xmax, byX);
+    auto last = std::ranges::lower_bound(first, src.cend(), xmax, std::less{}, &QPointF::x);
     if (last != src.cend()) {
         ++last;
     }
@@ -341,7 +343,7 @@ void PriceChart::buildChangeStrip()
     static_cast<void>(m_changeSeries->attachAxis(m_changeAxisY));
 
     // Reference lines: 0% baseline and the ±2σ thresholds (dashed amber).
-    auto flatLine = [this](QColor c, Qt::PenStyle style, qreal w) {
+    const auto flatLine = [this](QColor c, Qt::PenStyle style, qreal w) {
         auto *s = new QLineSeries(this);
         QPen p(c);
         p.setStyle(style);
@@ -582,7 +584,7 @@ void PriceChart::refreshTradeMarkers()
 
     // Clamp each entry's time into the visible window: trades opened before the
     // chart starts show at the left edge rather than vanish.
-    auto laneRow = [xmin, xmax, baseline](const QList<QPointF> &src) {
+    const auto laneRow = [xmin, xmax, baseline](const QList<QPointF> &src) {
         QList<QPointF> out;
         out.reserve(src.size());
         for (const QPointF &p : src) {
@@ -812,7 +814,7 @@ void PriceChart::recomputeChange()
     // coarse hourly seed, whose big steps dwarf intraday ticks) can't flatten the strip.
     const qreal vxmin = static_cast<qreal>(m_axisX->min().toMSecsSinceEpoch());
     const qreal vxmax = static_cast<qreal>(m_axisX->max().toMSecsSinceEpoch());
-    auto visible = [vxmin, vxmax](qreal x) { return (x >= vxmin) && (x <= vxmax); };
+    const auto visible = [vxmin, vxmax](qreal x) { return (x >= vxmin) && (x <= vxmax); };
 
     // Standard deviation of the visible changes → adaptive "strong move" threshold.
     double sigma = 0.0;

@@ -44,7 +44,7 @@ bool isRetryable(const QNetworkReply *reply, qint32 status)
 // Seconds to wait before the retry: honour a server-supplied delay (429s, and
 // some 503s, carry one); else a short default backoff — a bit longer for a
 // rate limit than a server hiccup. Capped, since the rate windows are <= 60 s.
-qint32 retryDelaySecs(QNetworkReply *reply, qint32 status)
+qint32 retryDelaySecs(const QNetworkReply *reply, qint32 status)
 {
     qint32 waitSecs = reply->rawHeader("Retry-After").toInt();
     if (waitSecs <= 0) {
@@ -85,7 +85,7 @@ void JsonHttp::handleReply(QNetworkReply *reply, Handler cb, qint32 retriesLeft)
     // for a race that lives inside Qt's own (non-instrumented-in-spirit) plumbing.
     static_cast<void>(connect(
         reply, &QNetworkReply::finished, this,
-        [this, reply, cb = std::move(cb), retriesLeft]() {
+        [this, reply, cb = std::move(cb), retriesLeft] {
             const qint32 status =
                 reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 

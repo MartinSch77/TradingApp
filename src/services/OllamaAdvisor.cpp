@@ -14,6 +14,7 @@
 #include <QNetworkRequest>
 #include <QUrl>
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -119,10 +120,9 @@ void OllamaAdvisor::checkAvailability()
             }
         }
         // A tag may be implicit: "llama3.2" is served as "llama3.2:latest".
-        const bool installed =
-            std::any_of(models.cbegin(), models.cend(), [this](const QString &name) {
-                return (name == m_model) || name.startsWith(m_model + QLatin1Char(':'));
-            });
+        const bool installed = std::ranges::any_of(models, [this](const QString &name) {
+            return (name == m_model) || name.startsWith(m_model + QLatin1Char(':'));
+        });
         if (installed) {
             emit availability(true, QStringLiteral("%1 ready at %2").arg(m_model, m_host), models);
             return;

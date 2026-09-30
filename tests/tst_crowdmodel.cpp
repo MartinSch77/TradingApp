@@ -183,7 +183,7 @@ private slots:
                 ++agreed;
             }
         }
-        const double agreement = double(agreed) / double(rows.size());
+        const double agreement = static_cast<double>(agreed) / static_cast<double>(rows.size());
         QVERIFY2(agreement > 0.7, qPrintable(QStringLiteral("agreement %1").arg(agreement)));
 
         // A caller who knows NOTHING still gets an honest answer: every feature imputed with

@@ -8,8 +8,6 @@
 
 #include <utility>
 
-using trading::LiveDay;
-using trading::LiveMirrorConfig;
 using trading::LiveMirrorInputs;
 using trading::LiveOrderPlan;
 using trading::Money;

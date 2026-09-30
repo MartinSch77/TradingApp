@@ -77,7 +77,7 @@ MockHttpServer::Response igHandler(const QByteArray &method, const QString &path
 // Wires `provider` against `server`'s base URL, drives one refresh(), and waits for exactly
 // `expectedCount` observations via QTRY_COMPARE_WITH_TIMEOUT — the boilerplate every
 // CftcCotProvider case here repeats around a differently shaped mock server.
-void refreshCftcAndWait(MockHttpServer &server, CftcCotProvider &provider, QObject *ctx,
+void refreshCftcAndWait(MockHttpServer &server, CftcCotProvider &provider, const QObject *ctx,
                         QList<Observation> &got, int expectedCount)
 {
     QVERIFY(server.listen(QHostAddress::LocalHost));

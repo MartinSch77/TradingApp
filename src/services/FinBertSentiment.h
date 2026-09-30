@@ -67,8 +67,11 @@ private:
     std::unique_ptr<Impl> m_impl;   // null until a successful load (and always, in a stub build)
     WordPieceVocab m_vocab;
     QStringList m_labels;
-    qint32 m_positive = -1;   // indices into the labels/probability columns
-    qint32 m_negative = -1;
+    // Indices into the labels/probability columns. Read only inside the
+    // TRADINGAPP_HAS_ONNXRUNTIME build of FinBertSentiment.cpp; the stub build never
+    // touches them, which clang reports as an unused private field.
+    [[maybe_unused]] qint32 m_positive = -1;
+    [[maybe_unused]] qint32 m_negative = -1;
     QString m_status;
 };
 

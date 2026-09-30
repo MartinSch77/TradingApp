@@ -292,10 +292,12 @@ struct PnlAccum {
 
 // Per-run state for the leverage screener. Held in a QSharedPointer so it survives
 // the bulk-leverage call and the ensuing chain of sequential candle fetches.
+namespace {
 struct ScanItem {
     qint64 id = 0;
     QString symbol;
 };
+}   // namespace
 struct ScanState {
     QList<ScanItem> queue;             // instruments still to fetch candles for
     qint32 index = 0;                  // next queue entry to fetch
@@ -643,7 +645,7 @@ QList<PendingOrder> EtoroClient::pendingOrders() const
     // around under the cursor when another order lands or resolves. QHash iteration
     // order is arbitrary, hence the explicit sort.
     QList<PendingOrder> out = m_pendingOrders.values();
-    std::sort(out.begin(), out.end(), [](const PendingOrder &a, const PendingOrder &b) {
+    std::ranges::sort(out, [](const PendingOrder &a, const PendingOrder &b) {
         return a.submitted < b.submitted;
     });
     return out;
@@ -696,7 +698,7 @@ void EtoroClient::fetchClosedTrades(qint32 weeksBack)
         return;
     }
     m_pnlFetching = true;
-    auto acc = QSharedPointer<PnlAccum>::create();
+    const auto acc = QSharedPointer<PnlAccum>::create();
     const qint32 weeks = std::clamp(weeksBack, 1, 26);
     acc->minDate = QDate::currentDate().addDays(-7LL * weeks);
     fetchTradeHistoryPageReal(acc);
@@ -817,7 +819,7 @@ void EtoroClient::resolveInstrumentReal()
                 continue;  // skip the "-100000" placeholder / header row
             }
             if (sym.compare(wantSym, Qt::CaseInsensitive) == 0) {
-                found = inst;
+                found = std::move(inst);
                 break;  // exact symbol match wins (e.g. SPX500 over SPX500.FUT)
             }
             if (!found.isValid()) {
@@ -868,7 +870,7 @@ void EtoroClient::retryResolveOrGiveUp(const QString &symbol)
                      .arg(symbol)
                      .arg(m_resolveRetries + 1),
                  false);
-        QTimer::singleShot(4000, this, [this, symbol]() {
+        QTimer::singleShot(4000, this, [this, symbol] {
             if ((symbol.compare(m_config.symbol, Qt::CaseInsensitive) == 0)
                 && !m_instrument.isValid()) {
                 resolveInstrumentReal();
@@ -2146,7 +2148,7 @@ void EtoroClient::scanInstrumentsReal()
     // Work list = the instruments whose ids are already resolved. Ids resolve
     // asynchronously at startup; scan whatever is known now, and nudge resolution
     // of any stragglers so a later rescan is complete.
-    auto st = QSharedPointer<ScanState>::create();
+    const auto st = QSharedPointer<ScanState>::create();
     for (auto it = m_symbolById.constBegin(); it != m_symbolById.constEnd(); ++it) {
         st->queue.append(ScanItem{it.key(), it.value()});
     }
@@ -2683,7 +2685,7 @@ void EtoroClient::refreshPendingOrdersReal()
     // order on every tick would spend the whole budget once a few orders rest.
     static constexpr qint32 kOrdersPerTick = 2;
     QStringList ids = m_pendingOrders.keys();
-    std::sort(ids.begin(), ids.end());  // QHash order is arbitrary; the cursor needs stability
+    std::ranges::sort(ids);   // QHash order is arbitrary; the cursor needs stability
     if (m_pendingCursor >= static_cast<qint32>(ids.size())) {
         m_pendingCursor = 0;
     }

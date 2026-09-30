@@ -44,8 +44,8 @@ ScreenerRow row(const QString &sym, const QList<double> &closes, qint32 maxLev =
 // out-of-bounds access.
 DecisionRow rowFor(const QList<DecisionRow> &rows, const QString &symbol)
 {
-    const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                 [&symbol](const DecisionRow &d) { return d.symbol == symbol; });
+    const auto it =
+        std::ranges::find_if(rows, [&symbol](const DecisionRow &d) { return d.symbol == symbol; });
     return (it == rows.cend()) ? DecisionRow{} : *it;
 }
 

@@ -11,6 +11,7 @@
 #include "console/BotConsoleView.h"
 
 #include <QtTest/QtTest>
+#include <algorithm>
 
 using namespace trading;
 using namespace trading::console;
@@ -109,8 +110,8 @@ private slots:
         // The index of the first line containing `needle`, or -1 — an algorithm, not a raw
         // loop, so cppcheck's useStlAlgorithm stays quiet and the .at() below is provably safe.
         const auto rowWith = [](const QStringList &rows, const QString &needle) -> qsizetype {
-            const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                         [&](const QString &l) { return l.contains(needle); });
+            const auto it =
+                std::ranges::find_if(rows, [&](const QString &l) { return l.contains(needle); });
             return (it == rows.cend()) ? -1 : std::distance(rows.cbegin(), it);
         };
 
@@ -127,8 +128,8 @@ private slots:
 
         // The empty book says so rather than showing a bare header.
         const QStringList empty = consoleOpenTrades({});
-        QVERIFY(std::any_of(empty.cbegin(), empty.cend(),
-                            [](const QString &l) { return l.contains(QStringLiteral("none open")); }));
+        QVERIFY(std::ranges::any_of(
+            empty, [](const QString &l) { return l.contains(QStringLiteral("none open")); }));
     }
 
     //! @tstid TS-CON-004 @design DES-CON-BOT
@@ -155,8 +156,8 @@ private slots:
 
         const QStringList lines = consoleClosedTrades({older, newer}, /*limit=*/10);
         const auto rowWith = [](const QStringList &rows, const QString &needle) -> qsizetype {
-            const auto it = std::find_if(rows.cbegin(), rows.cend(),
-                                         [&](const QString &l) { return l.contains(needle); });
+            const auto it =
+                std::ranges::find_if(rows, [&](const QString &l) { return l.contains(needle); });
             return (it == rows.cend()) ? -1 : std::distance(rows.cbegin(), it);
         };
         // Newest (NSDQ100, 10:05) appears above older (OIL, 09:27).
@@ -173,9 +174,8 @@ private slots:
         QVERIFY(oilRow.contains(QStringLiteral("x5")));   // the leverage is shown per row
 
         const QStringList none = consoleClosedTrades({}, 10);
-        QVERIFY(std::any_of(none.cbegin(), none.cend(), [](const QString &l) {
-            return l.contains(QStringLiteral("none closed"));
-        }));
+        QVERIFY(std::ranges::any_of(
+            none, [](const QString &l) { return l.contains(QStringLiteral("none closed")); }));
     }
 
     //! @tstid TS-CON-005 @design DES-CON-BOT
@@ -205,16 +205,16 @@ private slots:
         // cell (the single-column format), so MSFT sits exactly two past the NSDQ100 title —
         // which is the proof the cells line up rather than drift.
         const qsizetype titleOffset = rows.at(0).indexOf(QStringLiteral("NSDQ100"));
-        const qsizetype msftRow = std::distance(
-            rows.cbegin(),
-            std::find_if(rows.cbegin(), rows.cend(),
-                         [](const QString &l) { return l.contains(QStringLiteral("MSFT")); }));
+        const qsizetype msftRow =
+            std::distance(rows.cbegin(), std::ranges::find_if(rows, [](const QString &l) {
+                              return l.contains(QStringLiteral("MSFT"));
+                          }));
         QVERIFY(msftRow < rows.size());
         QCOMPARE(rows.at(msftRow).indexOf(QStringLiteral("MSFT")), titleOffset + 2);
 
         // The left column still has its own rows past where the right ran out (NVDA, AAPL).
-        QVERIFY(std::any_of(rows.cbegin(), rows.cend(),
-                            [](const QString &l) { return l.contains(QStringLiteral("AAPL")); }));
+        QVERIFY(std::ranges::any_of(
+            rows, [](const QString &l) { return l.contains(QStringLiteral("AAPL")); }));
     }
 
     //! @tstid TS-CON-006 @design DES-CON-BOT

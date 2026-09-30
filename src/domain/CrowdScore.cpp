@@ -77,10 +77,10 @@ CrowdScoreResult crowdScore(const QList<ComponentReading> &readings, const Crowd
         component.weight = spec.weight;
         component.contrarian = spec.contrarian;
 
-        const auto reading = std::find_if(readings.cbegin(), readings.cend(),
-                                          [&spec](const ComponentReading &candidate) {
-                                              return candidate.family == spec.family;
-                                          });
+        const auto reading =
+            std::ranges::find_if(readings, [&spec](const ComponentReading &candidate) {
+                return candidate.family == spec.family;
+            });
         const bool measured = (reading != readings.cend()) && reading->measured;
         component.measured = measured;
         if (measured) {

@@ -162,8 +162,8 @@ double rankAuc(const QList<double> &scores, const QList<double> &labels)
     for (qsizetype i = 0; i < scores.size(); ++i) {
         order.append(i);
     }
-    std::sort(order.begin(), order.end(),
-              [&scores](qsizetype a, qsizetype b) { return scores.at(a) < scores.at(b); });
+    std::ranges::sort(order,
+                      [&scores](qsizetype a, qsizetype b) { return scores.at(a) < scores.at(b); });
     QList<double> ranks(scores.size(), 0.0);
     qsizetype i = 0;
     while (i < order.size()) {
@@ -283,10 +283,8 @@ BotNet botNetFromJson(const QJsonObject &obj)
         net.error = QStringLiteral("model shape does not line up with its feature list");
         return net;
     }
-    const auto misshaped = std::find_if(net.w1.cbegin(), net.w1.cend(),
-                                        [n](const QList<double> &row) {
-                                            return row.size() != n;
-                                        });
+    const auto misshaped =
+        std::ranges::find_if(net.w1, [n](const QList<double> &row) { return row.size() != n; });
     if (misshaped != net.w1.cend()) {
         net.error = QStringLiteral("a hidden unit has %1 weights for %2 features")
                         .arg(misshaped->size())

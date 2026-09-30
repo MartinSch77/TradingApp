@@ -196,7 +196,7 @@ Provisioned by `.\setup.ps1`; see @ref windows for how each one is wired in.
 | Squish Coco | Qt Group (froglogic) | `C:\Program Files\squishcoco`, **licensed** (Full Commercial) | Source-instrumented statement/decision/condition **and true MC/DC** coverage; wrappers `cscl`/`cslib`/`cslink`; parses up to C++20 |
 | cppcheck | Cppcheck team (winget `Cppcheck.Cppcheck`) | 2.21.0 | Same role as on Linux; the newer version reports one finding the Linux 2.13 does not |
 | lizard / PMD CPD / Clang Static Analyzer | see the Linux rows | same versions | The same three shared Python drivers run from `tools\static_analysis.ps1`; the analyzer picks the clang matching the compile database's dialect (clang-cl for an MSVC database) and reports "skipped" when no clang driver is installed |
-| clang-tidy | LLVM Project | 19.1.5 / 22.1.8 | Same role; newer checks report ~27 additional findings vs clang-tidy 18 |
+| clang-tidy | LLVM Project | 19.1.5 / 22.1.8 | Same role. A release newer than CI's 18 switches on checks 18 never ran (the families in `.clang-tidy` are wildcards); measured 2026-09-30 on 23.1.2, the churn checks are listed there with their counts and the rest was fixed, so a newer clang-tidy reports 0 too |
 | OpenCppCoverage | OpenCppCoverage project (MIT) | optional | PDB-based **line** coverage for MSVC builds — the gcov/lcov substitute (no branch coverage) |
 | Doxygen / Graphviz | doxygen.nl / graphviz.org (winget) | 1.17.0 / 15.1.0 | Same role as on Linux |
 | VSDiagnostics / `wpr`+`wpa` | Microsoft (Visual Studio / Windows Performance Toolkit) | as installed | CPU profiling; records a trace for a GUI analyzer instead of `perf report --stdio` |

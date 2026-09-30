@@ -132,7 +132,7 @@ void EconomicCalendar::refresh()
     req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("TradingApp/1.0"));
 
     QNetworkReply *reply = m_nam->get(req);
-    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, tradingDays]() {
+    static_cast<void>(connect(reply, &QNetworkReply::finished, this, [this, reply, tradingDays] {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             emit log(QStringLiteral("Economic calendar fetch failed: %1").arg(reply->errorString()),

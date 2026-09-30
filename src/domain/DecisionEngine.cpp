@@ -136,8 +136,8 @@ RegimeRead marketRegime(const MarketSnapshot &m)
 
 void mergeScreenerRow(QList<ScreenerRow> &rows, const ScreenerRow &row)
 {
-    const auto known = std::find_if(
-        rows.begin(), rows.end(), [&row](const ScreenerRow &r) { return r.symbol == row.symbol; });
+    const auto known =
+        std::ranges::find_if(rows, [&row](const ScreenerRow &r) { return r.symbol == row.symbol; });
     if (known == rows.end()) {
         rows.append(row);
         return;

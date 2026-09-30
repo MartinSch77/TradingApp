@@ -181,7 +181,7 @@ private slots:
 
         // An unset cap, a ZERO cap (0 is "nothing may be sent", never "no cap"), an unset
         // daily-loss cap, and a paper trade without a positive stake are all unsized.
-        LiveMirrorConfig unset;
+        const LiveMirrorConfig unset;
         QCOMPARE(liveOrderFor(inputs(spxTrade()), unset).code, QStringLiteral("live-unsized"));
         LiveMirrorConfig zero = grant();
         zero.maxPerOrder = eur(0.0);

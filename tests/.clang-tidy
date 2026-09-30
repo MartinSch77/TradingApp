@@ -8,6 +8,18 @@
 #       invokes them through the meta-object. Most test functions never touch
 #       `this`, so the check fires on nearly every one of them (62 hits,
 #       measured 2026-07-29) and every "fix" would break the test runner.
+#   bugprone-random-generator-seed  (clang-tidy >= 19) tst_invariants seeds its
+#       property generators with a CONSTANT on purpose: a failing case has to
+#       reproduce on the next run, which a fresh seed would prevent (8 hits,
+#       all in tst_invariants.cpp, measured 2026-09-30 with clang-tidy 23.1.2)
+#   misc-use-internal-linkage  (clang-tidy >= 23 extends it to CLASSES) every test
+#       class is a Q_OBJECT type that only its own QTEST_GUILESS_MAIN instantiates,
+#       so the check asks for an anonymous namespace around each of them (58 hits,
+#       measured 2026-09-30 with clang-tidy 23.1.2). moc and the `Q_OBJECT;`
+#       tree-sitter anchor both want the class at file scope; the two production
+#       hits of that run (a free function, a helper struct) were fixed instead.
 InheritParentConfig: true
 Checks: >
-  -readability-convert-member-functions-to-static
+  -readability-convert-member-functions-to-static,
+  -bugprone-random-generator-seed,
+  -misc-use-internal-linkage

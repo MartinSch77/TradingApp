@@ -57,6 +57,36 @@
 #                                          repeat the base class's defaults
 #                                          (data(idx, role = DisplayRole) …)
 #
+#
+# The families above are WILDCARDS, so a newer clang-tidy switches on checks the
+# pipeline's clang-tidy 18 (Ubuntu 24.04, CI) has never run. The block below was
+# measured on 2026-09-30 with clang-tidy 23.1.2 (the newest release build
+# reachable from the authoring environment; a developer machine on the 24
+# snapshot reported the same set at 1251 findings, CI at 0). Everything else that
+# run reported — const-correctness, internal linkage, ranges algorithms, value
+# params, C-style casts, std::move, redundant lambda parameter lists, an unused
+# private field, a protected override of a public QObject method, the special
+# member functions of MainWindow — was FIXED in the code, not listed here.
+#   modernize-use-designated-initializers  every positional aggregate init in the
+#                                          code base (449 hits); pure churn
+#   readability-trailing-comma             a trailing comma after the last element
+#                                          of every braced list (329 hits): style
+#                                          only, and it changes how .clang-format
+#                                          packs the list
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
+#                                          flags EVERY operator[] with no data flow
+#                                          (275 hits): the indices here are bounded
+#                                          by the same container's size(), Qt's
+#                                          at() is a Q_ASSERT in debug builds only,
+#                                          and a throwing std at() is not an error
+#                                          strategy this code has
+#   readability-math-missing-parentheses   parentheses around every precedence
+#                                          step of `a + b * c` (90 hits); churn
+#   cppcoreguidelines-use-enum-class       3 hits, all table-column index enums
+#                                          (PositionsModel::Column, HeavyweightsPanel
+#                                          Column, CrowdStore Col) whose implicit
+#                                          int conversion IS their use
+#
 # Re-enabled 2026-07-29 after re-measuring at 0 hits (both were "churn" when the
 # code still mixed int/qsizetype freely): *narrowing-conversions, cert-err58-cpp.
 Checks: >
@@ -92,7 +122,12 @@ Checks: >
   -readability-avoid-nested-conditional-operator,
   -readability-function-cognitive-complexity,
   -misc-include-cleaner,
-  -misc-non-private-member-variables-in-classes
+  -misc-non-private-member-variables-in-classes,
+  -modernize-use-designated-initializers,
+  -readability-trailing-comma,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -readability-math-missing-parentheses,
+  -cppcoreguidelines-use-enum-class
 # Any finding is an error: the pipeline gates on a zero finding count, so a
 # direct clang-tidy run (IDE, run-clang-tidy) must exit nonzero as well.
 WarningsAsErrors: '*'

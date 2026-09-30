@@ -43,10 +43,9 @@ private slots:
         QCOMPARE(store.count(), static_cast<qint64>(rows));
 
         // Round-trip: value and UTC times survive storage exactly.
-        const auto srcVix = std::find_if(scan.observations.cbegin(), scan.observations.cend(),
-                                         [](const Observation &o) {
-                                             return o.seriesId == QStringLiteral("VIX");
-                                         });
+        const auto srcVix = std::ranges::find_if(scan.observations, [](const Observation &o) {
+            return o.seriesId == QStringLiteral("VIX");
+        });
         QVERIFY(srcVix != scan.observations.cend());
         const Observation vix = store.latest(QStringLiteral("SPX500"), Source::Volatility,
                                              QStringLiteral("VIX"));

@@ -31,6 +31,21 @@ for exe in "$ROOT/$BUILD_DIR"/tests/tst_*; do
     echo "=== $name ==="
     if ! "$exe" -o "$OUT/$name.xml,junitxml" -o -,txt; then
         FAIL=1
+        # Name the failing functions from the JUnit file too — the same summary the
+        # Windows runner prints, where Qt Test's own text report never reaches the
+        # CI console; here it is a second, grep-able line per failure.
+        python3 - "$OUT/$name.xml" <<'PY'
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+except Exception as exc:  # noqa: BLE001 - a report that cannot be read is named, not hidden
+    print(f"  (unreadable JUnit file: {exc})"); sys.exit(0)
+for case in root.iter("testcase"):
+    node = case.find("failure") if case.find("failure") is not None else case.find("error")
+    if node is not None:
+        msg = " ".join((node.get("message") or node.text or "").split())
+        print(f"  FAIL {case.get('name')}: {msg}")
+PY
     fi
 done
 

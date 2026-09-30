@@ -51,12 +51,32 @@ if ($exes.Count -eq 0) {
     exit 2
 }
 
+
+# The failing test functions of one JUnit file, with the assertion message: what a
+# person needs from a red stage, printed where the stage's log is.
+function Write-FailedCases([string]$JUnitPath) {
+    if (-not (Test-Path $JUnitPath)) { Write-Host "  (no JUnit file written: $JUnitPath)"; return }
+    try { $xml = [xml](Get-Content -Raw $JUnitPath) } catch { Write-Host "  (unreadable JUnit file: $JUnitPath)"; return }
+    foreach ($case in $xml.SelectNodes('//testcase[failure or error]')) {
+        $node = $case.SelectSingleNode('failure'); if (-not $node) { $node = $case.SelectSingleNode('error') }
+        $msg = $node.GetAttribute('message'); if (-not $msg) { $msg = $node.InnerText }
+        Write-Host ("  FAIL {0}: {1}" -f $case.GetAttribute('name'), ($msg -replace '\s+', ' ').Trim()) -ForegroundColor Red
+    }
+}
+
 $fail = 0
 foreach ($exe in $exes) {
     $name = $exe.BaseName
     Write-Host "=== $name ===" -ForegroundColor Cyan
     & $exe.FullName -o "$out\$name.xml,junitxml" -o '-,txt'
-    if ($LASTEXITCODE -ne 0) { $fail = 1 }
+    if ($LASTEXITCODE -ne 0) {
+        $fail = 1
+        # Qt Test's own text report does not reach a CI console on Windows (it went to
+        # the debugger, so a red stage showed the binary's name and nothing else — the
+        # failing function had to be dug out of the JUnit artifact). Name it here, from
+        # the JUnit file the run just wrote, the same way tools/run_tests.sh does.
+        Write-FailedCases -JUnitPath "$out\$name.xml"
+    }
 }
 
 Write-Host ""

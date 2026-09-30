@@ -24,6 +24,8 @@
 #include <QSize>
 #include <QStringList>
 
+#include <memory>
+
 namespace trading::ui {
 class HeavyweightsPanel;
 class CockpitPanel;
@@ -35,6 +37,10 @@ class CrowdCollector;
 
 class AiAdvisor;
 class BotSimDialog;
+class LiveBotExecutor;
+namespace trading {
+class EtoroOrderGateway;
+}
 class CrowdDashboardWindow;
 class BotSimRunner;
 class EconomicCalendar;
@@ -78,6 +84,11 @@ public:
     // lifecycles — the UI consumes their signals and owns none of them.
     explicit MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
                         EconomicCalendar *calendar, QWidget *parent = nullptr);
+    // Out of line: the two unique_ptr members below hold types this header only
+    // forward-declares, and an implicit destructor would instantiate their deleters in
+    // every translation unit that includes this header (moc's, main.cpp's) — where they
+    // are incomplete. The definition lives in MainWindow.cpp, beside the includes.
+    ~MainWindow() override;
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -451,6 +462,12 @@ private:
     // normal case and costs nothing.
     OllamaAdvisor *m_ollama = nullptr;
     BotSimRunner *m_botRunner = nullptr;
+    // The real-money mirror of the bot's SPX500/NSDQ100 decisions (REQ-F-076): the ONE
+    // object in the process that holds an order gateway, composed here and nowhere else.
+    // Declared in this order on purpose — members are destroyed in reverse, so the
+    // executor goes before the gateway it points at.
+    std::unique_ptr<trading::EtoroOrderGateway> m_liveGateway;
+    std::unique_ptr<LiveBotExecutor> m_liveExecutor;
     // The one open "Trading-Bot opened a trade" notice, if any. At most one at a
     // time: a single scan can open a dozen trades. A plain pointer cleared from the
     // box's own destroyed() signal — QPointer would do the same, but its

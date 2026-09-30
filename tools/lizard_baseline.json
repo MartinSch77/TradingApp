@@ -5,9 +5,6 @@
  "src/domain/Forecasting.cpp::trading::monteCarlo": {
   "ccn": 23
  },
- "src/services/EtoroClient.cpp::EtoroClient::confirmOrderReal": {
-  "ccn": 17
- },
  "src/services/EtoroClient.cpp::EtoroClient::onOrderSubmitReply": {
   "params": 7
  },

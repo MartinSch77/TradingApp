@@ -896,6 +896,11 @@ private slots:
         BotSimRunner runner(&client, nullptr, nullptr, QLatin1String(kStore));
         QSignalSpy decisions(&runner, &BotSimRunner::entryDecision);
         QVERIFY(decisions.isValid());
+        // The open reported WITH the trade (tradeOpenedDetail) is what the real-money
+        // mirror follows (REQ-F-076); it must carry the booked trade, geometry and all.
+        QList<PaperTrade> announced;
+        static_cast<void>(connect(&runner, &BotSimRunner::tradeOpenedDetail, &runner,
+                                  [&announced](const PaperTrade &t) { announced.append(t); }));
         const QString btc = QStringLiteral("BTC");
         const QString eth = QStringLiteral("ETH");
         const QString index = QStringLiteral("SP.24-7");
@@ -945,6 +950,11 @@ private slots:
         QCOMPARE(decisionCodeFor(decisions, btc), QStringLiteral("opened"));
         QCOMPARE(decisionCodeFor(decisions, eth), QStringLiteral("opened"));
         QCOMPARE(runner.book().openTrades().size(), 2);
+        QCOMPARE(announced.size(), 2);
+        QCOMPARE(announced.constFirst().symbol, btc);
+        QCOMPARE(announced.constFirst().openRate, btcSession.constLast());
+        QVERIFY(announced.constFirst().stake > 0.0);
+        QVERIFY(announced.constFirst().slRate > 0.0);
         QVERIFY(!notOpen(btc));
         QCOMPARE(openTrade(btc)->instrumentId, qint64(0));
         QVERIFY(openTrade(btc)->isBuy);

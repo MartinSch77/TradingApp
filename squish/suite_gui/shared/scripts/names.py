@@ -91,6 +91,9 @@ botOpenTable = {"container": botSimDialog, "type": "QTableWidget", "objectName":
 botClosedTable = {"container": botSimDialog, "type": "QTableWidget", "objectName": "closedTable"}
 botAccountLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "accountLabel"}
 botLiveLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "liveLabel"}
+# The real-money box (REQ-F-076): its state line and its arming button.
+botLiveStateLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "liveStateLabel"}
+botLiveArmButton = {"container": botSimDialog, "type": "QPushButton", "objectName": "liveArmButton"}
 botRecordLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "recordLabel"}
 botReasonLabel = {"container": botSimDialog, "type": "QLabel", "objectName": "reasonLabel"}
 botLog = {"container": botSimDialog, "type": "QTextEdit", "objectName": "log"}

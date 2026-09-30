@@ -94,6 +94,9 @@ tradingapp_add_test(tst_predictionledger tst_predictionledger.cpp)
 tradingapp_add_test(tst_decisionlog tst_decisionlog.cpp)
 tradingapp_add_test(tst_candles tst_candles.cpp)
 tradingapp_add_test(tst_confirmgate tst_confirmgate.cpp)
+# The real-money mirror's pure half (REQ-F-076): what one paper trade becomes as one
+# real order, to the cent, and the day-loss ledger the kill switch trips on.
+tradingapp_add_test(tst_livemirror tst_livemirror.cpp)
 # The bot-console front end's text, compiled directly (the console layer is not a library),
 # with NO terminal dependency — every line it shows is checkable headless.
 tradingapp_add_test(tst_botconsoleview tst_botconsoleview.cpp
@@ -122,6 +125,15 @@ tradingapp_add_test(tst_botsimrunner tst_botsimrunner.cpp MockHttpServer.cpp Moc
     ../src/ui/BotSimRunner.cpp ../src/ui/BotSimRunner.h)
 target_include_directories(tst_botsimrunner PRIVATE ../src)
 target_link_libraries(tst_botsimrunner PRIVATE Qt6::Concurrent)
+# The real-money mirror's executor (REQ-F-076), compiled directly like the runner and driven
+# headless: a FakeOrderGateway records what would have been sent, the simulation client
+# (never a real account) answers the close, and the "is the client live" question is the
+# constructor-injected predicate the composition root leaves at the client's own answer.
+tradingapp_add_test(tst_livebotexecutor tst_livebotexecutor.cpp
+    ../src/ui/BotSimRunner.cpp ../src/ui/BotSimRunner.h
+    ../src/ui/LiveBotExecutor.cpp ../src/ui/LiveBotExecutor.h)
+target_include_directories(tst_livebotexecutor PRIVATE ../src)
+target_link_libraries(tst_livebotexecutor PRIVATE Qt6::Concurrent)
 tradingapp_add_test(tst_swingpullbackstrategy tst_swingpullbackstrategy.cpp)
 tradingapp_add_test(tst_strategybacktest tst_strategybacktest.cpp)
 tradingapp_add_test(tst_pathoutcome tst_pathoutcome.cpp)
@@ -130,7 +142,9 @@ tradingapp_add_test(tst_benchmarks tst_benchmarks.cpp)
 
 # --- integration tests (services layer) ------------------------------------
 tradingapp_add_test(tst_config tst_config.cpp)
-tradingapp_add_test(tst_ordergateway tst_ordergateway.cpp)
+# The gateway suite runs the REAL gateway against the in-process mock too (TS-GATE-007): the
+# refusal on a non-live client needs no network, the accepted send needs a venue to POST to.
+tradingapp_add_test(tst_ordergateway tst_ordergateway.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_simulationengine tst_simulationengine.cpp)
 tradingapp_add_test(tst_jsonhttp tst_jsonhttp.cpp MockHttpServer.cpp MockHttpServer.h)
 tradingapp_add_test(tst_etoroclient tst_etoroclient.cpp MockHttpServer.cpp MockHttpServer.h)

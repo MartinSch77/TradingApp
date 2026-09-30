@@ -17,9 +17,13 @@
 // deliberately separable: the ARMED state that must be entered by hand, the SEAM that
 // makes the send testable, and the AUDIT record that survives the process.
 //
-// Nothing here is wired to the live broker. That wiring is a separate, deliberate act
-// under REQ-N-005, and this file exists so that when it happens the machinery it
-// needs is already built and tested rather than written under time pressure.
+// The wiring to the live broker is `EtoroOrderGateway` below — the deliberate act under
+// REQ-N-005 that REQ-F-076 records (the bot's SPX500/NSDQ100 mirror). Everything else in
+// this file was built and tested BEFORE that act, so the machinery it needs existed
+// rather than being written under time pressure; the composition root (MainWindow) is
+// the only place that chooses the real gateway over the fake.
+class EtoroClient;
+
 namespace trading {
 
 // ---------------------------------------------------------------------------
@@ -209,6 +213,26 @@ public:
 private:
     OrderResult m_next{true, QStringLiteral("fake-request-id"), QString(), {}};
     QList<QPair<OrderRequest, Money>> m_sent;
+};
+
+// The REAL gateway (REQ-F-076): hands an already-validated request to the broker client.
+// Two properties are load-bearing. `accepted` reports the SEND — the client's own
+// orderResult/positionOpened signals report the fill, exactly as the seam's contract says
+// — and the gateway FAILS CLOSED ON ITS OWN: a client whose configuration is not live (no
+// real keys, or mode demo/simulation) is refused here, before anything is sent, whatever
+// the caller believed. The arming and the validator stand in front of this; this is the
+// last check, and it does not trust that the others ran.
+class EtoroOrderGateway : public IOrderGateway
+{
+public:
+    // Non-owning: the client is the composition root's, and outlives every gateway.
+    explicit EtoroOrderGateway(EtoroClient *client);
+
+    [[nodiscard]] QString name() const override { return QStringLiteral("eToro (real)"); }
+    OrderResult placeOrder(const OrderRequest &request, const Money &stake) override;
+
+private:
+    EtoroClient *m_client = nullptr;
 };
 
 // The composed, guarded send: validate, then check the armed state, then hand to the

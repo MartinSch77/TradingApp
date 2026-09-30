@@ -4,10 +4,11 @@
 # -*- coding: utf-8 -*-
 # The bot window (REQ-F-029) states what it is and cannot become a real trader.
 #
-# The structural guarantee is in the code — BotSimPanel reads the broker client and
-# has no route to an order endpoint — but the CLAIM the user reads is on screen, and
-# a window that stopped saying "simulated" would be the first sign of that guarantee
-# being lost.
+# The structural guarantee is in the code — the runner reads the broker client and
+# has no route to an order endpoint; the window's real-money box (REQ-F-076) is
+# separately armed and cannot be armed in a simulation run — but the CLAIM the user
+# reads is on screen, and a window that stopped saying "simulated" would be the first
+# sign of that guarantee being lost.
 
 import names
 

@@ -21,7 +21,9 @@
 #include "ui/ScreenerDialog.h"
 #include "services/CrowdCollector.h"
 #include "services/OllamaAdvisor.h"
+#include "services/OrderGateway.h"
 #include "ui/BotSimPanel.h"
+#include "ui/LiveBotExecutor.h"
 #include "ui/CrowdDashboardWindow.h"
 #include "ui/HeavyweightsPanel.h"
 #include "ui/CockpitPanel.h"
@@ -238,6 +240,9 @@ QString eventTooltip(const EconomicEvent &e, const trading::ImpactGuess &guess,
 
 } // namespace
 
+// See the header: defined where LiveBotExecutor and EtoroOrderGateway are complete.
+MainWindow::~MainWindow() = default;
+
 MainWindow::MainWindow(EtoroClient *client, MarketFeeds *feeds, AiAdvisor *aiAdvisor,
                        EconomicCalendar *calendar, QWidget *parent)
     : QMainWindow(parent)
@@ -432,6 +437,24 @@ void MainWindow::setupRunners()
     static_cast<void>(connect(m_botRunner, &BotSimRunner::log, this, &MainWindow::onLog));
     static_cast<void>(connect(m_botRunner, &BotSimRunner::tradeOpened, this,
                               &MainWindow::onBotTradeOpened));
+    // The real-money mirror (REQ-F-076). The runner above still has no route to an order:
+    // it reports its opens and closes, and THIS is the one object that holds a gateway —
+    // the real one, over the same client, behind the guarded send's validation, arming and
+    // audit. It is armed only from the bot window's double press; nothing here arms it.
+    // The caps come from Config (250/250 EUR unless configured), the audit record lives
+    // beside the books, and the client already keeps the bot's holdings quoted.
+    m_liveGateway = std::make_unique<trading::EtoroOrderGateway>(m_client);
+    LiveBotSetup liveSetup;
+    liveSetup.config.maxPerOrder = trading::Money::fromDouble(
+        m_client->config().botLiveMaxPerOrderEur, trading::Currency::Eur);
+    liveSetup.config.maxDailyLoss =
+        trading::Money::fromDouble(m_client->config().botLiveDailyLossEur, trading::Currency::Eur);
+    liveSetup.auditPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+                          + QStringLiteral("/bot-live-orders.jsonl");
+    m_liveExecutor =
+        std::make_unique<LiveBotExecutor>(m_client, m_botRunner, m_liveGateway.get(), liveSetup);
+    static_cast<void>(
+        connect(m_liveExecutor.get(), &LiveBotExecutor::log, this, &MainWindow::onLog));
     // The crowd evidence reaches the bot's prompt (REQ-F-046): one line per instrument,
     // rebuilt whenever the score or the model's read changes — evidence beside the technical
     // lines, gating and sizing nothing.
@@ -1534,7 +1557,9 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "Trading-bot simulation (REQ-F-029): the app's own multi-source decision, traded "
         "across ALL instruments with SIMULATED money on live prices — spread, overnight "
         "fees and slippage-free fills charged like the real path, so the P/L is worth "
-        "reading. It never places an order at eToro and never moves real funds."));
+        "reading. The simulation itself never places an order at eToro; the window's "
+        "separately armed Real-money box (REQ-F-076) is the only way its SPX500/NSDQ100 "
+        "decisions reach a real account."));
     static_cast<void>(
         connect(m_botButton, &QPushButton::clicked, this, &MainWindow::openBotSim));
 
@@ -4555,7 +4580,7 @@ void MainWindow::onBotTradeOpened(const QString & /*symbol*/)
 void MainWindow::openBotSim()
 {
     if (m_botDialog == nullptr) {
-        m_botDialog = new BotSimDialog(m_botRunner, this);
+        m_botDialog = new BotSimDialog(m_botRunner, m_liveExecutor.get(), this);
     }
     m_botDialog->show();
     m_botDialog->raise();

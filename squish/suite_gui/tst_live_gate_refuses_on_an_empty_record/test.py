@@ -3,7 +3,8 @@
 
 # -*- coding: utf-8 -*-
 # The real-money gate (REQ-F-037 / REQ-N-005) must REFUSE on an empty record, name
-# what is missing, and say on screen that live execution is not wired.
+# what is missing, and the real-money box (REQ-F-076) must show its arming as
+# impossible in this run: the client is not live under forced simulation.
 #
 # What this checks that a unit test cannot: paperLiveReadiness() returning
 # ready=False is worth nothing if the window renders it as encouragement. This is
@@ -46,13 +47,19 @@ def main():
     test.verify(len(tail) > 1 and len(tail[1].strip()) > 0,
                 "the refusal names its blockers: %s" % live[:200])
 
-    # 3. The safety fact is on screen in both branches of that label: live execution
-    #    is NOT wired in this build. REQ-N-005 is not satisfied by the code alone if
-    #    the window lets a reader believe the bot can place a real order.
-    test.verify("not wired" in live or "NOT wired" in live,
-                "the window states that live execution is not wired: %s" % live[:200])
-    test.verify("simulated money" in live,
-                "the window states the bot trades simulated money")
+    # 3. The safety fact is on screen in the real-money box (REQ-F-076): under forced
+    #    simulation the client is not live, the state line says so, and the arming
+    #    button is DISABLED — a GUI run cannot arm real money whatever it clicks.
+    #    REQ-N-005 is not satisfied by the code alone if the window lets a reader
+    #    believe this run could place a real order.
+    state = str(waitForObject(names.botLiveStateLabel).text)
+    test.verify("not armed" in state,
+                "the real-money box states it is not armed: %s" % state[:200])
+    test.verify("not live" in state,
+                "the real-money box states the client is not live: %s" % state[:200])
+    liveArm = waitForObject(names.botLiveArmButton)
+    test.verify(not liveArm.enabled,
+                "the real-money arming button is disabled in a simulation run")
 
     # 4. The record label agrees with the verdict: zero closed trades. Two labels
     #    disagreeing about the same book is the failure this pins.

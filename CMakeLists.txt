@@ -144,6 +144,8 @@ qt_add_library(trading_domain STATIC
     src/domain/YahooChartParser.h
     src/domain/OrderRequestValidator.cpp
     src/domain/OrderRequestValidator.h
+    src/domain/LiveMirror.cpp
+    src/domain/LiveMirror.h
     src/domain/InstrumentCatalog.cpp
     src/domain/InstrumentCatalog.h
     src/domain/Indicators.cpp
@@ -303,6 +305,8 @@ qt_add_executable(TradingApp
     src/ui/CrowdDashboardWindow.h
     src/ui/BotSimRunner.cpp
     src/ui/BotSimRunner.h
+    src/ui/LiveBotExecutor.cpp
+    src/ui/LiveBotExecutor.h
     src/ui/BotSimPanel.cpp
     src/ui/BotSimPanel.h
     src/ui/ScreenerDialog.h

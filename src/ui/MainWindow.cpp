@@ -1554,7 +1554,9 @@ void MainWindow::buildHeaderButtons(QWidget *central)
         "Trading-bot simulation (REQ-F-029): the app's own multi-source decision, traded "
         "across ALL instruments with SIMULATED money on live prices — spread, overnight "
         "fees and slippage-free fills charged like the real path, so the P/L is worth "
-        "reading. It never places an order at eToro and never moves real funds."));
+        "reading. The simulation itself never places an order at eToro; the window's "
+        "separately armed Real-money box (REQ-F-076) is the only way its SPX500/NSDQ100 "
+        "decisions reach a real account."));
     static_cast<void>(
         connect(m_botButton, &QPushButton::clicked, this, &MainWindow::openBotSim));
 

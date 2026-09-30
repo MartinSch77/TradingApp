@@ -405,8 +405,8 @@ void BotSimRunner::setArmed(bool armed)
     m_armed = armed;
     const PaperStats s = m_book.stats();
     if (m_armed) {
-        emit log(QStringLiteral("BOT SIM ARMED — simulated money only, no order ever reaches "
-                                "eToro. Equity %1, %2 open, %3 closed.")
+        emit log(QStringLiteral("BOT SIM ARMED — simulated money only; the simulation itself "
+                                "never sends an order to eToro. Equity %1, %2 open, %3 closed.")
                      .arg(botPlain(s.equity))
                      .arg(s.openTrades)
                      .arg(s.closedTrades),

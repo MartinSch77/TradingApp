@@ -14,7 +14,27 @@ strategy.md`'s planning-artefact composition names.
 
 Nine paper-bot corrections, every one measured on the running bot or verified in
 the code before it was changed, plus the documentation that had drifted from it.
-Real-money execution stays excluded throughout (REQ-N-005).
+Real-money execution stays excluded from those nine (REQ-N-005); the separate
+item at the end of this list wires it, deliberately, behind REQ-N-009's path.
+
+- Real money (REQ-F-076, owner request 2026-09-30): the paper bot's SPX500 and
+  NSDQ100 decisions can be mirrored to real eToro orders from the bot window's
+  new "Real money" box — a REQ-N-005 double-pressed, time-bounded arming that
+  names its grant (scope, 250 EUR per order, 250 EUR realised daily loss, 480
+  min; `botLiveMaxPerOrderEur`/`botLiveDailyLossEur` in Config, 0 = nothing may
+  be sent). Every order goes through REQ-N-009's validated-armed-recorded path
+  (`EtoroOrderGateway`, the real seam, refusing a non-live client on its own;
+  audit `bot-live-orders.jsonl`); the stake is min(cap, paper stake) at the paper
+  leverage with the stop/target amounts scaled to it (`domain/LiveMirror`), one
+  live position per instrument, the paper close closes the live position, and a
+  realised daily loss at the cap trips the STICKY kill switch. Arming fails closed
+  on the kill switch, a non-owned book, a non-live client and the REQ-F-031
+  readiness verdict — the owner's request to waive readiness is recorded in
+  REQ-F-076's RATIONALE, not implemented. `EtoroClient` prices a market order on
+  an instrument that is not on screen off that instrument's own rate (the old
+  "only the instrument currently being traded" refusal is gone) and reports the
+  opened position id as a signal. GUI only; the console binaries compose no
+  gateway. TS-LIVE-001..004, TS-LBOT-001..005, TS-GATE-007, TS-CLI-042.
 
 - Rollover: `paperRolloverNights` billed a weekend as 5 nights (Sat 3 + Sun 1 +
   Mon 1). eToro charges it ONCE, tripled, on the Friday night — Saturday and

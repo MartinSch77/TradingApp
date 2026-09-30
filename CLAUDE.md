@@ -182,10 +182,13 @@ publish_release; refuses to publish on a red pipeline).
 - Money-moving actions need the double-press gate; advisory features never
   trade (REQ-N-005). Secrets only in git-ignored `apiKeyEtoro.json`.
 - The bot simulation (REQ-F-029, `domain/PaperTrader` + `ui/BotSimPanel`) is
-  SIMULATED money on LIVE prices, and must keep having NO route to an order
-  endpoint — reads only (quotes/spreads/fees/decision rows, plus
-  `EtoroClient::setExtraQuoteInstruments`, which registers quote interest, not an
-  order). Its cost model charges half the LIVE spread per side plus per-night
+  SIMULATED money on LIVE prices, and the RUNNER (`BotSimRunner`, linked by the console
+  binaries too) must keep having NO route to an order endpoint — reads only
+  (quotes/spreads/fees/decision rows, plus `EtoroClient::setExtraQuoteInstruments`,
+  which registers quote interest, not an order) and it EMITS its opens and closes
+  (`tradeOpenedDetail`/`tradeClosed`). The ONE object holding a gateway is
+  `ui/LiveBotExecutor` (REQ-F-076, below), composed in `MainWindow::setupRunners` and
+  nowhere else; both claims must stay true. Its cost model charges half the LIVE spread per side plus per-night
   rollover with the tripled weekend night; never simplify those away — a
   simulation without costs measures nothing. Those costs also DECIDE exits: close
   when the remaining upside no longer covers rollover-to-horizon + exit spread, and
@@ -335,7 +338,8 @@ publish_release; refuses to publish on a red pipeline).
   that function is also what makes crypto trading work at all (`TS-PAPER-037`), so the
   swing strategy's SPX500-only scope belongs to ITS OWN config, not to the shared
   general-purpose default. Real-money execution stays excluded throughout every one of
-  these items.
+  these items (the REQ-F-076 mirror, added 2026-09-30, is a separate path beside them —
+  see the real-money bullet below).
 - Prediction rests on AGREEMENT BETWEEN INDEPENDENT reads (REQ-F-059..-075 — one
   requirement per read, REQ-F-069 the agreement gate; REQ-F-035 is superseded by them —
   `domain/IndexConfluence`): NINE of them — futures leadership, the leading future's
@@ -497,10 +501,24 @@ publish_release; refuses to publish on a red pipeline).
   computes the record (net, net/day, rolling few-day net, profit factor,
   expectancy, win rate, peak-to-trough drawdown, target hit rate, long/short
   split) and `paperLiveReadiness` reports readiness or EVERY unmet threshold. Live
-  execution is not wired; wiring it needs a REQ-N-005 carve-out (the REQ-F-028
-  arm-instead-of-double-press precedent), the gate passing, and per-order/daily
-  caps — never a silent removal of the safeguard. The window states the verdict
-  and its blockers at all times; do not let it claim more than the record shows.
+  execution IS wired since 2026-09-30 (REQ-F-076) — for SPX500 and NSDQ100 ONLY, GUI
+  only (the console binaries compose no gateway), through REQ-N-009's
+  validated-armed-recorded path (`EtoroOrderGateway` behind `GuardedOrderSender`, audit
+  `bot-live-orders.jsonl`), behind the REQ-N-005 double-pressed ARMING in the bot
+  window's "Real money" box (`ui/LiveBotExecutor`, `BotSimDialog::buildLiveBox`; the
+  REQ-F-028 arm-instead-of-double-press precedent). `arm()` fails closed on the kill
+  switch, a runner that does not own its book, a client that is not live (real keys +
+  mode real) AND the readiness verdict. The owner asked (2026-09-30) for readiness NOT
+  to be a precondition; that amendment of REQ-F-031 was refused as weakening a
+  committed safety property, is recorded in REQ-F-076's RATIONALE, and lifting it is an
+  owner decision IN REQ-F-031 under the change-management strategy's two approvals —
+  never a silent removal of the safeguard in a code path. Caps come from Config
+  (`botLiveMaxPerOrderEur`/`botLiveDailyLossEur`, 250/250; a 0 means nothing may be
+  sent, never "off"): stake = min(cap, paper stake) at the paper leverage with the
+  stop/target amounts scaled to it (`domain/LiveMirror`), one live position per
+  instrument, a realised daily loss at the cap trips the STICKY kill switch, nothing is
+  persisted (a restart is disarmed). The window states the verdict and its blockers at
+  all times; do not let it claim more than the record shows.
 - The bot's proposal source can be a LOCAL model (REQ-F-030,
   `services/OllamaAdvisor` + the pure `paperAiGate`): optional, no key,
   `./setup.sh ollama` installs runtime + model under `~/.local/ollama`,

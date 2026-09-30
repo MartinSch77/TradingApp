@@ -306,3 +306,44 @@ Every step that refuses names a stable `code`; every step that could not measure
 treats that as *unknown*, never as agreement or disagreement — the same discipline running
 through §§2-9, restated once here because it is the property that makes the whole pipeline
 trustworthy rather than merely plausible.
+
+## 11. The real-money mirror (`ui/LiveBotExecutor`, `domain/LiveMirror`) — REQ-F-076
+
+Nothing in §§1-10 changed: the pipeline above decides and books the SIMULATED position
+exactly as before, and the record REQ-F-031 measures is still the record of the strategy.
+The mirror sits BESIDE it, following the runner's `tradeOpenedDetail` / `tradeClosed`
+events, and is the only object in the process that holds an order gateway (composed in
+`MainWindow::setupRunners`; the console binaries compose none, so nothing they run can send).
+
+What is mirrored, and only while a human has ARMED it in the bot window's "Real money" box
+(the REQ-N-005 double press over `liveGrantAction`, which names the scope, both caps and
+the duration):
+
+* **SPX500 and NSDQ100 only** (`LiveMirrorConfig::symbols`); every other paper open is
+  refused `live-scope` — crypto, the metals, the FX names, everything the widened GUI focus
+  set trades on paper.
+* **One live position per instrument** (`live-position-cap`), at **min(cap, paper stake)**
+  converted to the account's currency once (`Money`), at the paper trade's leverage, with
+  the stop and target AMOUNTS scaled by the stake ratio so the live stop and target sit at
+  the paper trade's RATES. The cap is `Config::botLiveMaxPerOrderEur` (250 EUR; 0 means
+  nothing may be sent, never "no cap").
+* Every order goes through `GuardedOrderSender` (validated → armed state with its caps →
+  the real `EtoroOrderGateway` → the append-only audit `bot-live-orders.jsonl` beside the
+  books), and `EtoroClient::openPositionReal` prices the instrument off ITS OWN rate or
+  refuses the market order.
+* The **paper close closes the live position** by the broker id the fill reported
+  (`positionOpened`); a position the broker never named is flagged "close by hand" and
+  kept in the table, never dropped. A PARTIAL paper close keeps the live position whole.
+* The **realised daily loss** (the last polled `Position.profit` of each closed position,
+  per calendar date, in the account's currency) reaching `Config::botLiveDailyLossEur`
+  (250 EUR) trips the STICKY kill switch: nothing more is sent, and only the "Clear kill
+  switch" button — a separate human action — re-enables arming.
+
+What is NOT mirrored, on purpose: anything outside the two indices; a second position in
+an instrument the mirror already holds; anything while the client is not live (real keys
+and mode `real`), while the runner does not own its book, or while the REQ-F-031 readiness
+verdict is unmet — `arm()` refuses each of those by name. The owner asked for readiness NOT
+to be a precondition; that request is recorded, not implemented (REQ-F-076's RATIONALE):
+lifting it is a decision for REQ-F-031 itself under the change-management strategy's two
+approvals. Nothing about the arming is persisted — a restart is disarmed — and the arming
+expires on its own after `armMinutes` (480, one trading day).

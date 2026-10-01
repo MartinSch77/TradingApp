@@ -57,18 +57,42 @@ bool registerCocoSave() noexcept
 
 #elif defined(__GNUC__) && defined(__linux__)
 
-#include <cstdlib>
+#include <QtGlobal>
 
-// Coco's runtime symbol, if the binary carries it. The reserved-identifier spelling is the
-// library's own name, not ours to choose — hence the three suppressions around this block.
+#include <cstdlib>
+#include <iostream>
+
+#include <unistd.h>
+
+// Coco's runtime symbols, if the binary carries them. The reserved-identifier spelling is
+// the library's own, not ours to choose — hence the three suppressions around this block.
+// `__coveragescanner_filename` is the report path Coco itself intends to write; with
+// TRADINGAPP_COCO_TRACE set, the hook says where that is and whether the file exists after
+// the save — the diagnostic for a binary whose report never appears (2026-10-02: the hook
+// was linked into tst_candles, Coco's save symbol was defined there, the test exited 0,
+// and still no .csexe — this trace is how that is taken apart on a licensed machine).
 // NOLINTBEGIN(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 extern "C" void __coveragescanner_save(void) __attribute__((weak));
+extern "C" const char *__coveragescanner_filename(void) __attribute__((weak));
 
 namespace {
 void saveCocoReport()
 {
-    if (__coveragescanner_save != nullptr) {
-        __coveragescanner_save();
+    if (__coveragescanner_save == nullptr) {
+        return;
+    }
+    const bool trace = qEnvironmentVariableIsSet("TRADINGAPP_COCO_TRACE");
+    const char *name =
+        (__coveragescanner_filename != nullptr) ? __coveragescanner_filename() : nullptr;
+    const char *shown = (name != nullptr) ? name : "(no filename from the runtime)";
+    if (trace) {
+        std::cerr << "coco: saving execution report to " << shown << '\n';
+    }
+    __coveragescanner_save();
+    if (trace) {
+        const bool present = (name != nullptr) && (::access(name, F_OK) == 0);
+        std::cerr << "coco: after save, " << shown << (present ? " exists" : " does NOT exist")
+                  << '\n';
     }
 }
 // A POD flag, not an object with a destructor (see the other branch).

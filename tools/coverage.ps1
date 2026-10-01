@@ -353,7 +353,7 @@ function Invoke-CocoCoverage {
             # swingpullbackstrategy) does this deterministically — a candidate Coco bug,
             # NOT build corruption (a clean rebuild reproduces it); see the long note in
             # tools/coverage.sh. The merged figure is then a FLOOR. tests/CocoSave.cpp
-            # saves the report explicitly on GCC/clang; MSVC has no weak references, so
+            # saves the report explicitly on Linux (ELF weak reference); MSVC has none, so
             # Windows still relies on Coco's automatic writer, and whether it reproduces
             # the same set is unverified.
             Write-Warning "no execution report for $($exe.BaseName) (expected $csexeFile)"

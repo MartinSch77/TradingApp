@@ -14,7 +14,7 @@ strategy.md`'s planning-artefact composition names.
 
 - Coverage: every test binary now links `tests/CocoSave.cpp`, which saves the Squish
   Coco execution report itself from a static destructor (`__coveragescanner_save()`,
-  reached through a weak reference so ordinary builds are unaffected). Coco's own
+  reached through an ELF weak reference on Linux so ordinary builds are unaffected). Coco's own
   writer never fired for eight of the 58 suites on 2026-10-01 (four of 31 in August),
   among them the only tests of Candles, ConfirmGate, LeadGauge, RollingZScore and
   SwingPullbackStrategyV1 — their coverage was absent from the merged figure, which

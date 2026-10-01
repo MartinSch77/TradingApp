@@ -24,11 +24,14 @@
 // (`--cs-exclude-path`) and it is not documented whether CoverageScanner still defines
 // `__COVERAGESCANNER__` for a file it does not instrument:
 //   * under the macro, the call the Coco manual shows (CoverageScanner declares it);
-//   * otherwise a WEAK reference on GCC/clang — resolved by Coco's runtime when the binary
+//   * otherwise a WEAK reference on Linux (ELF) — resolved by Coco's runtime when the binary
 //     is instrumented, null (and skipped) in every ordinary build, which keeps this file a
 //     no-op in build/, build-san/, the MC/DC tree and CI.
-// MSVC has no weak references; the Windows Coco path keeps relying on the automatic writer
-// (tools/coverage.ps1 says the Windows set of silent suites is unverified).
+// Linux only, deliberately: Mach-O's linker rejects a weak UNDEFINED function ("Undefined
+// symbols for architecture arm64: ___coveragescanner_save" — the build-macos CI job, first
+// push of this file), and MSVC has no weak references at all. Neither platform runs Coco
+// here (tools/coverage.sh is the Linux path; tools/coverage.ps1 keeps the automatic writer
+// and says the Windows set of silent suites is unverified).
 //
 // Validation belongs to the first licensed run after this landed: the "produced no
 // execution report" notes from tools/coverage.sh must stop appearing for the eight suites.
@@ -47,7 +50,7 @@ struct CocoSaveAtExit {
 const CocoSaveAtExit cocoSaveAtExit;
 }   // namespace
 
-#elif defined(__GNUC__) && !defined(_WIN32)
+#elif defined(__GNUC__) && defined(__linux__)
 
 // Coco's runtime symbol, if the binary carries it. The reserved-identifier spelling is the
 // library's own name, not ours to choose — hence the three suppressions around this block.

@@ -12,6 +12,12 @@ strategy.md`'s planning-artefact composition names.
 
 ## Unreleased
 
+- TS-CLI-008 no longer runs a 25 ms background price poll beside the limit-order
+  path it tests (it failed its final wait for the fill on the owner's machine while
+  every earlier step passed; the poll only added machine-dependent load through the
+  same network manager and mock as the order lookups). The eToro-client test's
+  mock config now also redirects the rollover-fee feed to the mock: each resolving
+  test used to open a real HTTPS connection to api.etorostatic.com.
 - Coverage: every test binary now links `tests/CocoSave.cpp`, which saves the Squish
   Coco execution report itself from a static destructor (`__coveragescanner_save()`,
   reached through an ELF weak reference on Linux so ordinary builds are unaffected). Coco's own

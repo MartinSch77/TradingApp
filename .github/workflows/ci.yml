@@ -70,11 +70,11 @@ jobs:
           # codespell via pipx (isolated)
           python3 -m pipx install --force codespell || true
 
-          # plantuml jar (used by docs)
-          mkdir -p tools
-          if [ ! -f tools/plantuml.jar ]; then
-            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
-          fi
+          # plantuml jar (used by docs): the PINNED GitHub release via the repo's own
+          # fetch script, never SourceForge's redirecting "latest" link — that link
+          # answered a server error (wget exit 8) on 2026-10-01 and took four jobs
+          # down before a single test ran. Non-fatal: no job here needs the jar.
+          ./tools/fetch_plantuml.sh || echo "plantuml jar not fetched (non-fatal)"
 
           # supply-chain helpers (syft, grype, trivy) - pinned examples
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
@@ -243,10 +243,8 @@ jobs:
           python3 -m pipx ensurepath || true
           python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
           python3 -m pipx install --force codespell || true
-          mkdir -p tools
-          if [ ! -f tools/plantuml.jar ]; then
-            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
-          fi
+          # pinned PlantUML via the repo's own script, non-fatal (see the first job)
+          ./tools/fetch_plantuml.sh || echo "plantuml jar not fetched (non-fatal)"
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
@@ -303,10 +301,8 @@ jobs:
           python3 -m pipx ensurepath || true
           python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
           python3 -m pipx install --force codespell || true
-          mkdir -p tools
-          if [ ! -f tools/plantuml.jar ]; then
-            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
-          fi
+          # pinned PlantUML via the repo's own script, non-fatal (see the first job)
+          ./tools/fetch_plantuml.sh || echo "plantuml jar not fetched (non-fatal)"
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true
@@ -504,10 +500,8 @@ jobs:
           python3 -m pipx ensurepath || true
           python3 -m pip install --upgrade strictdoc doorstop sphinx gcovr lizard aqtinstall
           python3 -m pipx install --force codespell || true
-          mkdir -p tools
-          if [ ! -f tools/plantuml.jar ]; then
-            wget -q -O tools/plantuml.jar "https://sourceforge.net/projects/plantuml/files/plantuml.jar/download"
-          fi
+          # pinned PlantUML via the repo's own script, non-fatal (see the first job)
+          ./tools/fetch_plantuml.sh || echo "plantuml jar not fetched (non-fatal)"
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v0.88.0 || true
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.61.0 || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 0.36.0 || true

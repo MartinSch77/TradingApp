@@ -132,6 +132,12 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the
   reads and TS-PAPER-027 as the test that pins the confluence majority rule.
+- CI: the four Ubuntu jobs no longer download `plantuml.jar` from SourceForge's
+  redirecting "latest" link with a fatal `wget` — that link answered a server
+  error on 2026-10-01 and took static-analysis, build-and-test, supply-chain and
+  sanitize down before a single test ran. They call the pinned
+  `tools/fetch_plantuml.sh` (GitHub release) non-fatally instead, and that script
+  no longer inherits PlantUML's exit status 16 from its own version print.
 
 ## v1.1.2
 

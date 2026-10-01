@@ -78,6 +78,12 @@ Config mockConfig(const MockHttpServer &server)
     cfg.userKey = QStringLiteral("u");
     cfg.mode = QStringLiteral("demo");
     cfg.baseUrl = server.baseUrl() + QStringLiteral("/api");
+    // The rollover-fee feed too, or every client that resolves an instrument here reaches
+    // the REAL api.etorostatic.com (measured 2026-10-01: one outbound HTTPS connection per
+    // test). Process-wide by design (see the declaration), so the one place every test
+    // builds its Config from is the one place to set it; the mock answers 404 and the
+    // fees stay unknown, which no test in this file asserts on.
+    EtoroClient::setTradeConfigBaseForTesting(server.baseUrl());
     return cfg;
 }
 
@@ -673,7 +679,17 @@ private slots:
             }));
         QVERIFY(server.listen(QHostAddress::LocalHost));
 
-        LimitOrderFixture fix(server, 25);
+        // No background price polling (as in TS-CLI-009): nothing here needs a quote — a
+        // limit order is priced off its own trigger, and the resting list is refreshed by
+        // the pending registry's own 4 s cycle, not by the price poll. The 25 ms poll this
+        // test used to run put ~40 rate requests a second plus a portfolio 404 on every
+        // third through the same QNetworkAccessManager and the same single-threaded mock
+        // as the order lookups. On the owner's machine (2026-10-01, Qt 6.11.1) the final
+        // wait for the fill failed after the 15 s bound while every earlier step passed —
+        // the client's lookup path is unchanged and still exercised here; what the poll
+        // added was only load that scales with the machine. The test is about the order
+        // path; only the order path runs now.
+        LimitOrderFixture fix(server, 50000);
         QVERIFY(fix.resolved());
         EtoroClient &client = fix.client;
         QSignalSpy &pending = fix.pending;

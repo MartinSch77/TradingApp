@@ -113,6 +113,13 @@ you run the tools by hand:
 * `cmreport` writes **one output file per invocation** — `--html` together with
   `--csv-excel` fails with *"Multiple output files defined"* and produces neither.
   `--stat` is what prints a number to the console; `--text=` writes a 0-byte file.
+* Coco's **automatic execution-report writer does not fire for every suite**: eight
+  of the 58 test binaries (measured 2026-10-01; four of 31 in August — the set grows
+  with the suite count) exit 0 and write no `.csexe` at all, so their coverage was
+  simply absent from the merged figure, which `coverage.sh` therefore reports as a
+  floor. `tests/CocoSave.cpp`, compiled into every test, now calls
+  `__coveragescanner_save()` from a static destructor so the report is written either
+  way; the "produced no execution report" notes are the check that it worked.
 
 ---
 

@@ -8,6 +8,7 @@
 // malformed body, a hard server error, and a 429 rate limit that JsonHttp retries through. A last
 // check pins that a configured key reaches the wire but never a diagnostic string.
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "domain/CrowdObservation.h"
 #include "services/CftcCotProvider.h"
@@ -31,7 +32,7 @@ namespace {
 
 // Generous shared bound: the mock answers in milliseconds; the margin absorbs the retry backoff
 // (a 429/500 waits ~1-2 s before JsonHttp re-issues) and CI load.
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 // One CFTC "Traders in Financial Futures" record, Socrata-shaped: numbers arrive as JSON STRINGS
 // and the report date carries a midnight time part, exactly as the live API sends them.

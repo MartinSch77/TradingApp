@@ -268,6 +268,8 @@ bool FinBertSentiment::load(const QString &directory)
 {
     Q_UNUSED(directory);
     m_status = missingRuntimeStatus();
+    m_positive = -1;   // the runtime build's load() sets these from the labels file;
+    m_negative = -1;   // the stub keeps them "no column", and referenced (see the header)
     return false;
 }
 

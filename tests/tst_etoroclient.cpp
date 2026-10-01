@@ -6,6 +6,7 @@
 // accumulates multiple pages, and the cost estimator prices each trade from
 // the bulk-rates spread (half-spread × invest × leverage per side).
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "domain/PositionMath.h"
 #include "services/Config.h"
@@ -66,7 +67,7 @@ QSignalSpy armSpx500(EtoroClient &client)
 
 // Generous shared bound for spy waits: the mock answers in milliseconds, the
 // margin only absorbs CI load. Deliberate short waits stay literal.
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 // Real-mode credentials pointed at the in-process mock — the one Config shape
 // every walk test needs (default symbol SPX500 comes from Config itself).

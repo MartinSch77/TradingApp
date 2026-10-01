@@ -9,6 +9,7 @@
 // throttled feed-error log. Every feed host is redirected to the mock via
 // setEndpointBaseForTesting() — no test touches the real network.
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "domain/DecisionEngine.h"
 #include "domain/IndexConfluence.h"
@@ -29,7 +30,7 @@ namespace {
 
 // Generous shared bound for spy waits: the mock answers in milliseconds, the
 // margin only absorbs CI load.
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 // Yahoo v8 chart payload: meta fields + a close series. Raw JSON snippets so
 // nulls can appear mid-array, exactly as the live feed sends holidays / empty

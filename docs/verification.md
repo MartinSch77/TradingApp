@@ -136,7 +136,10 @@ computeDecisionRows over 25 instruments 4.5 → 0.22 ms per iteration.
     tools/sanitize.sh tsan         # clang >= 18 ThreadSanitizer (data races)
     tools/sanitize.sh valgrind     # memcheck: --leak-check=full
                                    # --show-leak-kinds=all --track-origins=yes
-                                   # --error-exitcode=1
+                                   # --error-exitcode=1; exports
+                                   # TRADINGAPP_TEST_WAIT_SCALE=6 so the tests'
+                                   # 15 s spy-wait bound (tests/TestWait.h) fits
+                                   # memcheck's slowdown on a loaded machine
 
 A clean ASan+UBSan run demonstrates absence of out-of-bounds access,
 use-after-free, leaks and undefined behaviour **on the executed paths**; the

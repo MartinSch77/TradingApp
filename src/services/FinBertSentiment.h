@@ -68,10 +68,12 @@ private:
     WordPieceVocab m_vocab;
     QStringList m_labels;
     // Indices into the labels/probability columns. Read only inside the
-    // TRADINGAPP_HAS_ONNXRUNTIME build of FinBertSentiment.cpp; the stub build never
-    // touches them, which clang reports as an unused private field.
-    [[maybe_unused]] qint32 m_positive = -1;
-    [[maybe_unused]] qint32 m_negative = -1;
+    // TRADINGAPP_HAS_ONNXRUNTIME build of FinBertSentiment.cpp; the stub build's load()
+    // resets them so clang's -Wunused-private-field stays quiet there. NOT
+    // [[maybe_unused]]: GCC 11 (the ubuntu-22.04 AppImage runner) rejects that attribute
+    // on a data member under -Werror=attributes, which broke the v1.2.0 release build.
+    qint32 m_positive = -1;
+    qint32 m_negative = -1;
     QString m_status;
 };
 

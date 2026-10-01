@@ -15,6 +15,7 @@
 // each of those branches decides between reporting a fill, reporting a rejection and
 // silently doing nothing. MC/DC is the measure that says whether they were tried.
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "services/Config.h"
 #include "services/EtoroClient.h"
@@ -29,7 +30,7 @@
 
 namespace {
 
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 Config mockConfig(const MockHttpServer &server)
 {

@@ -242,9 +242,13 @@ coco_run_one() {
     (cd "$dir" && QT_QPA_PLATFORM=offscreen "./$name" >/dev/null 2>&1) || true
     if [ ! -f "$dir/$name.csexe" ]; then
         # A genuine, DETERMINISTIC Coco quirk, reported rather than hidden. Measured
-        # 2026-08-08: exactly four of the thirty-one suites write no execution report on exit
+        # 2026-08-08: exactly four of the thirty-one suites wrote no execution report on exit
         # — tst_models, tst_indicators, tst_candles, tst_confirmgate — while tst_money (and
-        # the rest) write a normal ~1.6 KB .csexe. Everything ruled out from the outside:
+        # the rest) wrote a normal ~1.6 KB .csexe. Re-measured 2026-10-01 on 58 suites: EIGHT
+        # — those four plus tst_architecture, tst_leadgauge, tst_rollingzscore,
+        # tst_swingpullbackstrategy — so the set GROWS as suites are added, and it does not
+        # follow the test main flavour (the eight mix QTEST_MAIN, QTEST_GUILESS_MAIN and
+        # QTEST_APPLESS_MAIN). Everything ruled out from the outside:
         #
         #   * NOT missing/stale instrumentation — each suite's .csmes is ~2.3 MB and contains
         #     its instrumented target source (Candles.cpp, ConfirmGate.cpp, …);
@@ -253,19 +257,25 @@ coco_run_one() {
         #     __coveragescanner_* symbols;
         #   * NOT the output path — an explicit COVERAGESCANNER_ARGS --cs-exec=<abspath>
         #     yields nothing either;
-        #   * NOT a crash — all four exit 0 cleanly, writing no file at all;
+        #   * NOT a crash — all exit 0 cleanly, writing no file at all;
         #   * NOT incremental-build corruption — a CLEAN from-scratch instrumented rebuild
-        #     (rm -rf build-cov-coco) reproduces the SAME four exactly. This is the decisive
+        #     (rm -rf build-cov-coco) reproduces the SAME set exactly. This is the decisive
         #     one: the behaviour is deterministic, not a stale-tree artefact.
         #
-        # The Coco atexit writer simply does not fire for these four binaries and the reason
-        # is not visible without Coco-internal tracing; it is a candidate Coco bug (a minimal
+        # The Coco atexit writer simply does not fire for these binaries and the reason is
+        # not visible without Coco-internal tracing; it is a candidate Coco bug (a minimal
         # from-scratch repro exists: identical suites, one writes, these do not).
         #
-        # CONSEQUENCE, stated wherever the number appears: the merged unit figure is a FLOOR.
-        # For a file exercised ONLY by an affected suite — Candles.cpp (tst_candles) and
-        # ConfirmGate.cpp (tst_confirmgate) most clearly — its coverage is MISSING from the
-        # Coco report even though the tests run and pass. The code is tested; the report
+        # ANSWER (2026-10-01): tests/CocoSave.cpp, compiled into every test binary, calls
+        # `__coveragescanner_save()` itself from a static destructor, so the report is
+        # written whether or not Coco's own handler fires. Its validation is the first
+        # licensed run after it landed: this note must stop appearing for the eight.
+        #
+        # CONSEQUENCE while the note still appears, stated wherever the number appears: the
+        # merged unit figure is a FLOOR. For a file exercised ONLY by an affected suite —
+        # Candles.cpp, ConfirmGate.cpp, LeadGauge.cpp, RollingZScore.cpp,
+        # SwingPullbackStrategy.cpp most clearly — its coverage is MISSING from the Coco
+        # report even though the tests run and pass. The code is tested; the report
         # undercounts it. Do not read a low number on those files as untested code.
         echo "note: $name produced no execution report — skipped in the merge"
         return 0

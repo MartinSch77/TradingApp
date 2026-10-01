@@ -14,7 +14,10 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 # One test executable per area; JUnit output for the traceability report is
 # produced by tools/run_tests.sh (ctest itself only records pass/fail).
 function(tradingapp_add_test name)
-    qt_add_executable(${name} ${ARGN})
+    # CocoSave.cpp: saves the Squish Coco execution report explicitly at exit (a no-op in
+    # every ordinary build) — see the file for the eight suites whose automatic report
+    # never appeared and why that undercounted the unit MC/DC figure.
+    qt_add_executable(${name} ${ARGN} CocoSave.cpp)
     target_link_libraries(${name} PRIVATE trading_services Qt6::Test)
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")

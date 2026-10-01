@@ -48,7 +48,11 @@ void saveCocoReport()
 }
 // A POD flag, not an object with a destructor: clazy's non-pod-global-static is part of the
 // static-analysis gate, and std::atexit (noexcept) runs the save at exit just the same.
-[[maybe_unused]] const bool cocoSaveRegistered = (std::atexit(saveCocoReport), true);
+bool registerCocoSave() noexcept
+{
+    return std::atexit(saveCocoReport) == 0;
+}
+[[maybe_unused]] const bool cocoSaveRegistered = registerCocoSave();
 }   // namespace
 
 #elif defined(__GNUC__) && defined(__linux__)
@@ -68,7 +72,11 @@ void saveCocoReport()
     }
 }
 // A POD flag, not an object with a destructor (see the other branch).
-[[maybe_unused]] const bool cocoSaveRegistered = (std::atexit(saveCocoReport), true);
+bool registerCocoSave() noexcept
+{
+    return std::atexit(saveCocoReport) == 0;
+}
+[[maybe_unused]] const bool cocoSaveRegistered = registerCocoSave();
 }   // namespace
 // NOLINTEND(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 

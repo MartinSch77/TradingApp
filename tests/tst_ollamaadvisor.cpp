@@ -12,6 +12,7 @@
 // The endpoint is redirected to the mock via setEndpointBaseForTesting(), so no
 // test needs a running Ollama and none touches the network.
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "services/OllamaAdvisor.h"
 
@@ -25,7 +26,7 @@ namespace {
 
 // Generous shared bound for spy waits: the mock answers in milliseconds, the
 // margin only absorbs CI load.
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 // Ollama's /api/generate envelope (stream=false): the model's text rides in
 // "response", with the bookkeeping fields the daemon really sends alongside.

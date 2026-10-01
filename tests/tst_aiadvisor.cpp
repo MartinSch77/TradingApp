@@ -10,6 +10,7 @@
 // is redirected to the mock via setEndpointBaseForTesting() — no test
 // touches the real network.
 
+#include "TestWait.h"
 #include "MockHttpServer.h"
 #include "services/AiAdvisor.h"
 
@@ -23,7 +24,7 @@ namespace {
 
 // Generous shared bound for spy waits: the mock answers in milliseconds, the
 // margin only absorbs CI load.
-constexpr qint32 kWaitMs = 15000;
+const qint32 kWaitMs = trading_test::scaledWaitMs(15000);
 
 // Anthropic Messages API success envelope: the decision JSON rides inside the
 // first text block; a non-text block leads so the block scan is exercised.

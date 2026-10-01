@@ -130,6 +130,11 @@ run_valgrind() {
     # compute-heavy test would hit the identical wall-clock-vs-instrumentation
     # mismatch under valgrind.
     export QTEST_FUNCTION_TIMEOUT=1800000
+    # The network-facing tests bound their spy waits at 15 s (tests/TestWait.h); under
+    # memcheck on a loaded machine TS-CLI-005 and TS-CLI-041 ran into that bound on
+    # 2026-09-30 while CI's valgrind pass and the uninstrumented run were fine. The
+    # bound is a margin for load, not a property under test, so it scales here.
+    export TRADINGAPP_TEST_WAIT_SCALE=6
     : > "$OUT/sanitize-valgrind.raw.txt"
     local name out
     for exe in "$BUILD"/tests/tst_*; do

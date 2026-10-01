@@ -10,4 +10,6 @@ DEST="$(cd "$(dirname "$0")" && pwd)/third-party/plantuml.jar"
 mkdir -p "$(dirname "$DEST")"
 curl -sL -o "$DEST" \
     "https://github.com/plantuml/plantuml/releases/download/v${VERSION}/plantuml-${VERSION}.jar"
-java -jar "$DEST" -version | head -1
+# PlantUML answers -version with exit status 16 (no diagram was generated), which
+# set -e/pipefail would turn into a failed fetch — the download above is the result.
+java -jar "$DEST" -version 2>/dev/null | head -1 || true

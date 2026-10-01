@@ -120,10 +120,24 @@ item at the end of this list wires it, deliberately, behind REQ-N-009's path.
   slower ASan build hit that window and failed the release's sanitize stage. The
   test now pins the candle-first order with the mock's `holdUntil` and waits for
   the converged quote; the client itself is unchanged (it converges within a tick).
+- Release build on the ubuntu-22.04 AppImage runner: GCC 11 rejects
+  `[[maybe_unused]]` on a data member (`-Werror=attributes`), which the two FinBERT
+  index fields had carried since the clang-tidy cleanup; the stub build's `load()`
+  now references them instead, and the attribute is gone.
+- The network-facing tests' 15 s spy-wait bound is one shared `tests/TestWait.h`
+  and scales with `TRADINGAPP_TEST_WAIT_SCALE`, which the sanitize stage exports
+  (6) for its valgrind pass — memcheck on a loaded machine ran TS-CLI-005 and
+  TS-CLI-041 into the unscaled bound.
 - Documentation: `docs/bot-decision-pipeline.md` §8 no longer claims the swing
   strategy is outside the live loop (it is wired behind `useSwingStrategy`,
   off by default, unvalidated live); CLAUDE.md names REQ-F-059..-075 for the
   reads and TS-PAPER-027 as the test that pins the confluence majority rule.
+- CI: the four Ubuntu jobs no longer download `plantuml.jar` from SourceForge's
+  redirecting "latest" link with a fatal `wget` — that link answered a server
+  error on 2026-10-01 and took static-analysis, build-and-test, supply-chain and
+  sanitize down before a single test ran. They call the pinned
+  `tools/fetch_plantuml.sh` (GitHub release) non-fatally instead, and that script
+  no longer inherits PlantUML's exit status 16 from its own version print.
 
 ## v1.1.2
 

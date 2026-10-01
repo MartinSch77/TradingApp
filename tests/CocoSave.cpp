@@ -15,10 +15,11 @@
 //
 // `__coveragescanner_save()` is the documented CoverageScanner library call for writing
 // the report from the program itself; it writes <executable>.csexe into the working
-// directory like the automatic writer, which is where coverage.sh runs each test. A static
-// object's destructor runs during exit() in every build, so the save happens whether or not
-// Coco's own handler fires; when both run, the second record is a union of the first — a
-// coverage database answers "was it executed", not "how often".
+// directory like the automatic writer, which is where coverage.sh runs each test. The call
+// is registered with std::atexit from a namespace-scope initialiser, so it runs during
+// exit() in every build whether or not Coco's own handler fires; when both run, the second
+// record is a union of the first — a coverage database answers "was it executed", not "how
+// often".
 //
 // Two ways to reach the function, because tests/ is EXCLUDED from instrumentation
 // (`--cs-exclude-path`) and it is not documented whether CoverageScanner still defines
@@ -38,19 +39,21 @@
 
 #ifdef __COVERAGESCANNER__
 
+#include <cstdlib>
+
 namespace {
-struct CocoSaveAtExit {
-    CocoSaveAtExit() = default;
-    CocoSaveAtExit(const CocoSaveAtExit &) = delete;
-    CocoSaveAtExit(CocoSaveAtExit &&) = delete;
-    CocoSaveAtExit &operator=(const CocoSaveAtExit &) = delete;
-    CocoSaveAtExit &operator=(CocoSaveAtExit &&) = delete;
-    ~CocoSaveAtExit() { __coveragescanner_save(); }
-};
-const CocoSaveAtExit cocoSaveAtExit;
+void saveCocoReport()
+{
+    __coveragescanner_save();
+}
+// A POD flag, not an object with a destructor: clazy's non-pod-global-static is part of the
+// static-analysis gate, and std::atexit (noexcept) runs the save at exit just the same.
+[[maybe_unused]] const bool cocoSaveRegistered = (std::atexit(saveCocoReport), true);
 }   // namespace
 
 #elif defined(__GNUC__) && defined(__linux__)
+
+#include <cstdlib>
 
 // Coco's runtime symbol, if the binary carries it. The reserved-identifier spelling is the
 // library's own name, not ours to choose — hence the three suppressions around this block.
@@ -58,20 +61,14 @@ const CocoSaveAtExit cocoSaveAtExit;
 extern "C" void __coveragescanner_save(void) __attribute__((weak));
 
 namespace {
-struct CocoSaveAtExit {
-    CocoSaveAtExit() = default;
-    CocoSaveAtExit(const CocoSaveAtExit &) = delete;
-    CocoSaveAtExit(CocoSaveAtExit &&) = delete;
-    CocoSaveAtExit &operator=(const CocoSaveAtExit &) = delete;
-    CocoSaveAtExit &operator=(CocoSaveAtExit &&) = delete;
-    ~CocoSaveAtExit()
-    {
-        if (__coveragescanner_save != nullptr) {
-            __coveragescanner_save();
-        }
+void saveCocoReport()
+{
+    if (__coveragescanner_save != nullptr) {
+        __coveragescanner_save();
     }
-};
-const CocoSaveAtExit cocoSaveAtExit;
+}
+// A POD flag, not an object with a destructor (see the other branch).
+[[maybe_unused]] const bool cocoSaveRegistered = (std::atexit(saveCocoReport), true);
 }   // namespace
 // NOLINTEND(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 

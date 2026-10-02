@@ -268,35 +268,52 @@ else {
 }
 Remove-Item $notes.FullName -Force
 
-# gh release upload can fail PARTWAY through its own batch (measured on Linux: a
-# transient API 404 on one asset aborted the whole call, silently skipping every
-# asset still queued after it). Retry the whole batch on failure - --clobber makes a
-# retry safe - then verify by NAME that every asset this run means to publish
-# actually landed, rather than trusting the command's exit code alone.
+# gh release upload's exit status is NOT evidence about what landed - in either
+# direction (measured on Linux, see tools/publish_release.sh: a transient 404 once
+# skipped the rest of the batch; three 404s in a row once hid a complete upload).
+# GitHub's asset API is eventually consistent, so after every attempt the release is
+# asked by NAME what is still missing and only that is re-uploaded; the loop stops
+# when nothing is missing, whatever gh said, and fails only when something is still
+# absent after the last attempt.
+function Get-MissingAssets {
+    $script:published = & gh release view $Tag --json assets -q '.assets[].name'
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $m = @()
+    foreach ($f in $assets) {
+        if ($script:published -notcontains (Split-Path -Leaf $f)) { $m += $f }
+    }
+    return ,$m
+}
+$missing = @($assets)
+$published = @()
 $uploadAttempts = 0
-while ($true) {
-    & gh release upload $Tag @assets --clobber
-    if ($LASTEXITCODE -eq 0) { break }
+while ($missing.Count -gt 0) {
     $uploadAttempts++
-    if ($uploadAttempts -ge 3) {
-        Write-Error "gh release upload failed after $uploadAttempts attempts - see the error above"
+    if ($uploadAttempts -gt 4) {
+        Write-Error "$($missing.Count) asset(s) still NOT on the release after $($uploadAttempts - 1) attempts:"
+        foreach ($f in $missing) { Write-Host "    $(Split-Path -Leaf $f)" }
         exit 1
     }
-    Write-Host "gh release upload failed (attempt $uploadAttempts) - retrying the batch"
-    Start-Sleep -Seconds 5
+    & gh release upload $Tag @missing --clobber
+    $ghStatus = $LASTEXITCODE
+    Start-Sleep -Seconds 3   # let the asset list settle before asking it what landed
+    $m = Get-MissingAssets
+    if ($null -eq $m) {
+        Write-Host "gh release view failed after upload attempt $uploadAttempts - retrying"
+        $missing = @($assets)
+        Start-Sleep -Seconds 5
+        continue
+    }
+    $missing = @($m)
+    if ($ghStatus -ne 0 -and $missing.Count -eq 0) {
+        Write-Host "  note  gh release upload exited $ghStatus on attempt $uploadAttempts, yet every asset is on the release - a known false negative, see above"
+    }
+    elseif ($missing.Count -gt 0) {
+        Write-Host "attempt $uploadAttempts left $($missing.Count) asset(s) missing (gh exit $ghStatus) - re-uploading those"
+        Start-Sleep -Seconds 5
+    }
 }
 
 Write-Host ''
-Write-Host "attached $($assets.Count) asset(s) to $Tag"
-$published = & gh release view $Tag --json assets -q '.assets[].name'
-$missing = @()
-foreach ($f in $assets) {
-    $base = Split-Path -Leaf $f
-    if ($published -notcontains $base) { $missing += $base }
-}
-if ($missing.Count -gt 0) {
-    Write-Error "upload reported success but $($missing.Count) asset(s) are NOT on the release:"
-    foreach ($f in $missing) { Write-Host "    $f" }
-    exit 1
-}
+Write-Host "attached $($assets.Count) asset(s) to $Tag (verified by name)"
 $published | ForEach-Object { Write-Host "    $_" }

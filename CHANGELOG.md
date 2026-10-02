@@ -12,6 +12,13 @@ strategy.md`'s planning-artefact composition names.
 
 ## Unreleased
 
+- `tools/publish_release.{sh,ps1}`: the asset upload no longer trusts `gh release
+  upload --clobber`'s exit status. On 2026-10-01 three consecutive attempts ended in
+  HTTP 404 (GitHub's asset API is eventually consistent: a replaced asset's id can
+  404 on delete and a just-deleted name on re-upload) while every asset had in fact
+  landed, so the script reported failure on a complete release. After each attempt
+  it now asks the release by name what is still missing, re-uploads only that, and
+  fails only when something is still absent after the last attempt.
 - TS-CLI-008 no longer runs a 25 ms background price poll beside the limit-order
   path it tests (it failed its final wait for the fill on the owner's machine while
   every earlier step passed; the poll only added machine-dependent load through the

@@ -329,35 +329,58 @@ fi
 rm -f "$NOTES"
 
 
-# gh release upload can fail PARTWAY through its own batch (measured: a transient
-# API 404 on one asset aborted the whole call, silently skipping every asset still
-# queued after it — the FIRST bug in this script, until this fix, was not checking
-# whether that happened at all). Retry the whole batch on failure — --clobber makes
-# a retry safe, since anything that DID land the first time is simply re-uploaded —
-# then verify by NAME that every asset this run means to publish actually landed,
-# rather than trusting the command's exit code alone.
+# gh release upload's exit status is NOT evidence about what landed — in either
+# direction. Measured twice on this release's own publishing:
+#   * a transient API 404 on one asset aborted the batch and silently skipped every
+#     asset still queued after it (the first bug this block fixed);
+#   * on 2026-10-01 23:08 UTC three consecutive --clobber attempts each ended in an
+#     HTTP 404 (two DELETEs of an asset id, one upload of a just-replaced name), the
+#     script gave up — and the release held all seven assets, uploaded within those
+#     same seconds. GitHub's asset API is eventually consistent: a replaced asset's id
+#     can 404 on delete, and a just-deleted name can 404 on re-upload, for a moment.
+# So the loop below asks the release by NAME what is still missing after every
+# attempt and re-uploads only that; it stops when nothing is missing, whatever gh
+# said, and fails only when something is still absent after the last attempt.
+missing_assets() {
+    local published
+    published="$(gh release view "$TAG" --json assets -q '.assets[].name')" || return 1
+    MISSING=()
+    local f
+    for f in "${ASSETS[@]}"; do
+        grep -qxF "$(basename "$f")" <<<"$published" || MISSING+=("$f")
+    done
+    PUBLISHED="$published"
+}
+MISSING=("${ASSETS[@]}")
+PUBLISHED=""
 UPLOAD_ATTEMPTS=0
-until gh release upload "$TAG" "${ASSETS[@]}" --clobber; do
+while [ "${#MISSING[@]}" -gt 0 ]; do
     UPLOAD_ATTEMPTS=$((UPLOAD_ATTEMPTS + 1))
-    if [ "$UPLOAD_ATTEMPTS" -ge 3 ]; then
-        bad "gh release upload failed after $UPLOAD_ATTEMPTS attempts — see the error above"
+    if [ "$UPLOAD_ATTEMPTS" -gt 4 ]; then
+        bad "${#MISSING[@]} asset(s) still NOT on the release after $((UPLOAD_ATTEMPTS - 1)) attempts:"
+        for f in "${MISSING[@]}"; do bad "    $(basename "$f")"; done
         exit 1
     fi
-    say "gh release upload failed (attempt $UPLOAD_ATTEMPTS) — retrying the batch"
-    sleep 5
+    if gh release upload "$TAG" "${MISSING[@]}" --clobber; then
+        GH_STATUS=0
+    else
+        GH_STATUS=$?
+    fi
+    sleep 3   # let the asset list settle before asking it what landed
+    if ! missing_assets; then
+        say "gh release view failed after upload attempt $UPLOAD_ATTEMPTS — retrying"
+        MISSING=("${ASSETS[@]}")
+        sleep 5
+        continue
+    fi
+    if [ "$GH_STATUS" -ne 0 ] && [ "${#MISSING[@]}" -eq 0 ]; then
+        note "gh release upload exited $GH_STATUS on attempt $UPLOAD_ATTEMPTS, yet every asset is on the release — a known false negative, see above"
+    elif [ "${#MISSING[@]}" -gt 0 ]; then
+        say "attempt $UPLOAD_ATTEMPTS left ${#MISSING[@]} asset(s) missing (gh exit $GH_STATUS) — re-uploading those"
+        sleep 5
+    fi
 done
 
 say ""
-say "attached ${#ASSETS[@]} asset(s) to $TAG"
-PUBLISHED="$(gh release view "$TAG" --json assets -q '.assets[].name')"
-MISSING=()
-for f in "${ASSETS[@]}"; do
-    base="$(basename "$f")"
-    grep -qxF "$base" <<<"$PUBLISHED" || MISSING+=("$base")
-done
-if [ "${#MISSING[@]}" -gt 0 ]; then
-    bad "upload reported success but ${#MISSING[@]} asset(s) are NOT on the release:"
-    for f in "${MISSING[@]}"; do bad "    $f"; done
-    exit 1
-fi
+say "attached ${#ASSETS[@]} asset(s) to $TAG (verified by name)"
 sed 's/^/    /' <<<"$PUBLISHED"

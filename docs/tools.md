@@ -182,6 +182,18 @@ that CPU `qwen2.5:7b` measured 27.5 prompt / 6.9 answer tokens per second (1.5B:
 Ollama's default of 4096 silently truncates a long evidence prompt, and the bot logs
 each answer's time and token counts, flagging a prompt that comes close to the limit.
 
+`./setup.sh ollama` creates no service. On the main development machine (WSL2) a
+hand-written systemd user unit, `~/.config/systemd/user/ollama.service` (2026-08-09),
+started the daemon at login. It runs `~/.local/ollama/bin/ollama serve` itself, not
+`~/.local/ollama/start.sh`, so it does not carry the GPU mode the setup writes there.
+The runtime under `~/.local/ollama` has been missing since at least 2026-11-15 (what
+removed it is not known), and the unit restarted every 3 s, failing each time. While
+TradingApp is not in use the unit is disabled (2026-11-24); the file stays. To use the
+local model again:
+
+    ./setup.sh ollama
+    systemctl --user enable --now ollama.service
+
 ## Windows-only tools
 
 Versions captured on the Windows reference machine (Windows 11, 2026-07-27).
